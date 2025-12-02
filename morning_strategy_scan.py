@@ -2,11 +2,13 @@
 Morning Strategy Scanner - ForexGod Trading AI
 Runs at 09:00 daily to classify all pairs as REVERSAL or CONTINUITY
 Generates Daily chart screenshots for each pair and sends grouped Telegram report
+Auto-executes trades via cTrader when high-quality setups are found
 """
 
 import os
 import json
 import sys
+import time
 from datetime import datetime
 from typing import List, Dict, Optional
 from dataclasses import dataclass
@@ -257,7 +259,77 @@ class MorningStrategyScanner:
         logger.info(f"🟢 CONTINUITY setups: {len(continuity_setups)}")
         logger.info(f"⚪ No setup: {len(no_setup_pairs)}")
         
+        # Auto-execute best setup via cTrader
+        self._auto_execute_best_setup(reversal_setups, continuity_setups)
+        
         return summary
+    
+    def _auto_execute_best_setup(self, reversal_setups: List[PairAnalysis], continuity_setups: List[PairAnalysis]):
+        """
+        Automatically send best setup to cTrader for execution
+        Prioritizes: Priority 1 pairs with R:R >= 2.0
+        """
+        try:
+            # Combine all setups and filter by quality
+            all_setups = reversal_setups + continuity_setups
+            high_quality = [s for s in all_setups if s.priority == 1 and s.setup.risk_reward >= 2.0]
+            
+            if not high_quality:
+                logger.info("⚠️  No high-quality setups found (Priority 1 + R:R >= 2.0). No auto-execution.")
+                return
+            
+            # Get best setup (highest R:R)
+            best = max(high_quality, key=lambda x: x.setup.risk_reward)
+            setup = best.setup
+            
+            logger.info(f"\n🎯 BEST SETUP FOUND: {best.symbol}")
+            logger.info(f"   Strategy: {setup.strategy_type.upper()}")
+            logger.info(f"   Direction: {setup.daily_choch.direction.upper()}")
+            logger.info(f"   R:R: 1:{setup.risk_reward:.2f}")
+            
+            # Generate signal for cTrader
+            signal = {
+                "SignalId": f"MORNING_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+                "Symbol": best.symbol.replace('USD', '/USD').replace('EUR', 'EUR/').replace('GBP', 'GBP/').replace('JPY', '/JPY').replace('CHF', '/CHF').replace('AUD', 'AUD/').replace('NZD', 'NZD/').replace('CAD', '/CAD'),
+                "Direction": "buy" if setup.daily_choch.direction == 'bullish' else "sell",
+                "StrategyType": f"Morning Glitch - {setup.strategy_type.capitalize()}",
+                "EntryPrice": setup.entry_price,
+                "StopLoss": setup.stop_loss,
+                "TakeProfit": setup.take_profit,
+                "StopLossPips": abs(setup.entry_price - setup.stop_loss) * 10000,  # Convert to pips
+                "TakeProfitPips": abs(setup.take_profit - setup.entry_price) * 10000,
+                "RiskReward": setup.risk_reward,
+                "Timestamp": datetime.now().isoformat()
+            }
+            
+            # Write signal file for cBot
+            signal_path = "signals.json"
+            with open(signal_path, 'w') as f:
+                json.dump(signal, f, indent=2)
+            
+            logger.success(f"✅ Signal file created: {signal_path}")
+            logger.info("🤖 cTrader cBot will execute this trade automatically!")
+            
+            # Send notification to Telegram
+            direction_emoji = "🟢" if signal["Direction"] == "buy" else "🔴"
+            telegram_msg = f"""
+🤖 *AUTO-TRADE SIGNAL SENT TO cTRADER*
+
+{direction_emoji} *{best.symbol}* - {signal['Direction'].upper()}
+Strategy: `{setup.strategy_type.upper()}`
+R:R: `1:{setup.risk_reward:.2f}`
+
+📍 Entry: `{setup.entry_price:.5f}`
+🛑 SL: `{setup.stop_loss:.5f}` ({signal['StopLossPips']:.1f} pips)
+🎯 TP: `{setup.take_profit:.5f}` ({signal['TakeProfitPips']:.1f} pips)
+
+⏰ cBot will execute within 10 seconds...
+"""
+            self.telegram.send_message(telegram_msg.strip())
+            
+        except Exception as e:
+            logger.error(f"❌ Error in auto-execution: {e}")
+
     
     def send_telegram_report(self, summary: Dict):
         """Send grouped Telegram report with charts"""
