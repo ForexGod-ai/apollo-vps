@@ -1,0 +1,161 @@
+{
+  "pairs": [
+    {
+      "symbol": "GBPUSD",
+      "mt5_symbol": "GBPUSD",
+      "priority": 1,
+      "description": "British Pound vs US Dollar",
+      "category": "forex_major"
+    },
+    {
+      "symbol": "XAUUSD",
+      "mt5_symbol": "XAUUSD",
+      "priority": 1,
+      "description": "Gold vs US Dollar",
+      "category": "commodity"
+    },
+    {
+      "symbol": "BTCUSD",
+      "mt5_symbol": "BTCUSD",
+      "priority": 1,
+      "description": "Bitcoin vs US Dollar",
+      "category": "crypto"
+    },
+    {
+      "symbol": "GBPJPY",
+      "mt5_symbol": "GBPJPY",
+      "priority": 1,
+      "description": "British Pound vs Japanese Yen",
+      "category": "forex_cross"
+    },
+    {
+      "symbol": "USOIL",
+      "mt5_symbol": "USOIL",
+      "priority": 1,
+      "description": "Crude Oil WTI",
+      "category": "commodity"
+    },
+    {
+      "symbol": "GBPNZD",
+      "mt5_symbol": "GBPNZD",
+      "priority": 1,
+      "description": "British Pound vs New Zealand Dollar",
+      "category": "forex_cross"
+    },
+    {
+      "symbol": "EURJPY",
+      "mt5_symbol": "EURJPY",
+      "priority": 1,
+      "description": "Euro vs Japanese Yen",
+      "category": "forex_cross"
+    },
+    {
+      "symbol": "EURUSD",
+      "mt5_symbol": "EURUSD",
+      "priority": 2,
+      "description": "Euro vs US Dollar",
+      "category": "forex_major"
+    },
+    {
+      "symbol": "NZDCAD",
+      "mt5_symbol": "NZDCAD",
+      "priority": 2,
+      "description": "New Zealand Dollar vs Canadian Dollar",
+      "category": "forex_cross"
+    },
+    {
+      "symbol": "USDJPY",
+      "mt5_symbol": "USDJPY",
+      "priority": 2,
+      "description": "US Dollar vs Japanese Yen",
+      "category": "forex_major"
+    },
+    {
+      "symbol": "USDCAD",
+      "mt5_symbol": "USDCAD",
+      "priority": 2,
+      "description": "US Dollar vs Canadian Dollar",
+      "category": "forex_major"
+    },
+    {
+      "symbol": "EURCAD",
+      "mt5_symbol": "EURCAD",
+      "priority": 2,
+      "description": "Euro vs Canadian Dollar",
+      "category": "forex_cross"
+    },
+    {
+      "symbol": "AUDCAD",
+      "mt5_symbol": "AUDCAD",
+      "priority": 2,
+      "description": "Australian Dollar vs Canadian Dollar",
+      "category": "forex_cross"
+    },
+    {
+      "symbol": "GBPCHF",
+      "mt5_symbol": "GBPCHF",
+      "priority": 2,
+      "description": "British Pound vs Swiss Franc",
+      "category": "forex_cross"
+    },
+    {
+      "symbol": "USDCHF",
+      "mt5_symbol": "USDCHF",
+      "priority": 2,
+      "description": "US Dollar vs Swiss Franc",
+      "category": "forex_major"
+    },
+    {
+      "symbol": "NZDUSD",
+      "mt5_symbol": "NZDUSD",
+      "priority": 2,
+      "description": "New Zealand Dollar vs US Dollar",
+      "category": "forex_major"
+    },
+    {
+      "symbol": "AUDNZD",
+      "mt5_symbol": "AUDNZD",
+      "priority": 2,
+      "description": "Australian Dollar vs New Zealand Dollar",
+      "category": "forex_cross"
+    },
+    {
+      "symbol": "CADCHF",
+      "mt5_symbol": "CADCHF",
+      "priority": 2,
+      "description": "Canadian Dollar vs Swiss Franc",
+      "category": "forex_cross"
+    }
+  ],
+  "scanner_settings": {
+    "daily_scan_time": "00:05",
+    "timeframes": {
+      "primary": "D1",
+      "confirmation": "H4"
+    },
+    "lookback_candles": {
+      "daily": 100,
+      "h4": 200
+    },
+    "strategy": "glitch_in_matrix",
+    "telegram_alerts": true,
+    "auto_execute": false
+  },
+  "strategy_rules": {
+    "name": "Glitch in Matrix",
+    "description": "Daily CHoCH + FVG retest + 4H opposite CHoCH confirmation inside FVG zone",
+    "steps": [
+      "1. Detect Daily CHoCH (break of swing high/low)",
+      "2. Identify FVG (gap from 3 candles) after CHoCH",
+      "3. Monitor price retest into FVG zone",
+      "4. Check 4H was in microtrend toward FVG",
+      "5. Detect 4H CHoCH in OPPOSITE direction INSIDE FVG zone",
+      "6. If all conditions met → Telegram alert + optional execution"
+    ],
+    "risk_management": {
+      "risk_per_trade": 0.02,
+      "max_positions": 3,
+      "min_risk_reward": 1.5
+    }
+  }
+}

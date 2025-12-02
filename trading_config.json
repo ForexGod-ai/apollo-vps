@@ -1,0 +1,52 @@
+{
+  "auto_trading": {
+    "enabled": true,
+    "mode": "demo",
+    "comment": "Set to false to disable autonomous trading. Mode can be 'demo' or 'live'."
+  },
+  
+  "risk_management": {
+    "risk_per_trade_percent": 2.0,
+    "max_risk_per_trade_percent": 5.0,
+    "min_risk_per_trade_percent": 0.5,
+    "comment": "Risk per trade as percentage of account balance. Default 2%."
+  },
+  
+  "position_limits": {
+    "max_trades_per_day": 5,
+    "max_open_positions": 3,
+    "max_positions_per_symbol": 1,
+    "comment": "Maximum number of trades to prevent overexposure."
+  },
+  
+  "lot_size": {
+    "min_lot": 0.01,
+    "max_lot": 1.0,
+    "step_lot": 0.01,
+    "comment": "Lot size constraints for trade execution."
+  },
+  
+  "filters": {
+    "min_risk_reward": 1.5,
+    "allowed_strategy_types": ["reversal", "continuation"],
+    "min_priority": 1,
+    "max_priority": 2,
+    "comment": "Only execute trades meeting these criteria."
+  },
+  
+  "monitoring": {
+    "check_interval_seconds": 60,
+    "send_telegram_updates": true,
+    "log_all_trades": true,
+    "comment": "How often to check for new setups and monitor active trades."
+  },
+  
+  "execution": {
+    "slippage_points": 20,
+    "magic_number": 234000,
+    "order_comment": "ForexGod-Glitch-Auto",
+    "retry_on_error": true,
+    "max_retries": 3,
+    "comment": "Trade execution parameters."
+  }
+}
