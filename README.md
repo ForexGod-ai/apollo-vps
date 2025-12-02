@@ -360,3 +360,5 @@ Pentru probleme:
 ---
 
 **Creat pentru trading automatizat inteligent! 🚀📈**
+
+Hai sa facem bani

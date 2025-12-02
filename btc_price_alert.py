@@ -1,130 +1,107 @@
 """
 BTCUSD Price Alert - Notify when price reaches $89k (ForexGod's SELL zone)
-Runs continuously and sends Telegram alert
+Uses TradingView data (via yfinance)
 """
 
-import MetaTrader5 as mt5
+import yfinance as yf
 import time
 import os
 import requests
 from loguru import logger
 from dotenv import load_dotenv
 from datetime import datetime
+from tradingview_chart_generator import TradingViewChartGenerator
 
 load_dotenv()
 
-# Telegram config
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
-
-# Alert config
-TARGET_PRICE = 89000  # $89k - ForexGod's perfect entry
-SYMBOL = "BTCUSD"
-CHECK_INTERVAL = 60  # Check every 60 seconds
+TARGET_PRICE = 89000
+SYMBOL = "BTC-USD"
+CHECK_INTERVAL = 60
 ALERT_SENT = False
 
-def send_telegram_alert(message: str):
-    """Send alert to Telegram"""
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    data = {
-        "chat_id": TELEGRAM_CHAT_ID,
-        "text": message,
-        "parse_mode": "HTML"
-    }
+def send_telegram_alert(message: str, chart_image: bytes = None):
+    """Send alert with optional chart screenshot"""
+    url_base = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
+    
     try:
+        # Send text message
+        url = f"{url_base}/sendMessage"
+        data = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "HTML"}
         response = requests.post(url, data=data)
+        
+        # Send chart screenshot if available
+        if chart_image:
+            url = f"{url_base}/sendPhoto"
+            files = {"photo": ("btc_chart.png", chart_image, "image/png")}
+            data = {"chat_id": TELEGRAM_CHAT_ID, "caption": "📊 BTCUSD Daily Chart"}
+            requests.post(url, data=data, files=files)
+            logger.info("✅ Chart screenshot sent!")
+        
         if response.status_code == 200:
             logger.info("✅ Alert sent to Telegram!")
-        else:
-            logger.error(f"❌ Telegram error: {response.text}")
     except Exception as e:
         logger.error(f"❌ Failed to send alert: {e}")
 
 def check_price():
-    """Check BTCUSD price and send alert if target reached"""
     global ALERT_SENT
-    
-    # Get current price
-    tick = mt5.symbol_info_tick(SYMBOL)
-    if tick is None:
-        logger.error(f"Failed to get {SYMBOL} tick")
-        return False
-    
-    current_price = tick.bid
-    distance = ((TARGET_PRICE - current_price) / current_price) * 100
-    
-    logger.info(f"💰 {SYMBOL}: ${current_price:,.2f} | Target: ${TARGET_PRICE:,.2f} ({distance:+.2f}%)")
-    
-    # Check if price reached or passed target
-    if not ALERT_SENT and current_price >= TARGET_PRICE:
-        # Price reached $89k!
-        alert_message = f"""
-🚨 <b>BTCUSD PRICE ALERT!</b> 🚨
+    try:
+        ticker = yf.Ticker(SYMBOL)
+        data = ticker.history(period='1d', interval='1m')
+        if data.empty:
+            return False
+        
+        current_price = data['Close'].iloc[-1]
+        distance = ((TARGET_PRICE - current_price) / current_price) * 100
+        logger.info(f"💰 BTCUSD: ${current_price:,.2f} | Target: ${TARGET_PRICE:,.2f} ({distance:+.2f}%)")
+        
+        if not ALERT_SENT and current_price >= TARGET_PRICE:
+            alert = f"""🚨 BTCUSD PRICE ALERT! 🚨
 
-💰 <b>Current Price: ${current_price:,.2f}</b>
-🎯 <b>Target Reached: $89,000</b>
+💰 Current Price: ${current_price:,.2f}
+🎯 Target Reached: $89,000
 
-🔥 <b>FOREXGOD's SELL ZONE ACTIVATED!</b>
+🔥 FOREXGOD SELL ZONE ACTIVATED!
 
-📊 <b>Setup Reminder:</b>
-• Market Structure: BEARISH (Lower High confirmed)
-• Entry Zone: $89k area
-• Resistance: $93,062 (swing high)
-• Stop Loss: Above $93k-$95k
-• Take Profit: $80,535 (recent low)
-• R:R: ~14% move potential
+📊 Setup: BEARISH (Lower High)
+⚡ Action: Watch for rejection signals
+💪 Stay disciplined!
 
-⚡ <b>Action Plan:</b>
-1. Watch for rejection signals (bearish engulfing, pinbar)
-2. Check lower timeframe for CHoCH bearish
-3. Wait for confirmation before entry
-4. Use proper risk management!
-
-💪 <b>Stay disciplined, ForexGod!</b>
-🎯 <b>This is your zone!</b>
-
-⏰ Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-"""
-        send_telegram_alert(alert_message)
-        ALERT_SENT = True
-        logger.info("🔔 ALERT SENT! Price target reached!")
-        return True
-    
+⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"""
+            
+            # Get TradingView chart screenshot
+            chart_image = None
+            try:
+                chart_gen = TradingViewChartGenerator(login=False)
+                chart_image = chart_gen.get_chart_screenshot('BTCUSD', 'D')
+                chart_gen.close()
+                logger.info("✅ Chart screenshot captured")
+            except Exception as e:
+                logger.error(f"⚠️  Could not capture chart: {e}")
+            
+            send_telegram_alert(alert, chart_image)
+            ALERT_SENT = True
+            return True
+    except Exception as e:
+        logger.error(f"Error: {e}")
     return False
 
 def run_alert_monitor():
-    """Main monitoring loop"""
     logger.info("="*80)
-    logger.info("🔔 BTCUSD PRICE ALERT MONITOR STARTED")
-    logger.info("="*80)
+    logger.info("🔔 BTCUSD ALERT MONITOR - TradingView Data")
     logger.info(f"📍 Target: ${TARGET_PRICE:,.2f}")
-    logger.info(f"⏱️  Check interval: {CHECK_INTERVAL}s")
     logger.info("="*80)
-    
-    # Initialize MT5
-    if not mt5.initialize():
-        logger.error("❌ MT5 initialization failed!")
-        return
-    
-    logger.info(f"✅ MT5 Connected: Account #{mt5.account_info().login}")
     
     try:
         while True:
             if check_price():
-                # Alert sent, wait 5 minutes then exit
-                logger.info("Waiting 5 minutes before shutting down...")
+                logger.info("✅ Alert sent! Shutting down in 5 min...")
                 time.sleep(300)
                 break
-            
             time.sleep(CHECK_INTERVAL)
-            
     except KeyboardInterrupt:
-        logger.info("\n⚠️ Monitor stopped by user")
-    except Exception as e:
-        logger.error(f"❌ Error: {e}")
-    finally:
-        mt5.shutdown()
-        logger.info("✅ Monitor shut down")
+        logger.info("Monitor stopped")
 
 if __name__ == "__main__":
     run_alert_monitor()

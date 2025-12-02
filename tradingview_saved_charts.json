@@ -1,0 +1,63 @@
+{
+  "description": "ForexGod's Published TradingView Charts - includes all drawings (CHoCH, FVG, imbalances)",
+  "charts": {
+    "GBPUSD": "https://www.tradingview.com/chart/GBPUSD/FaCNOV4i-GBPUSD/",
+    "EURUSD": "https://www.tradingview.com/chart/EURUSD/FdnIAmZI-eurusd/",
+    "USDJPY": "https://www.tradingview.com/chart/USDJPY/EnZkXHZA-usdjpy/",
+    "USDCHF": "https://www.tradingview.com/chart/USDCHF/K6Dakq8b-usdchf/",
+    "AUDUSD": "https://www.tradingview.com/chart/AUDUSD/MnwrQEy2-audusd/",
+    "USDCAD": "https://www.tradingview.com/chart/USDCAD/fAeReDnq-usdcad/",
+    "NZDUSD": "https://www.tradingview.com/chart/NZDUSD/jytptbp5-NZDUSD/",
+    "EURJPY": "https://www.tradingview.com/chart/EURJPY/AbEboUgE-EURJPY/",
+    "GBPJPY": "https://www.tradingview.com/chart/GBPJPY/dzJGMT3f-gbpjpy/",
+    "EURGBP": "https://www.tradingview.com/chart/EURGBP/F0URXcw3-eurgbp/",
+    "EURCAD": "https://www.tradingview.com/chart/EURCAD/OMvOQ3RE-eurcad/",
+    "AUDCAD": "https://www.tradingview.com/chart/AUDCAD/8VJ70ZBY-audcad/",
+    "AUDNZD": "https://www.tradingview.com/chart/AUDNZD/grqtkP3s-audnzd/",
+    "NZDCAD": "https://www.tradingview.com/chart/NZDCAD/SBxf3DYW-NZDCAD-REVERSE/",
+    "GBPNZD": "https://www.tradingview.com/chart/GBPNZD/7cWXAoPD-GBPNZD/",
+    "GBPCHF": "https://www.tradingview.com/chart/GBPCHF/Z5qwwZIyR-gbpchf/",
+    "CADCHF": "https://www.tradingview.com/chart/CADCHF/FgFkBBR0-cadchcf/",
+    "XAUUSD": "https://www.tradingview.com/chart/XAUUSD/dNMcYeMx-xaususd/",
+    "BTCUSD": "https://www.tradingview.com/chart/BTCUSD/ShxlXf23-BTCUSD/",
+    "USOIL": "https://www.tradingview.com/chart/USOIL/rNDncPww-USOIL/",
+    "EURNZD": "https://www.tradingview.com/chart/EURNZD/HXRIqyrR-eurnzd/",
+    "PIUSDT": "https://www.tradingview.com/chart/PIUSDT/jedRWKtB-piusdt/",
+    "XAGUSD": "https://www.tradingview.com/chart/XAGUSD/sAYg9BTu-xagusd/"
+  },
+  "instructions": "Add your published chart URLs here. Format: https://www.tradingview.com/chart/SYMBOL/xxxxx/",
+  "annotation_legend": {
+    "swing_points": {
+      "white_dots": "Swing Highs - peaks of body candles (max of open/close)",
+      "orange_dots": "Swing Lows - bottoms of body candles (min of open/close)",
+      "note": "BODY-ONLY analysis: wicks are ignored, only body (open/close) matters"
+    },
+    "structure_labels": {
+      "HH_HL": "Bullish structure - Higher Highs and Higher Lows pattern",
+      "LH_LL": "Bearish structure - Lower Highs and Lower Lows pattern",
+      "note": "Structure determines trend direction based on body swing points"
+    },
+    "imbalance_zones": {
+      "red_zones": "Bearish imbalance (FVG bearish) - unfilled gap, potential resistance",
+      "green_zones": "Bullish imbalance (FVG bullish) - unfilled gap, potential support",
+      "blue_zones": "Reverse imbalance - previously tested, role reversed",
+      "blue_mechanism": {
+        "red_to_blue": "When price breaks ABOVE red zone → becomes blue (support potential)",
+        "green_to_blue": "When price breaks BELOW green zone → becomes blue (resistance potential)",
+        "explanation": "Blue zones are imbalances that have been tested and now act opposite to their original role"
+      }
+    },
+    "choch_markers": {
+      "description": "Change of Character - marks where market structure shifts",
+      "bullish_choch": "Price breaks above previous high = bearish→bullish shift",
+      "bearish_choch": "Price breaks below previous low = bullish→bearish shift"
+    },
+    "trading_strategy": {
+      "step_1": "Identify Daily CHoCH (structure shift)",
+      "step_2": "Locate FVG zone (imbalance) near CHoCH",
+      "step_3": "Wait for price to retrace into FVG",
+      "step_4": "Look for 4H CHoCH confirmation in FVG zone",
+      "step_5": "Enter trade with defined risk management"
+    }
+  }
+}

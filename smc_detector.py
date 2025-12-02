@@ -94,23 +94,27 @@ class SMCDetector:
     
     def detect_swing_highs(self, df: pd.DataFrame) -> List[SwingPoint]:
         """
-        Detect swing highs in price data
-        Swing high = highest point with lower highs on both sides
+        Detect swing highs using BODY-ONLY (NO WICKS!)
+        Swing high = highest BODY with lower BODIES on both sides
+        BODY HIGH = max(open, close) - wicks are MANIPULATION!
         """
         swing_highs = []
         
+        # Calculate BODY highs for all candles (ignore wicks!)
+        body_highs = df[['open', 'close']].max(axis=1)
+        
         for i in range(self.swing_lookback, len(df) - self.swing_lookback):
-            current_high = df['high'].iloc[i]
+            current_high = body_highs.iloc[i]
             
-            # Check left side
+            # Check left side - all bodies lower
             left_check = all(
-                current_high > df['high'].iloc[i - j] 
+                current_high > body_highs.iloc[i - j] 
                 for j in range(1, self.swing_lookback + 1)
             )
             
-            # Check right side
+            # Check right side - all bodies lower
             right_check = all(
-                current_high > df['high'].iloc[i + j] 
+                current_high > body_highs.iloc[i + j] 
                 for j in range(1, self.swing_lookback + 1)
             )
             
@@ -126,23 +130,27 @@ class SMCDetector:
     
     def detect_swing_lows(self, df: pd.DataFrame) -> List[SwingPoint]:
         """
-        Detect swing lows in price data
-        Swing low = lowest point with higher lows on both sides
+        Detect swing lows using BODY-ONLY (NO WICKS!)
+        Swing low = lowest BODY with higher BODIES on both sides
+        BODY LOW = min(open, close) - wicks are MANIPULATION!
         """
         swing_lows = []
         
+        # Calculate BODY lows for all candles (ignore wicks!)
+        body_lows = df[['open', 'close']].min(axis=1)
+        
         for i in range(self.swing_lookback, len(df) - self.swing_lookback):
-            current_low = df['low'].iloc[i]
+            current_low = body_lows.iloc[i]
             
-            # Check left side
+            # Check left side - all bodies higher
             left_check = all(
-                current_low < df['low'].iloc[i - j] 
+                current_low < body_lows.iloc[i - j] 
                 for j in range(1, self.swing_lookback + 1)
             )
             
-            # Check right side
+            # Check right side - all bodies higher
             right_check = all(
-                current_low < df['low'].iloc[i + j] 
+                current_low < body_lows.iloc[i + j] 
                 for j in range(1, self.swing_lookback + 1)
             )
             
@@ -243,12 +251,16 @@ class SMCDetector:
                             if len(recent_lows) >= 2:
                                 ll_pattern = recent_lows[-1].price < recent_lows[-2].price
                             
-                            # Valid CHoCH only if BOTH LH and LL (confirmed bearish structure)
-                            if lh_pattern and ll_pattern:
+                            # Valid CHoCH only if LH pattern (relaxed for monitoring)
+                            # RELAXED: Accept even single LH as potential reversal signal
+                            if lh_pattern or ll_pattern:  # OR instead of AND
                                 # POST-BREAK VALIDATION: Check if price CONFIRMS the change
                                 # Look for swings AFTER the break to confirm HH or HL
                                 swings_after_break = [s for s in swing_highs if s.index > j] + \
                                                     [s for s in swing_lows if s.index > j]
+                                
+                                # RELAXED: Allow CHoCH even without full confirmation (MONITORING status)
+                                confirmed = True  # Default to true for monitoring
                                 
                                 # If we have recent data after break, validate confirmation
                                 if len(swings_after_break) >= 1:
@@ -256,7 +268,6 @@ class SMCDetector:
                                     highs_after = [s for s in swing_highs if s.index > j]
                                     lows_after = [s for s in swing_lows if s.index > j]
                                     
-                                    confirmed = False
                                     # For BULLISH CHoCH: need HH or HL after break
                                     if len(highs_after) >= 1:
                                         # Is there a Higher High?
@@ -266,20 +277,17 @@ class SMCDetector:
                                         # Is there a Higher Low?
                                         if any(l.price > recent_lows[-1].price for l in lows_after):
                                             confirmed = True
-                                    
-                                    if not confirmed:
-                                        # No confirmation yet - might be pullback
-                                        break
                                 
-                                chochs.append(CHoCH(
-                                    index=j,
-                                    direction='bullish',
-                                    break_price=swing.price,
-                                    previous_trend='bearish',
-                                    candle_time=df['time'].iloc[j],
-                                    swing_broken=swing
-                                ))
-                                current_trend = 'bullish'
+                                if confirmed:
+                                    chochs.append(CHoCH(
+                                        index=j,
+                                        direction='bullish',
+                                        break_price=swing.price,
+                                        previous_trend='bearish',
+                                        candle_time=df['time'].iloc[j],
+                                        swing_broken=swing
+                                    ))
+                                    current_trend = 'bullish'
                         elif current_trend == 'bullish':
                             # Already bullish, breaking another high → BOS
                             bos_list.append(BOS(
@@ -315,12 +323,16 @@ class SMCDetector:
                             if len(recent_lows) >= 2:
                                 hl_pattern = recent_lows[-1].price > recent_lows[-2].price
                             
-                            # Valid CHoCH only if BOTH HH and HL (confirmed bullish structure)
-                            if hh_pattern and hl_pattern:
+                            # Valid CHoCH only if HH pattern (relaxed for monitoring)
+                            # RELAXED: Accept even single HH as potential reversal signal
+                            if hh_pattern or hl_pattern:  # OR instead of AND
                                 # POST-BREAK VALIDATION: Check if price CONFIRMS the change
                                 # Look for swings AFTER the break to confirm LH or LL
                                 swings_after_break = [s for s in swing_highs if s.index > j] + \
                                                     [s for s in swing_lows if s.index > j]
+                                
+                                # RELAXED: Allow CHoCH even without full confirmation (MONITORING status)
+                                confirmed = True  # Default to true for monitoring
                                 
                                 # If we have recent data after break, validate confirmation
                                 if len(swings_after_break) >= 1:
@@ -328,7 +340,6 @@ class SMCDetector:
                                     highs_after = [s for s in swing_highs if s.index > j]
                                     lows_after = [s for s in swing_lows if s.index > j]
                                     
-                                    confirmed = False
                                     # For BEARISH CHoCH: need LL or LH after break
                                     if len(lows_after) >= 1:
                                         # Is there a Lower Low?
@@ -338,20 +349,17 @@ class SMCDetector:
                                         # Is there a Lower High?
                                         if any(h.price < recent_highs[-1].price for h in highs_after):
                                             confirmed = True
-                                    
-                                    if not confirmed:
-                                        # No confirmation yet - might be pullback
-                                        break
                                 
-                                chochs.append(CHoCH(
-                                    index=j,
-                                    direction='bearish',
-                                    break_price=swing.price,
-                                    previous_trend='bullish',
-                                    candle_time=df['time'].iloc[j],
-                                    swing_broken=swing
-                                ))
-                                current_trend = 'bearish'
+                                if confirmed:
+                                    chochs.append(CHoCH(
+                                        index=j,
+                                        direction='bearish',
+                                        break_price=swing.price,
+                                        previous_trend='bullish',
+                                        candle_time=df['time'].iloc[j],
+                                        swing_broken=swing
+                                    ))
+                                    current_trend = 'bearish'
                         elif current_trend == 'bearish':
                             # Already bearish, breaking another low → BOS
                             bos_list.append(BOS(
@@ -656,77 +664,143 @@ class SMCDetector:
         
         return entry, stop_loss, take_profit
     
+    def _analyze_pre_choch_structure(
+        self,
+        df: pd.DataFrame,
+        choch: CHoCH
+    ) -> Dict:
+        """
+        Analyze structure BEFORE CHoCH to determine previous trend
+        
+        Returns:
+            {'pattern': 'HH_HL' | 'LH_LL' | 'mixed', 'confidence': 0-100}
+        """
+        # IMPROVED: Use CHoCH's previous_trend field (most reliable)
+        if hasattr(choch, 'previous_trend') and choch.previous_trend:
+            if choch.previous_trend == 'bearish':
+                return {'pattern': 'LH_LL', 'confidence': 90}
+            elif choch.previous_trend == 'bullish':
+                return {'pattern': 'HH_HL', 'confidence': 90}
+        
+        # FALLBACK: Analyze swings if previous_trend not available
+        # Get candles BEFORE CHoCH (15-30 bars before for more data)
+        pre_choch_idx = max(0, choch.index - 30)
+        pre_df = df.iloc[pre_choch_idx:choch.index]
+        
+        if len(pre_df) < 5:
+            return {'pattern': 'mixed', 'confidence': 30}
+        
+        # Detect swings in pre-CHoCH period
+        highs = self.detect_swing_highs(pre_df)
+        lows = self.detect_swing_lows(pre_df)
+        
+        if len(highs) < 2 or len(lows) < 2:
+            # Not enough swings, check recent price action
+            recent_high = pre_df['high'].max()
+            recent_low = pre_df['low'].min()
+            first_half_high = pre_df.iloc[:len(pre_df)//2]['high'].max()
+            second_half_high = pre_df.iloc[len(pre_df)//2:]['high'].max()
+            first_half_low = pre_df.iloc[:len(pre_df)//2]['low'].min()
+            second_half_low = pre_df.iloc[len(pre_df)//2:]['low'].min()
+            
+            if second_half_high < first_half_high and second_half_low < first_half_low:
+                # Lower highs AND lower lows = BEARISH
+                return {'pattern': 'LH_LL', 'confidence': 60}
+            elif second_half_high > first_half_high and second_half_low > first_half_low:
+                # Higher highs AND higher lows = BULLISH
+                return {'pattern': 'HH_HL', 'confidence': 60}
+            else:
+                return {'pattern': 'mixed', 'confidence': 40}
+        
+        # Count patterns
+        hh_count = sum(1 for i in range(1, len(highs)) if highs[i].price > highs[i-1].price)
+        hl_count = sum(1 for i in range(1, len(lows)) if lows[i].price > lows[i-1].price)
+        lh_count = sum(1 for i in range(1, len(highs)) if highs[i].price < highs[i-1].price)
+        ll_count = sum(1 for i in range(1, len(lows)) if lows[i].price < lows[i-1].price)
+        
+        # Determine pattern
+        if hh_count >= 2 and hl_count >= 2:
+            # Clear BULLISH trend before CHoCH
+            return {'pattern': 'HH_HL', 'confidence': 85}
+        elif lh_count >= 2 and ll_count >= 2:
+            # Clear BEARISH trend before CHoCH
+            return {'pattern': 'LH_LL', 'confidence': 85}
+        elif hh_count >= 1 and hl_count >= 1:
+            # Weak bullish
+            return {'pattern': 'HH_HL', 'confidence': 65}
+        elif lh_count >= 1 and ll_count >= 1:
+            # Weak bearish
+            return {'pattern': 'LH_LL', 'confidence': 65}
+        else:
+            # Mixed/ranging - use price action as tiebreaker
+            recent_trend = pre_df['close'].iloc[-1] - pre_df['close'].iloc[0]
+            if recent_trend < 0:
+                return {'pattern': 'LH_LL', 'confidence': 50}
+            else:
+                return {'pattern': 'HH_HL', 'confidence': 50}
+    
     def detect_strategy_type(
         self,
         df_daily: pd.DataFrame,
-        latest_choch: CHoCH
+        latest_choch: CHoCH,
+        fvg: Optional[FVG] = None
     ) -> str:
         """
-        Determine if setup is REVERSAL or CONTINUATION
+        IMPROVED: Determine if setup is REVERSAL or CONTINUATION
         
-        REVERSAL: Daily CHoCH changes trend direction completely
-        - Bullish: Previous trend was bearish (LL→HH) - MAJOR reversal
-        - Bearish: Previous trend was bullish (HH→LL) - MAJOR reversal
+        REVERSAL: Previous trend OPPOSITE to CHoCH direction
+        - Bullish CHoCH + Previous BEARISH (LH/LL) = REVERSAL BULLISH (BUY)
+        - Bearish CHoCH + Previous BULLISH (HH/HL) = REVERSAL BEARISH (SELL)
         
-        CONTINUATION: Daily CHoCH is a pullback in existing trend
-        - Bullish continuation: Uptrend → pullback (HL) → resume (HH)
-        - Bearish continuation: Downtrend → pullback (LH) → resume (LL)
+        CONTINUATION: Previous trend SAME as CHoCH direction
+        - Bullish CHoCH + Previous BULLISH (HH/HL) = CONTINUATION BULLISH (pullback, then continue UP)
+        - Bearish CHoCH + Previous BEARISH (LH/LL) = CONTINUATION BEARISH (pullback, then continue DOWN)
         
         Returns:
             'reversal' or 'continuation'
         """
-        # Look at swing points before the CHoCH
-        swing_highs = self.detect_swing_highs(df_daily)
-        swing_lows = self.detect_swing_lows(df_daily)
-        
-        # Get swings before CHoCH
-        swings_before = []
-        for sh in swing_highs:
-            if sh.index < latest_choch.index:
-                swings_before.append(('high', sh.price, sh.index))
-        for sl in swing_lows:
-            if sl.index < latest_choch.index:
-                swings_before.append(('low', sl.price, sl.index))
-        
-        # Sort by index
-        swings_before.sort(key=lambda x: x[2])
-        
-        if len(swings_before) < 3:
-            # Not enough data, default to reversal
-            return 'reversal'
-        
-        # Get last 3 swings
-        last_3_swings = swings_before[-3:]
+        # Analyze trend BEFORE CHoCH
+        pre_choch_structure = self._analyze_pre_choch_structure(df_daily, latest_choch)
         
         if latest_choch.direction == 'bullish':
-            # Bullish CHoCH - check if it's continuation or reversal
-            # Reversal: LL → LL → HH (breaking out of downtrend)
-            # Continuation: HL in uptrend, then resuming
+            # BULLISH CHoCH
+            if pre_choch_structure['pattern'] == 'LH_LL':
+                # Previous: BEARISH → CHoCH: BULLISH = REVERSAL
+                # Should have GREEN FVG (bullish imbalance)
+                if fvg and fvg.direction == 'bullish':
+                    return 'reversal'  # ✅ REVERSAL BULLISH (BUY in green zone)
+                else:
+                    # FVG not aligned, but structure says reversal
+                    return 'reversal'
             
-            # Check if we had higher lows (uptrend continuation)
-            lows = [s for s in last_3_swings if s[0] == 'low']
-            if len(lows) >= 2:
-                # If recent lows are higher (HL pattern) = continuation
-                if lows[-1][1] > lows[-2][1]:
-                    return 'continuation'
+            elif pre_choch_structure['pattern'] == 'HH_HL':
+                # Previous: BULLISH → CHoCH: BULLISH = CONTINUATION
+                # Pullback retest at HL, should have GREEN/BLUE FVG
+                return 'continuation'  # ✅ CONTINUATION BULLISH (continue UP)
             
-            # Otherwise reversal (breaking from downtrend)
-            return 'reversal'
+            else:
+                # Mixed - default to reversal if confidence low
+                return 'reversal' if pre_choch_structure['confidence'] < 50 else 'continuation'
         
         else:  # bearish CHoCH
-            # Bearish CHoCH - check if it's continuation or reversal
-            # Reversal: HH → HH → LL (breaking out of uptrend)
-            # Continuation: LH in downtrend, then resuming
+            # BEARISH CHoCH
+            if pre_choch_structure['pattern'] == 'HH_HL':
+                # Previous: BULLISH → CHoCH: BEARISH = REVERSAL
+                # Should have RED FVG (bearish imbalance)
+                if fvg and fvg.direction == 'bearish':
+                    return 'reversal'  # ✅ REVERSAL BEARISH (SELL in red zone)
+                else:
+                    # FVG not aligned, but structure says reversal
+                    return 'reversal'
             
-            # Check if we had lower highs (downtrend continuation)
-            highs = [s for s in last_3_swings if s[0] == 'high']
-            if len(highs) >= 2:
-                # If recent highs are lower (LH pattern) = continuation
-                if highs[-1][1] < highs[-2][1]:
-                    return 'continuation'
+            elif pre_choch_structure['pattern'] == 'LH_LL':
+                # Previous: BEARISH → CHoCH: BEARISH = CONTINUATION
+                # Pullback retest at LH, should have RED/BLUE FVG
+                return 'continuation'  # ✅ CONTINUATION BEARISH (continue DOWN)
             
-            # Otherwise reversal (breaking from uptrend)
-            return 'reversal'
+            else:
+                # Mixed - default to reversal if confidence low
+                return 'reversal' if pre_choch_structure['confidence'] < 50 else 'continuation'
     
     def scan_for_setup(
         self, 
@@ -790,8 +864,8 @@ class SMCDetector:
         if not price_approaching_fvg:
             return None  # Price too far from FVG
         
-        # Step 5: Detect strategy type
-        strategy_type = self.detect_strategy_type(df_daily, latest_choch)
+        # Step 5: Detect strategy type (pass FVG for validation)
+        strategy_type = self.detect_strategy_type(df_daily, latest_choch, fvg)
         
         # Step 6: Check 4H for confirmation (OPTIONAL for MONITORING status)
         h4_chochs = self.detect_choch(df_4h)

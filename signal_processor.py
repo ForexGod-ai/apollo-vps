@@ -1,11 +1,11 @@
 """
-Procesator de semnale - coordonează validarea AI și execuția pe broker
+Procesator de semnale - coordonează validarea AI și notificările pentru setup-uri bune
 """
 from loguru import logger
 from datetime import datetime
 import os
 
-from broker_manager import BrokerManager
+from notification_manager import NotificationManager
 from money_manager import MoneyManager
 
 
@@ -13,13 +13,14 @@ class SignalProcessor:
     """Procesează semnalele primite de la TradingView"""
     
     def __init__(self):
-        self.broker_manager = BrokerManager()
+        self.notification_manager = NotificationManager()
         self.money_manager = MoneyManager()
         self.ai_validation_enabled = os.getenv('AI_VALIDATION_ENABLED', 'True').lower() == 'true'
+        self.auto_trade_enabled = os.getenv('AUTO_TRADE_ENABLED', 'False').lower() == 'true'
         
     def process_signal(self, signal_data, ai_validator=None):
         """
-        Procesează un semnal complet: validare AI -> money management -> execuție
+        Procesează un semnal complet: validare AI -> money management -> notificare
         
         Args:
             signal_data: Dict cu datele semnalului
@@ -36,8 +37,8 @@ class SignalProcessor:
             'timestamp': datetime.now().isoformat(),
             'ai_validation': None,
             'risk_assessment': None,
-            'execution': None,
-            'executed': False
+            'notification_sent': False,
+            'alert_sent': False
         }
         
         try:
@@ -68,32 +69,22 @@ class SignalProcessor:
             
             logger.info(f"✅ Poziție aprobată: {risk_assessment['position_size']} lots")
             
-            # STEP 3: Execuție pe broker
-            logger.info("🚀 STEP 3: Execuție pe broker...")
+            # STEP 3: Trimite notificare (NU mai executăm automat!)
+            logger.info("📢 STEP 3: Trimit alertă pentru setup bun...")
             
-            # Pregătește ordinul
-            order_data = {
-                'symbol': signal_data['symbol'],
-                'action': signal_data['action'],
-                'volume': risk_assessment['position_size'],
-                'price': signal_data.get('price'),
-                'stop_loss': signal_data.get('stop_loss'),
-                'take_profit': signal_data.get('take_profit'),
-                'comment': f"TradingView-{signal_data.get('strategy', 'auto')}"
-            }
+            notification_sent = self.notification_manager.send_trade_alert(
+                signal_data=signal_data,
+                ai_validation=result.get('ai_validation'),
+                risk_assessment=risk_assessment
+            )
             
-            # Execută
-            execution_result = self.broker_manager.execute_order(order_data)
-            result['execution'] = execution_result
+            result['notification_sent'] = notification_sent
+            result['alert_sent'] = notification_sent
             
-            if execution_result['success']:
-                logger.info(f"✅ Ordin executat cu succes: Ticket={execution_result.get('ticket')}")
-                result['executed'] = True
-                
-                # Update money manager
-                self.money_manager.record_trade(order_data, execution_result)
+            if notification_sent:
+                logger.info("✅ Alertă trimisă cu succes! Execută trade manual.")
             else:
-                logger.error(f"❌ Eroare la execuție: {execution_result.get('error')}")
+                logger.warning("⚠️ Alertă nu a putut fi trimisă!")
             
         except Exception as e:
             logger.error(f"❌ Eroare la procesarea semnalului: {e}")
