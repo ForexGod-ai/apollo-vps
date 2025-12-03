@@ -116,7 +116,7 @@ class CTraderExecutor:
     
     def get_open_positions(self) -> list:
         """
-        Get list of open positions
+        Get list of open positions from trade_history.json
         
         Returns:
             List of open position dicts
@@ -126,10 +126,23 @@ class CTraderExecutor:
                 return []
         
         try:
-            # TODO: Implement actual position retrieval
-            logger.info("📊 Fetching open positions...")
-            positions = []
+            logger.info("📊 Fetching open positions from trade history...")
+            
+            import json
+            try:
+                with open('trade_history.json', 'r') as f:
+                    trades = json.load(f)
+            except FileNotFoundError:
+                logger.warning("⚠️  No trade_history.json found")
+                return []
+            
+            # Filter open positions
+            positions = [t for t in trades if t.get('status') == 'OPEN']
+            
             logger.info(f"   Found {len(positions)} open positions")
+            for pos in positions:
+                logger.info(f"   • {pos['symbol']} {pos['direction']} @ {pos['entry_price']}")
+            
             return positions
             
         except Exception as e:
@@ -164,7 +177,7 @@ class CTraderExecutor:
     
     def get_account_info(self) -> Optional[Dict]:
         """
-        Get account information
+        Get account information - reads from trade_history.json
         
         Returns:
             Account info dict with balance, equity, margin, etc.
@@ -174,21 +187,48 @@ class CTraderExecutor:
                 return None
         
         try:
-            logger.info("📊 Fetching account info...")
+            logger.info("📊 Fetching account info from trade history...")
             
-            # TODO: Implement actual account info retrieval
+            # Read trade history to calculate account state
+            import json
+            try:
+                with open('trade_history.json', 'r') as f:
+                    trades = json.load(f)
+            except FileNotFoundError:
+                logger.warning("⚠️  No trade_history.json found - using defaults")
+                trades = []
+            
+            # Calculate from closed trades
+            initial_balance = 10000.0
+            closed_trades = [t for t in trades if 'CLOSED' in t.get('status', '')]
+            total_profit = sum([t.get('profit', 0) for t in closed_trades])
+            
+            current_balance = initial_balance + total_profit
+            
+            # Calculate open positions floating P/L
+            open_positions = [t for t in trades if t.get('status') == 'OPEN']
+            floating_pl = 0  # Would need live prices to calculate
+            
+            equity = current_balance + floating_pl
+            margin = len(open_positions) * 100  # Rough estimate
+            
             account_info = {
                 'account_id': self.account_id,
-                'balance': 10000.0,  # Demo balance
-                'equity': 10000.0,
-                'margin': 0.0,
-                'free_margin': 10000.0,
+                'balance': current_balance,
+                'equity': equity,
+                'margin': margin,
+                'free_margin': equity - margin,
                 'currency': 'USD',
-                'server': self.server
+                'server': self.server,
+                'profit': total_profit,
+                'open_positions': len(open_positions),
+                'closed_trades': len(closed_trades)
             }
             
             logger.info(f"   Balance: ${account_info['balance']:.2f}")
             logger.info(f"   Equity: ${account_info['equity']:.2f}")
+            logger.info(f"   Profit: ${account_info['profit']:.2f}")
+            logger.info(f"   Open positions: {account_info['open_positions']}")
             return account_info
             
         except Exception as e:
