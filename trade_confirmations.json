@@ -1,12 +1,12 @@
 {
   "signal_id": "MORNING_TEST_1764713254",
-  "position_id": "550472929",
+  "position_id": "550528227",
   "symbol": "GBP/USD",
   "direction": "buy",
   "volume": 6000,
-  "entry_price": 1.322,
-  "sl": 1.319,
-  "tp": 1.328,
-  "executed_at": "2025-12-03T02:13:46.947572+02:00",
+  "entry_price": 1.32431,
+  "sl": 1.32131,
+  "tp": 1.33031,
+  "executed_at": "2025-12-03T09:40:56.462155+02:00",
   "status": "executed"
 }

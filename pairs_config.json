@@ -125,6 +125,34 @@
       "priority": 2,
       "description": "Canadian Dollar vs Swiss Franc",
       "category": "forex_cross"
+    },
+    {
+      "symbol": "AUDUSD",
+      "mt5_symbol": "AUDUSD",
+      "priority": 2,
+      "description": "Australian Dollar vs US Dollar",
+      "category": "forex_major"
+    },
+    {
+      "symbol": "EURGBP",
+      "mt5_symbol": "EURGBP",
+      "priority": 2,
+      "description": "Euro vs British Pound",
+      "category": "forex_major"
+    },
+    {
+      "symbol": "XAGUSD",
+      "mt5_symbol": "XAGUSD",
+      "priority": 1,
+      "description": "Silver vs US Dollar",
+      "category": "commodity"
+    },
+    {
+      "symbol": "PIUSDT",
+      "mt5_symbol": "PIUSDT",
+      "priority": 2,
+      "description": "Pi Network vs Tether",
+      "category": "crypto"
     }
   ],
   "scanner_settings": {

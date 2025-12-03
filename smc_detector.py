@@ -89,6 +89,7 @@ class SMCDetector:
         """
         Args:
             swing_lookback: Number of candles to look back for swing points
+                          Keep at 5 for sensitivity, but analyze LONGER range for trend
         """
         self.swing_lookback = swing_lookback
     
@@ -675,16 +676,58 @@ class SMCDetector:
         Returns:
             {'pattern': 'HH_HL' | 'LH_LL' | 'mixed', 'confidence': 0-100}
         """
-        # IMPROVED: Use CHoCH's previous_trend field (most reliable)
+        # IMPROVED: Analyze MACRO trend (last 50 candles) instead of relying on CHoCH.previous_trend
+        # This gives us the REAL market trend, not just micro swing breaks
+        
+        # Get 50 candles before CHoCH
+        macro_start = max(0, choch.index - 60)
+        macro_end = max(macro_start + 10, choch.index - 10)  # Stop 10 candles before CHoCH
+        macro_df = df.iloc[macro_start:macro_end]
+        
+        if len(macro_df) >= 20:
+            # Analyze MACRO trend using price action
+            first_third = macro_df.iloc[:len(macro_df)//3]
+            last_third = macro_df.iloc[-len(macro_df)//3:]
+            
+            first_high = first_third['high'].max()
+            first_low = first_third['low'].min()
+            last_high = last_third['high'].max()
+            last_low = last_third['low'].min()
+            
+            # Calculate trend strength
+            high_change = last_high - first_high
+            low_change = last_low - first_low
+            
+            # Determine MACRO trend
+            if high_change > 0 and low_change > 0:
+                # Higher highs AND higher lows = BULLISH MACRO TREND
+                macro_trend = 'bullish'
+                confidence = 85
+            elif high_change < 0 and low_change < 0:
+                # Lower highs AND lower lows = BEARISH MACRO TREND
+                macro_trend = 'bearish'
+                confidence = 85
+            else:
+                # Mixed = use CHoCH previous_trend as fallback
+                macro_trend = choch.previous_trend if hasattr(choch, 'previous_trend') else None
+                confidence = 60
+            
+            # Return pattern based on MACRO trend
+            if macro_trend == 'bearish':
+                return {'pattern': 'LH_LL', 'confidence': confidence}
+            elif macro_trend == 'bullish':
+                return {'pattern': 'HH_HL', 'confidence': confidence}
+        
+        # FALLBACK: Use CHoCH's previous_trend field if macro analysis fails
         if hasattr(choch, 'previous_trend') and choch.previous_trend:
             if choch.previous_trend == 'bearish':
                 return {'pattern': 'LH_LL', 'confidence': 90}
             elif choch.previous_trend == 'bullish':
                 return {'pattern': 'HH_HL', 'confidence': 90}
         
-        # FALLBACK: Analyze swings if previous_trend not available
-        # Get candles BEFORE CHoCH (15-30 bars before for more data)
-        pre_choch_idx = max(0, choch.index - 30)
+        # LAST RESORT: Analyze swings if previous_trend not available
+        # Get candles BEFORE CHoCH (30-50 bars before for MAJOR trend analysis)
+        pre_choch_idx = max(0, choch.index - 50)
         pre_df = df.iloc[pre_choch_idx:choch.index]
         
         if len(pre_df) < 5:
