@@ -17,13 +17,14 @@ from loguru import logger
 
 # Import our modules
 from smc_detector_fixed import (
-    detect_body_swing_highs, 
-    detect_body_swing_lows, 
+    detect_body_swing_highs,
+    detect_body_swing_lows,
     analyze_trend_structure
 )
 from smc_detector import SMCDetector, TradeSetup
 from tradingview_chart_generator import TradingViewChartGenerator
 from telegram_notifier import TelegramNotifier
+from ctrader_data_client import get_ctrader_client
 
 load_dotenv()
 
@@ -51,6 +52,7 @@ class MorningStrategyScanner:
         self.smc_detector = SMCDetector()
         self.chart_generator = TradingViewChartGenerator(login=False)  # Use saved session
         self.telegram = TelegramNotifier()
+        self.ctrader_client = get_ctrader_client()  # cTrader data source
         self.pairs_config = self._load_pairs_config()
         
     def _load_pairs_config(self) -> List[Dict]:
@@ -65,54 +67,20 @@ class MorningStrategyScanner:
     
     def _get_market_data(self, symbol: str, timeframe: str = "D1", bars: int = 100) -> Optional[dict]:
         """
-        Get market data from Yahoo Finance (pentru analiză)
+        Get market data from cTrader (IC Markets feed) 
         Screenshots vin de pe TradingView separat!
         """
         try:
-            import yfinance as yf
+            logger.info(f"📊 Fetching data for {symbol} from cTrader...")
             
-            # Convert to Yahoo Finance format
-            yahoo_symbols = {
-                'EURUSD': 'EURUSD=X', 'GBPUSD': 'GBPUSD=X', 'USDJPY': 'USDJPY=X',
-                'USDCHF': 'USDCHF=X', 'AUDUSD': 'AUDUSD=X', 'USDCAD': 'USDCAD=X',
-                'NZDUSD': 'NZDUSD=X', 'EURJPY': 'EURJPY=X', 'GBPJPY': 'GBPJPY=X',
-                'EURGBP': 'EURGBP=X', 'EURCAD': 'EURCAD=X', 'AUDCAD': 'AUDCAD=X',
-                'AUDNZD': 'AUDNZD=X', 'NZDCAD': 'NZDCAD=X', 'GBPNZD': 'GBPNZD=X',
-                'GBPCHF': 'GBPCHF=X', 'CADCHF': 'CADCHF=X',
-                'XAUUSD': 'GC=F',  # Gold Futures
-                'BTCUSD': 'BTC-USD',
-                'USOIL': 'CL=F'  # Crude Oil Futures
-            }
+            # Use cTrader client instead of Yahoo Finance
+            df = self.ctrader_client.get_historical_data(symbol, timeframe, bars)
             
-            yahoo_symbol = yahoo_symbols.get(symbol, f"{symbol}=X")
-            logger.info(f"📊 Fetching data for {symbol}...")
-            
-            # Get last 150 days of DAILY data
-            from datetime import timedelta
-            end_date = datetime.now()
-            start_date = end_date - timedelta(days=150)
-            
-            ticker = yf.Ticker(yahoo_symbol)
-            df = ticker.history(start=start_date, end=end_date, interval='1d')
-            
-            if df.empty:
+            if df is None or df.empty:
                 logger.warning(f"⚠️  No data for {symbol}")
                 return None
             
-            # Take last 'bars' candles
-            df = df.tail(bars).copy()
-            
-            # Rename columns
-            df = df.rename(columns={
-                'Open': 'open', 'High': 'high', 'Low': 'low',
-                'Close': 'close', 'Volume': 'volume'
-            })
-            
-            df['time'] = df.index
-            df = df.reset_index(drop=True)
-            df = df[['time', 'open', 'high', 'low', 'close', 'volume']]
-            
-            logger.success(f"✅ Got {len(df)} REAL candles for {symbol}")
+            logger.success(f"✅ Got {len(df)} candles for {symbol} from cTrader")
             return df
             
         except Exception as e:
@@ -267,15 +235,15 @@ class MorningStrategyScanner:
     def _auto_execute_best_setup(self, reversal_setups: List[PairAnalysis], continuity_setups: List[PairAnalysis]):
         """
         Automatically send best setup to cTrader for execution
-        Prioritizes: Priority 1 pairs with R:R >= 2.0
+        Prioritizes: Priority 1 pairs with R:R >= 5.0 (1:5 minimum, targeting 1:10)
         """
         try:
-            # Combine all setups and filter by quality
+            # Combine all setups and filter by quality (MINIMUM 1:5 R:R)
             all_setups = reversal_setups + continuity_setups
-            high_quality = [s for s in all_setups if s.priority == 1 and s.setup.risk_reward >= 2.0]
+            high_quality = [s for s in all_setups if s.priority == 1 and s.setup.risk_reward >= 5.0]
             
             if not high_quality:
-                logger.info("⚠️  No high-quality setups found (Priority 1 + R:R >= 2.0). No auto-execution.")
+                logger.info("⚠️  No high-quality setups found (Priority 1 + R:R >= 1:5). No auto-execution.")
                 return
             
             # Get best setup (highest R:R)
@@ -310,20 +278,34 @@ class MorningStrategyScanner:
             logger.success(f"✅ Signal file created: {signal_path}")
             logger.info("🤖 cTrader cBot will execute this trade automatically!")
             
-            # Send notification to Telegram
+            # EPIC MESSAGE for super trades (R:R >= 1:5)
             direction_emoji = "🟢" if signal["Direction"] == "buy" else "🔴"
+            armageddon_messages = [
+                "⚔️ **THE ARMAGEDDON BEGINS** ⚔️",
+                "💥 **MARKET APOCALYPSE INITIATED** 💥",
+                "🔥 **UNLEASHING THE BEAST** 🔥",
+                "⚡ **GODMODE ACTIVATED** ⚡",
+                "🎯 **SNIPER ELITE EXECUTION** 🎯",
+                "💀 **NO MERCY PROTOCOL** 💀",
+                "🚀 **MOONSHOT ENGAGED** 🚀",
+                "👑 **KING'S GAMBIT** 👑"
+            ]
+            import random
+            epic_title = random.choice(armageddon_messages)
+            
             telegram_msg = f"""
-🤖 *AUTO-TRADE SIGNAL SENT TO cTRADER*
+{epic_title}
 
 {direction_emoji} *{best.symbol}* - {signal['Direction'].upper()}
 Strategy: `{setup.strategy_type.upper()}`
-R:R: `1:{setup.risk_reward:.2f}`
+💎 R:R: `1:{setup.risk_reward:.2f}` (LEGENDARY SETUP)
 
 📍 Entry: `{setup.entry_price:.5f}`
 🛑 SL: `{setup.stop_loss:.5f}` ({signal['StopLossPips']:.1f} pips)
 🎯 TP: `{setup.take_profit:.5f}` ({signal['TakeProfitPips']:.1f} pips)
 
-⏰ cBot will execute within 10 seconds...
+⏰ cBot executing in 10 seconds...
+💰 Risk: 2% | Expected: {setup.risk_reward*2:.1f}%
 """
             self.telegram.send_message(telegram_msg.strip())
             

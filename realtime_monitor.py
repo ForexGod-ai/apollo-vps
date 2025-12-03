@@ -28,9 +28,9 @@ class RealtimeMonitor:
     Monitor în timp real pentru toate perechile
     """
     
-    def __init__(self, symbols: List[str], check_interval_minutes: int = 15):
+    def __init__(self, symbols: List[str], check_interval_hours: int = 4):
         self.symbols = symbols
-        self.check_interval = check_interval_minutes * 60  # Convert to seconds
+        self.check_interval_hours = check_interval_hours
         
         # Tracking pentru fiecare simbol
         self.analyzers: Dict[str, SpatioTemporalAnalyzer] = {}
@@ -42,13 +42,41 @@ class RealtimeMonitor:
             self.analyzers[symbol] = SpatioTemporalAnalyzer(symbol)
             self.last_recommendations[symbol] = 'unknown'
     
+    def _wait_for_next_candle_close(self):
+        """Wait until next 4H candle closes (00:00, 04:00, 08:00, 12:00, 16:00, 20:00)"""
+        now = datetime.now()
+        # Calculate next 4H candle close
+        current_hour = now.hour
+        next_4h_hours = [0, 4, 8, 12, 16, 20]
+        
+        # Find next 4H boundary
+        next_close_hour = None
+        for h in next_4h_hours:
+            if h > current_hour:
+                next_close_hour = h
+                break
+        
+        if next_close_hour is None:
+            # Next day 00:00
+            next_close = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+        else:
+            next_close = now.replace(hour=next_close_hour, minute=0, second=0, microsecond=0)
+        
+        wait_seconds = (next_close - now).total_seconds()
+        
+        logger.info(f"\n⏰ Current time: {now.strftime('%Y-%m-%d %H:%M:%S')}")
+        logger.info(f"🕐 Next 4H candle closes at: {next_close.strftime('%Y-%m-%d %H:%M:%S')}")
+        logger.info(f"💤 Waiting {int(wait_seconds)} seconds ({int(wait_seconds/3600):.1f} hours)...")
+        
+        time.sleep(wait_seconds + 10)  # Wait + 10 seconds buffer for candle to fully close
+    
     def run(self):
         """
-        Main loop - rulează continuu
+        Main loop - rulează continuu, analizează la fiecare închidere de candelă 4H
         """
-        logger.info("🚀 Starting Real-Time Market Monitor...")
-        logger.info(f"📊 Monitoring {len(self.symbols)} symbols")
-        logger.info(f"⏰ Check interval: {self.check_interval // 60} minutes")
+        logger.info("🚀 Starting Real-Time Market Monitor (4H Timeframe)...")
+        logger.info(f"📊 Monitoring {len(self.symbols)} symbols (ALL PAIRS)")
+        logger.info(f"🕐 Analysis trigger: Every 4H candle close (00:00, 04:00, 08:00, 12:00, 16:00, 20:00)")
         logger.info(f"🔔 Telegram alerts enabled\n")
         
         iteration = 0
@@ -56,7 +84,7 @@ class RealtimeMonitor:
         while True:
             iteration += 1
             logger.info(f"\n{'='*80}")
-            logger.info(f"🔄 ITERATION #{iteration} - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+            logger.info(f"🕐 4H CANDLE CLOSE #{iteration} - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
             logger.info(f"{'='*80}\n")
             
             for symbol in self.symbols:
@@ -69,16 +97,13 @@ class RealtimeMonitor:
             ready_count = sum(1 for rec in self.last_recommendations.values() if rec == 'ready_to_trade')
             monitor_count = sum(1 for rec in self.last_recommendations.values() if rec == 'monitor_closely')
             
-            logger.info(f"\n📊 ITERATION SUMMARY:")
+            logger.info(f"\n📊 4H CANDLE CLOSE SUMMARY:")
             logger.info(f"   ✅ Ready to trade: {ready_count}")
             logger.info(f"   👀 Monitor closely: {monitor_count}")
             logger.info(f"   ⏳ Waiting: {len(self.symbols) - ready_count - monitor_count}")
             
-            # Sleep until next check
-            logger.info(f"\n💤 Sleeping for {self.check_interval // 60} minutes...")
-            logger.info(f"   Next check: {(datetime.now() + timedelta(seconds=self.check_interval)).strftime('%H:%M:%S')}")
-            
-            time.sleep(self.check_interval)
+            # Wait for next 4H candle close
+            self._wait_for_next_candle_close()
     
     def _check_symbol(self, symbol: str):
         """
@@ -311,7 +336,7 @@ Setup conditions no longer fully met. Some confirmations lost.
 
 def main():
     """
-    Start real-time monitor pentru toate perechile importante
+    Start real-time monitor pentru TOATE perechile din config (4H timeframe)
     """
     # Initialize MT5
     if not mt5.initialize():
@@ -319,20 +344,18 @@ def main():
         return
     
     try:
-        # Simboluri de monitorizat (Priority 1)
-        symbols = [
-            "GBPUSD",
-            "XAUUSD", 
-            "BTCUSD",
-            "GBPJPY",
-            "GBPNZD",
-            "NZDUSD",  # Exemplul tău!
-            "USDCHF",
-            "AUDNZD"
-        ]
+        # Load ALL symbols from pairs_config.json
+        import json
+        with open('pairs_config.json', 'r') as f:
+            config = json.load(f)
+            symbols = [pair['symbol'] for pair in config['pairs']]
         
-        # Create monitor
-        monitor = RealtimeMonitor(symbols, check_interval_minutes=15)
+        logger.info(f"📋 Loaded {len(symbols)} pairs from config:")
+        for i, sym in enumerate(symbols, 1):
+            logger.info(f"   {i}. {sym}")
+        
+        # Create monitor (checks every 4H candle close)
+        monitor = RealtimeMonitor(symbols, check_interval_hours=4)
         
         # Run forever
         monitor.run()
