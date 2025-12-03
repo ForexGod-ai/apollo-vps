@@ -101,11 +101,12 @@ class Realtime4HScanner:
                 time_since_alert = (datetime.now() - self.last_alerts[symbol]).total_seconds() / 3600
                 if time_since_alert < 24:  # Don't alert same pair within 24h
                     logger.info(f"      ⏭️ Skipping alert (already sent {time_since_alert:.1f}h ago)")
-                    return {'has_setup': True, 'symbol': symbol, 'already_alerted': True}
+                    return {'has_setup': True, 'symbol': symbol, 'priority': priority, 'already_alerted': True}
             
             return {
                 'has_setup': True,
                 'symbol': symbol,
+                'priority': priority,  # Add priority for auto-execution filtering
                 'setup': setup,
                 'already_alerted': False
             }
@@ -133,20 +134,91 @@ class Realtime4HScanner:
         logger.info(f"📊 SCAN COMPLETE: Found {len(new_setups)} new setups")
         logger.info("="*80)
         
-        # Log setups for learning (NO Telegram alerts - only morning scanner sends alerts)
+        # Log setups for learning
         if new_setups:
-            logger.info("\n📚 SETUPS DETECTED (Silent monitoring - no alerts):")
+            logger.info("\n📚 SETUPS DETECTED:")
             for r in new_setups:
                 symbol = r['symbol']
                 setup = r['setup']
                 logger.info(f"   • {symbol}: {setup.strategy_type.upper()} | R:R 1:{setup.risk_reward:.2f}")
-        
-        # DO NOT send Telegram alerts - only log for learning
-        # Telegram alerts ONLY from:
-        # 1. Morning Scanner (09:00) - Daily report
-        # 2. Auto-execution - When cBot executes trade
+            
+            # 🚀 AUTO-EXECUTE best setup if R:R >= 5.0
+            self._auto_execute_best_setup(new_setups)
         
         return results
+    
+    def _auto_execute_best_setup(self, setups: List[dict]):
+        """
+        Auto-execute best setup if R:R >= 5.0 (1:5 minimum)
+        Same logic as morning scanner
+        """
+        try:
+            # Filter high-quality setups (Priority 1 + R:R >= 5.0)
+            high_quality = [s for s in setups if s.get('priority', 99) == 1 and s['setup'].risk_reward >= 5.0]
+            
+            if not high_quality:
+                logger.info("\n⚠️  No high-quality setups found (Priority 1 + R:R >= 1:5). No auto-execution.")
+                return
+            
+            # Get best setup (highest R:R)
+            best = max(high_quality, key=lambda x: x['setup'].risk_reward)
+            setup = best['setup']
+            symbol = best['symbol']
+            
+            logger.info(f"\n🎯 BEST SETUP FOUND: {symbol}")
+            logger.info(f"   Strategy: {setup.strategy_type.upper()}")
+            logger.info(f"   Direction: {setup.daily_choch.direction.upper()}")
+            logger.info(f"   R:R: 1:{setup.risk_reward:.2f}")
+            
+            # Generate signal for cTrader
+            signal = {
+                "SignalId": f"4H_SCAN_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+                "Symbol": symbol.replace('USD', '/USD').replace('EUR', 'EUR/').replace('GBP', 'GBP/').replace('JPY', '/JPY').replace('CHF', '/CHF').replace('AUD', 'AUD/').replace('NZD', 'NZD/').replace('CAD', '/CAD'),
+                "Direction": "buy" if setup.daily_choch.direction == 'bullish' else "sell",
+                "StrategyType": f"4H Scan - {setup.strategy_type.capitalize()}",
+                "EntryPrice": setup.entry_price,
+                "StopLoss": setup.stop_loss,
+                "TakeProfit": setup.take_profit,
+                "StopLossPips": abs(setup.entry_price - setup.stop_loss) * 10000,
+                "TakeProfitPips": abs(setup.take_profit - setup.entry_price) * 10000,
+                "RiskReward": setup.risk_reward,
+                "Timestamp": datetime.now().isoformat()
+            }
+            
+            # Write signal file for cBot
+            signal_path = "signals.json"
+            with open(signal_path, 'w') as f:
+                json.dump(signal, f, indent=2)
+            
+            logger.success(f"✅ Signal file created: {signal_path}")
+            logger.info("🤖 cTrader cBot will execute this trade automatically!")
+            
+            # Send ARMAGEDDON alert to Telegram
+            direction_emoji = "🟢" if signal["Direction"] == "buy" else "🔴"
+            message = f"""
+⚔️ **ARMAGEDDON ALERT** ⚔️
+🔥 **4H SCANNER AUTO-EXECUTION** 🔥
+
+{direction_emoji} *{signal["Direction"].upper()}* `{symbol}`
+📊 *Entry:* {setup.entry_price:.5f}
+🛑 *SL:* {setup.stop_loss:.5f} (-{signal['StopLossPips']:.1f} pips)
+🎯 *TP:* {setup.take_profit:.5f} (+{signal['TakeProfitPips']:.1f} pips)
+⚡ *R:R:* 1:{setup.risk_reward:.2f}
+
+💀 *Strategy:* {setup.strategy_type.upper()}
+🕐 *Detected at:* {datetime.now().strftime('%H:%M:%S')}
+
+🤖 **cBot executing NOW!**
+"""
+            
+            try:
+                self.telegram.send_message(message)
+                logger.success("✅ ARMAGEDDON alert sent to Telegram!")
+            except Exception as e:
+                logger.error(f"❌ Failed to send Telegram alert: {e}")
+                
+        except Exception as e:
+            logger.error(f"❌ Error in auto-execution: {e}")
     
     def _send_telegram_alerts(self, setups: List[dict]):
         """Trimite alerte pe Telegram pentru setups găsite"""

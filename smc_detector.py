@@ -909,8 +909,98 @@ class SMCDetector:
         reward = abs(tp - entry)
         risk_reward = reward / risk if risk > 0 else 0
         
-        if risk_reward < 1.0:  # Relaxed from 1.5 for MONITORING
-            return None
+        # ⚠️  CRITICAL VALIDATION: Reject setups that are TOO LATE
+        # If R:R < 2.0, the move already happened - we missed it!
+        # This prevents entering at the END of the trend (like BTCUSD yesterday)
+        if risk_reward < 2.0:
+            return None  # Setup detected too late, move already happened
+        
+        # 🚨 CHECK 1: Price already moved too close to TP?
+        # If current price is within 20% of TP distance, it's too late
+        current_price = df_daily['close'].iloc[-1]
+        distance_to_tp = abs(current_price - tp)
+        total_move = abs(entry - tp)
+        
+        if total_move > 0 and (distance_to_tp / total_move) < 0.20:
+            return None  # Price already 80%+ toward TP - TOO LATE!
+        
+        # 🎯 CHECK 2: Stop Loss already HIT?
+        # If price broke through SL, try to find RE-ENTRY opportunity
+        sl_broken = False
+        if fvg.direction == 'bearish':
+            # SHORT setup - SL is ABOVE entry
+            if current_price > sl:
+                sl_broken = True
+        else:
+            # LONG setup - SL is BELOW entry
+            if current_price < sl:
+                sl_broken = True
+        
+        # 🔄 RE-ENTRY LOGIC: If SL broken but trend still valid, look for new entry
+        if sl_broken:
+            # Check if trend is STILL VALID (recent price action confirms trend)
+            recent_candles = df_daily.iloc[-10:]  # Last 10 days
+            
+            if fvg.direction == 'bearish':
+                # BEARISH trend - check if still making lower lows
+                recent_low = recent_candles['low'].min()
+                older_low = df_daily.iloc[-30:-10]['low'].min()
+                trend_continues = recent_low < older_low  # Still going down
+                
+                if trend_continues:
+                    # RE-ENTRY for SHORT: Use current price as new entry
+                    entry = current_price
+                    # New SL: Recent high (last 5-10 days)
+                    sl = recent_candles['high'].max()
+                    # Keep same TP target (original target still valid)
+                    # tp stays the same
+                    
+                    # Recalculate R:R with new parameters
+                    risk = abs(entry - sl)
+                    reward = abs(tp - entry)
+                    risk_reward = reward / risk if risk > 0 else 0
+                    
+                    if risk_reward < 2.0:
+                        return None  # Re-entry not worth it
+                        
+                    logger.info(f"🔄 RE-ENTRY setup found for {symbol}!")
+                    logger.info(f"   Original SL was broken, but trend continues")
+                    logger.info(f"   New Entry: {entry:.5f}")
+                    logger.info(f"   New SL: {sl:.5f}")
+                    logger.info(f"   New R:R: 1:{risk_reward:.2f}")
+                else:
+                    return None  # Trend invalidated
+                    
+            else:
+                # BULLISH trend - check if still making higher highs
+                recent_high = recent_candles['high'].max()
+                older_high = df_daily.iloc[-30:-10]['high'].max()
+                trend_continues = recent_high > older_high  # Still going up
+                
+                if trend_continues:
+                    # RE-ENTRY for LONG: Use current price as new entry
+                    entry = current_price
+                    # New SL: Recent low (last 5-10 days)
+                    sl = recent_candles['low'].min()
+                    # Keep same TP target
+                    
+                    # Recalculate R:R
+                    risk = abs(entry - sl)
+                    reward = abs(tp - entry)
+                    risk_reward = reward / risk if risk > 0 else 0
+                    
+                    if risk_reward < 2.0:
+                        return None  # Re-entry not worth it
+                        
+                    logger.info(f"🔄 RE-ENTRY setup found for {symbol}!")
+                    logger.info(f"   Original SL was broken, but trend continues")
+                    logger.info(f"   New Entry: {entry:.5f}")
+                    logger.info(f"   New SL: {sl:.5f}")
+                    logger.info(f"   New R:R: 1:{risk_reward:.2f}")
+                else:
+                    return None  # Trend invalidated
+        
+        # ✅ Setup still valid! Price hasn't hit SL or TP yet (or re-entry found)
         
         # Return setup (MONITORING or READY)
         return TradeSetup(
