@@ -220,48 +220,21 @@ class TradingViewChartGenerator:
     
     def _build_chart_url(self, tv_symbol: str, timeframe: str) -> str:
         """
-        Build TradingView chart URL - uses saved/published chart if available
-        
-        Priority:
-        1. Saved/published chart (includes all drawings - CHoCH, FVG, imbalances)
-        2. Default chart with user's layout
+        Build TradingView chart URL - DIRECT LIVE chart from user account
+        NO saved/published charts - always use current LIVE view
         """
-        # Check if we have a saved chart for this symbol
-        symbol_clean = tv_symbol.split(':')[-1]  # Extract "GBPUSD" from "FX:GBPUSD" or "GOLD" from "TVC:GOLD"
-        
-        # Try to find saved chart - check both original symbol and TradingView symbol
-        # Example: XAUUSD → check both "XAUUSD" and "GOLD"
-        saved_url = None
-        
-        # First check the TradingView symbol name (e.g., "GOLD")
-        if symbol_clean in self.saved_charts and self.saved_charts[symbol_clean]:
-            saved_url = self.saved_charts[symbol_clean]
-            print(f"✅ Using saved chart with drawings: {symbol_clean}")
-        
-        # Also check for MT5 symbol name mapping (e.g., XAUUSD → GOLD)
-        # Reverse lookup in tv_symbols dict
-        if not saved_url:
-            for mt5_sym, tv_sym in self._get_symbol_map().items():
-                if tv_sym == tv_symbol:
-                    # Found MT5 symbol, check if it has saved chart
-                    if mt5_sym in self.saved_charts and self.saved_charts[mt5_sym]:
-                        saved_url = self.saved_charts[mt5_sym]
-                        print(f"✅ Using saved chart with drawings: {mt5_sym}")
-                        break
-        
-        if saved_url:
-            return saved_url
-        
-        # Fallback to default chart
+        # Map timeframe to TradingView interval
         interval_map = {
             "1": "1", "5": "5", "15": "15", "60": "60", 
             "240": "240", "D": "D", "W": "W", "M": "M"
         }
         
         interval = interval_map.get(timeframe, "D")
+        
+        # DIRECT LIVE chart URL - will use user's current layout and drawings
         url = f"https://www.tradingview.com/chart/?symbol={tv_symbol}&interval={interval}"
         
-        print(f"⚠️  Using default chart (no saved chart for {symbol_clean})")
+        print(f"📊 Loading LIVE chart: {tv_symbol} @ {timeframe}")
         return url
     
     def _get_symbol_map(self) -> dict:

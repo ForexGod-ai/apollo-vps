@@ -23,6 +23,7 @@ from smc_detector_fixed import (
 )
 from smc_detector import SMCDetector, TradeSetup
 from tradingview_chart_generator import TradingViewChartGenerator
+from tradingview_desktop_screenshot import TradingViewDesktopCapture
 from telegram_notifier import TelegramNotifier
 from ctrader_data_client import get_ctrader_client
 
@@ -50,7 +51,8 @@ class MorningStrategyScanner:
     
     def __init__(self):
         self.smc_detector = SMCDetector()
-        self.chart_generator = TradingViewChartGenerator(login=False)  # Use saved session
+        # Use TradingView Desktop app for LIVE charts with your drawings
+        self.desktop_capture = TradingViewDesktopCapture()
         self.telegram = TelegramNotifier()
         self.ctrader_client = get_ctrader_client()  # cTrader data source
         self.pairs_config = self._load_pairs_config()
@@ -126,15 +128,12 @@ class MorningStrategyScanner:
             if setup is None:
                 logger.info(f"⚪ {symbol}: No valid setup detected")
                 
-                # Get TradingView screenshot (ca dimineața!)
+                # Get TradingView screenshot DIRECT from Desktop app
                 chart_path = f"charts/morning_scan/{symbol}_daily.png"
                 os.makedirs(os.path.dirname(chart_path), exist_ok=True)
                 
-                screenshot = self.chart_generator.get_chart_screenshot(symbol, "D")
-                if screenshot:
-                    with open(chart_path, 'wb') as f:
-                        f.write(screenshot)
-                else:
+                screenshot = self.desktop_capture.get_chart_screenshot(symbol, "D", chart_path)
+                if not screenshot:
                     chart_path = None
                 
                 return PairAnalysis(
@@ -154,15 +153,12 @@ class MorningStrategyScanner:
             logger.info(f"   TP: {setup.take_profit:.5f}")
             logger.info(f"   R:R: 1:{setup.risk_reward:.2f}")
             
-            # Get TradingView screenshot (EXACT ca dimineața!)
+            # Get TradingView screenshot DIRECT from Desktop app (LIVE with your drawings!)
             chart_path = f"charts/morning_scan/{symbol}_daily.png"
             os.makedirs(os.path.dirname(chart_path), exist_ok=True)
             
-            screenshot = self.chart_generator.get_chart_screenshot(symbol, "D")
-            if screenshot:
-                with open(chart_path, 'wb') as f:
-                    f.write(screenshot)
-            else:
+            screenshot = self.desktop_capture.get_chart_screenshot(symbol, "D", chart_path)
+            if not screenshot:
                 chart_path = None
             
             return PairAnalysis(
