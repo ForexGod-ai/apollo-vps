@@ -67,7 +67,7 @@ class CTraderExecutor:
         comment: str = "Glitch Matrix"
     ) -> Optional[Dict]:
         """
-        Place market order with SL/TP
+        Place market order with SL/TP via signals.json for cTrader bot
         
         Args:
             symbol: Trading pair (e.g., EURUSD)
@@ -86,32 +86,66 @@ class CTraderExecutor:
                 return None
         
         try:
-            logger.info(f"📊 Placing {order_type.upper()} order:")
+            import json
+            from datetime import datetime
+            
+            logger.info(f"📊 Writing signal to signals.json:")
             logger.info(f"   Symbol: {symbol}")
+            logger.info(f"   Direction: {order_type.upper()}")
             logger.info(f"   Volume: {volume} lots")
             logger.info(f"   Entry: {entry_price}")
             logger.info(f"   SL: {stop_loss}")
             logger.info(f"   TP: {take_profit}")
             
-            # TODO: Implement actual cTrader order placement
-            # For now, return mock data
-            order = {
-                'order_id': f"CT{datetime.now().strftime('%Y%m%d%H%M%S')}",
+            # Calculate risk-reward
+            sl_distance = abs(entry_price - stop_loss)
+            tp_distance = abs(take_profit - entry_price)
+            risk_reward = round(tp_distance / sl_distance, 2) if sl_distance > 0 else 0
+            
+            # Create signal for cTrader bot
+            signal = {
+                "signalId": f"SIGNAL_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+                "symbol": symbol,
+                "direction": order_type.lower(),
+                "entryPrice": entry_price,
+                "stopLoss": stop_loss,
+                "takeProfit": take_profit,
+                "volume": volume,
+                "riskReward": risk_reward,
+                "strategyType": comment,
+                "timestamp": datetime.now().isoformat()
+            }
+            
+            # Write to signals.json (both locations for compatibility)
+            signal_paths = [
+                'signals.json',  # Current directory
+                '/Users/forexgod/Desktop/trading-ai-agent apollo/signals.json'  # Full path
+            ]
+            
+            for path in signal_paths:
+                try:
+                    with open(path, 'w') as f:
+                        json.dump(signal, f, indent=2)
+                    logger.success(f"✅ Signal written to {path}")
+                except Exception as e:
+                    logger.warning(f"⚠️  Could not write to {path}: {e}")
+            
+            logger.success(f"✅ Signal ready for cTrader PythonSignalExecutor!")
+            
+            return {
+                'order_id': signal['signalId'],
                 'symbol': symbol,
                 'type': order_type,
                 'volume': volume,
                 'entry_price': entry_price,
                 'stop_loss': stop_loss,
                 'take_profit': take_profit,
-                'status': 'pending',
+                'status': 'signal_sent',
                 'timestamp': datetime.now()
             }
             
-            logger.success(f"✅ Order placed: {order['order_id']}")
-            return order
-            
         except Exception as e:
-            logger.error(f"❌ Failed to place order: {e}")
+            logger.error(f"❌ Failed to write signal: {e}")
             return None
     
     def get_open_positions(self) -> list:
@@ -177,7 +211,7 @@ class CTraderExecutor:
     
     def get_account_info(self) -> Optional[Dict]:
         """
-        Get account information - reads from trade_history.json
+        Get LIVE account information from cTrader
         
         Returns:
             Account info dict with balance, equity, margin, etc.
@@ -187,49 +221,23 @@ class CTraderExecutor:
                 return None
         
         try:
-            logger.info("📊 Fetching account info from trade history...")
+            logger.info("📊 Fetching LIVE account info from cTrader...")
             
-            # Read trade history to calculate account state
-            import json
-            try:
-                with open('trade_history.json', 'r') as f:
-                    trades = json.load(f)
-            except FileNotFoundError:
-                logger.warning("⚠️  No trade_history.json found - using defaults")
-                trades = []
+            # Import data client for API access
+            from ctrader_data_client import CTraderDataClient
             
-            # Calculate from closed trades
-            initial_balance = 10000.0
-            closed_trades = [t for t in trades if 'CLOSED' in t.get('status', '')]
-            total_profit = sum([t.get('profit', 0) for t in closed_trades])
+            data_client = CTraderDataClient()
+            account_info = data_client.get_account_balance()
             
-            current_balance = initial_balance + total_profit
-            
-            # Calculate open positions floating P/L
-            open_positions = [t for t in trades if t.get('status') == 'OPEN']
-            floating_pl = 0  # Would need live prices to calculate
-            
-            equity = current_balance + floating_pl
-            margin = len(open_positions) * 100  # Rough estimate
-            
-            account_info = {
-                'account_id': self.account_id,
-                'balance': current_balance,
-                'equity': equity,
-                'margin': margin,
-                'free_margin': equity - margin,
-                'currency': 'USD',
-                'server': self.server,
-                'profit': total_profit,
-                'open_positions': len(open_positions),
-                'closed_trades': len(closed_trades)
-            }
-            
-            logger.info(f"   Balance: ${account_info['balance']:.2f}")
-            logger.info(f"   Equity: ${account_info['equity']:.2f}")
-            logger.info(f"   Profit: ${account_info['profit']:.2f}")
-            logger.info(f"   Open positions: {account_info['open_positions']}")
-            return account_info
+            if account_info:
+                logger.info(f"   Balance: ${account_info['balance']:.2f}")
+                logger.info(f"   Equity: ${account_info['equity']:.2f}")
+                logger.info(f"   Profit: ${account_info.get('profit', 0):.2f}")
+                logger.info(f"   Open positions: {account_info.get('open_positions', 0)}")
+                return account_info
+            else:
+                logger.warning("⚠️  Could not fetch live account info")
+                return None
             
         except Exception as e:
             logger.error(f"❌ Failed to get account info: {e}")

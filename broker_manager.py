@@ -446,6 +446,102 @@ class BinanceBroker(BrokerInterface):
             return []
 
 
+class CTraderBroker(BrokerInterface):
+    """Broker cTrader pentru IC Markets"""
+    
+    def __init__(self):
+        self.connected = False
+        self.executor = None
+    
+    def connect(self):
+        """Conectează la cTrader"""
+        try:
+            from ctrader_executor import CTraderExecutor
+            
+            self.executor = CTraderExecutor()
+            if self.executor.connect():
+                self.connected = True
+                logger.success("✅ Conectat la cTrader (IC Markets)")
+                return True
+            else:
+                logger.error("❌ Conexiune cTrader eșuată")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Eroare conectare cTrader: {e}")
+            return False
+    
+    def disconnect(self):
+        """Deconectează de la cTrader"""
+        if self.executor:
+            self.executor.disconnect()
+            self.connected = False
+            logger.info("cTrader deconectat")
+    
+    def execute_order(self, order_data):
+        """Execută ordin pe cTrader"""
+        if not self.connected or not self.executor:
+            return {'success': False, 'error': 'Not connected to cTrader'}
+        
+        try:
+            symbol = order_data['symbol']
+            action = order_data['action'].upper()
+            volume = order_data['volume']
+            price = order_data.get('price', 0)
+            stop_loss = order_data.get('stop_loss', 0)
+            take_profit = order_data.get('take_profit', 0)
+            comment = order_data.get('comment', 'AI Trading Bot')
+            
+            order = self.executor.place_order(
+                symbol=symbol,
+                order_type='buy' if action == 'BUY' else 'sell',
+                volume=volume,
+                entry_price=price,
+                stop_loss=stop_loss,
+                take_profit=take_profit,
+                comment=comment
+            )
+            
+            if order:
+                return {
+                    'success': True,
+                    'ticket': order['order_id'],
+                    'price': order['entry_price'],
+                    'volume': order['volume'],
+                    'broker': 'cTrader'
+                }
+            else:
+                return {'success': False, 'error': 'Order placement failed'}
+                
+        except Exception as e:
+            logger.error(f"Eroare execuție cTrader: {e}")
+            return {'success': False, 'error': str(e)}
+    
+    def get_account_info(self):
+        """Obține info cont cTrader LIVE"""
+        if not self.connected or not self.executor:
+            return None
+        
+        try:
+            account_info = self.executor.get_account_info()
+            return account_info
+        except Exception as e:
+            logger.error(f"Eroare get account info: {e}")
+            return None
+    
+    def get_open_positions(self):
+        """Obține poziții deschise cTrader"""
+        if not self.connected or not self.executor:
+            return []
+        
+        try:
+            positions = self.executor.get_open_positions()
+            return positions
+        except Exception as e:
+            logger.error(f"Eroare get positions: {e}")
+            return []
+
+
 class BrokerManager:
     """Manager pentru toate brokerele"""
     
@@ -454,10 +550,11 @@ class BrokerManager:
             'MT5': MT5Broker(),
             'OANDA': OandaBroker(),
             'BINANCE': BinanceBroker(),
+            'CTRADER': CTraderBroker(),
             'DEMO': DemoBroker()
         }
         
-        self.default_broker = os.getenv('DEFAULT_BROKER', 'MT5').upper()
+        self.default_broker = os.getenv('DEFAULT_BROKER', 'CTRADER').upper()
         self.active_broker = None
         
         # Conectează la broker-ul implicit

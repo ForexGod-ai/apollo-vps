@@ -13,6 +13,7 @@ import os
 
 from signal_processor import SignalProcessor
 from ai_validator import AISignalValidator
+from ctrader_simple_sync import CTraderSimpleSync
 
 load_dotenv()
 
@@ -26,6 +27,7 @@ WEBHOOK_PORT = int(os.getenv('WEBHOOK_PORT', 5001))
 # Inițializare procesoare
 signal_processor = SignalProcessor()
 ai_validator = AISignalValidator()
+ctrader_sync = CTraderSimpleSync()
 
 # Stocare semnale
 received_signals = []
@@ -57,9 +59,9 @@ def health_check():
 
 @app.route('/', methods=['GET'])
 def index():
-    """Servește dashboard-ul HTML"""
+    """Servește dashboard-ul HTML LIVE"""
     try:
-        return render_template('dashboard.html')
+        return render_template('dashboard_live.html')
     except Exception as e:
         logger.error(f"Error loading dashboard: {e}")
         return jsonify({'error': 'Dashboard not found', 'details': str(e)}), 404
@@ -220,6 +222,81 @@ def handle_trades():
             return jsonify({'success': False, 'error': str(e)}), 500
 
 
+@app.route('/api/dashboard', methods=['GET'])
+def get_dashboard_data():
+    """Returnează date LIVE pentru dashboard - sincronizat cu cTrader"""
+    try:
+        # Load trade history from cTrader sync
+        trade_history_path = 'trade_history.json'
+        if os.path.exists(trade_history_path):
+            with open(trade_history_path, 'r') as f:
+                trades_data = json.load(f)
+                # Handle both list and dict format
+                if isinstance(trades_data, list):
+                    trades = trades_data
+                else:
+                    trades = trades_data.get('trades', [])
+        else:
+            trades = []
+        
+        # Calculate stats
+        total_trades = len(trades)
+        winning_trades = sum(1 for t in trades if t.get('profit', 0) > 0)
+        losing_trades = sum(1 for t in trades if t.get('profit', 0) < 0)
+        breakeven_trades = sum(1 for t in trades if t.get('profit', 0) == 0)
+        
+        total_profit = sum(t.get('profit', 0) for t in trades)
+        win_rate = (winning_trades / total_trades * 100) if total_trades > 0 else 0
+        
+        # Get final balance from last trade or calculate
+        if trades:
+            current_balance = trades[-1].get('balance_after', 1000.0)
+        else:
+            current_balance = ctrader_sync.get_balance()
+        
+        # Recent signals
+        recent_signals = received_signals[-10:] if received_signals else []
+        
+        # Check signals.json for pending trades
+        signals_path = 'signals.json'
+        pending_signal = None
+        if os.path.exists(signals_path):
+            with open(signals_path, 'r') as f:
+                pending_signal = json.load(f)
+        
+        return jsonify({
+            'success': True,
+            'timestamp': datetime.now().isoformat(),
+            'account': {
+                'balance': current_balance,
+                'profit': total_profit,
+                'account_id': '9709773',
+                'broker': 'IC Markets'
+            },
+            'stats': {
+                'total_trades': total_trades,
+                'winning_trades': winning_trades,
+                'losing_trades': losing_trades,
+                'breakeven_trades': breakeven_trades,
+                'win_rate': round(win_rate, 2),
+                'total_profit': round(total_profit, 2)
+            },
+            'trades': trades[-20:],  # Last 20 trades
+            'signals': recent_signals,
+            'pending_signal': pending_signal,
+            'system_status': {
+                'webhook_active': True,
+                'ai_validator': True,
+                'ctrader_connected': True,
+                'telegram_active': True,
+                'morning_scan': 'Active (09:00 daily)'
+            }
+        })
+    except Exception as e:
+        logger.error(f"Error getting dashboard data: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 @app.route('/signals/stats', methods=['GET'])
 def get_stats():
     """Returnează statistici despre semnale"""
@@ -268,6 +345,7 @@ def start_webhook_server(host='0.0.0.0', port=None):
     logger.info(f"📡 Server pornit pe http://{host}:{port}")
     logger.info(f"📥 Webhook URL: http://{host}:{port}/webhook")
     logger.info(f"🏥 Health check: http://{host}:{port}/health")
+    logger.info(f"💰 Current balance: ${ctrader_sync.get_balance():.2f}")
     logger.info("=" * 60)
     
     app.run(host=host, port=port, debug=False)

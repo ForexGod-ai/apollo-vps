@@ -1,13 +1,12 @@
 {
-  "SignalId": "MORNING_TEST_1764713254",
-  "Symbol": "GBP/USD",
-  "Direction": "buy",
-  "StrategyType": "Morning Glitch - Reversal",
-  "EntryPrice": 1.265,
-  "StopLoss": 1.262,
-  "TakeProfit": 1.271,
-  "StopLossPips": 29.999999999998916,
-  "TakeProfitPips": 60.00000000000006,
-  "RiskReward": 2.0,
-  "Timestamp": "2025-12-03T00:07:34.311590"
+  "signalId": "SIGNAL_20251207_143938",
+  "symbol": "GBPUSD",
+  "direction": "buy",
+  "entryPrice": 1.275,
+  "stopLoss": 1.272,
+  "takeProfit": 1.281,
+  "volume": 0.09,
+  "riskReward": 2.0,
+  "strategyType": "AI Bot - morning_scan",
+  "timestamp": "2025-12-07T14:39:38.037913"
 }

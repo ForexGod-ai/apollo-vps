@@ -1,0 +1,44 @@
+{
+  "account_id": "9709773",
+  "broker": "IC Markets",
+  "platform": "cTrader",
+  "account_type": "Demo",
+  "report_date": "2025-12-07T14:24:29.864557",
+  "balance": {
+    "initial": 1000.0,
+    "current": 1336.12,
+    "total_profit": 336.12,
+    "growth_percent": 33.611999999999995
+  },
+  "statistics": {
+    "total_trades": 11,
+    "winning_trades": 11,
+    "losing_trades": 0,
+    "win_rate": 100.0,
+    "average_win": 30.55636363636364,
+    "average_loss": 0,
+    "total_volume": 0.74
+  },
+  "symbols": {
+    "GBPUSD": {
+      "count": 10,
+      "profit": 300.74,
+      "pips": 481.2
+    },
+    "EURUSD": {
+      "count": 1,
+      "profit": 35.38,
+      "pips": 40.0
+    }
+  },
+  "direction": {
+    "buy": {
+      "count": 11,
+      "profit": 336.12
+    },
+    "sell": {
+      "count": 0,
+      "profit": 0
+    }
+  }
+}

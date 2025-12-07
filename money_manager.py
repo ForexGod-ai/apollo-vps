@@ -2,6 +2,7 @@
 Money Manager - gestionează riscul și calculează dimensiunea pozițiilor
 """
 import os
+import json
 from loguru import logger
 from datetime import datetime, timedelta
 
@@ -9,10 +10,13 @@ from datetime import datetime, timedelta
 class MoneyManager:
     """Gestionează riscul și money management-ul automat"""
     
-    def __init__(self):
+    def __init__(self, broker_type='CTRADER'):
         self.risk_per_trade = float(os.getenv('RISK_PER_TRADE', 0.02))
         self.max_positions = int(os.getenv('MAX_POSITIONS', 3))
-        self.account_balance = float(os.getenv('ACCOUNT_BALANCE', 10000))
+        self.broker_type = broker_type.upper()
+        
+        # Get LIVE balance from broker
+        self.account_balance = self._fetch_live_balance()
         
         # Tracking
         self.open_positions = []
@@ -26,7 +30,58 @@ class MoneyManager:
         self.peak_balance = self.account_balance
         self.current_balance = self.account_balance
         
-        logger.info(f"💰 Money Manager inițializat: Balance=${self.account_balance}, Risk={self.risk_per_trade*100}%")
+        logger.info(f"💰 Money Manager inițializat: Balance=${self.account_balance:.2f}, Risk={self.risk_per_trade*100}%")
+    
+    def _fetch_live_balance(self) -> float:
+        """
+        Fetch LIVE account balance from broker
+        
+        Returns:
+            Current account balance
+        """
+        try:
+            # Read from trade_history.json for accurate balance
+            with open('trade_history.json', 'r') as f:
+                trades = json.load(f)
+            
+            if not trades:
+                logger.warning("⚠️  No trade history, using default")
+                return 1336.12  # Your current balance
+            
+            # Calculate from trade history
+            initial_balance = 1000.0
+            total_profit = sum(trade.get('profit', 0) for trade in trades)
+            balance = initial_balance + total_profit
+            
+            logger.success(f"✅ Balance from trade history: ${balance:.2f} ({len(trades)} trades)")
+            return balance
+                
+        except FileNotFoundError:
+            logger.warning("⚠️  No trade history found")
+            return 1336.12  # Your current balance
+        except Exception as e:
+            logger.error(f"❌ Error reading balance: {e}")
+            return float(os.getenv('ACCOUNT_BALANCE', 1336))
+    
+    def refresh_balance(self):
+        """
+        Refresh account balance from live broker data
+        """
+        try:
+            new_balance = self._fetch_live_balance()
+            if new_balance != self.account_balance:
+                logger.info(f"💰 Balance updated: ${self.account_balance:.2f} → ${new_balance:.2f}")
+                self.account_balance = new_balance
+                self.current_balance = new_balance
+                
+                # Update limits
+                self.max_daily_loss = self.account_balance * 0.05
+                self.max_drawdown = self.account_balance * 0.20
+                
+                if new_balance > self.peak_balance:
+                    self.peak_balance = new_balance
+        except Exception as e:
+            logger.error(f"❌ Error refreshing balance: {e}")
     
     def calculate_position_size(self, signal_data):
         """

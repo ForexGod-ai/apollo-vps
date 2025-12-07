@@ -1,13 +1,11 @@
 """
-Test Telegram messages with fake setup
-Shows how alerts will look when real setups are found
+Test Telegram Connection - Quick Test
 """
+import os
+import requests
+from dotenv import load_dotenv
 
-from telegram_notifier import TelegramNotifier
-from smc_detector import TradeSetup, CHoCH, FVG, SwingPoint
-from datetime import datetime
-import pandas as pd
-import numpy as np
+load_dotenv()
 
 def create_fake_setup(symbol: str, direction: str, priority: int):
     """Create a fake trade setup for testing Telegram messages"""

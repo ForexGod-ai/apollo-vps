@@ -7,6 +7,10 @@ import os
 import requests
 import subprocess
 import platform
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 
 class NotificationManager:
@@ -24,7 +28,7 @@ class NotificationManager:
         if self.desktop_notifications:
             logger.info(f"✅ Desktop notifications: ENABLED")
     
-    def send_trade_alert(self, signal_data, ai_validation=None, risk_assessment=None):
+    def send_trade_alert(self, signal_data, ai_validation=None, risk_assessment=None, execution_result=None):
         """
         Trimite alertă pentru un setup de trading bun
         
@@ -32,11 +36,12 @@ class NotificationManager:
             signal_data: Date semnal original
             ai_validation: Rezultat validare AI
             risk_assessment: Rezultat money management
+            execution_result: Rezultat executare trade (optional)
         """
         logger.info("📢 Trimit alertă pentru setup de trading...")
         
         # Construiește mesajul
-        message = self._build_alert_message(signal_data, ai_validation, risk_assessment)
+        message = self._build_alert_message(signal_data, ai_validation, risk_assessment, execution_result)
         
         # Trimite pe toate canalele activate
         success = False
@@ -52,7 +57,7 @@ class NotificationManager:
         
         return success
     
-    def _build_alert_message(self, signal_data, ai_validation, risk_assessment):
+    def _build_alert_message(self, signal_data, ai_validation, risk_assessment, execution_result=None):
         """Construiește mesaj frumos pentru alertă"""
         
         action = signal_data.get('action', '').upper()
@@ -124,8 +129,17 @@ class NotificationManager:
         # Timestamp
         message += f"\n🕐 *Timp:* {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
         
-        # Call to action
-        message += f"\n✅ *Verifică chart-ul și execută manual!*"
+        # Execution status
+        if execution_result:
+            if execution_result.get('success'):
+                message += f"\n✅ *EXECUTAT AUTOMAT în cTrader*\n"
+                message += f"🎫 *Ticket:* {execution_result.get('ticket')}\n"
+            else:
+                message += f"\n⚠️ *Execuție eșuată:* {execution_result.get('error')}\n"
+                message += f"✅ *Execută manual!*"
+        else:
+            # Call to action
+            message += f"\n✅ *Verifică chart-ul și execută manual!*"
         
         return message
     

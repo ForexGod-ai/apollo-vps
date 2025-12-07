@@ -1,5 +1,5 @@
 """
-Procesator de semnale - coordonează validarea AI și notificările pentru setup-uri bune
+Procesator de semnale - coordonează validarea AI și executarea în cTrader
 """
 from loguru import logger
 from datetime import datetime
@@ -7,6 +7,7 @@ import os
 
 from notification_manager import NotificationManager
 from money_manager import MoneyManager
+from broker_manager import BrokerManager
 
 
 class SignalProcessor:
@@ -14,9 +15,15 @@ class SignalProcessor:
     
     def __init__(self):
         self.notification_manager = NotificationManager()
-        self.money_manager = MoneyManager()
+        self.money_manager = MoneyManager(broker_type='CTRADER')
+        self.broker_manager = BrokerManager()
         self.ai_validation_enabled = os.getenv('AI_VALIDATION_ENABLED', 'True').lower() == 'true'
         self.auto_trade_enabled = os.getenv('AUTO_TRADE_ENABLED', 'False').lower() == 'true'
+        
+        logger.info(f"⚙️  Signal Processor initialized")
+        logger.info(f"   Auto-trade: {'ENABLED' if self.auto_trade_enabled else 'DISABLED'}")
+        logger.info(f"   AI validation: {'ENABLED' if self.ai_validation_enabled else 'DISABLED'}")
+        logger.info(f"   Broker: {self.broker_manager.default_broker}")
         
     def process_signal(self, signal_data, ai_validator=None):
         """
@@ -69,13 +76,46 @@ class SignalProcessor:
             
             logger.info(f"✅ Poziție aprobată: {risk_assessment['position_size']} lots")
             
-            # STEP 3: Trimite notificare (NU mai executăm automat!)
-            logger.info("📢 STEP 3: Trimit alertă pentru setup bun...")
+            # STEP 3: Executare în cTrader (dacă AUTO_TRADE_ENABLED=True)
+            if self.auto_trade_enabled:
+                logger.info("🚀 STEP 3: Execut trade în cTrader...")
+                
+                order_data = {
+                    'symbol': signal_data.get('symbol'),
+                    'action': signal_data.get('action'),
+                    'volume': risk_assessment['position_size'],
+                    'price': signal_data.get('price'),
+                    'stop_loss': signal_data.get('stop_loss'),
+                    'take_profit': signal_data.get('take_profit'),
+                    'comment': f"AI Bot - {signal_data.get('strategy', 'setup')}"
+                }
+                
+                execution_result = self.broker_manager.execute_order(order_data)
+                result['execution'] = execution_result
+                
+                if execution_result.get('success'):
+                    logger.success(f"✅ Trade executat: Ticket #{execution_result.get('ticket')}")
+                    
+                    # Update money manager
+                    self.money_manager.open_positions.append({
+                        'ticket': execution_result.get('ticket'),
+                        'symbol': signal_data.get('symbol'),
+                        'volume': risk_assessment['position_size'],
+                        'risk_amount': risk_assessment['risk_amount']
+                    })
+                else:
+                    logger.error(f"❌ Execuție eșuată: {execution_result.get('error')}")
+            else:
+                logger.info("📢 STEP 3: AUTO_TRADE_ENABLED=False - trimit doar alertă...")
+            
+            # STEP 4: Trimite notificare
+            logger.info("📢 STEP 4: Trimit alertă...")
             
             notification_sent = self.notification_manager.send_trade_alert(
                 signal_data=signal_data,
                 ai_validation=result.get('ai_validation'),
-                risk_assessment=risk_assessment
+                risk_assessment=risk_assessment,
+                execution_result=result.get('execution')
             )
             
             result['notification_sent'] = notification_sent
