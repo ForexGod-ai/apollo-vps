@@ -27,3 +27,8 @@ models/*.pkl
 # OS
 .DS_Store
 Thumbs.db
+
+# Test screenshots
+test_chart.png
+test_desktop_chart.png
+charts/test_*.png
