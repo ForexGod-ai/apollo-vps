@@ -55,32 +55,69 @@ class TradingViewDesktopCapture:
         except Exception as e:
             logger.error(f"Failed to focus TradingView: {e}")
     
+    # Watchlist order mapping (from your TradingView screenshot)
+    WATCHLIST_ORDER = [
+        "BTCUSD", "XAUUSD", "XAGUSD", "USOIL", "GBPNZD",
+        "GBPUSD", "GBPJPY", "USDCAD", "NZDCAD", "EURUSD",
+        "EURJPY", "EURCAD", "AUDCAD", "USDCHF", "USDJPY",
+        "GBPCHF", "AUDNZD", "AUDUSD", "NZDUSD", "GBPCAD",
+        "EURNZD", "PIUSDT"
+    ]
+    
     def change_symbol(self, symbol: str):
-        """Change symbol in TradingView using keyboard shortcut"""
+        """
+        Navigate to symbol using DOWN arrow keys based on Watchlist position
+        Simple and reliable - no UI element detection needed!
+        """
+        logger.info(f"🔍 Navigating to {symbol} in Watchlist...")
+        
+        # Find symbol position in Watchlist
+        try:
+            position = self.WATCHLIST_ORDER.index(symbol)
+            logger.info(f"   Position: {position + 1}/{len(self.WATCHLIST_ORDER)}")
+        except ValueError:
+            logger.error(f"❌ Symbol {symbol} not found in Watchlist order!")
+            return False
+        
         applescript = f'''
         tell application "System Events"
             tell process "TradingView"
-                -- Press Cmd+K to open symbol search
-                keystroke "k" using command down
+                set frontmost to true
                 delay 0.5
                 
-                -- Type symbol
-                keystroke "{symbol}"
+                -- Click somewhere in Watchlist area to focus it
+                -- Approximate right side of window
+                keystroke tab
+                delay 0.3
+                
+                -- Go to top of Watchlist (Home key)
+                key code 115
                 delay 0.5
                 
-                -- Press Enter to load symbol
+                -- Navigate down {position} times to reach symbol
+                repeat {position} times
+                    key code 125  -- Down arrow
+                    delay 0.2
+                end repeat
+                
+                -- Press Enter to load chart
                 key code 36
-                delay 2
+                delay 3
             end tell
         end tell
         '''
+        
         try:
-            subprocess.run(['osascript', '-e', applescript], check=True)
-            logger.success(f"✅ Changed to symbol: {symbol}")
-            time.sleep(2)  # Wait for chart to load
+            subprocess.run(['osascript', '-e', applescript], check=True, timeout=30)
+            logger.success(f"✅ Navigated to {symbol} (position {position + 1})")
+            time.sleep(2)  # Extra wait for chart to fully load
             return True
+            
+        except subprocess.TimeoutExpired:
+            logger.error(f"⏱️  Timeout navigating to {symbol}")
+            return False
         except Exception as e:
-            logger.error(f"Failed to change symbol: {e}")
+            logger.error(f"❌ Failed to navigate to {symbol}: {e}")
             return False
     
     def change_timeframe(self, timeframe: str):

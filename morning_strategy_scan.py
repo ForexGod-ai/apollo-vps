@@ -25,7 +25,7 @@ from smc_detector import SMCDetector, TradeSetup
 from tradingview_chart_generator import TradingViewChartGenerator
 from tradingview_desktop_screenshot import TradingViewDesktopCapture
 from telegram_notifier import TelegramNotifier
-from ctrader_data_client import get_ctrader_client
+from ctrader_data_client import get_ctrader_client  # Alpha Vantage + Yahoo Finance fallback
 
 load_dotenv()
 
@@ -128,20 +128,13 @@ class MorningStrategyScanner:
             if setup is None:
                 logger.info(f"⚪ {symbol}: No valid setup detected")
                 
-                # Get TradingView screenshot DIRECT from Desktop app
-                chart_path = f"charts/morning_scan/{symbol}_daily.png"
-                os.makedirs(os.path.dirname(chart_path), exist_ok=True)
-                
-                screenshot = self.desktop_capture.get_chart_screenshot(symbol, "D", chart_path)
-                if not screenshot:
-                    chart_path = None
-                
+                # Skip screenshot for pairs without setup (saves time)
                 return PairAnalysis(
                     symbol=symbol,
                     priority=priority,
                     has_setup=False,
                     setup=None,
-                    chart_path=chart_path
+                    chart_path=None
                 )
             
             # Setup found!
@@ -153,13 +146,17 @@ class MorningStrategyScanner:
             logger.info(f"   TP: {setup.take_profit:.5f}")
             logger.info(f"   R:R: 1:{setup.risk_reward:.2f}")
             
-            # Get TradingView screenshot DIRECT from Desktop app (LIVE with your drawings!)
+            # Capture screenshot ONLY for pairs with valid setup
+            logger.info(f"📸 Capturing TradingView screenshot for {symbol}...")
             chart_path = f"charts/morning_scan/{symbol}_daily.png"
             os.makedirs(os.path.dirname(chart_path), exist_ok=True)
             
             screenshot = self.desktop_capture.get_chart_screenshot(symbol, "D", chart_path)
             if not screenshot:
+                logger.warning(f"⚠️  Failed to capture screenshot for {symbol}")
                 chart_path = None
+            else:
+                logger.success(f"✅ Screenshot saved: {chart_path}")
             
             return PairAnalysis(
                 symbol=symbol,

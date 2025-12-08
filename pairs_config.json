@@ -146,13 +146,6 @@
       "priority": 1,
       "description": "Silver vs US Dollar",
       "category": "commodity"
-    },
-    {
-      "symbol": "PIUSDT",
-      "mt5_symbol": "PIUSDT",
-      "priority": 2,
-      "description": "Pi Network vs Tether",
-      "category": "crypto"
     }
   ],
   "scanner_settings": {

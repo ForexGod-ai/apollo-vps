@@ -46,7 +46,7 @@ class TelegramNotifier:
             return False
     
     def send_photo(self, photo_bytes: bytes, caption: str = "") -> bool:
-        """Send photo to Telegram"""
+        """Send photo to Telegram (raw bytes)"""
         try:
             url = f"{self.base_url}/sendPhoto"
             files = {"photo": photo_bytes}
@@ -59,6 +59,28 @@ class TelegramNotifier:
             return response.status_code == 200
         except Exception as e:
             print(f"❌ Error sending Telegram photo: {e}")
+            return False
+    
+    def send_photo_file(self, file_path: str, caption: str = "") -> bool:
+        """Send photo from file path"""
+        try:
+            if not os.path.exists(file_path):
+                print(f"❌ Photo file not found: {file_path}")
+                return False
+            
+            url = f"{self.base_url}/sendPhoto"
+            with open(file_path, 'rb') as photo_file:
+                files = {"photo": photo_file}
+                data = {
+                    "chat_id": self.chat_id,
+                    "caption": caption,
+                    "parse_mode": "Markdown"
+                }
+                response = requests.post(url, files=files, data=data)
+            
+            return response.status_code == 200
+        except Exception as e:
+            print(f"❌ Error sending Telegram photo from file: {e}")
             return False
     
     def send_setup_alert(

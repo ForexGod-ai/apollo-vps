@@ -1,12 +1,12 @@
 {
-  "signalId": "SIGNAL_20251207_143938",
+  "signalId": "SIGNAL_20251207_201518",
   "symbol": "GBPUSD",
   "direction": "buy",
   "entryPrice": 1.275,
   "stopLoss": 1.272,
   "takeProfit": 1.281,
-  "volume": 0.09,
+  "volume": 0.1,
   "riskReward": 2.0,
-  "strategyType": "AI Bot - morning_scan",
-  "timestamp": "2025-12-07T14:39:38.037913"
+  "strategyType": "CONTINUITY - morning_scan",
+  "timestamp": "2025-12-07T20:15:18.716914"
 }

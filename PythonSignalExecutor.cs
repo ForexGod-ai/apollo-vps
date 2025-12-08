@@ -87,6 +87,26 @@ namespace cAlgo.Robots
             }
         }
 
+        private string MapSymbolName(string pythonSymbol)
+        {
+            // Symbol mapping: Python scanner names → IC Markets cTrader names
+            // Verified with actual IC Markets cTrader account
+            
+            // Disabled symbols
+            if (pythonSymbol == "PIUSDT") return null; // Not available in IC Markets
+            
+            // Oil mapping: USOIL → WTIUSD (verified)
+            if (pythonSymbol == "USOIL") return "WTIUSD";
+            
+            // All other symbols work as-is:
+            // - Forex pairs: GBPUSD, EURUSD, etc. ✓
+            // - Gold: XAUUSD ✓
+            // - Silver: XAGUSD ✓
+            // - Bitcoin: BTCUSD ✓
+            
+            return pythonSymbol;
+        }
+
         private void ManageOpenPositions()
         {
             foreach (var position in Positions)
@@ -185,12 +205,22 @@ namespace cAlgo.Robots
 
         private void ExecuteSignal(TradeSignal signal)
         {
-            var symbolName = signal.Symbol.Replace("/", "");
+            // Map Python symbol names to IC Markets cTrader names
+            var pythonSymbol = signal.Symbol.Replace("/", "");
+            var symbolName = MapSymbolName(pythonSymbol);
+            
+            if (string.IsNullOrEmpty(symbolName))
+            {
+                Print($"❌ Symbol disabled or not available: {pythonSymbol}");
+                return;
+            }
+            
             var symbol = Symbols.GetSymbol(symbolName);
             
             if (symbol == null)
             {
-                Print($"❌ Symbol not found: {symbolName}");
+                Print($"❌ Symbol not found in cTrader: {symbolName} (from {pythonSymbol})");
+                Print($"   💡 Check Market Watch and verify symbol name");
                 return;
             }
 

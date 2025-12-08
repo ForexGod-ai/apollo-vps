@@ -22,9 +22,10 @@ class CTraderDataClient:
     Priority: cTrader WebSocket (REAL-TIME) -> Alpha Vantage (backup) -> Error
     """
     
-    # cTrader Open API endpoints
-    API_BASE = "https://api.ctrader.com"
-    DEMO_API_BASE = "https://api.ctrader.com"
+    # cTrader Open API endpoints (CORRECT URLs)
+    API_BASE = "https://openapi.ctrader.com"
+    DEMO_API_BASE = "https://demo-openapi.ctrader.com"
+    TOKEN_ENDPOINT = "https://openapi.ctrader.com/apps/token"
     
     # Alpha Vantage API (FREE tier: 500 requests/day)
     ALPHA_VANTAGE_BASE = "https://www.alphavantage.co/query"
@@ -70,10 +71,12 @@ class CTraderDataClient:
     def __init__(self):
         self.account_id = os.getenv('CTRADER_ACCOUNT_ID')
         self.access_token = os.getenv('CTRADER_ACCESS_TOKEN')
+        self.refresh_token = os.getenv('CTRADER_REFRESH_TOKEN')
         self.client_id = os.getenv('CTRADER_CLIENT_ID')
         self.client_secret = os.getenv('CTRADER_CLIENT_SECRET')
         self.alpha_vantage_key = os.getenv('ALPHA_VANTAGE_API_KEY', 'demo')
         self.demo = os.getenv('CTRADER_DEMO', 'True').lower() == 'true'
+        self.token_expiry = None
         
         # Session for connection pooling
         self.session = requests.Session()
@@ -86,6 +89,110 @@ class CTraderDataClient:
         logger.info(f"   Priority: IC Markets WebSocket -> Alpha Vantage backup")
         logger.info(f"   Account: {self.account_id}")
         logger.info(f"   Mode: {'DEMO' if self.demo else 'LIVE'}")
+        
+        # Validate and refresh token if needed
+        if self.access_token and self.refresh_token:
+            self._ensure_valid_token()
+    
+    def _ensure_valid_token(self) -> bool:
+        """Ensure access token is valid, refresh if needed"""
+        try:
+            # Check if token needs refresh (tokens expire after 24h)
+            if self.token_expiry and datetime.now() < self.token_expiry:
+                return True
+            
+            # Refresh token
+            logger.info("🔄 Refreshing cTrader access token...")
+            success = self._refresh_access_token()
+            
+            if success:
+                logger.success("✅ Token refreshed successfully")
+                return True
+            else:
+                logger.warning("⚠️ Token refresh failed, using existing token")
+                return bool(self.access_token)
+                
+        except Exception as e:
+            logger.error(f"❌ Token validation error: {e}")
+            return bool(self.access_token)
+    
+    def _refresh_access_token(self) -> bool:
+        """Refresh OAuth2 access token using refresh_token"""
+        try:
+            if not self.refresh_token or not self.client_id or not self.client_secret:
+                logger.debug("Missing OAuth2 credentials for token refresh")
+                return False
+            
+            data = {
+                'grant_type': 'refresh_token',
+                'refresh_token': self.refresh_token,
+                'client_id': self.client_id,
+                'client_secret': self.client_secret
+            }
+            
+            response = requests.post(
+                self.TOKEN_ENDPOINT,
+                data=data,
+                headers={'Content-Type': 'application/x-www-form-urlencoded'},
+                timeout=10
+            )
+            
+            if response.status_code == 200:
+                token_data = response.json()
+                
+                # Update tokens
+                self.access_token = token_data.get('access_token')
+                new_refresh_token = token_data.get('refresh_token')
+                
+                if new_refresh_token:
+                    self.refresh_token = new_refresh_token
+                
+                # Set expiry (23 hours from now to be safe)
+                expires_in = token_data.get('expires_in', 86400)  # Default 24h
+                self.token_expiry = datetime.now() + timedelta(seconds=expires_in - 3600)
+                
+                # Update .env file with new tokens
+                self._update_env_tokens()
+                
+                logger.success(f"✅ Token refreshed, expires in {expires_in / 3600:.1f}h")
+                return True
+            else:
+                logger.error(f"❌ Token refresh failed: {response.status_code}")
+                logger.debug(f"Response: {response.text}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"❌ Token refresh error: {e}")
+            return False
+    
+    def _update_env_tokens(self):
+        """Update .env file with new tokens"""
+        try:
+            # Only update if we have valid tokens
+            if not self.access_token or self.access_token == 'None':
+                logger.debug("Skipping .env update - no valid token")
+                return
+            
+            env_path = '.env'
+            if not os.path.exists(env_path):
+                return
+            
+            with open(env_path, 'r') as f:
+                lines = f.readlines()
+            
+            with open(env_path, 'w') as f:
+                for line in lines:
+                    if line.startswith('CTRADER_ACCESS_TOKEN='):
+                        f.write(f'CTRADER_ACCESS_TOKEN={self.access_token}\n')
+                    elif line.startswith('CTRADER_REFRESH_TOKEN=') and self.refresh_token:
+                        f.write(f'CTRADER_REFRESH_TOKEN={self.refresh_token}\n')
+                    else:
+                        f.write(line)
+            
+            logger.debug("✅ Updated .env with new tokens")
+            
+        except Exception as e:
+            logger.debug(f"Error updating .env: {e}")
     
     def get_account_balance(self) -> Optional[Dict]:
         """
@@ -230,6 +337,7 @@ class CTraderDataClient:
                 return df
             
             logger.error(f"❌ No data available for {symbol}")
+            logger.error(f"❌ cTrader API not responding - check credentials in .env")
             return None
             
         except Exception as e:
@@ -237,53 +345,117 @@ class CTraderDataClient:
             return None
     
     def _fetch_from_ctrader_api(self, symbol: str, timeframe: str, bars: int) -> Optional[pd.DataFrame]:
-        """Fetch data from cTrader Open API (if configured)"""
+        """Fetch data from cTrader Open API REST endpoint with OAuth2 authentication"""
         try:
-            # Get authentication token
-            token = self.access_token
-            if not token:
-                logger.debug("No cTrader API token configured")
+            # Ensure valid token
+            if not self._ensure_valid_token():
+                logger.debug("No valid cTrader API token")
                 return None
             
-            # Build API request
-            url = f"{self.DEMO_API_BASE if self.demo else self.API_BASE}/v3/ohlc"
-            headers = {'Authorization': f'Bearer {token}'}
+            # Use correct API base URL
+            base_url = self.DEMO_API_BASE if self.demo else self.API_BASE
             
-            # Calculate time range
+            # Build trendbars endpoint: /v3/accounts/{accountId}/trendbars
+            url = f"{base_url}/v3/accounts/{self.account_id}/trendbars"
+            
+            # Calculate time range (cTrader uses Unix timestamps in milliseconds)
             end_time = int(datetime.now(timezone.utc).timestamp() * 1000)
             
-            if timeframe == 'D1':
-                start_time = end_time - (bars * 86400000)
-            elif timeframe == 'H4':
-                start_time = end_time - (bars * 14400000)
-            elif timeframe == 'H1':
-                start_time = end_time - (bars * 3600000)
-            else:
-                start_time = end_time - (bars * 86400000)
-            
-            params = {
-                'symbol': symbol,
-                'periodicity': timeframe,
-                'fromTimestamp': start_time,
-                'toTimestamp': end_time,
-                'barsCount': bars
+            timeframe_ms = {
+                'D1': 86400000,  # 1 day
+                'D': 86400000,
+                'H4': 14400000,  # 4 hours
+                'H1': 3600000,   # 1 hour
+                'M15': 900000,   # 15 minutes
+                'M5': 300000,    # 5 minutes
+                'M1': 60000      # 1 minute
             }
             
-            response = self.session.get(url, headers=headers, params=params, timeout=5)
+            period_ms = timeframe_ms.get(timeframe, 86400000)
+            start_time = end_time - (bars * period_ms * 2)  # Request more for safety
+            
+            params = {
+                'symbolName': symbol,
+                'periodicity': timeframe.upper(),
+                'from': start_time,
+                'to': end_time,
+                'count': bars
+            }
+            
+            headers = {
+                'Authorization': f'Bearer {self.access_token}',
+                'Accept': 'application/json',
+                'Content-Type': 'application/json'
+            }
+            
+            response = self.session.get(url, headers=headers, params=params, timeout=10)
+            
+            if response.status_code == 401:
+                # Token expired, try to refresh
+                logger.info("🔄 Token expired, refreshing...")
+                if self._refresh_access_token():
+                    headers['Authorization'] = f'Bearer {self.access_token}'
+                    response = self.session.get(url, headers=headers, params=params, timeout=10)
             
             if response.status_code == 200:
                 data = response.json()
-                candles_data = data.get('data', data.get('candles', data.get('bars', [])))
                 
-                if candles_data:
-                    df = self._parse_candles_response(candles_data)
+                # Parse response - cTrader returns { "data": [...] }
+                trendbars = data.get('data', data.get('trendbars', []))
+                
+                if trendbars and len(trendbars) > 0:
+                    df = self._parse_ctrader_trendbars(trendbars)
                     if df is not None and not df.empty:
-                        return df.tail(bars)
+                        # Return only requested number of bars
+                        return df.tail(bars).reset_index(drop=True)
+            elif response.status_code == 404:
+                logger.debug(f"Symbol {symbol} not found on cTrader")
+            else:
+                logger.debug(f"cTrader API returned {response.status_code}")
+                logger.debug(f"Response: {response.text[:200]}")
             
             return None
             
         except Exception as e:
             logger.debug(f"cTrader API error: {e}")
+            return None
+    
+    def _parse_ctrader_trendbars(self, trendbars: List[Dict]) -> Optional[pd.DataFrame]:
+        """Parse trendbars/OHLC data from cTrader API"""
+        try:
+            if not trendbars:
+                return None
+            
+            df_data = []
+            for bar in trendbars:
+                # Handle different timestamp formats
+                ts = bar.get('timestamp', bar.get('time', bar.get('t')))
+                if ts:
+                    # Convert milliseconds to datetime
+                    if ts > 1e12:  # Milliseconds
+                        dt = datetime.fromtimestamp(ts / 1000)
+                    else:  # Seconds
+                        dt = datetime.fromtimestamp(ts)
+                    
+                    df_data.append({
+                        'time': dt,
+                        'open': float(bar.get('open', bar.get('o', 0))),
+                        'high': float(bar.get('high', bar.get('h', 0))),
+                        'low': float(bar.get('low', bar.get('l', 0))),
+                        'close': float(bar.get('close', bar.get('c', 0))),
+                        'volume': float(bar.get('volume', bar.get('v', 0)))
+                    })
+            
+            if not df_data:
+                return None
+            
+            df = pd.DataFrame(df_data)
+            df = df.sort_values('time').reset_index(drop=True)
+            
+            return df
+            
+        except Exception as e:
+            logger.debug(f"Error parsing cTrader trendbars: {e}")
             return None
     
     def _parse_candles_response(self, candles: List[Dict]) -> Optional[pd.DataFrame]:
