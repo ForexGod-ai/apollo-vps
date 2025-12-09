@@ -1,0 +1,30 @@
+# ForexGod Dashboard - GitHub Pages Deploy
+# Acest script face deploy INSTANT pe GitHub Pages (FREE 24/7)
+
+name: Deploy Dashboard
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    # Update every 5 minutes
+    - cron: '*/5 * * * *'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      
+      - name: Copy dashboard files
+        run: |
+          mkdir -p public
+          cp dashboard_live.html public/index.html
+          cp trade_history.json public/trade_history.json
+      
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./public
+          cname: dashboard.forexgod.com

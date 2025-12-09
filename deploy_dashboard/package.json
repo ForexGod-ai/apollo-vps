@@ -1,0 +1,9 @@
+{
+  "name": "forexgod-dashboard",
+  "version": "1.0.0",
+  "description": "ForexGod Trading Dashboard - Live 24/7",
+  "scripts": {
+    "dev": "python3 -m http.server 8080",
+    "deploy": "vercel --prod"
+  }
+}
