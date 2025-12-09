@@ -353,7 +353,7 @@ class AutoTrader:
                 f"{extra}"
             )
             
-            self.telegram.send_alert(message)
+            self.telegram.send_message(message)
             
             # Post to website dashboard
             if event == "OPENED":

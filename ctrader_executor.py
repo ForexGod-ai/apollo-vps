@@ -132,6 +132,9 @@ class CTraderExecutor:
             
             logger.success(f"✅ Signal ready for cTrader PythonSignalExecutor!")
             
+            # Send ARMAGEDDON notification to Telegram
+            self._send_telegram_notification(signal)
+            
             return {
                 'order_id': signal['signalId'],
                 'symbol': symbol,
@@ -243,6 +246,52 @@ class CTraderExecutor:
             logger.error(f"❌ Failed to get account info: {e}")
             return None
     
+    def _send_telegram_notification(self, signal: Dict):
+        """Send ARMAGEDDON notification to Telegram"""
+        try:
+            import requests
+            
+            telegram_token = os.getenv('TELEGRAM_BOT_TOKEN')
+            telegram_chat_id = os.getenv('TELEGRAM_CHAT_ID')
+            
+            if not telegram_token or not telegram_chat_id:
+                logger.warning("⚠️  Telegram credentials missing - skipping notification")
+                return
+            
+            # Epic ARMAGEDDON message  
+            direction_emoji = "📈" if signal['direction'] == 'buy' else "📉"
+            message = (
+                "⚔️ <b>THE ARMAGEDDON BEGINS</b> ⚔️\n\n"
+                "🔥 <b>GLITCH IN MATRIX DETECTED</b> 🔥\n\n"
+                f"{direction_emoji} <b>{signal['direction'].upper()}</b> {signal['volume']} {signal['symbol']}\n"
+                f"💰 Entry: {signal['entryPrice']:.5f}\n"
+                f"🛑 Stop Loss: {signal['stopLoss']:.5f}\n"
+                f"🎯 Take Profit: {signal['takeProfit']:.5f}\n"
+                f"📊 R:R: 1:{signal['riskReward']}\n\n"
+                f"🎲 <b>Strategy</b>: {signal['strategyType']}\n"
+                "🧠 <b>AI Validation</b>: CONFIRMED\n"
+                "⚡ <b>Risk Level</b>: CALCULATED\n\n"
+                "<i>🤖 Executed by FOREXGOD AI Bot</i>\n"
+                '<i>💎 "The Matrix cannot hold us"</i>'
+            )
+            
+            url = f"https://api.telegram.org/bot{telegram_token}/sendMessage"
+            payload = {
+                'chat_id': telegram_chat_id,
+                'text': message,
+                'parse_mode': 'HTML'
+            }
+            
+            response = requests.post(url, json=payload, timeout=10)
+            
+            if response.status_code == 200:
+                logger.success("✅ ARMAGEDDON notification sent to Telegram!")
+            else:
+                logger.warning(f"⚠️  Telegram API returned {response.status_code}")
+                
+        except Exception as e:
+            logger.error(f"❌ Failed to send Telegram notification: {e}")
+    
     def disconnect(self):
         """Disconnect from cTrader"""
         if self.connected:
@@ -291,3 +340,4 @@ def test_ctrader_connection():
 
 if __name__ == "__main__":
     test_ctrader_connection()
+

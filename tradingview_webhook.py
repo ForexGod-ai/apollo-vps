@@ -240,16 +240,24 @@ def webhook():
             
             # Telegram - EXECUTION RESULT
             if execution_result['success']:
+                # EPIC MESSAGE for Glitch in Matrix strategy
                 exec_msg = f"""
-✅ <b>TRADE EXECUTED</b>
+⚔️ <b>THE ARMAGEDDON BEGINS</b> ⚔️
+
+🔥 <b>GLITCH IN MATRIX DETECTED</b> 🔥
 
 📈 {data['action'].upper()} {execution_result['volume']} {data['symbol']}
-💰 Price: {execution_result['price']}
-🛑 SL: {execution_result['sl']}
-🎯 TP: {execution_result['tp']}
-🆔 Order: #{execution_result['order_id']}
+💰 Entry: {execution_result['price']}
+🛑 Stop Loss: {execution_result['sl']}
+🎯 Take Profit: {execution_result['tp']}
+🆔 Ticket: #{execution_result['order_id']}
 
-<i>Executed by FOREXGOD Bot</i>
+🎲 <b>Strategy</b>: Glitch in Matrix
+🧠 <b>AI Validation</b>: CONFIRMED
+⚡ <b>Risk Level</b>: CALCULATED
+
+<i>🤖 Executed by FOREXGOD AI Bot</i>
+<i>💎 "The Matrix cannot hold us"</i>
 """
                 send_telegram(exec_msg)
             else:

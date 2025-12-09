@@ -32,8 +32,9 @@ class cTraderTest:
         logger.info(f"Client ID: {self.client_id[:20]}...")
         logger.info(f"Account: {self.account_id}")
         
-        # Create client
+        # Create client - Try alternative DEMO host
         logger.info("🔌 Creating cTrader client...")
+        logger.info("   Host: demo.ctraderapi.com:5035")
         self.client = Client("demo.ctraderapi.com", 5035, TcpProtocol)
         
         # Set callbacks
@@ -52,6 +53,9 @@ class cTraderTest:
         """Called when WebSocket connects"""
         logger.success("✅ WebSocket connected!")
         logger.info("🔐 Authenticating application...")
+        logger.debug(f"   Client ID: {self.client_id}")
+        logger.debug(f"   Client Secret: {self.client_secret}")
+        logger.debug(f"   Access Token: {self.access_token}")
         
         # Send application auth request
         app_auth_req = msg.ProtoOAApplicationAuthReq()

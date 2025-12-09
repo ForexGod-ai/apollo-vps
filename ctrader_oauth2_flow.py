@@ -26,7 +26,9 @@ class CTraderOAuth2:
     """
     
     # Spotware OAuth2 Endpoints
-    AUTH_URL = "https://openapi.ctrader.com/apps/auth"
+    # Auth uses connect.spotware.com/oauth/v2/auth
+    # Token uses openapi.ctrader.com/apps/token (DIFFERENT domain!)
+    AUTH_URL = "https://connect.spotware.com/oauth/v2/auth"
     TOKEN_URL = "https://openapi.ctrader.com/apps/token"
     
     def __init__(self):
@@ -39,7 +41,8 @@ class CTraderOAuth2:
         # Scopes (permissions)
         # trading: permite execuție ordine
         # accounts: citește info cont
-        self.scope = "trading accounts"
+        # cTrader acceptă doar "trading" sau "accounts" individual, nu ambele
+        self.scope = "trading"
         
         logger.info("🔐 cTrader OAuth2 Manager initialized")
         logger.info(f"   Client ID: {self.client_id[:20]}...")
@@ -176,6 +179,13 @@ class CTraderOAuth2:
                 tokens = response.json()
                 
                 logger.success("✅ Tokens received!")
+                logger.debug(f"Full response: {tokens}")
+                
+                # Check if it's an error response
+                if 'errorCode' in tokens:
+                    logger.error(f"❌ Server error: {tokens.get('errorCode')} - {tokens.get('description')}")
+                    return None
+                
                 logger.info(f"   Access Token: {tokens.get('access_token', '')[:30]}...")
                 logger.info(f"   Refresh Token: {tokens.get('refresh_token', '')[:30]}...")
                 logger.info(f"   Expires in: {tokens.get('expires_in', 0)} seconds")
