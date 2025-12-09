@@ -32,3 +32,17 @@ Thumbs.db
 test_chart.png
 test_desktop_chart.png
 charts/test_*.png
+
+# Runtime files
+.http_server.pid
+.trade_monitor.pid
+.position_monitor.pid
+.last_trade_check.json
+.seen_positions.json
+
+# Logs
+/tmp/
+*.log
+
+# OS files
+.DS_Store
