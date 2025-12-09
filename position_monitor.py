@@ -59,6 +59,8 @@ class PositionMonitor:
         entry = trade.get('entry_price', 0)
         lot = trade.get('lot_size', 0)
         ticket = trade.get('ticket', 'N/A')
+        stop_loss = trade.get('stop_loss')
+        take_profit = trade.get('take_profit')
         
         direction_emoji = "📈" if direction == 'BUY' else "📉"
         
@@ -76,6 +78,7 @@ class PositionMonitor:
         ]
         epic_title = random.choice(armageddon_messages)
         
+        # Build message with TP/SL
         message = f"""
 {epic_title}
 
@@ -84,13 +87,26 @@ class PositionMonitor:
 {direction_emoji} <b>{direction}</b> {lot} {symbol}
 💰 Entry: {entry:.5f}
 🎫 Ticket: #{ticket}
-
+"""
+        
+        # Add SL/TP if available
+        if stop_loss:
+            message += f"🛑 Stop Loss: {stop_loss:.5f}\n"
+        if take_profit:
+            message += f"🎯 Take Profit: {take_profit:.5f}\n"
+        
+        message += """
 🧠 <b>AI Validation</b>: CONFIRMED
 ⚡ <b>Risk Level</b>: CALCULATED
 🤖 <b>Status</b>: POSITION OPENED
 
-<i>🤖 Executed by FOREXGOD AI Bot</i>
 <i>💎 "The Matrix cannot hold us"</i>
+
+━━━━━━━━━━━━━━━━━━━━━━━━
+✨ <b>Strategy by ForexGod</b> ✨
+🧠 Glitch in Matrix Trading System
+💎 + AI Validation
+━━━━━━━━━━━━━━━━━━━━━━━━
 """
         
         try:

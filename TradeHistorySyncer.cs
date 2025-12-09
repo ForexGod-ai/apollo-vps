@@ -48,41 +48,26 @@ namespace cAlgo.Robots
         {
             try
             {
-                // ENHANCED DEBUG - Print EVERYTHING from History API
                 Print("═══════════════════════════════════════════════════════");
-                Print($"🔍 FULL HISTORY DEBUG");
+                Print($"🔍 SYNCING TRADE HISTORY + OPEN POSITIONS");
                 Print($"   Account: {Account.Number}");
-                Print($"   History NULL? {History == null}");
-                Print($"   History.Count = {History?.Count ?? 0}");
+                Print($"   Closed Trades: {History?.Count ?? 0}");
+                Print($"   Open Positions: {Positions?.Count ?? 0}");
                 Print("═══════════════════════════════════════════════════════");
                 
-                // Get all closed positions from History
-                if (History == null || History.Count == 0)
-                {
-                    Print("⚠️ No history available");
-                    return;
-                }
+                var closedPositions = History?.OrderBy(x => x.ClosingTime).ToList() ?? new System.Collections.Generic.List<HistoricalTrade>();
+                var openPositions = Positions?.ToList() ?? new System.Collections.Generic.List<Position>();
                 
-                // Print EVERY trade in History
-                int counter = 0;
-                foreach (var trade in History)
-                {
-                    counter++;
-                    Print($"  [{counter}] Ticket: {trade.PositionId} | {trade.SymbolName} | {trade.EntryTime:yyyy-MM-dd HH:mm} → {trade.ClosingTime:yyyy-MM-dd HH:mm} | P/L: ${trade.NetProfit:F2}");
-                }
-                
-                Print($"📊 Total trades enumerated: {counter}");
-                Print("═══════════════════════════════════════════════════════");
-                
-                var closedPositions = History.OrderBy(x => x.ClosingTime).ToList();
-                
-                Print($"📊 Found {closedPositions.Count} closed positions in history");
+                Print($"📊 Found {closedPositions.Count} closed + {openPositions.Count} open positions");
 
                 var json = new StringBuilder();
                 json.AppendLine("[");
 
                 double runningBalance = 1000.0; // Initial balance
+                int totalCount = closedPositions.Count + openPositions.Count;
+                int currentIndex = 0;
 
+                // Add CLOSED positions first
                 for (int i = 0; i < closedPositions.Count; i++)
                 {
                     var position = closedPositions[i];
@@ -103,7 +88,41 @@ namespace cAlgo.Robots
                     json.AppendLine($"        \"pips\": {position.Pips.ToString("F1", CultureInfo.InvariantCulture)},");
                     json.AppendLine($"        \"balance_after\": {runningBalance.ToString("F2", CultureInfo.InvariantCulture)}");
                     
-                    if (i < closedPositions.Count - 1)
+                    currentIndex++;
+                    if (currentIndex < totalCount)
+                        json.AppendLine("    },");
+                    else
+                        json.AppendLine("    }");
+                }
+                
+                // Add OPEN positions
+                for (int i = 0; i < openPositions.Count; i++)
+                {
+                    var position = openPositions[i];
+                    
+                    // Calculate current P/L for open position
+                    double currentPnL = position.NetProfit;
+
+                    json.AppendLine("    {");
+                    json.AppendLine($"        \"ticket\": {position.Id},");
+                    json.AppendLine($"        \"symbol\": \"{position.SymbolName}\",");
+                    json.AppendLine($"        \"direction\": \"{(position.TradeType == TradeType.Buy ? "BUY" : "SELL")}\",");
+                    json.AppendLine($"        \"entry_price\": {position.EntryPrice.ToString(CultureInfo.InvariantCulture)},");
+                    json.AppendLine($"        \"lot_size\": {(position.VolumeInUnits / 100000.0).ToString("F2", CultureInfo.InvariantCulture)},");
+                    json.AppendLine($"        \"open_time\": \"{position.EntryTime:yyyy-MM-ddTHH:mm:ss}\",");
+                    json.AppendLine($"        \"status\": \"OPEN\",");
+                    json.AppendLine($"        \"profit\": {currentPnL.ToString("F2", CultureInfo.InvariantCulture)},");
+                    
+                    // Add SL/TP if set
+                    if (position.StopLoss.HasValue)
+                        json.AppendLine($"        \"stop_loss\": {position.StopLoss.Value.ToString(CultureInfo.InvariantCulture)},");
+                    if (position.TakeProfit.HasValue)
+                        json.AppendLine($"        \"take_profit\": {position.TakeProfit.Value.ToString(CultureInfo.InvariantCulture)},");
+                    
+                    json.AppendLine($"        \"balance_after\": {runningBalance.ToString("F2", CultureInfo.InvariantCulture)}");
+                    
+                    currentIndex++;
+                    if (currentIndex < totalCount)
                         json.AppendLine("    },");
                     else
                         json.AppendLine("    }");
@@ -114,8 +133,8 @@ namespace cAlgo.Robots
                 // Write to file
                 File.WriteAllText(JsonFilePath, json.ToString());
 
-                Print($"✅ Synced {closedPositions.Count} trades to JSON");
-                Print($"💰 Current balance: ${runningBalance:F2}");
+                Print($"✅ Synced {closedPositions.Count} closed + {openPositions.Count} open to JSON");
+                Print($"💰 Balance: ${runningBalance:F2} | Open P/L: ${openPositions.Sum(p => p.NetProfit):F2}");
                 
                 _lastUpdate = DateTime.Now;
             }

@@ -182,6 +182,12 @@ class TradeMonitor:
 ⏰ Closed: {trade.get('close_time', 'N/A')}
 
 <i>💎 "Another one for the books"</i>
+
+━━━━━━━━━━━━━━━━━━━━━━━━
+✨ <b>Strategy by ForexGod</b> ✨
+🧠 Glitch in Matrix Trading System
+💎 + AI Validation
+━━━━━━━━━━━━━━━━━━━━━━━━
 """
         
         # Adaugă account summary

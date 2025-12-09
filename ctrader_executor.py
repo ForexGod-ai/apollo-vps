@@ -271,8 +271,12 @@ class CTraderExecutor:
                 f"🎲 <b>Strategy</b>: {signal['strategyType']}\n"
                 "🧠 <b>AI Validation</b>: CONFIRMED\n"
                 "⚡ <b>Risk Level</b>: CALCULATED\n\n"
-                "<i>🤖 Executed by FOREXGOD AI Bot</i>\n"
-                '<i>💎 "The Matrix cannot hold us"</i>'
+                "<i>💎 \"The Matrix cannot hold us\"</i>\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "✨ <b>Strategy by ForexGod</b> ✨\n"
+                "🧠 Glitch in Matrix Trading System\n"
+                "💎 + AI Validation\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━"
             )
             
             url = f"https://api.telegram.org/bot{telegram_token}/sendMessage"
