@@ -26,6 +26,7 @@ from tradingview_chart_generator import TradingViewChartGenerator
 from tradingview_desktop_screenshot import TradingViewDesktopCapture
 from telegram_notifier import TelegramNotifier
 from ctrader_data_client import get_ctrader_client  # Alpha Vantage + Yahoo Finance fallback
+from ctrader_executor import CTraderExecutor
 
 load_dotenv()
 
@@ -248,31 +249,29 @@ class MorningStrategyScanner:
             logger.info(f"   Direction: {setup.daily_choch.direction.upper()}")
             logger.info(f"   R:R: 1:{setup.risk_reward:.2f}")
             
-            # Generate signal for cTrader
-            signal = {
-                "SignalId": f"MORNING_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
-                "Symbol": best.symbol.replace('USD', '/USD').replace('EUR', 'EUR/').replace('GBP', 'GBP/').replace('JPY', '/JPY').replace('CHF', '/CHF').replace('AUD', 'AUD/').replace('NZD', 'NZD/').replace('CAD', '/CAD'),
-                "Direction": "buy" if setup.daily_choch.direction == 'bullish' else "sell",
-                "StrategyType": f"Morning Glitch - {setup.strategy_type.capitalize()}",
-                "EntryPrice": setup.entry_price,
-                "StopLoss": setup.stop_loss,
-                "TakeProfit": setup.take_profit,
-                "StopLossPips": abs(setup.entry_price - setup.stop_loss) * 10000,  # Convert to pips
-                "TakeProfitPips": abs(setup.take_profit - setup.entry_price) * 10000,
-                "RiskReward": setup.risk_reward,
-                "Timestamp": datetime.now().isoformat()
-            }
+            # Use CTraderExecutor to place order (will send ARMAGEDDON notification)
+            executor = CTraderExecutor()
             
-            # Write signal file for cBot
-            signal_path = "signals.json"
-            with open(signal_path, 'w') as f:
-                json.dump(signal, f, indent=2)
+            order_result = executor.place_order(
+                symbol=best.symbol,
+                order_type='buy' if setup.daily_choch.direction == 'bullish' else 'sell',
+                volume=0.1,  # Default lot size
+                entry_price=setup.entry_price,
+                stop_loss=setup.stop_loss,
+                take_profit=setup.take_profit,
+                comment=f"Morning Glitch - {setup.strategy_type.capitalize()}"
+            )
             
-            logger.success(f"✅ Signal file created: {signal_path}")
-            logger.info("🤖 cTrader cBot will execute this trade automatically!")
+            if not order_result:
+                logger.error("❌ Failed to place order via CTraderExecutor")
+                return
             
-            # EPIC MESSAGE for super trades (R:R >= 1:5)
-            direction_emoji = "🟢" if signal["Direction"] == "buy" else "🔴"
+            logger.success(f"✅ Order placed via CTraderExecutor - ARMAGEDDON notification sent!")
+            logger.info(f"🤖 Signal ID: {order_result['order_id']}")
+            logger.info("⏰ cTrader cBot will execute automatically!")
+            
+            # EPIC MESSAGE for Telegram (additional confirmation)
+            direction_emoji = "🟢" if setup.daily_choch.direction == 'bullish' else "🔴"
             armageddon_messages = [
                 "⚔️ **THE ARMAGEDDON BEGINS** ⚔️",
                 "💥 **MARKET APOCALYPSE INITIATED** 💥",
@@ -289,15 +288,15 @@ class MorningStrategyScanner:
             telegram_msg = f"""
 {epic_title}
 
-{direction_emoji} *{best.symbol}* - {signal['Direction'].upper()}
+{direction_emoji} *{best.symbol}* - {setup.daily_choch.direction.upper()}
 Strategy: `{setup.strategy_type.upper()}`
 💎 R:R: `1:{setup.risk_reward:.2f}` (LEGENDARY SETUP)
 
 📍 Entry: `{setup.entry_price:.5f}`
-🛑 SL: `{setup.stop_loss:.5f}` ({signal['StopLossPips']:.1f} pips)
-🎯 TP: `{setup.take_profit:.5f}` ({signal['TakeProfitPips']:.1f} pips)
+🛑 SL: `{setup.stop_loss:.5f}`
+🎯 TP: `{setup.take_profit:.5f}`
 
-⏰ cBot executing in 10 seconds...
+✅ Signal sent to cTrader - Auto-execution in progress!
 💰 Risk: 2% | Expected: {setup.risk_reward*2:.1f}%
 """
             self.telegram.send_message(telegram_msg.strip())
