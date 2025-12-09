@@ -1,0 +1,29 @@
+{
+  "timestamp": "2025-12-09T14:29:31.057731",
+  "total_pairs": 21,
+  "available_pairs": 0,
+  "availability": {
+    "BTCUSD": false,
+    "XAUUSD": false,
+    "XAGUSD": false,
+    "USOIL": false,
+    "GBPNZD": false,
+    "GBPUSD": false,
+    "GBPJPY": false,
+    "USDCAD": false,
+    "NZDCAD": false,
+    "EURUSD": false,
+    "EURJPY": false,
+    "EURCAD": false,
+    "AUDCAD": false,
+    "USDCHF": false,
+    "USDJPY": false,
+    "GBPCHF": false,
+    "AUDNZD": false,
+    "AUDUSD": false,
+    "NZDUSD": false,
+    "GBPCAD": false,
+    "EURNZD": false
+  },
+  "symbol_ids": {}
+}

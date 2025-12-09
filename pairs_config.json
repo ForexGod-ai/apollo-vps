@@ -1,11 +1,11 @@
 {
   "pairs": [
     {
-      "symbol": "GBPUSD",
-      "mt5_symbol": "GBPUSD",
+      "symbol": "BTCUSD",
+      "mt5_symbol": "BTCUSD",
       "priority": 1,
-      "description": "British Pound vs US Dollar",
-      "category": "forex_major"
+      "description": "Bitcoin vs US Dollar",
+      "category": "crypto"
     },
     {
       "symbol": "XAUUSD",
@@ -15,18 +15,11 @@
       "category": "commodity"
     },
     {
-      "symbol": "BTCUSD",
-      "mt5_symbol": "BTCUSD",
+      "symbol": "XAGUSD",
+      "mt5_symbol": "XAGUSD",
       "priority": 1,
-      "description": "Bitcoin vs US Dollar",
-      "category": "crypto"
-    },
-    {
-      "symbol": "GBPJPY",
-      "mt5_symbol": "GBPJPY",
-      "priority": 1,
-      "description": "British Pound vs Japanese Yen",
-      "category": "forex_cross"
+      "description": "Silver vs US Dollar",
+      "category": "commodity"
     },
     {
       "symbol": "USOIL",
@@ -43,6 +36,41 @@
       "category": "forex_cross"
     },
     {
+      "symbol": "GBPUSD",
+      "mt5_symbol": "GBPUSD",
+      "priority": 1,
+      "description": "British Pound vs US Dollar",
+      "category": "forex_major"
+    },
+    {
+      "symbol": "GBPJPY",
+      "mt5_symbol": "GBPJPY",
+      "priority": 1,
+      "description": "British Pound vs Japanese Yen",
+      "category": "forex_cross"
+    },
+    {
+      "symbol": "USDCAD",
+      "mt5_symbol": "USDCAD",
+      "priority": 1,
+      "description": "US Dollar vs Canadian Dollar",
+      "category": "forex_major"
+    },
+    {
+      "symbol": "NZDCAD",
+      "mt5_symbol": "NZDCAD",
+      "priority": 1,
+      "description": "New Zealand Dollar vs Canadian Dollar",
+      "category": "forex_cross"
+    },
+    {
+      "symbol": "EURUSD",
+      "mt5_symbol": "EURUSD",
+      "priority": 1,
+      "description": "Euro vs US Dollar",
+      "category": "forex_major"
+    },
+    {
       "symbol": "EURJPY",
       "mt5_symbol": "EURJPY",
       "priority": 1,
@@ -50,133 +78,77 @@
       "category": "forex_cross"
     },
     {
-      "symbol": "EURUSD",
-      "mt5_symbol": "EURUSD",
-      "priority": 2,
-      "description": "Euro vs US Dollar",
-      "category": "forex_major"
-    },
-    {
-      "symbol": "NZDCAD",
-      "mt5_symbol": "NZDCAD",
-      "priority": 2,
-      "description": "New Zealand Dollar vs Canadian Dollar",
-      "category": "forex_cross"
-    },
-    {
-      "symbol": "USDJPY",
-      "mt5_symbol": "USDJPY",
-      "priority": 2,
-      "description": "US Dollar vs Japanese Yen",
-      "category": "forex_major"
-    },
-    {
-      "symbol": "USDCAD",
-      "mt5_symbol": "USDCAD",
-      "priority": 2,
-      "description": "US Dollar vs Canadian Dollar",
-      "category": "forex_major"
-    },
-    {
       "symbol": "EURCAD",
       "mt5_symbol": "EURCAD",
-      "priority": 2,
+      "priority": 1,
       "description": "Euro vs Canadian Dollar",
       "category": "forex_cross"
     },
     {
       "symbol": "AUDCAD",
       "mt5_symbol": "AUDCAD",
-      "priority": 2,
+      "priority": 1,
       "description": "Australian Dollar vs Canadian Dollar",
-      "category": "forex_cross"
-    },
-    {
-      "symbol": "GBPCHF",
-      "mt5_symbol": "GBPCHF",
-      "priority": 2,
-      "description": "British Pound vs Swiss Franc",
       "category": "forex_cross"
     },
     {
       "symbol": "USDCHF",
       "mt5_symbol": "USDCHF",
-      "priority": 2,
+      "priority": 1,
       "description": "US Dollar vs Swiss Franc",
       "category": "forex_major"
     },
     {
-      "symbol": "NZDUSD",
-      "mt5_symbol": "NZDUSD",
-      "priority": 2,
-      "description": "New Zealand Dollar vs US Dollar",
+      "symbol": "USDJPY",
+      "mt5_symbol": "USDJPY",
+      "priority": 1,
+      "description": "US Dollar vs Japanese Yen",
       "category": "forex_major"
+    },
+    {
+      "symbol": "GBPCHF",
+      "mt5_symbol": "GBPCHF",
+      "priority": 1,
+      "description": "British Pound vs Swiss Franc",
+      "category": "forex_cross"
     },
     {
       "symbol": "AUDNZD",
       "mt5_symbol": "AUDNZD",
-      "priority": 2,
+      "priority": 1,
       "description": "Australian Dollar vs New Zealand Dollar",
-      "category": "forex_cross"
-    },
-    {
-      "symbol": "CADCHF",
-      "mt5_symbol": "CADCHF",
-      "priority": 2,
-      "description": "Canadian Dollar vs Swiss Franc",
       "category": "forex_cross"
     },
     {
       "symbol": "AUDUSD",
       "mt5_symbol": "AUDUSD",
-      "priority": 2,
+      "priority": 1,
       "description": "Australian Dollar vs US Dollar",
       "category": "forex_major"
     },
     {
-      "symbol": "EURGBP",
-      "mt5_symbol": "EURGBP",
-      "priority": 2,
-      "description": "Euro vs British Pound",
+      "symbol": "NZDUSD",
+      "mt5_symbol": "NZDUSD",
+      "priority": 1,
+      "description": "New Zealand Dollar vs US Dollar",
       "category": "forex_major"
     },
     {
-      "symbol": "XAGUSD",
-      "mt5_symbol": "XAGUSD",
+      "symbol": "GBPCAD",
+      "mt5_symbol": "GBPCAD",
       "priority": 1,
-      "description": "Silver vs US Dollar",
-      "category": "commodity"
+      "description": "British Pound vs Canadian Dollar",
+      "category": "forex_cross"
+    },
+    {
+      "symbol": "EURNZD",
+      "mt5_symbol": "EURNZD",
+      "priority": 1,
+      "description": "Euro vs New Zealand Dollar",
+      "category": "forex_cross"
     }
   ],
-  "scanner_settings": {
-    "daily_scan_time": "00:05",
-    "timeframes": {
-      "primary": "D1",
-      "confirmation": "H4"
-    },
-    "lookback_candles": {
-      "daily": 100,
-      "h4": 200
-    },
-    "strategy": "glitch_in_matrix",
-    "telegram_alerts": true,
-    "auto_execute": false
-  },
-  "strategy_rules": {
-    "name": "Glitch in Matrix",
-    "description": "Daily CHoCH + FVG retest + 4H opposite CHoCH confirmation inside FVG zone",
-    "steps": [
-      "1. Detect Daily CHoCH (break of swing high/low)",
-      "2. Identify FVG (gap from 3 candles) after CHoCH",
-      "3. Monitor price retest into FVG zone",
-      "4. Check 4H was in microtrend toward FVG",
-      "5. Detect 4H CHoCH in OPPOSITE direction INSIDE FVG zone",
-      "6. If all conditions met → Telegram alert + optional execution"
-    ],
-    "risk_management": {
-      "risk_per_trade": 0.02,
-      "max_positions": 3,
-      "min_risk_reward": 1.5
-    }
-  }
+  "last_updated": "2025-12-09",
+  "total_pairs": 21,
+  "note": "Lista exact din TradingView watchlist - IC Markets cTrader compatible"
 }

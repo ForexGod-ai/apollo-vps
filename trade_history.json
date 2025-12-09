@@ -161,7 +161,7 @@
         "lot_size": 0.08,
         "open_time": "2025-12-08T14:55:17",
         "status": "OPEN",
-        "profit": 7.15,
+        "profit": -2.53,
         "stop_loss": 1.32886,
         "take_profit": 1.33786,
         "balance_after": 1336.12
@@ -174,7 +174,7 @@
         "lot_size": 0.08,
         "open_time": "2025-12-08T15:20:19",
         "status": "OPEN",
-        "profit": 13.23,
+        "profit": 3.55,
         "stop_loss": 1.3281,
         "take_profit": 1.3371,
         "balance_after": 1336.12
@@ -187,7 +187,7 @@
         "lot_size": 0.08,
         "open_time": "2025-12-08T17:41:10",
         "status": "OPEN",
-        "profit": 9.07,
+        "profit": -0.61,
         "stop_loss": 1.32862,
         "take_profit": 1.33762,
         "balance_after": 1336.12
@@ -200,7 +200,7 @@
         "lot_size": 0.08,
         "open_time": "2025-12-08T20:06:02",
         "status": "OPEN",
-        "profit": 0.59,
+        "profit": -9.09,
         "stop_loss": 1.32968,
         "take_profit": 1.33868,
         "balance_after": 1336.12
@@ -213,7 +213,7 @@
         "lot_size": 0.08,
         "open_time": "2025-12-09T11:12:52",
         "status": "OPEN",
-        "profit": 0.08,
+        "profit": -9.60,
         "stop_loss": 1.32978,
         "take_profit": 1.33878,
         "balance_after": 1336.12
@@ -226,7 +226,7 @@
         "lot_size": 0.08,
         "open_time": "2025-12-09T11:24:10",
         "status": "OPEN",
-        "profit": -3.36,
+        "profit": -13.04,
         "stop_loss": 1.33021,
         "take_profit": 1.33921,
         "balance_after": 1336.12
@@ -239,7 +239,7 @@
         "lot_size": 0.08,
         "open_time": "2025-12-09T11:33:49",
         "status": "OPEN",
-        "profit": -6.96,
+        "profit": -16.64,
         "stop_loss": 1.33066,
         "take_profit": 1.33966,
         "balance_after": 1336.12
@@ -252,7 +252,7 @@
         "lot_size": 0.08,
         "open_time": "2025-12-09T11:45:29",
         "status": "OPEN",
-        "profit": 0.24,
+        "profit": -9.44,
         "stop_loss": 1.32976,
         "take_profit": 1.33876,
         "balance_after": 1336.12

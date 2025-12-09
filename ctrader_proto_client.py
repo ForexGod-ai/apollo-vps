@@ -149,7 +149,9 @@ class CTraderProtoClient:
     def _run_websocket(self):
         """Run WebSocket connection loop"""
         try:
-            self.ws.run_forever()
+            # Disable SSL verification for macOS
+            import ssl
+            self.ws.run_forever(sslopt={"cert_reqs": ssl.CERT_NONE})
         except Exception as e:
             logger.error(f"❌ WebSocket error: {e}")
     
@@ -585,23 +587,24 @@ class CTraderProtoClient:
     
     def _encode_message(self, msg_type: int, payload: bytes) -> bytes:
         """Encode message in ProtoOA format"""
-        # Simplified encoding - în producție folosește protobuf
-        # Format: [length:4][type:1][payload:n]
+        # ProtoOA format: [length:4][type:4][payload:n]
+        # Message types > 255 require 4 bytes (e.g., 2100 for auth)
         
-        msg_length = 1 + len(payload)  # type(1) + payload
+        msg_length = 4 + len(payload)  # type(4) + payload
         header = struct.pack('<I', msg_length)  # Little-endian 4-byte length
-        type_byte = struct.pack('<B', msg_type)  # 1-byte message type
+        type_bytes = struct.pack('<I', msg_type)  # 4-byte message type
         
-        return header + type_byte + payload
+        return header + type_bytes + payload
     
     def _parse_message(self, raw_message: bytes) -> tuple:
         """Parse incoming ProtoOA message"""
         try:
-            # Extract message type (first byte after length)
-            msg_type = struct.unpack('<B', raw_message[4:5])[0]
+            # ProtoOA format: [length:4][type:4][payload:n]
+            # Extract message type (4 bytes after length header)
+            msg_type = struct.unpack('<I', raw_message[4:8])[0]
             
-            # Extract payload (rest of message)
-            payload = raw_message[5:]
+            # Extract payload (rest of message after type)
+            payload = raw_message[8:]
             
             return msg_type, payload
             
