@@ -23,7 +23,7 @@ import time
 load_dotenv()
 
 
-class CTraderDataClient:
+class CTraderDataClientV2:
     """
     UNLIMITED market data client using Official OpenApiPy
     Supports all 21 trading pairs with ProtoOA WebSocket
@@ -48,7 +48,7 @@ class CTraderDataClient:
         self.last_trendbars = None
         self.last_error = None
         
-        logger.info(f"🚀 Initialized CTraderDataClient (Official OpenApiPy)")
+        logger.info(f"🚀 Initialized CTraderDataClientV2 (Official OpenApiPy)")
         logger.info(f"📍 Host: {self.host}:{self.port}")
     
     def connect(self):
@@ -115,10 +115,15 @@ class CTraderDataClient:
         try:
             # Application auth response
             if message.payloadType == ProtoOAApplicationAuthRes().payloadType:
-                logger.success("✅ App authenticated! Requesting symbols...")
+                logger.success("✅ App authenticated, authenticating account...")
+                self._authenticate_account()
+            
+            # Account auth response
+            elif message.payloadType == ProtoOAAccountAuthRes().payloadType:
+                logger.success(f"✅ Account {self.account_id} authenticated!")
                 self.authenticated = True
-                # Request symbols immediately after app auth (no account auth needed for market data)
-                self._request_symbols_without_account()
+                # Request symbols list
+                self._request_symbols()
             
             # Symbols list response
             elif message.payloadType == ProtoOASymbolsListRes().payloadType:
@@ -155,17 +160,14 @@ class CTraderDataClient:
         deferred = self.client.send(request)
         deferred.addErrback(self._on_error)
     
-    def _request_symbols_without_account(self):
-        """Request available symbols WITHOUT account authentication (market data only)"""
-        try:
-            request = ProtoOASymbolsListReq()
-            # DON'T set ctidTraderAccountId for public market data
-            request.includeArchivedSymbols = False
-            
-            deferred = self.client.send(request)
-            deferred.addErrback(self._on_error)
-        except Exception as e:
-            logger.error(f"Symbols request error: {e}")
+    def _request_symbols(self):
+        """Request available symbols"""
+        request = ProtoOASymbolsListReq()
+        request.ctidTraderAccountId = self.account_id
+        request.includeArchivedSymbols = False
+        
+        deferred = self.client.send(request)
+        deferred.addErrback(self._on_error)
     
     def get_historical_data(self, symbol: str, timeframe: str = 'D1', bars: int = 100) -> Optional[pd.DataFrame]:
         """
@@ -215,9 +217,9 @@ class CTraderDataClient:
             from_timestamp = int((datetime.utcnow() - timedelta(weeks=weeks)).timestamp() * 1000)
             to_timestamp = int(datetime.utcnow().timestamp() * 1000)
             
-            # Send trendbars request WITHOUT account ID (public market data)
+            # Send trendbars request
             request = ProtoOAGetTrendbarsReq()
-            # DON'T set ctidTraderAccountId for public market data
+            request.ctidTraderAccountId = self.account_id
             request.symbolId = symbol_id
             request.period = period
             request.fromTimestamp = from_timestamp
@@ -299,17 +301,17 @@ class CTraderDataClient:
 # Global client instance (reuse connection)
 _global_client = None
 
-def get_ctrader_client() -> CTraderDataClient:
+def get_ctrader_client_v2() -> CTraderDataClientV2:
     """Get or create global ProtoOA client"""
     global _global_client
     if _global_client is None:
-        _global_client = CTraderDataClient()
+        _global_client = CTraderDataClientV2()
     return _global_client
 
 
 if __name__ == "__main__":
     # Test with all 21 pairs
-    logger.info("🧪 Testing CTraderDataClient with 21 pairs...")
+    logger.info("🧪 Testing CTraderDataClientV2 with 21 pairs...")
     
     test_pairs = [
         'BTCUSD', 'XAUUSD', 'XAGUSD', 'USOIL',
@@ -319,7 +321,7 @@ if __name__ == "__main__":
         'AUDNZD', 'AUDUSD', 'NZDUSD', 'GBPCAD', 'EURNZD'
     ]
     
-    client = get_ctrader_client()
+    client = get_ctrader_client_v2()
     
     successful = []
     failed = []
