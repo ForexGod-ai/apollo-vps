@@ -182,8 +182,9 @@ Take Profit: `{setup.take_profit:.5f}`
 [🔍 4H Chart](https://www.tradingview.com/chart/?symbol={self._get_tv_symbol(setup.symbol)}&interval=240)
 
 ━━━━━━━━━━━━━━━━━━━━
-🎯 *ForexGod - Glitch Strategy*
-_Glitch in Matrix_ 🔥
+✨ *Strategy by ForexGod* ✨
+🧠 _Glitch in Matrix Trading System_
+💎 _+ AI Validation_
 """
         
         return message.strip()
@@ -249,6 +250,10 @@ _Glitch in Matrix_ 🔥
     def _send_action_buttons(self, setup: TradeSetup) -> bool:
         """Send interactive buttons for Execute/Skip actions"""
         try:
+            # Only send buttons for READY setups (have h4_choch)
+            if not setup.h4_choch:
+                return True  # Skip buttons for MONITORING setups
+            
             url = f"{self.base_url}/sendMessage"            
             # Determine direction and format callback data
             direction = 'buy' if setup.h4_choch.direction == 'bullish' else 'sell'
@@ -299,8 +304,9 @@ _Glitch in Matrix_ 🔥
 ⏰ Scan Time: `{datetime.now().strftime('%Y-%m-%d %H:%M UTC')}`
 
 ━━━━━━━━━━━━━━━━━━━━
-🔥 *ForexGod - Glitch Signals*
-_Next scan in 24 hours_
+✨ *Strategy by ForexGod* ✨
+🧠 _Glitch in Matrix Trading System_
+💎 _+ AI Validation_
 """
         return self.send_message(message.strip())
     

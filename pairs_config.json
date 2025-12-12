@@ -22,13 +22,6 @@
       "category": "commodity"
     },
     {
-      "symbol": "USOIL",
-      "mt5_symbol": "USOIL",
-      "priority": 1,
-      "description": "Crude Oil WTI",
-      "category": "commodity"
-    },
-    {
       "symbol": "GBPNZD",
       "mt5_symbol": "GBPNZD",
       "priority": 1,
@@ -148,7 +141,18 @@
       "category": "forex_cross"
     }
   ],
-  "last_updated": "2025-12-09",
+  "scanner_settings": {
+    "timeframes": ["D1", "H4"],
+    "min_rr": 3.0,
+    "max_setups_per_scan": 5,
+    "lookback_candles": {
+      "daily": 250,
+      "h4": 500
+    },
+    "telegram_alerts": true,
+    "chart_generation": true
+  },
+  "last_updated": "2025-12-12",
   "total_pairs": 21,
-  "note": "Lista exact din TradingView watchlist - IC Markets cTrader compatible"
+  "note": "Lista IC Markets cTrader - 21 perechi (forex + BTC + XAU + XAG)"
 }

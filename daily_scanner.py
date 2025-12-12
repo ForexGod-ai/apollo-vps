@@ -1,9 +1,9 @@
 """
 Daily Scanner for ForexGod - Glitch Signals
 Scans all pairs for "Glitch in Matrix" setups at 00:05 daily
+Uses IC Markets data via cTrader cBot HTTP server
 """
 
-import MetaTrader5 as mt5
 import pandas as pd
 from datetime import datetime, timedelta
 import json
@@ -13,52 +13,36 @@ from dotenv import load_dotenv
 
 from smc_detector import SMCDetector, TradeSetup
 from telegram_notifier import TelegramNotifier
+from ctrader_cbot_client import CTraderCBotClient
 
 load_dotenv()
 
 
-class MT5DataProvider:
-    """Downloads historical data from MetaTrader 5"""
+class CTraderDataProvider:
+    """Downloads historical data from cTrader via cBot HTTP server"""
     
     def __init__(self):
-        self.login = int(os.getenv('MT5_LOGIN'))
-        self.password = os.getenv('MT5_PASSWORD')
-        self.server = os.getenv('MT5_SERVER')
+        self.client = CTraderCBotClient()
         self.connected = False
     
     def connect(self) -> bool:
-        """Connect to MT5"""
+        """Check if cBot server is running"""
         try:
-            if not mt5.initialize():
-                print(f"❌ MT5 initialize() failed: {mt5.last_error()}")
-                return False
-            
-            authorized = mt5.login(self.login, password=self.password, server=self.server)
-            
-            if not authorized:
-                print(f"❌ MT5 login failed: {mt5.last_error()}")
-                mt5.shutdown()
-                return False
-            
-            account_info = mt5.account_info()
-            if account_info:
-                print(f"✅ MT5 Connected: Account #{account_info.login}, Balance: ${account_info.balance}")
+            if self.client.is_available():
+                print("✅ cTrader cBot connected (IC Markets)")
                 self.connected = True
                 return True
             else:
-                print(f"❌ Failed to get account info: {mt5.last_error()}")
+                print("❌ cTrader cBot not running. Please start MarketDataProvider cBot in cTrader.")
                 return False
-        
         except Exception as e:
-            print(f"❌ MT5 connection error: {e}")
+            print(f"❌ cTrader connection error: {e}")
             return False
     
     def disconnect(self):
-        """Disconnect from MT5"""
-        if self.connected:
-            mt5.shutdown()
-            print("🔌 MT5 disconnected")
-            self.connected = False
+        """Disconnect (no-op for HTTP client)"""
+        print("🔌 cTrader cBot disconnected")
+        self.connected = False
     
     def get_historical_data(
         self, 
@@ -67,57 +51,28 @@ class MT5DataProvider:
         num_candles: int
     ) -> Optional[pd.DataFrame]:
         """
-        Download historical candlestick data
+        Download historical candlestick data from cTrader
         
         Args:
-            symbol: Trading pair (e.g., "EURUSD")
-            timeframe: "D1" (Daily) or "H4" (4-hour)
+            symbol: Trading symbol (e.g., 'GBPUSD')
+            timeframe: 'M1', 'M5', 'M15', 'H1', 'H4', 'D1'
             num_candles: Number of candles to retrieve
-        
+            
         Returns:
             DataFrame with columns: time, open, high, low, close, volume
         """
-        if not self.connected:
-            print("❌ MT5 not connected")
-            return None
-        
         try:
-            # Convert timeframe string to MT5 constant
-            tf_map = {
-                "D1": mt5.TIMEFRAME_D1,
-                "H4": mt5.TIMEFRAME_H4,
-                "H1": mt5.TIMEFRAME_H1,
-                "M15": mt5.TIMEFRAME_M15
-            }
+            df = self.client.get_historical_data(symbol, timeframe, num_candles)
             
-            if timeframe not in tf_map:
-                print(f"❌ Invalid timeframe: {timeframe}")
-                return None
-            
-            mt5_timeframe = tf_map[timeframe]
-            
-            # Get current time and calculate start time
-            to_date = datetime.now()
-            
-            # Download data
-            rates = mt5.copy_rates_from(symbol, mt5_timeframe, to_date, num_candles)
-            
-            if rates is None or len(rates) == 0:
+            if df is not None and not df.empty:
+                # Rename index to 'time' column
+                df = df.reset_index()
+                print(f"✅ Downloaded {len(df)} candles for {symbol} ({timeframe}) from IC Markets")
+                return df
+            else:
                 print(f"⚠️ No data for {symbol} on {timeframe}")
                 return None
-            
-            # Convert to DataFrame
-            df = pd.DataFrame(rates)
-            df['time'] = pd.to_datetime(df['time'], unit='s')
-            
-            # Keep only necessary columns
-            df = df[['time', 'open', 'high', 'low', 'close', 'tick_volume']]
-            df = df.rename(columns={'tick_volume': 'volume'})
-            
-            print(f"✅ Downloaded {len(df)} candles for {symbol} ({timeframe})")
-            
-            return df
-        
+                
         except Exception as e:
             print(f"❌ Error downloading data for {symbol}: {e}")
             return None
@@ -126,8 +81,15 @@ class MT5DataProvider:
 class DailyScanner:
     """Main scanner that runs daily at 00:05"""
     
-    def __init__(self):
-        self.data_provider = MT5DataProvider()
+    def __init__(self, use_ctrader: bool = True):
+        # Choose data provider
+        if use_ctrader:
+            self.data_provider = CTraderDataProvider()
+            print("📊 Using cTrader cBot for market data (IC Markets)")
+        else:
+            self.data_provider = MT5DataProvider()
+            print("📊 Using MT5 for market data")
+            
         self.smc_detector = SMCDetector(swing_lookback=5)
         self.telegram = TelegramNotifier()
         

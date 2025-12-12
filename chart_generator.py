@@ -73,17 +73,13 @@ class ChartGenerator:
                 
                 mpf.plot(
                     df,
-                    type='ohlc',  # OHLC bars mai groase decât candle!
+                    type='candle',  # Use candle instead of ohlc for better compatibility
                     style=self.style,
                     title=f'{symbol} - Daily',
                     ylabel='',
                     volume=False,
                     figsize=(10, 5.5),
                     tight_layout=True,
-                    update_width_config=dict(
-                        ohlc_tickwidth=1.5,  # Bars mai groase!
-                        ohlc_linewidth=1.5
-                    ),
                     savefig=dict(
                         fname=save_path,
                         dpi=120,

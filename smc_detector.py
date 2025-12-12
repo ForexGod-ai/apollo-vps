@@ -1006,11 +1006,11 @@ class SMCDetector:
                     if risk_reward < 2.0:
                         return None  # Re-entry not worth it
                         
-                    logger.info(f"🔄 RE-ENTRY setup found for {symbol}!")
-                    logger.info(f"   Original SL was broken, but trend continues")
-                    logger.info(f"   New Entry: {entry:.5f}")
-                    logger.info(f"   New SL: {sl:.5f}")
-                    logger.info(f"   New R:R: 1:{risk_reward:.2f}")
+                    print(f"🔄 RE-ENTRY setup found for {symbol}!")
+                    print(f"   Original SL was broken, but trend continues")
+                    print(f"   New Entry: {entry:.5f}")
+                    print(f"   New SL: {sl:.5f}")
+                    print(f"   New R:R: 1:{risk_reward:.2f}")
                 else:
                     return None  # Trend invalidated
                     
@@ -1035,11 +1035,11 @@ class SMCDetector:
                     if risk_reward < 2.0:
                         return None  # Re-entry not worth it
                         
-                    logger.info(f"🔄 RE-ENTRY setup found for {symbol}!")
-                    logger.info(f"   Original SL was broken, but trend continues")
-                    logger.info(f"   New Entry: {entry:.5f}")
-                    logger.info(f"   New SL: {sl:.5f}")
-                    logger.info(f"   New R:R: 1:{risk_reward:.2f}")
+                    print(f"🔄 RE-ENTRY setup found for {symbol}!")
+                    print(f"   Original SL was broken, but trend continues")
+                    print(f"   New Entry: {entry:.5f}")
+                    print(f"   New SL: {sl:.5f}")
+                    print(f"   New R:R: 1:{risk_reward:.2f}")
                 else:
                     return None  # Trend invalidated
         
