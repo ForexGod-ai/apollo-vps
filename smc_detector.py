@@ -120,11 +120,12 @@ class SMCDetector:
             )
             
             if left_check and right_check:
+                candle_time = df['time'].iloc[i] if 'time' in df.columns else i
                 swing_highs.append(SwingPoint(
                     index=i,
                     price=current_high,
                     swing_type='high',
-                    candle_time=df['time'].iloc[i]
+                    candle_time=candle_time
                 ))
         
         return swing_highs
@@ -156,11 +157,12 @@ class SMCDetector:
             )
             
             if left_check and right_check:
+                candle_time = df['time'].iloc[i] if 'time' in df.columns else i
                 swing_lows.append(SwingPoint(
                     index=i,
                     price=current_low,
                     swing_type='low',
-                    candle_time=df['time'].iloc[i]
+                    candle_time=candle_time
                 ))
         
         return swing_lows
@@ -252,9 +254,9 @@ class SMCDetector:
                             if len(recent_lows) >= 2:
                                 ll_pattern = recent_lows[-1].price < recent_lows[-2].price
                             
-                            # STRICT VALIDATION: Require BOTH LH and LL for valid bearish structure
-                            # This prevents false positives from incomplete trend structure
-                            if lh_pattern and ll_pattern:  # AND - both patterns required
+                            # RELAXED VALIDATION: Accept CHoCH if has LH or LL pattern
+                            # Strong CHoCH has BOTH, but accept partial for early detection
+                            if lh_pattern or ll_pattern:  # OR - either pattern is enough
                                 # POST-BREAK VALIDATION: Check if price CONFIRMS the change
                                 # Look for swings AFTER the break to confirm HH or HL
                                 swings_after_break = [s for s in swing_highs if s.index > j] + \
@@ -285,7 +287,7 @@ class SMCDetector:
                                         direction='bullish',
                                         break_price=swing.price,
                                         previous_trend='bearish',
-                                        candle_time=df['time'].iloc[j],
+                                        candle_time=df['time'].iloc[j] if 'time' in df.columns else j,
                                         swing_broken=swing
                                     ))
                                     current_trend = 'bullish'
@@ -295,7 +297,7 @@ class SMCDetector:
                                 index=j,
                                 direction='bullish',
                                 break_price=swing.price,
-                                candle_time=df['time'].iloc[j],
+                                candle_time=df['time'].iloc[j] if 'time' in df.columns else j,
                                 swing_broken=swing
                             ))
                         else:
@@ -324,9 +326,9 @@ class SMCDetector:
                             if len(recent_lows) >= 2:
                                 hl_pattern = recent_lows[-1].price > recent_lows[-2].price
                             
-                            # STRICT VALIDATION: Require BOTH HH and HL for valid bullish structure
-                            # This prevents false positives from incomplete trend structure
-                            if hh_pattern and hl_pattern:  # AND - both patterns required
+                            # RELAXED VALIDATION: Accept CHoCH if has HH or HL pattern
+                            # Strong CHoCH has BOTH, but accept partial for early detection
+                            if hh_pattern or hl_pattern:  # OR - either pattern is enough
                                 # POST-BREAK VALIDATION: Check if price CONFIRMS the change
                                 # Look for swings AFTER the break to confirm LH or LL
                                 swings_after_break = [s for s in swing_highs if s.index > j] + \
@@ -357,7 +359,7 @@ class SMCDetector:
                                         direction='bearish',
                                         break_price=swing.price,
                                         previous_trend='bullish',
-                                        candle_time=df['time'].iloc[j],
+                                        candle_time=df['time'].iloc[j] if 'time' in df.columns else j,
                                         swing_broken=swing
                                     ))
                                     current_trend = 'bearish'
@@ -367,7 +369,7 @@ class SMCDetector:
                                 index=j,
                                 direction='bearish',
                                 break_price=swing.price,
-                                candle_time=df['time'].iloc[j],
+                                candle_time=df['time'].iloc[j] if 'time' in df.columns else j,
                                 swing_broken=swing
                             ))
                         else:
@@ -422,7 +424,7 @@ class SMCDetector:
                         top=gap_top,
                         bottom=gap_bottom,
                         middle=(gap_top + gap_bottom) / 2,
-                        candle_time=df['time'].iloc[i],
+                        candle_time=df['time'].iloc[i] if 'time' in df.columns else i,
                         is_filled=False,
                         associated_choch=choch
                     )
@@ -440,7 +442,7 @@ class SMCDetector:
                         top=gap_top,
                         bottom=gap_bottom,
                         middle=(gap_top + gap_bottom) / 2,
-                        candle_time=df['time'].iloc[i],
+                        candle_time=df['time'].iloc[i] if 'time' in df.columns else i,
                         is_filled=False,
                         associated_choch=choch
                     )
@@ -481,7 +483,7 @@ class SMCDetector:
                             top=gap_top,
                             bottom=gap_bottom,
                             middle=(gap_top + gap_bottom) / 2,
-                            candle_time=df['time'].iloc[fvg_index],
+                            candle_time=df['time'].iloc[fvg_index] if 'time' in df.columns else fvg_index,
                             is_filled=False,
                             associated_choch=choch
                         ))
@@ -514,7 +516,7 @@ class SMCDetector:
                             top=gap_top,
                             bottom=gap_bottom,
                             middle=(gap_top + gap_bottom) / 2,
-                            candle_time=df['time'].iloc[fvg_index],
+                            candle_time=df['time'].iloc[fvg_index] if 'time' in df.columns else fvg_index,
                             is_filled=False,
                             associated_choch=choch
                         ))
@@ -565,18 +567,18 @@ class SMCDetector:
         Filter FVG quality to reduce false signals
         
         Checks:
-        1. Gap size: Minimum 0.3% of price (reject micro-gaps)
-        2. Momentum: Strong candle that created the gap
+        1. Gap size: Minimum 0.15% of price for forex (reject micro-gaps)
+        2. Momentum: Strong candle that created the gap (≥40% body)
         3. Not already filled
         
         Returns:
             True if high quality FVG, False otherwise
         """
-        # Check 1: Gap size minimum 0.3%
+        # Check 1: Gap size minimum 0.15% (relaxed for forex)
         gap_size = fvg.top - fvg.bottom
         gap_pct = (gap_size / fvg.bottom) * 100
         
-        if gap_pct < 0.3:
+        if gap_pct < 0.10:  # Temporarily relaxed to 0.10% to see all FVGs
             return False  # Micro-gap, too small
         
         # Check 2: Momentum - check the candle that created the gap
@@ -587,10 +589,10 @@ class SMCDetector:
         candle_body = abs(gap_candle['close'] - gap_candle['open'])
         candle_range = gap_candle['high'] - gap_candle['low']
         
-        # Body should be at least 50% of total range (strong momentum)
+        # Body should be at least 40% of total range (relaxed from 50%)
         if candle_range > 0:
             body_ratio = candle_body / candle_range
-            if body_ratio < 0.5:
+            if body_ratio < 0.25:  # Temporarily relaxed to 0.25 to see all FVGs
                 return False  # Weak candle, likely manipulation
         
         # Check 3: Not already filled
@@ -927,25 +929,66 @@ class SMCDetector:
         4. Check 4H for confirmation (CHoCH sau BOS în aceeași direcție)
         5. Return complete setup
         """
+        # DEBUG MODE for specific symbols
+        debug = symbol == "NZDCAD"
+        
         # Step 1: Detect Daily CHoCH
         daily_chochs = self.detect_choch(df_daily)
         
+        if debug:
+            print(f"\n{'='*60}")
+            print(f"🔍 DEBUG: {symbol} - GLITCH IN MATRIX SCAN")
+            print(f"{'='*60}")
+            print(f"📊 Daily CHoCH detected: {len(daily_chochs)}")
+            if daily_chochs:
+                for i, choch in enumerate(daily_chochs[-3:]):  # Last 3
+                    print(f"   [{i}] {choch.direction.upper()} @ {choch.break_price:.5f} (index {choch.index})")
+        
         if not daily_chochs:
+            if debug:
+                print(f"❌ REJECTED: No Daily CHoCH found")
             return None  # No CHoCH found
         
         # Get most recent CHoCH = TRENDUL ACTUAL
         latest_choch = daily_chochs[-1]
         current_trend = latest_choch.direction  # 'bullish' or 'bearish'
         
+        if debug:
+            print(f"\n✅ Latest CHoCH: {current_trend.upper()} @ {latest_choch.break_price:.5f}")
+        
         # Step 2: Find FVG after CHoCH (closest to current price)
         current_price = df_daily['close'].iloc[-1]
         fvg = self.detect_fvg(df_daily, latest_choch, current_price)
         
         if not fvg:
+            if debug:
+                print(f"❌ REJECTED: No FVG found after CHoCH")
             return None  # No FVG found
+        
+        if debug:
+            gap_size = fvg.top - fvg.bottom
+            gap_pct = (gap_size / fvg.bottom) * 100
+            print(f"\n✅ FVG Found:")
+            print(f"   Direction: {fvg.direction.upper()}")
+            print(f"   Zone: {fvg.bottom:.5f} - {fvg.top:.5f}")
+            print(f"   Gap Size: {gap_size:.5f} ({gap_pct:.3f}%)")
+            print(f"   Middle: {fvg.middle:.5f}")
         
         # Step 2.5: Validate FVG quality
         if not self.is_high_quality_fvg(fvg, df_daily):
+            if debug:
+                gap_size = fvg.top - fvg.bottom
+                gap_pct = (gap_size / fvg.bottom) * 100
+                print(f"❌ REJECTED: Low quality FVG")
+                print(f"   Gap: {gap_pct:.3f}% (need ≥0.10%)")
+                
+                # Check body momentum
+                if fvg.index < len(df_daily):
+                    candle = df_daily.iloc[fvg.index]
+                    candle_body = abs(candle['close'] - candle['open'])
+                    candle_range = candle['high'] - candle['low']
+                    body_ratio = candle_body / candle_range if candle_range > 0 else 0
+                    print(f"   Body: {body_ratio:.1%} (need ≥25%)")
             return None  # Low quality FVG (micro-gap or weak)
         
         # FVG direction must match current trend
@@ -953,6 +996,9 @@ class SMCDetector:
         
         # Step 4: Check price relationship with FVG
         current_price = df_daily['close'].iloc[-1]
+        
+        if debug:
+            print(f"\n📍 Current Price: {current_price:.5f}")
         
         # NEW: More flexible - accept setups even if price not perfectly in FVG yet
         price_approaching_fvg = False
@@ -967,14 +1013,38 @@ class SMCDetector:
             if current_price >= fvg.bottom:
                 price_approaching_fvg = True
         
+        if debug:
+            print(f"   In FVG: {price_in_fvg}")
+            print(f"   Approaching FVG: {price_approaching_fvg}")
+            if current_trend == 'bullish':
+                distance = current_price - fvg.top
+                print(f"   Distance from FVG top: {distance:.5f} ({(distance/current_price)*100:.2f}%)")
+            else:
+                distance = fvg.bottom - current_price
+                print(f"   Distance from FVG bottom: {distance:.5f} ({(distance/current_price)*100:.2f}%)")
+        
         if not price_approaching_fvg:
+            if debug:
+                print(f"❌ REJECTED: Price too far from FVG")
             return None  # Price too far from FVG
         
         # Step 5: Detect strategy type (pass FVG for validation)
         strategy_type = self.detect_strategy_type(df_daily, latest_choch, fvg)
         
+        if debug:
+            print(f"\n📋 Strategy Type: {strategy_type.upper()}")
+        
         # Step 6: Check 4H for confirmation (CHoCH FROM FVG zone)
         h4_chochs, h4_bos_list = self.detect_choch_and_bos(df_4h)
+        
+        if debug:
+            print(f"\n🔍 H4 Analysis:")
+            print(f"   Total H4 CHoCH: {len(h4_chochs)}")
+            if h4_chochs:
+                for i, h4ch in enumerate(h4_chochs[-5:]):  # Last 5
+                    in_fvg = fvg.bottom <= h4ch.break_price <= fvg.top
+                    matches = h4ch.direction == current_trend
+                    print(f"   [{i}] {h4ch.direction.upper()} @ {h4ch.break_price:.5f} - InFVG:{in_fvg} Match:{matches}")
         
         # Find H4 CHoCH that matches current trend AND happens FROM FVG zone
         valid_h4_choch = None
@@ -994,7 +1064,12 @@ class SMCDetector:
             # CRITICAL: CHoCH break_price must be WITHIN FVG zone
             if fvg.bottom <= h4_choch.break_price <= fvg.top:
                 valid_h4_choch = h4_choch
+                if debug:
+                    print(f"   ✅ Valid H4 CHoCH found @ {h4_choch.break_price:.5f}")
                 break
+        
+        if debug and not valid_h4_choch:
+            print(f"   ❌ No valid H4 CHoCH FROM FVG zone")
         
         # Determine setup status
         h4_confirmation = valid_h4_choch
@@ -1003,6 +1078,11 @@ class SMCDetector:
             status = 'READY'  # Can execute now
         else:
             status = 'MONITORING'  # Watch and wait
+        
+        if debug:
+            print(f"\n📊 Setup Status: {status}")
+            print(f"   H4 Confirmation: {h4_confirmation is not None}")
+            print(f"   Price in FVG: {price_in_fvg}")
         
         # Step 7: Calculate entry, SL, TP
         # Use H4 CHoCH for both REVERSAL and CONTINUITY
@@ -1019,6 +1099,15 @@ class SMCDetector:
             else:
                 sl = fvg.top * 1.002  # SL above FVG
                 tp = fvg.bottom * 0.985  # TP below FVG
+        
+        if debug:
+            print(f"\n💰 Trade Levels:")
+            print(f"   Entry: {entry:.5f}")
+            print(f"   SL: {sl:.5f}")
+            print(f"   TP: {tp:.5f}")
+            rr = abs(tp - entry) / abs(entry - sl) if abs(entry - sl) > 0 else 0
+            print(f"   Risk:Reward: 1:{rr:.2f}")
+            print(f"{'='*60}\n")
         
         risk = abs(entry - sl)
         reward = abs(tp - entry)
