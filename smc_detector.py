@@ -252,9 +252,9 @@ class SMCDetector:
                             if len(recent_lows) >= 2:
                                 ll_pattern = recent_lows[-1].price < recent_lows[-2].price
                             
-                            # Valid CHoCH only if LH pattern (relaxed for monitoring)
-                            # RELAXED: Accept even single LH as potential reversal signal
-                            if lh_pattern or ll_pattern:  # OR instead of AND
+                            # STRICT VALIDATION: Require BOTH LH and LL for valid bearish structure
+                            # This prevents false positives from incomplete trend structure
+                            if lh_pattern and ll_pattern:  # AND - both patterns required
                                 # POST-BREAK VALIDATION: Check if price CONFIRMS the change
                                 # Look for swings AFTER the break to confirm HH or HL
                                 swings_after_break = [s for s in swing_highs if s.index > j] + \
@@ -324,9 +324,9 @@ class SMCDetector:
                             if len(recent_lows) >= 2:
                                 hl_pattern = recent_lows[-1].price > recent_lows[-2].price
                             
-                            # Valid CHoCH only if HH pattern (relaxed for monitoring)
-                            # RELAXED: Accept even single HH as potential reversal signal
-                            if hh_pattern or hl_pattern:  # OR instead of AND
+                            # STRICT VALIDATION: Require BOTH HH and HL for valid bullish structure
+                            # This prevents false positives from incomplete trend structure
+                            if hh_pattern and hl_pattern:  # AND - both patterns required
                                 # POST-BREAK VALIDATION: Check if price CONFIRMS the change
                                 # Look for swings AFTER the break to confirm LH or LL
                                 swings_after_break = [s for s in swing_highs if s.index > j] + \
@@ -560,6 +560,45 @@ class SMCDetector:
         """Check if current price is inside FVG zone"""
         return fvg.bottom <= current_price <= fvg.top
     
+    def is_high_quality_fvg(self, fvg: FVG, df: pd.DataFrame) -> bool:
+        """
+        Filter FVG quality to reduce false signals
+        
+        Checks:
+        1. Gap size: Minimum 0.3% of price (reject micro-gaps)
+        2. Momentum: Strong candle that created the gap
+        3. Not already filled
+        
+        Returns:
+            True if high quality FVG, False otherwise
+        """
+        # Check 1: Gap size minimum 0.3%
+        gap_size = fvg.top - fvg.bottom
+        gap_pct = (gap_size / fvg.bottom) * 100
+        
+        if gap_pct < 0.3:
+            return False  # Micro-gap, too small
+        
+        # Check 2: Momentum - check the candle that created the gap
+        if fvg.index >= len(df):
+            return True  # Can't validate, assume OK
+        
+        gap_candle = df.iloc[fvg.index]
+        candle_body = abs(gap_candle['close'] - gap_candle['open'])
+        candle_range = gap_candle['high'] - gap_candle['low']
+        
+        # Body should be at least 50% of total range (strong momentum)
+        if candle_range > 0:
+            body_ratio = candle_body / candle_range
+            if body_ratio < 0.5:
+                return False  # Weak candle, likely manipulation
+        
+        # Check 3: Not already filled
+        if fvg.is_filled:
+            return False
+        
+        return True
+    
     def detect_microtrend(self, df_4h: pd.DataFrame, fvg: FVG, choch_4h_index: int) -> bool:
         """
         Check if 4H was in microtrend toward the FVG before the 4H CHoCH
@@ -638,10 +677,20 @@ class SMCDetector:
             recent_lows = df_4h['low'].iloc[lookback_start:lookback_end]
             stop_loss = recent_lows.min()
             
-            # TP = Last High on Daily (aim for higher structure)
-            # EXPANDED: Look at last 30 days for major structure points (not just 10)
-            recent_highs = df_daily['high'].iloc[-30:]
-            take_profit = recent_highs.max()
+            # TP = Next Daily HIGH structure (body-based, not wick)
+            # STRATEGY: Find the next resistance level (previous swing high)
+            daily_swing_highs = self.detect_swing_highs(df_daily)
+            
+            # Get swing highs BEFORE current position
+            previous_highs = [sh for sh in daily_swing_highs if sh.index < len(df_daily) - 5]
+            
+            if previous_highs:
+                # Use last significant high as TP (next resistance)
+                take_profit = previous_highs[-1].price
+            else:
+                # Fallback: Use recent high from last 30 days
+                recent_highs = df_daily['high'].iloc[-30:]
+                take_profit = recent_highs.max()
             
         else:
             # SHORT TRADE (Daily bearish trend)
@@ -658,10 +707,20 @@ class SMCDetector:
             recent_highs = df_4h['high'].iloc[lookback_start:lookback_end]
             stop_loss = recent_highs.max()
             
-            # TP = Last Low on Daily (aim for lower structure)
-            # EXPANDED: Look at last 30 days for major structure points (not just 10)
-            recent_lows = df_daily['low'].iloc[-30:]
-            take_profit = recent_lows.min()
+            # TP = Next Daily LOW structure (body-based, not wick)
+            # STRATEGY: Find the next support level (previous swing low)
+            daily_swing_lows = self.detect_swing_lows(df_daily)
+            
+            # Get swing lows BEFORE current position
+            previous_lows = [sl for sl in daily_swing_lows if sl.index < len(df_daily) - 5]
+            
+            if previous_lows:
+                # Use last significant low as TP (next support)
+                take_profit = previous_lows[-1].price
+            else:
+                # Fallback: Use recent low from last 30 days
+                recent_lows = df_daily['low'].iloc[-30:]
+                take_profit = recent_lows.min()
         
         return entry, stop_loss, take_profit
     
@@ -885,6 +944,10 @@ class SMCDetector:
         if not fvg:
             return None  # No FVG found
         
+        # Step 2.5: Validate FVG quality
+        if not self.is_high_quality_fvg(fvg, df_daily):
+            return None  # Low quality FVG (micro-gap or weak)
+        
         # FVG direction must match current trend
         fvg.direction = current_trend
         
@@ -910,34 +973,43 @@ class SMCDetector:
         # Step 5: Detect strategy type (pass FVG for validation)
         strategy_type = self.detect_strategy_type(df_daily, latest_choch, fvg)
         
-        # Step 6: Check 4H for confirmation (OPTIONAL for MONITORING status)
-        h4_chochs = self.detect_choch(df_4h)
+        # Step 6: Check 4H for confirmation (CHoCH FROM FVG zone)
+        h4_chochs, h4_bos_list = self.detect_choch_and_bos(df_4h)
         
-        # Find 4H CHoCH that matches current trend
+        # Find H4 CHoCH that matches current trend AND happens FROM FVG zone
         valid_h4_choch = None
         
-        for h4_choch in reversed(h4_chochs):  # Start from most recent
-            # 4H must confirm CURRENT TREND direction
+        # BOTH STRATEGIES USE H4 CHoCH:
+        # REVERSAL: Daily CHoCH (trend change) → H4 CHoCH confirms new trend FROM FVG
+        # CONTINUITY: Daily BOS (trend continues) → Pullback → H4 CHoCH (from pullback back to main trend) FROM FVG
+        # 
+        # Example CONTINUITY:
+        # Daily BULLISH (BOS = HH) → Pullback în FVG (4H becomes bearish) → H4 CHoCH BULLISH (from bearish pullback to bullish continuation)
+        
+        for h4_choch in reversed(h4_chochs):
+            # H4 CHoCH direction must match Daily trend direction
             if h4_choch.direction != current_trend:
                 continue
             
-            # Check if CHoCH happened inside or near FVG zone
-            h4_price_at_choch = df_4h['close'].iloc[h4_choch.index]
-            
-            if self.is_price_in_fvg(h4_price_at_choch, fvg):
-                # Found valid 4H confirmation!
+            # CRITICAL: CHoCH break_price must be WITHIN FVG zone
+            if fvg.bottom <= h4_choch.break_price <= fvg.top:
                 valid_h4_choch = h4_choch
                 break
         
         # Determine setup status
-        if valid_h4_choch and price_in_fvg:
+        h4_confirmation = valid_h4_choch
+        
+        if h4_confirmation and price_in_fvg:
             status = 'READY'  # Can execute now
         else:
             status = 'MONITORING'  # Watch and wait
         
         # Step 7: Calculate entry, SL, TP
-        if valid_h4_choch:
-            entry, sl, tp = self.calculate_entry_sl_tp(fvg, valid_h4_choch, df_4h, df_daily)
+        # Use H4 CHoCH for both REVERSAL and CONTINUITY
+        h4_signal = valid_h4_choch
+        
+        if h4_signal:
+            entry, sl, tp = self.calculate_entry_sl_tp(fvg, h4_signal, df_4h, df_daily)
         else:
             # No 4H CHoCH yet - use FVG middle as estimated entry
             entry = fvg.middle
@@ -1050,7 +1122,7 @@ class SMCDetector:
             symbol=symbol,
             daily_choch=latest_choch,
             fvg=fvg,
-            h4_choch=valid_h4_choch,  # May be None
+            h4_choch=h4_signal,  # H4 CHoCH (same for both REVERSAL and CONTINUITY)
             entry_price=entry,
             stop_loss=sl,
             take_profit=tp,
@@ -1072,11 +1144,19 @@ def format_setup_message(setup: TradeSetup) -> str:
     else:
         status_icon = "👀 MONITORING (waiting for entry)"
     
-    h4_info = f"🔄 4H CHoCH: {setup.h4_choch.direction.upper()} (inside FVG)" if setup.h4_choch else "⏳ Waiting for 4H confirmation"
+    # Strategy type emoji
+    strategy_emoji = "🔄 REVERSAL" if setup.strategy_type == 'reversal' else "➡️ CONTINUITY"
+    
+    # H4 confirmation type
+    if setup.h4_choch:
+        # Both strategies use CHoCH
+        h4_info = f"🔄 4H CHoCH: {setup.h4_choch.direction.upper()} (FROM FVG zone)"
+    else:
+        h4_info = "⏳ Waiting for 4H CHoCH confirmation"
     
     message = f"""
 🚨 SETUP - {setup.symbol}
-{direction} | {status_icon}
+{direction} | {status_icon} | {strategy_emoji}
 
 📊 Daily CHoCH: {setup.daily_choch.direction.upper()}
 📍 FVG Zone: {setup.fvg.bottom:.5f} - {setup.fvg.top:.5f}
