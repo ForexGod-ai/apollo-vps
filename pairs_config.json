@@ -1,145 +1,110 @@
 {
   "pairs": [
     {
-      "symbol": "BTCUSD",
-      "mt5_symbol": "BTCUSD",
-      "priority": 1,
-      "description": "Bitcoin vs US Dollar",
-      "category": "crypto"
-    },
-    {
       "symbol": "XAUUSD",
       "mt5_symbol": "XAUUSD",
       "priority": 1,
-      "description": "Gold vs US Dollar",
+      "description": "Gold vs US Dollar - Best performer: +146% return, 86% WR",
       "category": "commodity"
-    },
-    {
-      "symbol": "XAGUSD",
-      "mt5_symbol": "XAGUSD",
-      "priority": 1,
-      "description": "Silver vs US Dollar",
-      "category": "commodity"
-    },
-    {
-      "symbol": "GBPNZD",
-      "mt5_symbol": "GBPNZD",
-      "priority": 1,
-      "description": "British Pound vs New Zealand Dollar",
-      "category": "forex_cross"
-    },
-    {
-      "symbol": "GBPUSD",
-      "mt5_symbol": "GBPUSD",
-      "priority": 1,
-      "description": "British Pound vs US Dollar",
-      "category": "forex_major"
-    },
-    {
-      "symbol": "GBPJPY",
-      "mt5_symbol": "GBPJPY",
-      "priority": 1,
-      "description": "British Pound vs Japanese Yen",
-      "category": "forex_cross"
     },
     {
       "symbol": "USDCAD",
       "mt5_symbol": "USDCAD",
       "priority": 1,
-      "description": "US Dollar vs Canadian Dollar",
+      "description": "US Dollar vs Canadian Dollar - +92.5% return, 80% WR",
       "category": "forex_major"
-    },
-    {
-      "symbol": "NZDCAD",
-      "mt5_symbol": "NZDCAD",
-      "priority": 1,
-      "description": "New Zealand Dollar vs Canadian Dollar",
-      "category": "forex_cross"
-    },
-    {
-      "symbol": "EURUSD",
-      "mt5_symbol": "EURUSD",
-      "priority": 1,
-      "description": "Euro vs US Dollar",
-      "category": "forex_major"
-    },
-    {
-      "symbol": "EURJPY",
-      "mt5_symbol": "EURJPY",
-      "priority": 1,
-      "description": "Euro vs Japanese Yen",
-      "category": "forex_cross"
-    },
-    {
-      "symbol": "EURCAD",
-      "mt5_symbol": "EURCAD",
-      "priority": 1,
-      "description": "Euro vs Canadian Dollar",
-      "category": "forex_cross"
-    },
-    {
-      "symbol": "AUDCAD",
-      "mt5_symbol": "AUDCAD",
-      "priority": 1,
-      "description": "Australian Dollar vs Canadian Dollar",
-      "category": "forex_cross"
     },
     {
       "symbol": "USDCHF",
       "mt5_symbol": "USDCHF",
       "priority": 1,
-      "description": "US Dollar vs Swiss Franc",
+      "description": "US Dollar vs Swiss Franc - +82.1% return, 100% WR",
       "category": "forex_major"
-    },
-    {
-      "symbol": "USDJPY",
-      "mt5_symbol": "USDJPY",
-      "priority": 1,
-      "description": "US Dollar vs Japanese Yen",
-      "category": "forex_major"
-    },
-    {
-      "symbol": "GBPCHF",
-      "mt5_symbol": "GBPCHF",
-      "priority": 1,
-      "description": "British Pound vs Swiss Franc",
-      "category": "forex_cross"
-    },
-    {
-      "symbol": "AUDNZD",
-      "mt5_symbol": "AUDNZD",
-      "priority": 1,
-      "description": "Australian Dollar vs New Zealand Dollar",
-      "category": "forex_cross"
     },
     {
       "symbol": "AUDUSD",
       "mt5_symbol": "AUDUSD",
       "priority": 1,
-      "description": "Australian Dollar vs US Dollar",
+      "description": "Australian Dollar vs US Dollar - +63.3% return, 100% WR",
       "category": "forex_major"
     },
     {
-      "symbol": "NZDUSD",
-      "mt5_symbol": "NZDUSD",
+      "symbol": "AUDJPY",
+      "mt5_symbol": "AUDJPY",
       "priority": 1,
-      "description": "New Zealand Dollar vs US Dollar",
+      "description": "Australian Dollar vs Japanese Yen - +46.4% return, 100% WR",
+      "category": "forex_cross"
+    },
+    {
+      "symbol": "USDJPY",
+      "mt5_symbol": "USDJPY",
+      "priority": 1,
+      "description": "US Dollar vs Japanese Yen - +45.5% return, 100% WR",
       "category": "forex_major"
+    },
+    {
+      "symbol": "EURGBP",
+      "mt5_symbol": "EURGBP",
+      "priority": 1,
+      "description": "Euro vs British Pound - +42.3% return, 100% WR",
+      "category": "forex_cross"
     },
     {
       "symbol": "GBPCAD",
       "mt5_symbol": "GBPCAD",
       "priority": 1,
-      "description": "British Pound vs Canadian Dollar",
+      "description": "British Pound vs Canadian Dollar - +37.3% return, 80% WR",
       "category": "forex_cross"
     },
     {
-      "symbol": "EURNZD",
-      "mt5_symbol": "EURNZD",
+      "symbol": "BTCUSD",
+      "mt5_symbol": "BTCUSD",
       "priority": 1,
-      "description": "Euro vs New Zealand Dollar",
+      "description": "Bitcoin vs US Dollar - +34.2% return, 100% WR",
+      "category": "crypto"
+    },
+    {
+      "symbol": "GBPJPY",
+      "mt5_symbol": "GBPJPY",
+      "priority": 1,
+      "description": "British Pound vs Japanese Yen - +14.4% return, 100% WR",
       "category": "forex_cross"
+    },
+    {
+      "symbol": "EURUSD",
+      "mt5_symbol": "EURUSD",
+      "priority": 2,
+      "description": "Euro vs US Dollar - +11.2% return, 33% WR (marginal)",
+      "category": "forex_major"
+    },
+    {
+      "symbol": "NZDUSD",
+      "mt5_symbol": "NZDUSD",
+      "priority": 2,
+      "description": "New Zealand Dollar vs US Dollar - +8.9% return, 100% WR",
+      "category": "forex_major"
+    },
+    {
+      "symbol": "GBPUSD",
+      "mt5_symbol": "GBPUSD",
+      "priority": 2,
+      "description": "British Pound vs US Dollar - +6.3% return, 25% WR (marginal)",
+      "category": "forex_major"
     }
+  ],
+  "removed_pairs": [
+    "EURAUD - Eliminated: -26% return, 0% WR (13 losing trades)",
+    "EURCHF - Eliminated: -16.3% return, 8% WR",
+    "GBPAUD - Eliminated: -4% return, 0% WR",
+    "GBPCHF - Eliminated: -3.6% return, 12.5% WR",
+    "XAGUSD - Eliminated: 0 trades in 12 months",
+    "EURJPY - Eliminated: 0 trades in 12 months",
+    "AUDNZD - Eliminated: 0 trades in 12 months",
+    "NZDCAD - Eliminated: 0 trades in 12 months",
+    "GBPNZD - Not tested in backtest",
+    "EURCAD - Not tested in backtest",
+    "AUDCAD - Not tested in backtest",
+    "EURNZD - Not tested in backtest"
   ],
   "scanner_settings": {
     "timeframes": ["D1", "H4"],
@@ -152,7 +117,16 @@
     "telegram_alerts": true,
     "chart_generation": true
   },
-  "last_updated": "2025-12-12",
-  "total_pairs": 21,
-  "note": "Lista IC Markets cTrader - 21 perechi (forex + BTC + XAU + XAG)"
+  "backtest_validation": {
+    "period": "12 months historical data",
+    "account_size": "$1,000",
+    "risk_per_trade": "2%",
+    "leverage": "1:500",
+    "total_trades": 123,
+    "total_profit": "$5,810",
+    "total_return": "581%",
+    "last_updated": "2025-12-14"
+  },
+  "total_pairs": 13,
+  "note": "Optimized list based on backtest results - Top 13 profitable pairs only. Priority 1 = excellent performers (80-100% WR), Priority 2 = marginal but still profitable"
 }
