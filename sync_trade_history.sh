@@ -1,8 +1,8 @@
 #!/bin/bash
-# Sync trade_history.json from old folder to current project folder
-# Runs every 10 seconds
+# Sync trade_history.json - cBot scrie direct în folderul corect acum
+# Script kept for backwards compatibility but not needed anymore
 
-SOURCE="/Users/forexgod/Desktop/trading-ai-agent apollo/trade_history.json"
+SOURCE="/Users/forexgod/Desktop/Glitch in Matrix/trading-ai-agent apollo/trade_history.json"
 DEST="/Users/forexgod/Desktop/Glitch in Matrix/trading-ai-agent apollo/trade_history.json"
 
 echo "🔄 Starting trade_history.json sync..."

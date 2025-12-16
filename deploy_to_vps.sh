@@ -17,7 +17,7 @@ fi
 VPS_IP="$1"
 VPS_USER="root"  # Change to 'forexgod' if using non-root
 PROJECT_DIR="/home/forexgod/trading-ai-agent"
-LOCAL_DIR="/Users/forexgod/Desktop/trading-ai-agent apollo"
+LOCAL_DIR="/Users/forexgod/Desktop/Glitch in Matrix/trading-ai-agent apollo"
 
 echo "🚀 Deploying Trading Bot to VPS..."
 echo "📍 VPS IP: $VPS_IP"

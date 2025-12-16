@@ -6,7 +6,7 @@
 # ====================================================================
 
 # Change to project directory
-cd /Users/forexgod/Desktop/trading-ai-agent\ apollo
+cd "/Users/forexgod/Desktop/Glitch in Matrix/trading-ai-agent apollo"
 
 echo "════════════════════════════════════════════════════════════════"
 echo "🌅 MORNING SCANNER STARTED - $(date '+%Y-%m-%d %H:%M:%S')"

@@ -5,7 +5,7 @@
 echo "🚀 Setting up Morning Strategy Scanner cron job..."
 
 # Get the absolute path to the project directory
-PROJECT_DIR="/Users/forexgod/Desktop/trading-ai-agent"
+PROJECT_DIR="/Users/forexgod/Desktop/Glitch in Matrix/trading-ai-agent apollo"
 PYTHON_PATH="/usr/bin/python3"
 
 # Create logs directory if it doesn't exist

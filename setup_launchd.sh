@@ -10,7 +10,7 @@ echo "🚀 Setting up Trading Monitor as macOS LaunchAgent..."
 PLIST_NAME="com.forexgod.trading-monitor.plist"
 LAUNCH_AGENTS_DIR="$HOME/Library/LaunchAgents"
 PLIST_PATH="$LAUNCH_AGENTS_DIR/$PLIST_NAME"
-WORKSPACE="/Users/forexgod/Desktop/trading-ai-agent apollo"
+WORKSPACE="/Users/forexgod/Desktop/Glitch in Matrix/trading-ai-agent apollo"
 
 # Create LaunchAgents directory if doesn't exist
 mkdir -p "$LAUNCH_AGENTS_DIR"

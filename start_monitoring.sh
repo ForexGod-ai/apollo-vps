@@ -8,7 +8,7 @@ pkill -f "position_monitor|trade_monitor"
 sleep 1
 
 # 2. PORNEȘTE MONITOARELE NOI (background cu logging)
-cd "/Users/forexgod/Desktop/trading-ai-agent apollo"
+cd "/Users/forexgod/Desktop/Glitch in Matrix/trading-ai-agent apollo"
 nohup python3 position_monitor.py --loop > logs/position_monitor.log 2>&1 & echo $! > .position_monitor.pid
 nohup python3 trade_monitor.py --loop > logs/trade_monitor.log 2>&1 & echo $! > .trade_monitor.pid
 

@@ -3,7 +3,7 @@
 # ForexGod Dashboard - PUBLIC 24/7 with Auto-Restart
 # Keeps both HTTP server and SSH tunnel running continuously
 
-DASHBOARD_DIR="/Users/forexgod/Desktop/trading-ai-agent apollo"
+DASHBOARD_DIR="/Users/forexgod/Desktop/Glitch in Matrix/trading-ai-agent apollo"
 HTTP_PORT=8080
 LOG_DIR="$DASHBOARD_DIR/logs"
 
