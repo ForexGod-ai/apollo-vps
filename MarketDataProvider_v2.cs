@@ -193,7 +193,145 @@ namespace cAlgo.Robots
                     return;
                 }
                 
-                // Get data
+                // Get trade history from TradeHistorySyncer2 JSON file
+                if (request.Url.AbsolutePath == "/history")
+                {
+                    try
+                    {
+                        string jsonPath = "/Users/forexgod/Desktop/Glitch in Matrix/trading-ai-agent apollo/trade_history.json";
+                        
+                        if (System.IO.File.Exists(jsonPath))
+                        {
+                            string jsonContent = System.IO.File.ReadAllText(jsonPath);
+                            byte[] buffer = Encoding.UTF8.GetBytes(jsonContent);
+                            response.ContentType = "application/json";
+                            response.ContentLength64 = buffer.Length;
+                            response.OutputStream.Write(buffer, 0, buffer.Length);
+                            response.Close();
+                        }
+                        else
+                        {
+                            byte[] buffer = Encoding.UTF8.GetBytes("{\"error\":\"Trade history file not found\"}");
+                            response.StatusCode = 404;
+                            response.ContentType = "application/json";
+                            response.ContentLength64 = buffer.Length;
+                            response.OutputStream.Write(buffer, 0, buffer.Length);
+                            response.Close();
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Print($"❌ Error reading trade history: {ex.Message}");
+                        byte[] buffer = Encoding.UTF8.GetBytes("{\"error\":\"" + ex.Message + "\"}");
+                        response.StatusCode = 500;
+                        response.ContentType = "application/json";
+                        response.ContentLength64 = buffer.Length;
+                        response.OutputStream.Write(buffer, 0, buffer.Length);
+                        response.Close();
+                    }
+                    
+                    listener.BeginGetContext(HandleRequest, listener);
+                    return;
+                }
+                
+                // Handle /historical/{symbol}/{timeframe}/{bars} path format
+                if (request.Url.AbsolutePath.StartsWith("/historical/"))
+                {
+                    var pathParts = request.Url.AbsolutePath.Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries);
+                    if (pathParts.Length >= 4)
+                    {
+                        var pathSymbol = pathParts[1];  // /historical/GBPJPY/D1/100 -> GBPJPY
+                        var pathTimeframe = pathParts[2];  // D1
+                        var pathBars = int.Parse(pathParts[3] ?? "100");  // 100
+                        
+                        Print($"📊 PATH FORMAT: Getting {pathBars} {pathTimeframe} bars for {pathSymbol}");
+                        
+                        // Process on main thread
+                        string pathJsonResult = null;
+                        Exception pathError = null;
+                        
+                        BeginInvokeOnMainThread(() =>
+                        {
+                            try
+                            {
+                                var symbolObj = Symbols.GetSymbol(pathSymbol);
+                                if (symbolObj == null)
+                                {
+                                    pathError = new Exception($"Symbol {pathSymbol} not found");
+                                    return;
+                                }
+                                
+                                var tf = ParseTimeFrame(pathTimeframe);
+                                var series = MarketData.GetBars(tf, symbolObj.Name);
+                                
+                                if (series == null || series.Count == 0)
+                                {
+                                    pathError = new Exception("No data");
+                                    return;
+                                }
+                                
+                                var json = new StringBuilder();
+                                json.Append("{\"symbol\":\"").Append(pathSymbol).Append("\",\"bars\":[");
+                                
+                                int count = Math.Min(pathBars, series.Count);
+                                int start = series.Count - count;
+                                
+                                for (int i = start; i < series.Count; i++)
+                                {
+                                    var bar = series[i];
+                                    if (i > start) json.Append(",");
+                                    
+                                    json.Append("{\"time\":\"")
+                                        .Append(bar.OpenTime.ToString("yyyy-MM-dd HH:mm:ss"))
+                                        .Append("\",\"open\":").Append(bar.Open.ToString(System.Globalization.CultureInfo.InvariantCulture))
+                                        .Append(",\"high\":").Append(bar.High.ToString(System.Globalization.CultureInfo.InvariantCulture))
+                                        .Append(",\"low\":").Append(bar.Low.ToString(System.Globalization.CultureInfo.InvariantCulture))
+                                        .Append(",\"close\":").Append(bar.Close.ToString(System.Globalization.CultureInfo.InvariantCulture))
+                                        .Append(",\"volume\":").Append(bar.TickVolume)
+                                        .Append("}");
+                                }
+                                
+                                json.Append("]}");
+                                pathJsonResult = json.ToString();
+                            }
+                            catch (Exception ex)
+                            {
+                                pathError = ex;
+                            }
+                        });
+                        
+                        // Wait for completion
+                        int waitCount3 = 0;
+                        while (pathJsonResult == null && pathError == null && waitCount3 < 50)
+                        {
+                            System.Threading.Thread.Sleep(20);
+                            waitCount3++;
+                        }
+                        
+                        if (pathError != null)
+                        {
+                            Print($"❌ Error: {pathError.Message}");
+                            byte[] errorBuf = Encoding.UTF8.GetBytes($"{{\"error\":\"{pathError.Message}\"}}");
+                            response.StatusCode = 500;
+                            response.ContentType = "application/json";
+                            response.ContentLength64 = errorBuf.Length;
+                            response.OutputStream.Write(errorBuf, 0, errorBuf.Length);
+                        }
+                        else if (pathJsonResult != null)
+                        {
+                            byte[] buffer = Encoding.UTF8.GetBytes(pathJsonResult);
+                            response.ContentType = "application/json";
+                            response.ContentLength64 = buffer.Length;
+                            response.OutputStream.Write(buffer, 0, buffer.Length);
+                        }
+                        
+                        response.Close();
+                        listener.BeginGetContext(HandleRequest, listener);
+                        return;
+                    }
+                }
+                
+                // Get data (legacy query param format)
                 var query = request.Url.Query;
                 var symbol = GetParam(query, "symbol") ?? "GBPUSD";
                 var timeframe = GetParam(query, "timeframe") ?? "Daily";

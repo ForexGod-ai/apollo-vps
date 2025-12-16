@@ -16,16 +16,10 @@ from dotenv import load_dotenv
 from loguru import logger
 
 # Import our modules
-from smc_detector_fixed import (
-    detect_body_swing_highs,
-    detect_body_swing_lows,
-    analyze_trend_structure
-)
 from smc_detector import SMCDetector, TradeSetup
 from tradingview_chart_generator import TradingViewChartGenerator
 from tradingview_desktop_screenshot import TradingViewDesktopCapture
 from telegram_notifier import TelegramNotifier
-from ctrader_data_client import get_ctrader_client  # Alpha Vantage + Yahoo Finance fallback
 from ctrader_executor import CTraderExecutor
 
 load_dotenv()
@@ -55,7 +49,7 @@ class MorningStrategyScanner:
         # Use TradingView Desktop app for LIVE charts with your drawings
         self.desktop_capture = TradingViewDesktopCapture()
         self.telegram = TelegramNotifier()
-        self.ctrader_client = get_ctrader_client()  # cTrader data source
+        # cTrader data comes from MarketDataProvider on port 8767
         self.pairs_config = self._load_pairs_config()
         
     def _load_pairs_config(self) -> List[Dict]:
@@ -70,21 +64,34 @@ class MorningStrategyScanner:
     
     def _get_market_data(self, symbol: str, timeframe: str = "D1", bars: int = 100) -> Optional[dict]:
         """
-        Get market data from cTrader (IC Markets feed) 
+        Get market data from cTrader MarketDataProvider (port 8767)
         Screenshots vin de pe TradingView separat!
         """
         try:
-            logger.info(f"📊 Fetching data for {symbol} from cTrader...")
+            logger.info(f"📊 Fetching data for {symbol} from cTrader MarketDataProvider...")
             
-            # Use cTrader client instead of Yahoo Finance
-            df = self.ctrader_client.get_historical_data(symbol, timeframe, bars)
+            # Query cTrader MarketDataProvider HTTP endpoint
+            import requests
+            url = f"http://localhost:8767/historical/{symbol}/{timeframe}/{bars}"
+            response = requests.get(url, timeout=10)
             
-            if df is None or df.empty:
-                logger.warning(f"⚠️  No data for {symbol}")
+            if response.status_code != 200:
+                logger.warning(f"⚠️  No data for {symbol} - MarketDataProvider returned {response.status_code}")
                 return None
             
-            logger.success(f"✅ Got {len(df)} candles for {symbol} from cTrader")
-            return df
+            data = response.json()
+            candles = data.get('bars', [])  # MarketDataProvider uses 'bars' not 'candles'
+            logger.success(f"✅ Got {len(candles)} candles for {symbol} from cTrader")
+            
+            # Convert to pandas DataFrame format expected by SMCDetector
+            import pandas as pd
+            df = pd.DataFrame(candles)
+            if not df.empty:
+                df.columns = ['time', 'open', 'high', 'low', 'close', 'volume']
+                df['time'] = pd.to_datetime(df['time'])
+                df.set_index('time', inplace=True)
+            
+            return df if not df.empty else None
             
         except Exception as e:
             logger.error(f"❌ Error getting market data for {symbol}: {e}")
@@ -111,14 +118,7 @@ class MorningStrategyScanner:
                     error="Failed to get market data"
                 )
             
-            # FIXED: Analyze trend structure first (Glitch in Matrix)
-            highs = detect_body_swing_highs(df_daily)
-            lows = detect_body_swing_lows(df_daily)
-            trend = analyze_trend_structure(highs, lows)
-            
-            logger.info(f"📊 Trend: {trend.direction.upper()} ({trend.structure}, {trend.confidence:.0%})")
-            
-            # Detect setup using SMC algorithm (cu trend corect)
+            # Detect setup using SMC algorithm
             setup = self.smc_detector.scan_for_setup(symbol, df_daily, df_daily, priority)
             
             # NOTE: Do NOT override CHoCH direction with trend!

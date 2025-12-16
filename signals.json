@@ -1,12 +1,12 @@
 {
-  "signalId": "SIGNAL_20251207_201518",
-  "symbol": "GBPUSD",
+  "signalId": "SIGNAL_20251216_192854",
+  "symbol": "GBPJPY",
   "direction": "buy",
-  "entryPrice": 1.275,
-  "stopLoss": 1.272,
-  "takeProfit": 1.281,
-  "volume": 0.1,
-  "riskReward": 2.0,
-  "strategyType": "CONTINUITY - morning_scan",
-  "timestamp": "2025-12-07T20:15:18.716914"
+  "entryPrice": 207.806,
+  "stopLoss": 207.390388,
+  "takeProfit": 211.36055499999998,
+  "volume": 0.01,
+  "riskReward": 8.552580291232879,
+  "strategyType": "continuation - MONITORING_CONFIRMED",
+  "timestamp": "2025-12-16T19:28:54.410854"
 }

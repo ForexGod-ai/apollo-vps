@@ -32,7 +32,7 @@ print("   - Sign up: https://www.alphavantage.co/support/#api-key")
 print()
 
 # Check current configuration
-env_file = "/Users/forexgod/Desktop/trading-ai-agent apollo/.env"
+env_file = "/Users/forexgod/Desktop/Glitch in Matrix/trading-ai-agent apollo/.env"
 
 print("=" * 70)
 print("📝 CONFIGURAȚIE CURENTĂ:")

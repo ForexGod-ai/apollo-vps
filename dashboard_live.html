@@ -173,10 +173,10 @@
                 const response = await fetch('trade_history.json?t=' + Date.now());
                 if (!response.ok) throw new Error('Failed to fetch data');
                 
-                const trades = await response.json();
+                const data = await response.json();
                 
                 // Check if data changed
-                const dataHash = JSON.stringify(trades);
+                const dataHash = JSON.stringify(data);
                 if (dataHash === lastDataHash) {
                     // Just update timestamp
                     document.getElementById('lastUpdate').textContent = 
@@ -185,9 +185,9 @@
                 }
                 lastDataHash = dataHash;
 
-                // Separate trades
-                const openTrades = trades.filter(t => t.status === 'OPEN');
-                const closedTrades = trades.filter(t => t.status === 'CLOSED');
+                // Get trades from new format: data.open_positions and data.closed_trades
+                const openTrades = data.open_positions || [];
+                const closedTrades = data.closed_trades || [];
 
                 // Calculate statistics
                 const totalClosed = closedTrades.length;
@@ -201,20 +201,10 @@
                 const winRate = totalClosed > 0 ? (winningTrades.length / totalClosed * 100) : 0;
                 const profitFactor = totalLoss > 0 ? (totalWin / totalLoss) : 0;
 
-                // Get balance from most recent trade
-                let balance = 1000;
-                if (trades.length > 0) {
-                    const sortedTrades = [...trades].sort((a, b) => {
-                        const timeA = a.close_time || a.open_time || '';
-                        const timeB = b.close_time || b.open_time || '';
-                        return timeB.localeCompare(timeA);
-                    });
-                    balance = sortedTrades[0].balance_after || 1000;
-                }
-
-                // Current open P/L
-                const openPL = openTrades.reduce((sum, t) => sum + (t.profit || 0), 0);
-                const equity = balance + openPL;
+                // Get balance from account section (new format)
+                const balance = data.account?.balance || 1000;
+                const openPL = data.account?.open_pl || 0;
+                const equity = data.account?.equity || (balance + openPL);
 
                 // Update stats grid
                 updateStatsGrid({

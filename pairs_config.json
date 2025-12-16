@@ -117,8 +117,8 @@
     "min_rr": 3.0,
     "max_setups_per_scan": 5,
     "lookback_candles": {
-      "daily": 250,
-      "h4": 500
+      "daily": 365,
+      "h4": 2190
     },
     "telegram_alerts": true,
     "chart_generation": true

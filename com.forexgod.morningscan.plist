@@ -8,27 +8,27 @@
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>
-        <string>/Users/forexgod/Desktop/trading-ai-agent apollo/run_morning_scan.sh</string>
+        <string>/Users/forexgod/Desktop/Glitch in Matrix/trading-ai-agent apollo/run_morning_scan.sh</string>
     </array>
     
     <key>StartCalendarInterval</key>
     <dict>
         <key>Hour</key>
-        <integer>9</integer>
+        <integer>8</integer>
         <key>Minute</key>
         <integer>0</integer>
     </dict>
     
     <key>StandardOutPath</key>
-    <string>/Users/forexgod/Desktop/trading-ai-agent apollo/logs/morning_scan_launchd.log</string>
+    <string>/Users/forexgod/Desktop/Glitch in Matrix/trading-ai-agent apollo/logs/morning_scan_launchd.log</string>
     
     <key>StandardErrorPath</key>
-    <string>/Users/forexgod/Desktop/trading-ai-agent apollo/logs/morning_scan_launchd_error.log</string>
+    <string>/Users/forexgod/Desktop/Glitch in Matrix/trading-ai-agent apollo/logs/morning_scan_launchd_error.log</string>
     
     <key>RunAtLoad</key>
     <false/>
     
     <key>WorkingDirectory</key>
-    <string>/Users/forexgod/Desktop/trading-ai-agent apollo</string>
+    <string>/Users/forexgod/Desktop/Glitch in Matrix/trading-ai-agent apollo</string>
 </dict>
 </plist>

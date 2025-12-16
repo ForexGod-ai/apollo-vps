@@ -8,7 +8,6 @@ actualizează narrativul și alertează când setups become READY
 import time
 from datetime import datetime, timedelta
 from typing import Dict, List
-import MetaTrader5 as mt5
 from loguru import logger
 import requests
 import os
@@ -338,11 +337,6 @@ def main():
     """
     Start real-time monitor pentru TOATE perechile din config (4H timeframe)
     """
-    # Initialize MT5
-    if not mt5.initialize():
-        logger.error("❌ MT5 initialization failed")
-        return
-    
     try:
         # Load ALL symbols from pairs_config.json
         import json
@@ -364,9 +358,6 @@ def main():
         logger.info("\n\n⏸️  Monitor stopped by user")
     except Exception as e:
         logger.error(f"❌ Fatal error: {e}")
-    finally:
-        mt5.shutdown()
-        logger.info("👋 MT5 disconnected")
 
 
 if __name__ == "__main__":

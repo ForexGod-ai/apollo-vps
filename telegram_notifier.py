@@ -294,15 +294,30 @@ Take Profit: `{setup.take_profit:.5f}`
             print(f"❌ Error sending action buttons: {e}")
             return False
     
-    def send_daily_summary(self, scanned_pairs: int, setups_found: int) -> bool:
-        """Send daily scan summary"""
+    def send_daily_summary(self, scanned_pairs: int, setups_found: int, active_setups: list = None) -> bool:
+        """Send daily scan summary with ACTIVE monitoring setups"""
         message = f"""
 📊 *Daily Scan Complete*
 
 🔍 Pairs Scanned: `{scanned_pairs}`
-🎯 Setups Found: `{setups_found}`
+🎯 New Setups Found: `{setups_found}`
+📋 Total Active Setups: `{len(active_setups) if active_setups else 0}`
 ⏰ Scan Time: `{datetime.now().strftime('%Y-%m-%d %H:%M UTC')}`
-
+"""
+        
+        # Add active setups list
+        if active_setups:
+            message += "\n━━━━━━━━━━━━━━━━━━━━\n"
+            message += "🎯 *ACTIVE MONITORING SETUPS:*\n\n"
+            for setup in active_setups:
+                symbol = setup.get('symbol', 'Unknown')
+                direction = "🟢 LONG" if setup.get('direction') == 'buy' else "🔴 SHORT"
+                entry = setup.get('entry_price', 0)
+                rr = setup.get('risk_reward', 0)
+                message += f"• *{symbol}* - {direction}\n"
+                message += f"  Entry: `{entry:.5f}` | R:R `1:{rr:.1f}`\n"
+        
+        message += """
 ━━━━━━━━━━━━━━━━━━━━
 ✨ *Strategy by ForexGod* ✨
 🧠 _Glitch in Matrix Trading System_

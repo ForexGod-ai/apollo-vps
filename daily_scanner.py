@@ -175,17 +175,28 @@ class DailyScanner:
             if not keep_connection:
                 self.data_provider.disconnect()
         
+        # Load ALL monitoring setups (existing + new) for summary
+        monitoring_setups = []
+        try:
+            with open('monitoring_setups.json', 'r') as f:
+                data = json.load(f)
+                monitoring_setups = data.get("setups", [])
+        except FileNotFoundError:
+            pass  # No existing file
+        
         # Send daily summary
         print("\n" + "="*60)
         print(f"✅ Scan Complete!")
         print(f"📊 Total Pairs Scanned: {len(self.pairs)}")
-        print(f"🎯 Setups Found: {len(setups_found)}")
+        print(f"🎯 New Setups Found: {len(setups_found)}")
+        print(f"📋 Total Active Setups: {len(monitoring_setups)}")
         print("="*60 + "\n")
         
         if self.scanner_settings['telegram_alerts']:
             self.telegram.send_daily_summary(
                 scanned_pairs=len(self.pairs),
-                setups_found=len(setups_found)
+                setups_found=len(setups_found),
+                active_setups=monitoring_setups
             )
         
         return setups_found
@@ -241,6 +252,62 @@ class DailyScanner:
             self.data_provider.disconnect()
 
 
+def save_monitoring_setups(setups: List[TradeSetup]):
+    """Salvează setup-urile MONITORING în monitoring_setups.json
+    
+    IMPORTANT: Păstrează setups existente și adaugă doar pe cele noi.
+    Doar dacă același symbol are setup nou, îl înlocuiește.
+    """
+    try:
+        # Load existing setups FIRST
+        existing_setups = {}
+        try:
+            with open('monitoring_setups.json', 'r') as f:
+                data = json.load(f)
+                for setup in data.get("setups", []):
+                    existing_setups[setup["symbol"]] = setup
+        except FileNotFoundError:
+            pass  # No existing file, start fresh
+        
+        # Add/update with new setups
+        for setup in setups:
+            if setup.status == "MONITORING":
+                monitoring_setup = {
+                    "symbol": setup.symbol,
+                    "direction": "buy" if setup.daily_choch.direction == "bullish" else "sell",
+                    "entry_price": setup.entry_price,
+                    "stop_loss": setup.stop_loss,
+                    "take_profit": setup.take_profit,
+                    "risk_reward": setup.risk_reward,
+                    "strategy_type": setup.strategy_type,
+                    "setup_time": setup.setup_time.isoformat(),
+                    "priority": setup.priority,
+                    "fvg_zone_top": setup.fvg.top if setup.fvg else None,
+                    "fvg_zone_bottom": setup.fvg.bottom if setup.fvg else None,
+                    "lot_size": 0.01  # Default lot size
+                }
+                existing_setups[setup.symbol] = monitoring_setup  # Update/add
+        
+        # Convert back to list
+        monitoring_setups = list(existing_setups.values())
+        
+        # ALWAYS save (even if empty, to update timestamp)
+        # But if we have setups, they should persist
+        with open('monitoring_setups.json', 'w') as f:
+            json.dump({
+                "setups": monitoring_setups,
+                "last_updated": datetime.now().isoformat()
+            }, f, indent=2)
+        
+        if monitoring_setups:
+            print(f"\n💾 Saved {len(monitoring_setups)} setup(s) to MONITORING (kept existing + added new)")
+        else:
+            print(f"\n💾 No monitoring setups (file cleared)")
+        
+    except Exception as e:
+        print(f"❌ Error saving monitoring setups: {e}")
+
+
 def main():
     """Main entry point"""
     scanner = DailyScanner()
@@ -254,6 +321,10 @@ def main():
     
     # Run full daily scan
     setups = scanner.run_daily_scan()
+    
+    # ALWAYS save monitoring setups (preserves existing + adds new)
+    # Even if setups is empty, we keep existing ones
+    save_monitoring_setups(setups if setups else [])
     
     # Print summary
     if setups:

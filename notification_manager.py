@@ -215,6 +215,54 @@ class NotificationManager:
         """Notificare Linux"""
         subprocess.run(['notify-send', title, message], check=True)
     
+    def send_telegram_alert(self, message):
+        """Trimite mesaj direct pe Telegram (funcție publică)"""
+        if self.telegram_enabled:
+            return self._send_telegram(message)
+        else:
+            logger.warning("⚠️ Telegram notifications dezactivate!")
+            return False
+    
+    def send_execution_alert(self, setup_data):
+        """Trimite alertă ARMAGEDDON BEGINS pentru execuție automată"""
+        symbol = setup_data.get('symbol', 'N/A')
+        direction = setup_data.get('direction', 'buy').upper()
+        entry = setup_data.get('entry', 0)
+        sl = setup_data.get('sl', 0)
+        tp = setup_data.get('tp', 0)
+        rr = setup_data.get('risk_reward', 0)
+        
+        # Calculate pips
+        sl_pips = abs(entry - sl) / (0.01 if 'JPY' in symbol else 0.0001)
+        tp_pips = abs(tp - entry) / (0.01 if 'JPY' in symbol else 0.0001)
+        
+        message = f"""
+🚨 *ARMAGEDDON BEGINS!* 🚨
+
+*{symbol} {direction}* 📊
+
+**Entry:** {entry}
+**SL:** {sl} (-{sl_pips:.1f} pips)
+**TP:** {tp} (+{tp_pips:.1f} pips)
+**R:R:** 1:{rr:.2f}
+
+**Status:** ✅ EXECUTED in cTrader
+
+🔥 *THE GLITCH IS LIVE!* 🔥
+
+⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+✨ *Strategy by ForexGod* ✨
+🧠 *Glitch in Matrix Trading System*
+💎 *+ AI Validation*
+"""
+        
+        if self.telegram_enabled:
+            return self._send_telegram(message)
+        else:
+            logger.warning("⚠️ Telegram notifications dezactivate!")
+            return False
+    
     def send_summary_alert(self, stats):
         """Trimite rezumat periodic cu statistici"""
         message = f"📊 *REZUMAT TRADING*\n\n"

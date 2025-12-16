@@ -282,6 +282,10 @@ class SMCDetector:
                                             confirmed = True
                                 
                                 if confirmed:
+                                    # WHIPSAW PROTECTION: Minimum 10 candles between CHoCH
+                                    if chochs and (j - chochs[-1].index) < 10:
+                                        continue  # Skip this CHoCH, too close to previous one
+                                    
                                     chochs.append(CHoCH(
                                         index=j,
                                         direction='bullish',
@@ -354,6 +358,10 @@ class SMCDetector:
                                             confirmed = True
                                 
                                 if confirmed:
+                                    # WHIPSAW PROTECTION: Minimum 10 candles between CHoCH
+                                    if chochs and (j - chochs[-1].index) < 10:
+                                        continue  # Skip this CHoCH, too close to previous one
+                                    
                                     chochs.append(CHoCH(
                                         index=j,
                                         direction='bearish',
@@ -521,18 +529,16 @@ class SMCDetector:
                             associated_choch=choch
                         ))
         
-        # Return the best FVG (closest to current price or most recent)
+        # Return the MOST RECENT FVG (closest to current time, not price!)
+        # FIXED: Use most recent FVG after CHoCH (highest index = latest formed)
+        # This gives consistent results - always the LAST pullback zone before current price
         if all_fvgs:
-            # For bearish: closest FVG above current price
-            # For bullish: closest FVG below current price
-            if choch.direction == 'bearish':
-                # Find FVG with bottom closest to (but ideally above or near) current price
-                all_fvgs.sort(key=lambda fvg: abs(fvg.bottom - current_price))
-            else:
-                # Find FVG with top closest to (but ideally below or near) current price
-                all_fvgs.sort(key=lambda fvg: abs(fvg.top - current_price))
+            # Sort by index (chronological order after CHoCH)
+            all_fvgs.sort(key=lambda fvg: fvg.index)
             
-            return all_fvgs[0]
+            # Return LAST FVG (most recent, closest to current time)
+            # This is the latest pullback zone where price should retrace
+            return all_fvgs[-1]
         
         return None
     
@@ -666,18 +672,27 @@ class SMCDetector:
         # Trade direction = DAILY CHoCH direction = FVG direction
         if fvg.direction == 'bullish':
             # LONG TRADE (Daily bullish trend)
-            # Entry = Slightly ABOVE middle (wait for price to confirm entry)
-            # Middle + 0.5% of FVG range
-            fvg_range = fvg.top - fvg.bottom
-            entry = fvg.middle + (fvg_range * 0.005)
             
-            # SL = Last Low on 4H BEFORE the FVG (swing low that created FVG)
+            # Calculate ATR-based entry tolerance (30% of daily ATR)
+            daily_atr = (df_daily['high'] - df_daily['low']).rolling(14).mean().iloc[-1]
+            atr_pct = daily_atr / fvg.bottom
+            tolerance = atr_pct * 0.3  # 30% of ATR as tolerance
+            
+            # Entry = FVG BOTTOM (discount zone entry for LONG)
+            # Slightly below bottom for better fill probability
+            entry = fvg.bottom * (1 - tolerance * 0.5)  # Small buffer below bottom
+            
+            # SL = Last Low on 4H with ATR buffer
             # Look at 4H candles around FVG formation time
             fvg_index_4h = df_4h[df_4h['time'] <= fvg.candle_time].index[-1] if len(df_4h[df_4h['time'] <= fvg.candle_time]) > 0 else len(df_4h) - 20
             lookback_start = max(0, fvg_index_4h - 30)
             lookback_end = min(len(df_4h), fvg_index_4h + 10)
             recent_lows = df_4h['low'].iloc[lookback_start:lookback_end]
-            stop_loss = recent_lows.min()
+            swing_low = recent_lows.min()
+            
+            # ATR buffer for SL (1.5x 4H ATR)
+            atr_4h = (df_4h['high'] - df_4h['low']).rolling(14).mean().iloc[-1]
+            stop_loss = swing_low - (1.5 * atr_4h)
             
             # TP = Next Daily HIGH structure (body-based, not wick)
             # STRATEGY: Find the next resistance level (previous swing high)
@@ -694,20 +709,33 @@ class SMCDetector:
                 recent_highs = df_daily['high'].iloc[-30:]
                 take_profit = recent_highs.max()
             
+            # Cap TP at 3x Daily ATR from entry (prevent unrealistic targets)
+            max_tp_distance = 3 * daily_atr
+            take_profit = min(take_profit, entry + max_tp_distance)
+            
         else:
             # SHORT TRADE (Daily bearish trend)
-            # Entry = Slightly BELOW middle (wait for price to confirm pullback)
-            # Middle - 0.5% of FVG range
-            fvg_range = fvg.top - fvg.bottom
-            entry = fvg.middle - (fvg_range * 0.005)
             
-            # SL = Last High on 4H BEFORE/AROUND the FVG (swing high that created FVG)
+            # Calculate ATR-based entry tolerance (30% of daily ATR)
+            daily_atr = (df_daily['high'] - df_daily['low']).rolling(14).mean().iloc[-1]
+            atr_pct = daily_atr / fvg.top
+            tolerance = atr_pct * 0.3  # 30% of ATR as tolerance
+            
+            # Entry = FVG TOP (premium zone entry for SHORT)
+            # Slightly above top for better fill probability
+            entry = fvg.top * (1 + tolerance * 0.5)  # Small buffer above top
+            
+            # SL = Last High on 4H with ATR buffer
             # Look at 4H candles around FVG formation time (not just last 20!)
             fvg_index_4h = df_4h[df_4h['time'] <= fvg.candle_time].index[-1] if len(df_4h[df_4h['time'] <= fvg.candle_time]) > 0 else len(df_4h) - 20
             lookback_start = max(0, fvg_index_4h - 30)
             lookback_end = min(len(df_4h), fvg_index_4h + 10)
             recent_highs = df_4h['high'].iloc[lookback_start:lookback_end]
-            stop_loss = recent_highs.max()
+            swing_high = recent_highs.max()
+            
+            # ATR buffer for SL (1.5x 4H ATR)
+            atr_4h = (df_4h['high'] - df_4h['low']).rolling(14).mean().iloc[-1]
+            stop_loss = swing_high + (1.5 * atr_4h)
             
             # TP = Next Daily LOW structure (body-based, not wick)
             # STRATEGY: Find the next support level (previous swing low)
@@ -723,6 +751,10 @@ class SMCDetector:
                 # Fallback: Use recent low from last 30 days
                 recent_lows = df_daily['low'].iloc[-30:]
                 take_profit = recent_lows.min()
+            
+            # Cap TP at 3x Daily ATR from entry (prevent unrealistic targets)
+            max_tp_distance = 3 * daily_atr
+            take_profit = max(take_profit, entry - max_tp_distance)
         
         return entry, stop_loss, take_profit
     
@@ -1091,12 +1123,15 @@ class SMCDetector:
         if h4_signal:
             entry, sl, tp = self.calculate_entry_sl_tp(fvg, h4_signal, df_4h, df_daily)
         else:
-            # No 4H CHoCH yet - use FVG middle as estimated entry
-            entry = fvg.middle
+            # No 4H CHoCH yet - use FVG edge as entry (discount/premium zone)
+            # LONG: Entry at FVG bottom (buy the discount)
+            # SHORT: Entry at FVG top (sell the premium)
             if current_trend == 'bullish':
+                entry = fvg.bottom  # Buy at FVG bottom
                 sl = fvg.bottom * 0.998  # SL below FVG
                 tp = fvg.top * 1.015  # TP above FVG
             else:
+                entry = fvg.top  # Sell at FVG top
                 sl = fvg.top * 1.002  # SL above FVG
                 tp = fvg.bottom * 0.985  # TP below FVG
         
@@ -1114,9 +1149,10 @@ class SMCDetector:
         risk_reward = reward / risk if risk > 0 else 0
         
         # ⚠️  CRITICAL VALIDATION: Reject setups that are TOO LATE
-        # If R:R < 2.0, the move already happened - we missed it!
-        # This prevents entering at the END of the trend (like BTCUSD yesterday)
-        if risk_reward < 2.0:
+        # STRATEGY 2.0: SL on 4H (close swing), TP on Daily (far swing)
+        # Normal R:R = 4.0 - 8.0 (NOT 2.0!)
+        # If R:R < 4.0, the move already happened - we missed it!
+        if risk_reward < 4.0:
             return None  # Setup detected too late, move already happened
         
         # 🚨 CHECK 1: Price already moved too close to TP?
@@ -1142,6 +1178,24 @@ class SMCDetector:
         
         # 🔄 RE-ENTRY LOGIC: If SL broken but trend still valid, look for new entry
         if sl_broken:
+            # RE-ENTRY CONFIRMATION: Wait for 4H CHoCH in same direction before re-entering
+            # This prevents re-entering during a pullback that continues against us
+            
+            # Get recent 4H CHoCH signals (after potential SL break)
+            h4_chochs, _ = self.detect_choch_and_bos(df_4h)
+            
+            # Find the most recent CHoCH
+            recent_h4_choch = None
+            if h4_chochs:
+                # Look for CHoCH in last 20 candles (recent confirmation)
+                recent_h4_chochs = [ch for ch in h4_chochs if ch.index >= len(df_4h) - 20]
+                if recent_h4_chochs:
+                    recent_h4_choch = recent_h4_chochs[-1]
+            
+            # Require 4H CHoCH confirmation in SAME direction as original setup
+            if not recent_h4_choch or recent_h4_choch.direction != fvg.direction:
+                return None  # No re-entry without 4H confirmation
+            
             # Check if trend is STILL VALID (recent price action confirms trend)
             recent_candles = df_daily.iloc[-10:]  # Last 10 days
             
@@ -1154,9 +1208,12 @@ class SMCDetector:
                 if trend_continues:
                     # RE-ENTRY for SHORT: Use current price as new entry
                     entry = current_price
-                    # New SL: Recent high (last 5-10 days)
-                    sl = recent_candles['high'].max()
-                    # Keep same TP target (original target still valid)
+                    # New SL: Recent high on 4H with ATR buffer
+                    recent_4h = df_4h.iloc[-10:]
+                    swing_high = recent_4h['high'].max()
+                    atr_4h = (df_4h['high'] - df_4h['low']).rolling(14).mean().iloc[-1]
+                    sl = swing_high + (1.5 * atr_4h)
+                    # Keep same TP target (original target still valid on Daily)
                     # tp stays the same
                     
                     # Recalculate R:R with new parameters
@@ -1164,13 +1221,13 @@ class SMCDetector:
                     reward = abs(tp - entry)
                     risk_reward = reward / risk if risk > 0 else 0
                     
-                    if risk_reward < 2.0:
-                        return None  # Re-entry not worth it
+                    if risk_reward < 4.0:
+                        return None  # Re-entry not worth it (need R:R ≥ 4.0)
                         
                     print(f"🔄 RE-ENTRY setup found for {symbol}!")
-                    print(f"   Original SL was broken, but trend continues")
+                    print(f"   Original SL was broken, but 4H CHoCH confirmed trend continues")
                     print(f"   New Entry: {entry:.5f}")
-                    print(f"   New SL: {sl:.5f}")
+                    print(f"   New SL: {sl:.5f} (with ATR buffer)")
                     print(f"   New R:R: 1:{risk_reward:.2f}")
                 else:
                     return None  # Trend invalidated
@@ -1180,20 +1237,23 @@ class SMCDetector:
                 recent_high = recent_candles['high'].max()
                 older_high = df_daily.iloc[-30:-10]['high'].max()
                 trend_continues = recent_high > older_high  # Still going up
-                
                 if trend_continues:
                     # RE-ENTRY for LONG: Use current price as new entry
                     entry = current_price
-                    # New SL: Recent low (last 5-10 days)
-                    sl = recent_candles['low'].min()
-                    # Keep same TP target
+                    # New SL: Recent low on 4H with ATR buffer
+                    recent_4h = df_4h.iloc[-10:]
+                    swing_low = recent_4h['low'].min()
+                    atr_4h = (df_4h['high'] - df_4h['low']).rolling(14).mean().iloc[-1]
+                    sl = swing_low - (1.5 * atr_4h)
+                    # Keep same TP target (original on Daily)
                     
                     # Recalculate R:R
                     risk = abs(entry - sl)
                     reward = abs(tp - entry)
                     risk_reward = reward / risk if risk > 0 else 0
                     
-                    if risk_reward < 2.0:
+                    if risk_reward < 4.0:
+                        return None  # Re-entry not worth it (need R:R ≥ 4.0)
                         return None  # Re-entry not worth it
                         
                     print(f"🔄 RE-ENTRY setup found for {symbol}!")

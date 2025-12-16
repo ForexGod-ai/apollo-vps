@@ -16,9 +16,9 @@ echo ""
 # Activate Python environment (if using venv)
 # source venv/bin/activate
 
-# Run morning scanner
-echo "🔍 Scanning markets for trading setups..."
-python3 morning_strategy_scan.py
+# Run morning scanner (GLITCH IN MATRIX 2.0)
+echo "🔍 Scanning markets for trading setups with Glitch 2.0..."
+python3 daily_scanner.py
 
 # Check exit code
 if [ $? -eq 0 ]; then

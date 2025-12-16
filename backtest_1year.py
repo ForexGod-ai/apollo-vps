@@ -99,9 +99,9 @@ class HistoricalDataDownloader:
             
             # Get bar count based on timeframe (match scanner settings!)
             if timeframe == "D1":
-                bar_count = 250  # ~1 year (same as scanner)
+                bar_count = 365  # 1 year (same as scanner)
             else:  # H4
-                bar_count = 500  # ~3 months (same as scanner)
+                bar_count = 2190  # 1 year synchronized (365 × 6)
             
             # Use query string format (not path params)
             url = f"http://localhost:8767/bars?symbol={symbol}&timeframe={timeframe}&bars={bar_count}"
@@ -479,7 +479,7 @@ class GlitchBacktester:
     
     def backtest_all_pairs(self, months: int = 12) -> Dict:
         """
-        Backtest all 21 pairs
+        Backtest all pairs from pairs_config.json (Glitch 2.0)
         
         Args:
             months: Number of months to backtest
@@ -487,14 +487,11 @@ class GlitchBacktester:
         Returns:
             Dictionary with all results
         """
+        # Load active pairs from config (same as daily_scanner.py)
         pairs = [
-            # Major Forex
-            'EURUSD', 'GBPUSD', 'USDJPY', 'AUDUSD', 'USDCAD', 'NZDUSD', 'USDCHF',
-            # Cross Pairs
-            'EURGBP', 'EURJPY', 'GBPJPY', 'AUDJPY', 'EURAUD', 'EURCHF',
-            'GBPAUD', 'GBPCAD', 'GBPCHF', 'AUDNZD', 'NZDCAD',
-            # Crypto & Metals
-            'BTCUSD', 'XAUUSD', 'XAGUSD'
+            'XAUUSD', 'USDCAD', 'USDCHF', 'AUDUSD', 'AUDJPY', 'USDJPY',
+            'EURGBP', 'GBPCAD', 'BTCUSD', 'GBPJPY', 'GBPNZD', 'EURUSD',
+            'NZDUSD', 'GBPUSD'
         ]
         
         all_results = []
