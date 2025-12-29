@@ -139,11 +139,16 @@ class PositionMonitor:
         
         try:
             with open(self.trade_history_file, 'r') as f:
-                trades = json.load(f)
+                data = json.load(f)
+            
+            # Get both open and closed trades
+            open_positions = data.get('open_positions', [])
+            closed_trades = data.get('closed_trades', [])
+            all_trades = open_positions + closed_trades
             
             # Găsește poziții noi (nu văzute anterior)
             new_positions = []
-            for trade in trades:
+            for trade in all_trades:
                 ticket = trade.get('ticket')
                 
                 if ticket and ticket not in self.seen_tickets:

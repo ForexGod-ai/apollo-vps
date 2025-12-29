@@ -758,6 +758,103 @@ class SMCDetector:
         
         return entry, stop_loss, take_profit
     
+    def detect_pullback_zone(
+        self, 
+        df: pd.DataFrame, 
+        fvg: FVG, 
+        current_trend: str,
+        current_index: int
+    ) -> Optional[Dict]:
+        """
+        🎯 PULLBACK DETECTION - Entry on pullback consolidation!
+        
+        After FVG is identified and price moves away from it,
+        detect when price CONSOLIDATES (pullback) before resuming trend.
+        
+        Logic:
+        1. LONG (bullish): Price breaks FVG bottom → moves up → pullback consolidation
+           - Entry = when price breaks OUT of pullback consolidation upward
+        
+        2. SHORT (bearish): Price breaks FVG top → moves down → pullback consolidation
+           - Entry = when price breaks OUT of pullback consolidation downward
+        
+        Returns: Dict with pullback info or None
+        """
+        
+        if current_index < fvg.index + 5:
+            return None  # Too early, not enough price action
+        
+        recent_df = df.iloc[fvg.index:current_index+1].copy()
+        if len(recent_df) < 3:
+            return None
+        
+        if current_trend == 'bullish':
+            # LONG PULLBACK: Price up, then consolidates
+            high_since_fvg = recent_df['high'].max()
+            fvg_breakout_distance = (high_since_fvg - fvg.bottom) / fvg.bottom
+            
+            if fvg_breakout_distance < 0.003:  # Need 0.3%+ move
+                return None
+            
+            recent_lows = recent_df['low'].iloc[-10:].min()
+            pullback_range = (high_since_fvg - recent_lows) / fvg.bottom
+            
+            if 0.002 <= pullback_range <= 0.01:  # Valid pullback (0.2%-1%)
+                return {
+                    'type': 'bullish_pullback',
+                    'high_point': high_since_fvg,
+                    'pullback_low': recent_lows,
+                    'pullback_depth_pct': pullback_range * 100
+                }
+        
+        else:  # bearish
+            # SHORT PULLBACK: Price down, then consolidates
+            low_since_fvg = recent_df['low'].min()
+            fvg_breakout_distance = (fvg.top - low_since_fvg) / fvg.top
+            
+            if fvg_breakout_distance < 0.003:  # Need 0.3%+ move
+                return None
+            
+            recent_highs = recent_df['high'].iloc[-10:].max()
+            pullback_range = (recent_highs - low_since_fvg) / fvg.top
+            
+            if 0.002 <= pullback_range <= 0.01:  # Valid pullback (0.2%-1%)
+                return {
+                    'type': 'bearish_pullback',
+                    'low_point': low_since_fvg,
+                    'pullback_high': recent_highs,
+                    'pullback_depth_pct': pullback_range * 100
+                }
+        
+        return None
+    
+    def check_pullback_breakout(
+        self,
+        df: pd.DataFrame,
+        pullback: Dict,
+        current_index: int
+    ) -> bool:
+        """
+        Check if price broke OUT of pullback consolidation
+        
+        LONG: Price breaks ABOVE pullback high
+        SHORT: Price breaks BELOW pullback low
+        """
+        if pullback is None:
+            return False
+        
+        recent_high = df['high'].iloc[max(0, current_index-2):current_index+1].max()
+        recent_low = df['low'].iloc[max(0, current_index-2):current_index+1].min()
+        
+        if pullback['type'] == 'bullish_pullback':
+            pullback_high = pullback['pullback_high'] * 1.001
+            return recent_high > pullback_high
+        else:
+            pullback_low = pullback['pullback_low'] * 0.999
+            return recent_low < pullback_low
+        
+        return False
+    
     def _analyze_pre_choch_structure(
         self,
         df: pd.DataFrame,
@@ -1103,18 +1200,48 @@ class SMCDetector:
         if debug and not valid_h4_choch:
             print(f"   ❌ No valid H4 CHoCH FROM FVG zone")
         
-        # Determine setup status
+        # 🎯 PULLBACK-BASED ENTRY LOGIC
+        # Detect pullback consolidation for safer entries
+        pullback_info = self.detect_pullback_zone(
+            df_4h, 
+            fvg, 
+            current_trend,
+            len(df_4h) - 1
+        )
+        
         h4_confirmation = valid_h4_choch
         
-        if h4_confirmation and price_in_fvg:
-            status = 'READY'  # Can execute now
+        # STATUS LOGIC:
+        # READY = H4 confirmation + (price in FVG OR pullback breakout confirmed)
+        # MONITORING = waiting for pullback formation or H4 confirmation
+        
+        if h4_confirmation:
+            if pullback_info:
+                # In pullback zone - check if breakout happened
+                pullback_breakout = self.check_pullback_breakout(df_4h, pullback_info, len(df_4h) - 1)
+                if pullback_breakout:
+                    status = 'READY'  # 🚀 Pullback BREAKOUT entry!
+                    if debug:
+                        print(f"\n✅ PULLBACK BREAKOUT ENTRY!")
+                        print(f"   Pullback Depth: {pullback_info.get('pullback_depth_pct', 0):.2f}%")
+                else:
+                    status = 'MONITORING'  # In pullback, waiting for breakout
+                    if debug:
+                        print(f"\n⏳ IN PULLBACK CONSOLIDATION")
+                        print(f"   Pullback Depth: {pullback_info.get('pullback_depth_pct', 0):.2f}%")
+                        print(f"   Waiting for breakout confirmation...")
+            elif price_in_fvg:
+                status = 'READY'  # H4 confirmed + price in FVG
+            else:
+                status = 'MONITORING'  # H4 confirmed but waiting for pullback
         else:
-            status = 'MONITORING'  # Watch and wait
+            status = 'MONITORING'  # No H4 yet
         
         if debug:
             print(f"\n📊 Setup Status: {status}")
             print(f"   H4 Confirmation: {h4_confirmation is not None}")
             print(f"   Price in FVG: {price_in_fvg}")
+            print(f"   Pullback Detected: {pullback_info is not None}")
         
         # Step 7: Calculate entry, SL, TP
         # Use H4 CHoCH for both REVERSAL and CONTINUITY

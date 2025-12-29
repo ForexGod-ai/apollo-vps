@@ -10,6 +10,39 @@ namespace cAlgo.Robots
 {
     [Robot(TimeZone = TimeZones.UTC, AccessRights = AccessRights.FullAccess)]
     public class PythonSignalExecutor : Robot
+            private void ExportActivePositions()
+            {
+                try
+                {
+                    var positionsList = new List<object>();
+                    foreach (var position in Account.Positions)
+                    {
+                        var symbol = Symbols.GetSymbol(position.SymbolName);
+                        if (symbol == null)
+                            continue;
+
+                        var exportObj = new {
+                            symbol = position.SymbolName,
+                            direction = position.TradeType.ToString().ToLower(),
+                            entry_price = position.EntryPrice,
+                            volume = position.Volume,
+                            opened_at = position.EntryTime,
+                            stop_loss = position.StopLoss,
+                            take_profit = position.TakeProfit
+                        };
+                        Print($"[EXPORT] {exportObj.symbol} | {exportObj.direction} | Entry: {exportObj.entry_price} | Vol: {exportObj.volume}");
+                        positionsList.Add(exportObj);
+                    }
+                    var exportPath = SignalFilePath.Replace("signals.json", "active_positions.json");
+                    var options = new JsonSerializerOptions { WriteIndented = true };
+                    File.WriteAllText(exportPath, JsonSerializer.Serialize(positionsList, options));
+                    Print($"✅ Active positions exported to {exportPath}");
+                }
+                catch (Exception ex)
+                {
+                    Print($"❌ Error exporting active positions: {ex.Message}");
+                }
+            }
     {
         [Parameter("Signal File Path", DefaultValue = "/Users/forexgod/Desktop/Glitch in Matrix/trading-ai-agent apollo/signals.json")]
         public string SignalFilePath { get; set; }
@@ -50,36 +83,43 @@ namespace cAlgo.Robots
                 
                 // THEN: Check for new signals
                 if (!File.Exists(SignalFilePath))
+                try
                 {
-                    return;
+                    // FIRST: Manage existing positions
+                    ManageOpenPositions();
+                    // Export active positions for Telegram sync (forțat la fiecare tick)
+                    ExportActivePositions();
+                    // DEBUG: Log toate pozițiile exportate
+                    var exportPath = SignalFilePath.Replace("signals.json", "active_positions.json");
+                    if (File.Exists(exportPath))
+                    {
+                        var exported = File.ReadAllText(exportPath);
+                        Print($"[DEBUG] active_positions.json: {exported}");
+                    }
+                    // THEN: Check for new signals
+                    if (!File.Exists(SignalFilePath))
+                        return;
+                    var fileInfo = new FileInfo(SignalFilePath);
+                    if (fileInfo.LastWriteTime <= _lastFileCheck)
+                        return;
+                    _lastFileCheck = fileInfo.LastWriteTime;
+                    var json = File.ReadAllText(SignalFilePath);
+                    var signal = JsonSerializer.Deserialize<TradeSignal>(json);
+                    if (signal == null || signal.SignalId == _lastProcessedSignal)
+                        return;
+                    _lastProcessedSignal = signal.SignalId;
+                    Print($"📊 NEW SIGNAL RECEIVED: {signal.Symbol} {signal.Direction.ToUpper()}");
+                    Print($"   Strategy: {signal.StrategyType}");
+                    Print($"   Entry: {signal.EntryPrice}");
+                    Print($"   SL: {signal.StopLoss}");
+                    Print($"   TP: {signal.TakeProfit}");
+                    Print($"   R:R: 1:{signal.RiskReward}");
+                    ExecuteSignal(signal);
                 }
-
-                var fileInfo = new FileInfo(SignalFilePath);
-                if (fileInfo.LastWriteTime <= _lastFileCheck)
+                catch (Exception ex)
                 {
-                    return;
+                    Print($"❌ ERROR: {ex.Message}");
                 }
-
-                _lastFileCheck = fileInfo.LastWriteTime;
-                
-                var json = File.ReadAllText(SignalFilePath);
-                var signal = JsonSerializer.Deserialize<TradeSignal>(json);
-
-                if (signal == null || signal.SignalId == _lastProcessedSignal)
-                {
-                    return;
-                }
-
-                Print($"📊 NEW SIGNAL RECEIVED: {signal.Symbol} {signal.Direction.ToUpper()}");
-                Print($"   Strategy: {signal.StrategyType}");
-                Print($"   Entry: {signal.EntryPrice}");
-                Print($"   SL: {signal.StopLoss}");
-                Print($"   TP: {signal.TakeProfit}");
-                Print($"   R:R: 1:{signal.RiskReward}");
-
-                ExecuteSignal(signal);
-                
-                _lastProcessedSignal = signal.SignalId;
             }
             catch (Exception ex)
             {
@@ -112,31 +152,33 @@ namespace cAlgo.Robots
             foreach (var position in Positions)
             {
                 if (!position.Label.StartsWith("Glitch Matrix"))
-                    continue;
-
-                var symbol = Symbols.GetSymbol(position.SymbolName);
-                if (symbol == null)
-                    continue;
-
-                // Calculate profit in pips
-                double profitPips = 0;
-                if (position.TradeType == TradeType.Buy)
-                {
-                    profitPips = (symbol.Bid - position.EntryPrice) / symbol.PipSize;
-                }
-                else
-                {
-                    profitPips = (position.EntryPrice - symbol.Ask) / symbol.PipSize;
-                }
-
-                // AUTO-CLOSE at 100 pips
-                if (profitPips >= AutoCloseProfitPips)
-                {
-                    Print($"🎯 TARGET REACHED: {position.SymbolName} +{profitPips:F1} pips");
-                    Print($"   Closing position #{position.Id}...");
-                    
-                    var closeResult = ClosePosition(position);
-                    if (closeResult.IsSuccessful)
+                    try
+                    {
+                        // FIRST: Manage existing positions
+                        ManageOpenPositions();
+                        // Export active positions for Telegram sync
+                        ExportActivePositions();
+                        // THEN: Check for new signals
+                        if (!File.Exists(SignalFilePath))
+                            return;
+                        var fileInfo = new FileInfo(SignalFilePath);
+                        if (fileInfo.LastWriteTime <= _lastFileCheck)
+                            return;
+                        _lastFileCheck = fileInfo.LastWriteTime;
+                        var json = File.ReadAllText(SignalFilePath);
+                        var signal = JsonSerializer.Deserialize<TradeSignal>(json);
+                        if (signal == null || signal.SignalId == _lastProcessedSignal)
+                            return;
+                        _lastProcessedSignal = signal.SignalId;
+                        Print($"📊 NEW SIGNAL RECEIVED: {signal.Symbol} {signal.Direction.ToUpper()}");
+                        Print($"   Strategy: {signal.StrategyType}");
+                        Print($"   Entry: {signal.EntryPrice}");
+                        ExecuteSignal(signal);
+                    }
+                    catch (Exception ex)
+                    {
+                        Print($"❌ Error in OnTimer: {ex.Message}");
+                    }
                     {
                         Print($"✅ POSITION CLOSED: ${position.NetProfit:F2} profit");
                         LogTradeClosure(position, profitPips, "auto_close_100pips");

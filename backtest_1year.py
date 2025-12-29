@@ -145,6 +145,14 @@ class GlitchBacktester:
         self.account_balance = 1000  # Starting balance in $
         self.risk_per_trade_pct = 2.0  # Risk 2% per trade
         self.leverage = 500  # 1:500 leverage
+        # Ensure pair_list is always loaded
+        self.pair_list = []
+        try:
+            with open('pairs_config.json', 'r') as f:
+                config = json.load(f)
+                self.pair_list = [p['symbol'] for p in config['pairs']]
+        except Exception as e:
+            logger.error(f"Could not load pairs from config: {e}")
     
     def backtest_pair(self, pair: str, months: int = 12) -> Dict:
         """
@@ -218,11 +226,6 @@ class GlitchBacktester:
         if not trades:
             logger.warning(f"⚠️ No trades found for {pair}")
             return {
-                'pair': pair,
-                'trades': 0,
-                'win_rate': 0,
-                'avg_rr': 0,
-                'total_pips': 0
             }
         
         stats = self._calculate_statistics(pair, trades)
@@ -487,16 +490,9 @@ class GlitchBacktester:
         Returns:
             Dictionary with all results
         """
-        # Load active pairs from config (same as daily_scanner.py)
-        pairs = [
-            'XAUUSD', 'USDCAD', 'USDCHF', 'AUDUSD', 'AUDJPY', 'USDJPY',
-            'EURGBP', 'GBPCAD', 'BTCUSD', 'GBPJPY', 'GBPNZD', 'EURUSD',
-            'NZDUSD', 'GBPUSD'
-        ]
-        
         all_results = []
         
-        for pair in pairs:
+        for pair in self.pair_list:
             result = self.backtest_pair(pair, months)
             if result:
                 all_results.append(result)

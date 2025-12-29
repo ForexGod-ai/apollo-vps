@@ -108,32 +108,40 @@ class RealtimeMonitor:
         """
         Check un simbol și detectează schimbări în narrativ
         """
-        logger.info(f"🔍 Analyzing {symbol}...")
-        
-        # Get analyzer
-        analyzer = self.analyzers[symbol]
-        
-        # Analyze current state
-        narrative = analyzer.analyze_market()
-        
-        # Store narrative
-        self.last_narratives[symbol] = narrative
-        
-        # Check for state changes
-        previous_rec = self.last_recommendations[symbol]
-        current_rec = narrative.recommendation
-        
-        if current_rec != previous_rec:
-            # CHANGE DETECTED!
-            self._handle_state_change(symbol, previous_rec, current_rec, narrative)
-        else:
-            # Same state, just log summary
-            logger.info(f"   Status: {current_rec.upper()}")
-            if narrative.waiting_for:
-                logger.info(f"   Waiting: {', '.join(narrative.waiting_for[:2])}")
-        
-        # Update last recommendation
-        self.last_recommendations[symbol] = current_rec
+        try:
+            logger.info(f"🔍 Analyzing {symbol}...")
+            
+            # Get analyzer
+            analyzer = self.analyzers[symbol]
+            
+            # Analyze current state
+            narrative = analyzer.analyze_market()
+            
+            if not narrative or not hasattr(narrative, 'recommendation'):
+                logger.warning(f"⚠️  Invalid narrative for {symbol}, skipping")
+                return
+            
+            # Store narrative
+            self.last_narratives[symbol] = narrative
+            
+            # Check for state changes
+            previous_rec = self.last_recommendations[symbol]
+            current_rec = narrative.recommendation
+            
+            if current_rec != previous_rec:
+                # CHANGE DETECTED!
+                self._handle_state_change(symbol, previous_rec, current_rec, narrative)
+            else:
+                # Same state, just log summary
+                logger.info(f"   Status: {current_rec.upper()}")
+                if narrative.waiting_for:
+                    logger.info(f"   Waiting: {', '.join(narrative.waiting_for[:2])}")
+            
+            # Update last recommendation
+            self.last_recommendations[symbol] = current_rec
+        except Exception as e:
+            logger.error(f"❌ Error analyzing {symbol}: {e}", exc_info=False)
+            # Don't update state - keep previous recommendation
     
     def _handle_state_change(
         self, 
@@ -167,66 +175,49 @@ class RealtimeMonitor:
         """
         🚨 READY TO TRADE - toate confirmările prezente!
         """
-        best_scenario = narrative.expected_scenarios[0] if narrative.expected_scenarios else None
-        
-        if not best_scenario:
-            return
-        
-        # Extract targets
-        entry = next((t['level'] for t in best_scenario.get('targets', []) if t['type'] == 'entry_zone'), narrative.current_price)
-        sl = next((t['level'] for t in best_scenario.get('targets', []) if t['type'] == 'stop_loss'), None)
-        tp = next((t['level'] for t in best_scenario.get('targets', []) if t['type'] == 'take_profit'), None)
-        
-        # Calculate R:R
-        if sl and tp and entry:
-            risk = abs(entry - sl)
-            reward = abs(tp - entry)
-            rr = reward / risk if risk > 0 else 0
-        else:
-            rr = 0
-        
-        message = f"""
+        try:
+            best_scenario = narrative.expected_scenarios[0] if hasattr(narrative, 'expected_scenarios') and narrative.expected_scenarios else None
+            
+            if not best_scenario:
+                logger.debug(f"Skipping ready alert for {symbol} - no scenarios")
+                return
+            
+            message = f"""
 🚨🔥 <b>{symbol} - READY TO TRADE!</b> 🔥🚨
 
 <b>📊 SETUP:</b> {best_scenario['name']}
-<b>🎯 Probability:</b> {best_scenario['probability']}%
-<b>💪 Confidence:</b> {narrative.confidence}%
-
-<b>📍 LEVELS:</b>
-• Entry Zone: ${entry:.5f}
-• Stop Loss: ${sl:.5f}
-• Take Profit: ${tp:.5f}
-• Risk/Reward: 1:{rr:.2f}
-
-<b>📖 STORY:</b>
-{best_scenario['description']}
+<b>🎯 Probability:</b> {best_scenario.get('probability', 'N/A')}%
+<b>💪 Confidence:</b> {narrative.confidence:.0%}
 
 <b>⏰ TIMING:</b> {best_scenario.get('expected_timing', 'Now')}
 
 <b>✅ ALL CONFIRMATIONS PRESENT - EXECUTE NOW!</b>
 
 <b>🔍 MARKET STATE:</b>
-• Structure: {narrative.current_state}
-• Position: {narrative.price_position}
-• Momentum: {narrative.momentum}
+• Structure: {narrative.condition.value}
+• CHoCH Count: {narrative.choch_count}
+• FVG Count: {narrative.fvg_count}
+• Volatility: {narrative.volatility_level}
 
----
-<i>Spatiotemporal Analysis v1.0</i>
-        """
-        
-        self._send_telegram(message)
-        logger.success(f"✅ READY alert sent for {symbol}")
+```"""
+            
+            self._send_telegram(message)
+            logger.info(f"🚨 READY ALERT sent for {symbol}")
+        except Exception as e:
+            logger.debug(f"Could not send ready alert for {symbol}: {e}")
     
     def _send_monitoring_alert(self, symbol: str, narrative: MarketNarrative):
         """
         👀 MONITOR CLOSELY - setup forming
         """
-        best_scenario = narrative.expected_scenarios[0] if narrative.expected_scenarios else None
-        
-        if not best_scenario:
-            return
-        
-        message = f"""
+        try:
+            best_scenario = narrative.expected_scenarios[0] if hasattr(narrative, 'expected_scenarios') and narrative.expected_scenarios else None
+            
+            if not best_scenario:
+                logger.debug(f"Skipping alert for {symbol} - no scenarios")
+                return
+            
+            message = f"""
 👀 <b>{symbol} - MONITOR CLOSELY</b>
 
 <b>📊 SETUP FORMING:</b> {best_scenario['name']}
@@ -234,78 +225,79 @@ class RealtimeMonitor:
 
 <b>⏳ WAITING FOR:</b>
 """
-        
-        for conf in narrative.waiting_for[:5]:
-            message += f"• {conf.replace('_', ' ').title()}\n"
-        
-        message += f"""
+            
+            for conf in narrative.waiting_for[:5]:
+                message += f"• {conf.replace('_', ' ').title()}\n"
+            
+            message += f"""
 <b>⏰ EXPECTED:</b> {best_scenario.get('expected_timing', 'TBD')}
 
-<b>📍 CURRENT PRICE:</b> ${narrative.current_price:.5f}
+<b>📍 CURRENT PRICE:</b> ${getattr(narrative, 'current_price', 0):.5f}
 
 <b>🔍 STATUS:</b>
-• Structure: {narrative.current_state}
-• Position: {narrative.price_position}
+• Confidence: {narrative.confidence:.0%}
+• Setup: {narrative.setup_status.replace('_', ' ').title()}
 
 🔔 <i>Will alert when READY!</i>
-        """
-        
-        self._send_telegram(message)
-        logger.info(f"👀 Monitoring alert sent for {symbol}")
+            """
+            
+            self._send_telegram(message)
+            logger.info(f"👀 Monitoring alert sent for {symbol}")
+        except Exception as e:
+            logger.debug(f"Could not send monitoring alert for {symbol}: {e}")
     
     def _send_downgrade_alert(self, symbol: str, old_state: str, new_state: str, narrative: MarketNarrative):
         """
         ⚠️ Setup degraded
         """
-        message = f"""
+        try:
+            message = f"""
 ⚠️ <b>{symbol} - SETUP DOWNGRADED</b>
 
 <b>Status:</b> {old_state.replace('_', ' ').title()} → {new_state.replace('_', ' ').title()}
 
-<b>📍 Current Price:</b> ${narrative.current_price:.5f}
-
 <b>⚠️ REASON:</b>
 Setup conditions no longer fully met. Some confirmations lost.
 
-<b>🔍 NEW WAITING LIST:</b>
-"""
-        
-        for conf in narrative.waiting_for[:5]:
-            message += f"• {conf.replace('_', ' ').title()}\n"
-        
-        message += "\n⏳ <i>Continue monitoring...</i>"
-        
-        self._send_telegram(message)
-        logger.warning(f"⚠️ Downgrade alert sent for {symbol}")
+<b>🔍 NEW STATUS:</b>
+• Confidence: {narrative.confidence:.0%}
+• Setup: {narrative.setup_status.replace('_', ' ').title()}
+
+<b>📊 Market:</b>
+• Condition: {narrative.condition.value}
+• Volatility: {narrative.volatility_level}
+
+⏳ <i>Continue monitoring...</i>
+            """
+            
+            self._send_telegram(message)
+            logger.warning(f"⚠️ Downgrade alert sent for {symbol}")
+        except Exception as e:
+            logger.debug(f"Could not send downgrade alert for {symbol}: {e}")
     
     def _send_invalidation_alert(self, symbol: str, narrative: MarketNarrative):
         """
         ❌ Setup invalidated
         """
-        message = f"""
+        try:
+            message = f"""
 ❌ <b>{symbol} - SETUP INVALIDATED</b>
 
-<b>📍 Current Price:</b> ${narrative.current_price:.5f}
-
 <b>❌ INVALIDATION:</b>
-"""
-        
-        if narrative.invalidation_levels:
-            for level in narrative.invalidation_levels:
-                message += f"• Price broke ${level:.5f}\n"
-        else:
-            message += "Setup conditions no longer valid.\n"
-        
-        message += f"""
+Setup conditions no longer valid.
+
 <b>🔍 CURRENT STATE:</b>
-• Structure: {narrative.current_state}
-• Momentum: {narrative.momentum}
+• Condition: {narrative.condition.value}
+• Confidence: {narrative.confidence:.0%}
+• Setup: {narrative.setup_status.replace('_', ' ').title()}
 
 ⏸️ <i>Waiting for new setup...</i>
-        """
-        
-        self._send_telegram(message)
-        logger.warning(f"❌ Invalidation alert sent for {symbol}")
+            """
+            
+            self._send_telegram(message)
+            logger.warning(f"❌ Invalidation alert sent for {symbol}")
+        except Exception as e:
+            logger.debug(f"Could not send invalidation alert for {symbol}: {e}")
     
     def _send_telegram(self, message: str):
         """

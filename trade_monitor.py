@@ -48,44 +48,52 @@ class TradeMonitor:
         except Exception as e:
             logger.error(f"Could not save processed trades: {e}")
     
-    def _get_account_summary(self, trades):
+    def _get_account_summary(self, closed_trades_list):
         """Generează summary cont din trade history"""
-        if not trades:
-            return "📊 No trades yet"
+        # Load full account data from trade_history.json
+        try:
+            with open(self.trade_history_file, 'r') as f:
+                data = json.load(f)
+            
+            account_info = data.get('account', {})
+            balance = account_info.get('balance', 1200.00)
+            equity = account_info.get('equity', balance)
+            open_positions = data.get('open_positions', [])
+            closed_trades = data.get('closed_trades', [])
+            
+        except:
+            # Fallback if file read fails
+            balance = 1200.00
+            equity = balance
+            open_positions = []
+            closed_trades = closed_trades_list
         
         # Calculează stats
-        total_profit = sum(t.get('profit', 0) for t in trades)
-        closed_trades = [t for t in trades if t.get('status') == 'CLOSED']
-        open_trades = [t for t in trades if t.get('status') == 'OPEN']
+        total_profit = sum(t.get('profit', 0) for t in closed_trades)
         
         winning_trades = len([t for t in closed_trades if t.get('profit', 0) > 0])
         losing_trades = len([t for t in closed_trades if t.get('profit', 0) < 0])
         
         win_rate = (winning_trades / len(closed_trades) * 100) if closed_trades else 0
         
-        # Ultimul balance
-        balance = 1200.00  # Default
-        if closed_trades:
-            last_trade = max(closed_trades, key=lambda t: t.get('close_time', ''))
-            balance = last_trade.get('balance_after', balance)
-        
         summary = f"""
 📊 <b>ACCOUNT STATUS - IC Markets cTrader</b>
 
 💰 <b>Balance</b>: ${balance:.2f}
+💎 <b>Equity</b>: ${equity:.2f}
 📈 <b>Total P/L</b>: ${total_profit:+.2f}
 
 📋 <b>Trade Statistics</b>:
-   • Open Positions: {len(open_trades)}
+   • Open Positions: {len(open_positions)}
    • Closed Trades: {len(closed_trades)}
    • Win Rate: {win_rate:.1f}%
    • Winners: {winning_trades} | Losers: {losing_trades}
 """
         
         # Pozițiile deschise
-        if open_trades:
+        if open_positions:
             summary += "\n🔓 <b>Open Positions</b>:\n"
-            for trade in open_trades[:5]:  # Max 5
+            for trade in open_positions[:5]:  # Max 5
                 symbol = trade.get('symbol', 'N/A')
                 direction = trade.get('direction', 'N/A')
                 lot = trade.get('lot_size', 0)
@@ -131,21 +139,24 @@ class TradeMonitor:
         
         try:
             with open(self.trade_history_file, 'r') as f:
-                trades = json.load(f)
+                data = json.load(f)
+            
+            # Extract closed trades from data structure
+            closed_trades = data.get('closed_trades', [])
             
             # Găsește trades închise recent (nu procesate)
             new_closed_trades = []
-            for trade in trades:
+            for trade in closed_trades:
                 ticket = trade.get('ticket')
-                status = trade.get('status')
                 
-                if ticket and status == 'CLOSED' and ticket not in self.processed_trades:
+                # Trade-urile din closed_trades sunt deja închise, nu mai verificăm status
+                if ticket and ticket not in self.processed_trades:
                     new_closed_trades.append(trade)
                     self.processed_trades.add(ticket)
             
             # Trimite notification pentru fiecare trade închis
             for trade in new_closed_trades:
-                self._send_trade_closed_notification(trade, trades)
+                self._send_trade_closed_notification(trade, closed_trades)
             
             if new_closed_trades:
                 self._save_processed_trades()

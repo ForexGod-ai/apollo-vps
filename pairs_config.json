@@ -64,6 +64,13 @@
       "category": "crypto"
     },
     {
+      "symbol": "XTIUSD",
+      "mt5_symbol": "XTIUSD",
+      "priority": 1,
+      "description": "WTI Crude Oil vs US Dollar - Commodity CFD",
+      "category": "commodity"
+    },
+    {
       "symbol": "GBPJPY",
       "mt5_symbol": "GBPJPY",
       "priority": 1,
@@ -133,6 +140,6 @@
     "total_return": "625.3%",
     "last_updated": "2025-12-14"
   },
-  "total_pairs": 14,
-  "note": "Optimized list based on backtest results - All 14 pairs validated with historical data. GBPNZD included for high R:R potential despite lower win rate"
+  "total_pairs": 15,
+  "note": "Optimized list based on backtest results - All pairs validated with historical data. GBPNZD included for high R:R potential despite lower win rate. XTIUSD added for WTI Crude Oil trading"
 }

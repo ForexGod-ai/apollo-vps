@@ -98,23 +98,32 @@ class TelegramNotifier:
         """
         # 1. Send main alert message
         message = self._format_setup_message(setup)
-        
+        print(f"[DEBUG] Sending setup alert for {setup.symbol} | status: {getattr(setup, 'status', None)}")
         if not self.send_message(message):
+            print(f"[ERROR] Failed to send main message for {setup.symbol}")
             return False
-        
         # 2. Generate and send Daily chart
-        daily_chart = self._create_daily_chart(setup, df_daily)
-        if daily_chart:
-            self.send_photo(daily_chart, caption=f"📊 {setup.symbol} - Daily Timeframe")
-        
+        try:
+            daily_chart = self._create_daily_chart(setup, df_daily)
+            if daily_chart:
+                print(f"[DEBUG] Daily chart generated for {setup.symbol}")
+                self.send_photo(daily_chart, caption=f"📊 {setup.symbol} - Daily Timeframe")
+            else:
+                print(f"[ERROR] Daily chart NOT generated for {setup.symbol}")
+        except Exception as e:
+            print(f"[EXCEPTION] Error generating Daily chart for {setup.symbol}: {e}")
         # 3. Generate and send 4H chart
-        h4_chart = self._create_4h_chart(setup, df_4h)
-        if h4_chart:
-            self.send_photo(h4_chart, caption=f"🔍 {setup.symbol} - 4H Timeframe")
-        
+        try:
+            h4_chart = self._create_4h_chart(setup, df_4h)
+            if h4_chart:
+                print(f"[DEBUG] 4H chart generated for {setup.symbol}")
+                self.send_photo(h4_chart, caption=f"🔍 {setup.symbol} - 4H Timeframe")
+            else:
+                print(f"[ERROR] 4H chart NOT generated for {setup.symbol}")
+        except Exception as e:
+            print(f"[EXCEPTION] Error generating 4H chart for {setup.symbol}: {e}")
         # 4. Send interactive buttons
         self._send_action_buttons(setup)
-        
         return True
     
     def _format_setup_message(self, setup: TradeSetup) -> str:
@@ -212,7 +221,8 @@ Take Profit: `{setup.take_profit:.5f}`
             "CADCHF": "FX:CADCHF",
             "XAUUSD": "TVC:GOLD",
             "BTCUSD": "BITSTAMP:BTCUSD",
-            "USOIL": "TVC:USOIL"
+            "USOIL": "TVC:USOIL",
+            "XTIUSD": "TVC:USOIL"
         }
         
         return tv_symbols.get(symbol, f"FX:{symbol}")
@@ -311,7 +321,8 @@ Take Profit: `{setup.take_profit:.5f}`
             message += "🎯 *ACTIVE MONITORING SETUPS:*\n\n"
             for setup in active_setups:
                 symbol = setup.get('symbol', 'Unknown')
-                direction = "🟢 LONG" if setup.get('direction') == 'buy' else "🔴 SHORT"
+                dir_raw = str(setup.get('direction', '')).strip().lower()
+                direction = "🟢 LONG" if dir_raw == 'buy' else ("🔴 SHORT" if dir_raw == 'sell' else dir_raw.upper())
                 entry = setup.get('entry_price', 0)
                 rr = setup.get('risk_reward', 0)
                 message += f"• *{symbol}* - {direction}\n"

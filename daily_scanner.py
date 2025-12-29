@@ -10,6 +10,7 @@ import json
 import os
 from typing import List, Optional, Dict
 from dotenv import load_dotenv
+from loguru import logger
 
 from smc_detector import SMCDetector, TradeSetup
 from telegram_notifier import TelegramNotifier
@@ -175,7 +176,7 @@ class DailyScanner:
             if not keep_connection:
                 self.data_provider.disconnect()
         
-        # Load ALL monitoring setups (existing + new) for summary
+        # Load monitoring setups + check for recently executed setups still in open positions
         monitoring_setups = []
         try:
             with open('monitoring_setups.json', 'r') as f:
@@ -184,22 +185,66 @@ class DailyScanner:
         except FileNotFoundError:
             pass  # No existing file
         
+        # Include ALL open positions from trade_history.json as active setups
+        active_setups_count = len(monitoring_setups)
+        executed_positions = []
+        all_open_positions = []
+        open_position_symbols = set()  # Track which symbols have open positions
+        try:
+            with open('trade_history.json', 'r') as f:
+                trade_data = json.load(f)
+                all_open_positions = trade_data.get('open_positions', [])
+                open_position_symbols = {p.get('symbol') for p in all_open_positions}
+                active_setups_count += len(all_open_positions)
+                logger.info(f"📊 Found {len(all_open_positions)} open positions: {[p.get('symbol') for p in all_open_positions]}")
+        except Exception as e:
+            logger.debug(f"Could not check open positions: {e}")
+        
+        # FILTER OUT setups that are already in open positions (don't report as NEW)
+        new_setups = [s for s in setups_found if s.symbol not in open_position_symbols]
+
         # Send daily summary
         print("\n" + "="*60)
         print(f"✅ Scan Complete!")
         print(f"📊 Total Pairs Scanned: {len(self.pairs)}")
-        print(f"🎯 New Setups Found: {len(setups_found)}")
-        print(f"📋 Total Active Setups: {len(monitoring_setups)}")
+        print(f"🎯 New Setups Found (not already open): {len(new_setups)}")
+        print(f"📋 Total Active Setups: {active_setups_count}")
+        print(f"    └─ Monitoring: {len(monitoring_setups)} | Executed & Open: {len(all_open_positions)}")
         print("="*60 + "\n")
-        
+
         if self.scanner_settings['telegram_alerts']:
+            # Create combined active setups list for Telegram
+            combined_active = monitoring_setups.copy()
+            # Add ALL open positions info, calculând corect R:R
+            for pos in all_open_positions:
+                entry = pos.get('entry_price', 0)
+                sl = pos.get('stop_loss', 0)
+                tp = pos.get('take_profit', 0)
+                direction = str(pos.get('direction', 'buy')).strip().lower()
+                # Calcul R:R: (|TP-Entry|) / (|Entry-SL|), protejat la div zero
+                risk = abs(entry - sl)
+                reward = abs(tp - entry)
+                rr = round(reward / risk, 2) if risk > 0 else 0
+                combined_active.append({
+                    'symbol': pos.get('symbol', 'N/A'),
+                    'direction': pos.get('direction', 'buy'),
+                    'entry_price': entry,
+                    'status': 'EXECUTED',
+                    'ticket': pos.get('ticket', 'N/A'),
+                    'profit': pos.get('profit', 0),
+                    'risk_reward': rr
+                })
             self.telegram.send_daily_summary(
                 scanned_pairs=len(self.pairs),
-                setups_found=len(setups_found),
-                active_setups=monitoring_setups
+                setups_found=len(new_setups),
+                active_setups=combined_active
             )
-        
-        return setups_found
+        # DEBUG: Print status for each setup found
+        print('\n--- DEBUG: Status setup-uri returnate de run_daily_scan ---')
+        for s in new_setups:
+            print(f"{getattr(s, 'symbol', 'N/A')}: status={getattr(s, 'status', 'N/A')}")
+        print('----------------------------------------------------------')
+        return new_setups
     
     def scan_single_pair(self, symbol: str) -> Optional[TradeSetup]:
         """Scan a single pair (for testing)"""
@@ -342,3 +387,30 @@ if __name__ == "__main__":
     
     # For full daily scan:
     main()
+
+import os
+
+def get_active_positions(path):
+    if not os.path.exists(path):
+        return []
+    with open(path, 'r') as f:
+        return json.load(f)
+
+def format_telegram_active_setups(positions):
+    if not positions:
+        return 'No active positions in cTrader.'
+    msg = '🎯 ACTIVE SETUPS (cTrader Sync):\n'
+    for pos in positions:
+        direction = 'LONG' if pos['direction'] == 'buy' else 'SHORT'
+        msg += f"• {pos['symbol']} - {direction}\n  Entry: {pos['entry_price']} | Vol: {pos['volume']}\n"
+    return msg
+
+# La finalul scanării, trimite active setups din cTrader
+ACTIVE_POSITIONS_FILE = '/Users/forexgod/Desktop/Glitch in Matrix/trading-ai-agent apollo/active_positions.json'
+active_positions = get_active_positions(ACTIVE_POSITIONS_FILE)
+active_setups_message = format_telegram_active_setups(active_positions)
+print(active_setups_message)
+# Dacă vrei să trimiți și aici mesajul pe Telegram, decomentează liniile de mai jos:
+# from telegram_notifier import TelegramNotifier
+# telegram = TelegramNotifier()
+# telegram.send_message(active_setups_message)

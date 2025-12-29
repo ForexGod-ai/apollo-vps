@@ -1,12 +1,14 @@
 {
-  "signalId": "SIGNAL_20251216_192854",
-  "symbol": "GBPJPY",
-  "direction": "buy",
-  "entryPrice": 207.806,
-  "stopLoss": 207.390388,
-  "takeProfit": 211.36055499999998,
-  "volume": 0.01,
-  "riskReward": 8.552580291232879,
-  "strategyType": "continuation - MONITORING_CONFIRMED",
-  "timestamp": "2025-12-16T19:28:54.410854"
+  "SignalId": "SIGNAL_20251229_154629",
+  "Symbol": "NZDUSD",
+  "Direction": "buy",
+  "EntryPrice": 0.58014,
+  "StopLoss": 0.57897972,
+  "TakeProfit": 0.5910141999999999,
+  "StopLossPips": 11.602800000000135,
+  "TakeProfitPips": 108.74199999999945,
+  "Volume": 0.01,
+  "RiskReward": 9.372048126314182,
+  "StrategyType": "reversal - MONITORING_CONFIRMED",
+  "Timestamp": "2025-12-29T15:46:29.413391"
 }

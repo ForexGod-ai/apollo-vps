@@ -1,12 +1,12 @@
 {
-  "signal_id": "SIGNAL_20251216_183308",
-  "position_id": "553083786",
-  "symbol": "GBPJPY",
+  "signal_id": "SIGNAL_20251226_122935",
+  "position_id": "558456792",
+  "symbol": "NZDUSD",
   "direction": "buy",
-  "volume": 10000,
-  "entry_price": 207.869,
-  "sl": 207.453,
-  "tp": 211.424,
-  "executed_at": "2025-12-16T18:35:14.019886+02:00",
+  "volume": 29000,
+  "entry_price": 0.58218,
+  "sl": 0.58102,
+  "tp": 0.59305,
+  "executed_at": "2025-12-26T12:29:45.153185+02:00",
   "status": "executed"
 }

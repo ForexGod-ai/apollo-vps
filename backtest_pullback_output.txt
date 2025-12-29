@@ -1,0 +1,1049 @@
+2025-12-29 15:27:45,242 - INFO - 🚀 Starting backtest on ALL 21 pairs...
+2025-12-29 15:27:45,242 - INFO - 
+============================================================
+2025-12-29 15:27:45,242 - INFO - 🔍 BACKTESTING XAUUSD - 12 months
+2025-12-29 15:27:45,242 - INFO - ============================================================
+2025-12-29 15:27:45,242 - INFO - 📦 Loading XAUUSD D1 from cache...
+2025-12-29 15:27:45,246 - INFO - 📦 Loading XAUUSD H4 from cache...
+2025-12-29 15:27:45,247 - INFO - 📊 Replaying 365 days of data...
+2025-12-29 15:27:45,247 - INFO - ⏰ Starting from index 100 (need context for swing detection)
+2025-12-29 15:27:45,579 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:27:45,579 - INFO - 📍 Setup found on 2025-05-19: READY
+2025-12-29 15:27:45,580 - INFO - 📊 Trade #1 @ 2025-05-19: WIN | Pips: 2053.9 | USD: $283.79 | R:R: 14.19x | Lot: 0.01
+2025-12-29 15:27:45,599 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:27:45,599 - INFO - 📍 Setup found on 2025-05-20: READY
+2025-12-29 15:27:45,605 - INFO - 📊 Trade #2 @ 2025-05-20: LOSS | Pips: -237.5 | USD: $-20.00 | R:R: -1.00x | Lot: 0.01
+2025-12-29 15:27:45,624 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:27:45,624 - INFO - 📍 Setup found on 2025-05-21: READY
+2025-12-29 15:27:45,630 - INFO - 📊 Trade #3 @ 2025-05-21: LOSS | Pips: -189.3 | USD: $-20.00 | R:R: -1.00x | Lot: 0.01
+2025-12-29 15:27:45,650 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:27:45,650 - INFO - 📍 Setup found on 2025-05-22: READY
+2025-12-29 15:27:45,655 - INFO - 📊 Trade #4 @ 2025-05-22: LOSS | Pips: -193.3 | USD: $-20.00 | R:R: -1.00x | Lot: 0.01
+2025-12-29 15:27:45,675 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:27:45,675 - INFO - 📍 Setup found on 2025-05-25: READY
+2025-12-29 15:27:45,680 - INFO - 📊 Trade #5 @ 2025-05-25: LOSS | Pips: -217.4 | USD: $-20.00 | R:R: -1.00x | Lot: 0.01
+2025-12-29 15:27:45,701 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:27:45,701 - INFO - 📍 Setup found on 2025-05-26: READY
+2025-12-29 15:27:45,706 - INFO - 📊 Trade #6 @ 2025-05-26: LOSS | Pips: -132.9 | USD: $-20.00 | R:R: -1.00x | Lot: 0.02
+2025-12-29 15:27:45,727 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:27:45,727 - INFO - 📍 Setup found on 2025-05-27: READY
+2025-12-29 15:27:45,732 - INFO - 📊 Trade #7 @ 2025-05-27: LOSS | Pips: -121.7 | USD: $-20.00 | R:R: -1.00x | Lot: 0.02
+2025-12-29 15:27:45,752 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:27:45,753 - INFO - 📍 Setup found on 2025-05-28: READY
+2025-12-29 15:27:45,758 - INFO - 📊 Trade #8 @ 2025-05-28: LOSS | Pips: -192.9 | USD: $-20.00 | R:R: -1.00x | Lot: 0.01
+2025-12-29 15:27:45,779 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:27:45,779 - INFO - 📍 Setup found on 2025-05-29: READY
+2025-12-29 15:27:45,784 - INFO - 📊 Trade #9 @ 2025-05-29: LOSS | Pips: -237.8 | USD: $-20.00 | R:R: -1.00x | Lot: 0.01
+2025-12-29 15:27:45,968 - INFO - 🎯 Setup found: CONTINUATION bullish
+2025-12-29 15:27:45,968 - INFO - 📍 Setup found on 2025-06-17: READY
+2025-12-29 15:27:45,969 - INFO - 📊 Trade #10 @ 2025-06-17: WIN | Pips: 697.3 | USD: $207.47 | R:R: 10.37x | Lot: 0.03
+2025-12-29 15:27:45,985 - INFO - 🎯 Setup found: CONTINUATION bullish
+2025-12-29 15:27:45,985 - INFO - 📍 Setup found on 2025-06-18: READY
+2025-12-29 15:27:45,986 - INFO - 📊 Trade #11 @ 2025-06-18: WIN | Pips: 697.3 | USD: $207.47 | R:R: 10.37x | Lot: 0.03
+2025-12-29 15:27:46,002 - INFO - 🎯 Setup found: CONTINUATION bullish
+2025-12-29 15:27:46,002 - INFO - 📍 Setup found on 2025-06-19: READY
+2025-12-29 15:27:46,003 - INFO - 📊 Trade #12 @ 2025-06-19: WIN | Pips: 697.3 | USD: $207.47 | R:R: 10.37x | Lot: 0.03
+2025-12-29 15:27:46,020 - INFO - 🎯 Setup found: CONTINUATION bullish
+2025-12-29 15:27:46,020 - INFO - 📍 Setup found on 2025-06-22: READY
+2025-12-29 15:27:46,021 - INFO - 📊 Trade #13 @ 2025-06-22: WIN | Pips: 697.3 | USD: $207.47 | R:R: 10.37x | Lot: 0.03
+2025-12-29 15:27:46,398 - INFO - 🎯 Setup found: CONTINUATION bullish
+2025-12-29 15:27:46,399 - INFO - 📍 Setup found on 2025-07-23: READY
+2025-12-29 15:27:46,399 - INFO - 📊 Trade #14 @ 2025-07-23: WIN | Pips: 728.9 | USD: $216.86 | R:R: 10.84x | Lot: 0.03
+2025-12-29 15:27:46,555 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:27:46,555 - INFO - 📍 Setup found on 2025-08-03: READY
+2025-12-29 15:27:46,557 - INFO - 📊 Trade #15 @ 2025-08-03: LOSS | Pips: -159.9 | USD: $-20.00 | R:R: -1.00x | Lot: 0.01
+2025-12-29 15:27:46,588 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:27:46,588 - INFO - 📍 Setup found on 2025-08-04: READY
+2025-12-29 15:27:46,589 - INFO - 📊 Trade #16 @ 2025-08-04: LOSS | Pips: -207.2 | USD: $-20.00 | R:R: -1.00x | Lot: 0.01
+2025-12-29 15:27:46,620 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:27:46,620 - INFO - 📍 Setup found on 2025-08-05: READY
+2025-12-29 15:27:46,622 - INFO - 📊 Trade #17 @ 2025-08-05: LOSS | Pips: -250.3 | USD: $-20.00 | R:R: -1.00x | Lot: 0.01
+2025-12-29 15:27:46,652 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:27:46,652 - INFO - 📍 Setup found on 2025-08-06: READY
+2025-12-29 15:27:46,654 - INFO - 📊 Trade #18 @ 2025-08-06: LOSS | Pips: -280.6 | USD: $-20.00 | R:R: -1.00x | Lot: 0.01
+2025-12-29 15:27:46,685 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:27:46,685 - INFO - 📍 Setup found on 2025-08-07: READY
+2025-12-29 15:27:46,686 - INFO - 📊 Trade #19 @ 2025-08-07: LOSS | Pips: -235.1 | USD: $-20.00 | R:R: -1.00x | Lot: 0.01
+2025-12-29 15:27:46,718 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:27:46,718 - INFO - 📍 Setup found on 2025-08-10: READY
+2025-12-29 15:27:46,719 - INFO - 📊 Trade #20 @ 2025-08-10: LOSS | Pips: -170.7 | USD: $-20.00 | R:R: -1.00x | Lot: 0.01
+2025-12-29 15:27:46,929 - INFO - 🎯 Setup found: REVERSAL bullish
+2025-12-29 15:27:46,929 - INFO - 📍 Setup found on 2025-09-16: READY
+2025-12-29 15:27:46,929 - INFO - 📊 Trade #21 @ 2025-09-16: WIN | Pips: 730.7 | USD: $199.82 | R:R: 9.99x | Lot: 0.03
+2025-12-29 15:27:47,024 - INFO - 🎯 Setup found: REVERSAL bullish
+2025-12-29 15:27:47,025 - INFO - 📍 Setup found on 2025-09-23: READY
+2025-12-29 15:27:47,025 - INFO - 📊 Trade #22 @ 2025-09-23: WIN | Pips: 1074.0 | USD: $291.43 | R:R: 14.57x | Lot: 0.03
+2025-12-29 15:27:47,131 - INFO - 🎯 Setup found: REVERSAL bullish
+2025-12-29 15:27:47,131 - INFO - 📍 Setup found on 2025-10-08: READY
+2025-12-29 15:27:47,132 - INFO - 📊 Trade #23 @ 2025-10-08: WIN | Pips: 732.8 | USD: $184.59 | R:R: 9.23x | Lot: 0.03
+2025-12-29 15:27:48,096 - INFO - 🎯 Setup found: REVERSAL bullish
+2025-12-29 15:27:48,096 - INFO - 📍 Setup found on 2025-11-11: READY
+2025-12-29 15:27:48,096 - INFO - 📊 Trade #24 @ 2025-11-11: WIN | Pips: 832.9 | USD: $199.27 | R:R: 9.96x | Lot: 0.02
+2025-12-29 15:27:48,827 - INFO - 🎯 Setup found: REVERSAL bullish
+2025-12-29 15:27:48,827 - INFO - 📍 Setup found on 2025-12-04: READY
+2025-12-29 15:27:48,828 - INFO - 📊 Trade #25 @ 2025-12-04: WIN | Pips: 832.9 | USD: $199.27 | R:R: 9.96x | Lot: 0.02
+2025-12-29 15:27:48,865 - INFO - 🎯 Setup found: REVERSAL bullish
+2025-12-29 15:27:48,865 - INFO - 📍 Setup found on 2025-12-07: READY
+2025-12-29 15:27:48,865 - INFO - 📊 Trade #26 @ 2025-12-07: WIN | Pips: 832.9 | USD: $199.27 | R:R: 9.96x | Lot: 0.02
+2025-12-29 15:27:48,902 - INFO - ✅ Scan complete: 26 setups found, 26 trades executed
+2025-12-29 15:27:48,902 - INFO - 
+✅ XAUUSD RESULTS:
+2025-12-29 15:27:48,902 - INFO -    Trades: 26
+2025-12-29 15:27:48,902 - INFO -    Win Rate: 46.2%
+2025-12-29 15:27:48,902 - INFO -    Avg R:R (USD): 10.85x
+2025-12-29 15:27:48,902 - INFO -    Total Pips: 7781.5
+2025-12-29 15:27:48,902 - INFO -    Total USD: $2,324
+2025-12-29 15:27:48,902 - INFO -    Return: 232.4%
+2025-12-29 15:27:48,902 - INFO -    Max Drawdown: 12.5%
+2025-12-29 15:27:48,902 - INFO - 
+============================================================
+2025-12-29 15:27:48,902 - INFO - 🔍 BACKTESTING USDCAD - 12 months
+2025-12-29 15:27:48,902 - INFO - ============================================================
+2025-12-29 15:27:48,902 - INFO - 📦 Loading USDCAD D1 from cache...
+2025-12-29 15:27:48,904 - INFO - 📦 Loading USDCAD H4 from cache...
+2025-12-29 15:27:48,906 - INFO - 📊 Replaying 365 days of data...
+2025-12-29 15:27:48,906 - INFO - ⏰ Starting from index 100 (need context for swing detection)
+2025-12-29 15:27:49,050 - INFO - 🎯 Setup found: REVERSAL bullish
+2025-12-29 15:27:49,050 - INFO - 📍 Setup found on 2025-05-12: READY
+2025-12-29 15:27:49,051 - INFO - 📊 Trade #1 @ 2025-05-12: WIN | Pips: 416.0 | USD: $301.25 | R:R: 15.06x | Lot: 0.07
+2025-12-29 15:27:49,066 - INFO - 🎯 Setup found: REVERSAL bullish
+2025-12-29 15:27:49,066 - INFO - 📍 Setup found on 2025-05-13: READY
+2025-12-29 15:27:49,067 - INFO - 📊 Trade #2 @ 2025-05-13: WIN | Pips: 457.5 | USD: $332.30 | R:R: 16.62x | Lot: 0.07
+2025-12-29 15:27:49,082 - INFO - 🎯 Setup found: REVERSAL bullish
+2025-12-29 15:27:49,082 - INFO - 📍 Setup found on 2025-05-14: READY
+2025-12-29 15:27:49,083 - INFO - 📊 Trade #3 @ 2025-05-14: WIN | Pips: 457.5 | USD: $332.30 | R:R: 16.62x | Lot: 0.07
+2025-12-29 15:27:49,099 - INFO - 🎯 Setup found: REVERSAL bullish
+2025-12-29 15:27:49,099 - INFO - 📍 Setup found on 2025-05-15: READY
+2025-12-29 15:27:49,100 - INFO - 📊 Trade #4 @ 2025-05-15: WIN | Pips: 457.5 | USD: $332.30 | R:R: 16.62x | Lot: 0.07
+2025-12-29 15:27:49,116 - INFO - 🎯 Setup found: REVERSAL bullish
+2025-12-29 15:27:49,116 - INFO - 📍 Setup found on 2025-05-18: READY
+2025-12-29 15:27:49,117 - INFO - 📊 Trade #5 @ 2025-05-18: WIN | Pips: 457.5 | USD: $332.30 | R:R: 16.62x | Lot: 0.07
+2025-12-29 15:27:49,133 - INFO - 🎯 Setup found: REVERSAL bullish
+2025-12-29 15:27:49,133 - INFO - 📍 Setup found on 2025-05-19: READY
+2025-12-29 15:27:49,133 - INFO - 📊 Trade #6 @ 2025-05-19: WIN | Pips: 457.5 | USD: $332.30 | R:R: 16.62x | Lot: 0.07
+2025-12-29 15:27:49,150 - INFO - 🎯 Setup found: REVERSAL bullish
+2025-12-29 15:27:49,150 - INFO - 📍 Setup found on 2025-05-20: READY
+2025-12-29 15:27:49,151 - INFO - 📊 Trade #7 @ 2025-05-20: WIN | Pips: 422.9 | USD: $307.16 | R:R: 15.36x | Lot: 0.07
+2025-12-29 15:27:49,167 - INFO - 🎯 Setup found: REVERSAL bullish
+2025-12-29 15:27:49,168 - INFO - 📍 Setup found on 2025-05-21: READY
+2025-12-29 15:27:49,168 - INFO - 📊 Trade #8 @ 2025-05-21: WIN | Pips: 422.9 | USD: $307.16 | R:R: 15.36x | Lot: 0.07
+2025-12-29 15:27:49,232 - INFO - 🎯 Setup found: REVERSAL bullish
+2025-12-29 15:27:49,232 - INFO - 📍 Setup found on 2025-05-26: READY
+2025-12-29 15:27:49,233 - INFO - 📊 Trade #9 @ 2025-05-26: WIN | Pips: 422.9 | USD: $307.16 | R:R: 15.36x | Lot: 0.07
+2025-12-29 15:27:49,257 - INFO - 🎯 Setup found: REVERSAL bullish
+2025-12-29 15:27:49,257 - INFO - 📍 Setup found on 2025-05-29: READY
+2025-12-29 15:27:49,258 - INFO - 📊 Trade #10 @ 2025-05-29: WIN | Pips: 269.3 | USD: $196.02 | R:R: 9.80x | Lot: 0.07
+2025-12-29 15:27:49,292 - INFO - 🎯 Setup found: REVERSAL bullish
+2025-12-29 15:27:49,292 - INFO - 📍 Setup found on 2025-06-02: READY
+2025-12-29 15:27:49,293 - INFO - 📊 Trade #11 @ 2025-06-02: WIN | Pips: 269.3 | USD: $196.02 | R:R: 9.80x | Lot: 0.07
+2025-12-29 15:27:49,578 - INFO - 🎯 Setup found: REVERSAL bullish
+2025-12-29 15:27:49,578 - INFO - 📍 Setup found on 2025-06-29: READY
+2025-12-29 15:27:49,579 - INFO - 📊 Trade #12 @ 2025-06-29: WIN | Pips: 231.9 | USD: $170.44 | R:R: 8.52x | Lot: 0.07
+2025-12-29 15:27:49,602 - INFO - 🎯 Setup found: REVERSAL bullish
+2025-12-29 15:27:49,602 - INFO - 📍 Setup found on 2025-07-01: READY
+2025-12-29 15:27:49,603 - INFO - 📊 Trade #13 @ 2025-07-01: WIN | Pips: 231.9 | USD: $170.44 | R:R: 8.52x | Lot: 0.07
+2025-12-29 15:27:49,620 - INFO - 🎯 Setup found: REVERSAL bullish
+2025-12-29 15:27:49,620 - INFO - 📍 Setup found on 2025-07-02: READY
+2025-12-29 15:27:49,621 - INFO - 📊 Trade #14 @ 2025-07-02: WIN | Pips: 231.9 | USD: $170.44 | R:R: 8.52x | Lot: 0.07
+2025-12-29 15:27:49,638 - INFO - 🎯 Setup found: REVERSAL bullish
+2025-12-29 15:27:49,638 - INFO - 📍 Setup found on 2025-07-03: READY
+2025-12-29 15:27:49,639 - INFO - 📊 Trade #15 @ 2025-07-03: WIN | Pips: 231.9 | USD: $170.44 | R:R: 8.52x | Lot: 0.07
+2025-12-29 15:27:49,997 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:27:49,997 - INFO - 📍 Setup found on 2025-09-02: READY
+2025-12-29 15:27:49,999 - INFO - 📊 Trade #16 @ 2025-09-02: WIN | Pips: 164.5 | USD: $187.25 | R:R: 9.36x | Lot: 0.11
+2025-12-29 15:27:50,032 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:27:50,032 - INFO - 📍 Setup found on 2025-09-03: READY
+2025-12-29 15:27:50,033 - INFO - 📊 Trade #17 @ 2025-09-03: WIN | Pips: 169.9 | USD: $175.04 | R:R: 8.75x | Lot: 0.10
+2025-12-29 15:27:50,067 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:27:50,067 - INFO - 📍 Setup found on 2025-09-04: READY
+2025-12-29 15:27:50,068 - INFO - 📊 Trade #18 @ 2025-09-04: WIN | Pips: 179.7 | USD: $147.38 | R:R: 7.37x | Lot: 0.08
+2025-12-29 15:27:50,102 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:27:50,102 - INFO - 📍 Setup found on 2025-09-07: READY
+2025-12-29 15:27:50,103 - INFO - 📊 Trade #19 @ 2025-09-07: WIN | Pips: 177.0 | USD: $228.14 | R:R: 11.41x | Lot: 0.13
+2025-12-29 15:27:50,137 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:27:50,137 - INFO - 📍 Setup found on 2025-09-08: READY
+2025-12-29 15:27:50,138 - INFO - 📊 Trade #20 @ 2025-09-08: WIN | Pips: 184.4 | USD: $332.29 | R:R: 16.61x | Lot: 0.18
+2025-12-29 15:27:50,172 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:27:50,172 - INFO - 📍 Setup found on 2025-09-09: READY
+2025-12-29 15:27:50,173 - INFO - 📊 Trade #21 @ 2025-09-09: WIN | Pips: 182.3 | USD: $298.75 | R:R: 14.94x | Lot: 0.16
+2025-12-29 15:27:50,207 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:27:50,207 - INFO - 📍 Setup found on 2025-09-10: READY
+2025-12-29 15:27:50,208 - INFO - 📊 Trade #22 @ 2025-09-10: WIN | Pips: 172.4 | USD: $214.84 | R:R: 10.74x | Lot: 0.12
+2025-12-29 15:27:50,243 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:27:50,243 - INFO - 📍 Setup found on 2025-09-11: READY
+2025-12-29 15:27:50,243 - INFO - 📊 Trade #23 @ 2025-09-11: WIN | Pips: 168.4 | USD: $186.90 | R:R: 9.34x | Lot: 0.11
+2025-12-29 15:27:51,080 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:27:51,080 - INFO - 📍 Setup found on 2025-12-02: READY
+2025-12-29 15:27:51,080 - INFO - 📊 Trade #24 @ 2025-12-02: WIN | Pips: 128.8 | USD: $134.87 | R:R: 6.74x | Lot: 0.10
+2025-12-29 15:27:51,186 - INFO - ✅ Scan complete: 24 setups found, 24 trades executed
+2025-12-29 15:27:51,186 - INFO - 
+✅ USDCAD RESULTS:
+2025-12-29 15:27:51,186 - INFO -    Trades: 24
+2025-12-29 15:27:51,186 - INFO -    Win Rate: 100.0%
+2025-12-29 15:27:51,186 - INFO -    Avg R:R (USD): 12.22x
+2025-12-29 15:27:51,186 - INFO -    Total Pips: 6966.5
+2025-12-29 15:27:51,186 - INFO -    Total USD: $5,864
+2025-12-29 15:27:51,186 - INFO -    Return: 586.4%
+2025-12-29 15:27:51,186 - INFO -    Max Drawdown: 0.0%
+2025-12-29 15:27:51,186 - INFO - 
+============================================================
+2025-12-29 15:27:51,186 - INFO - 🔍 BACKTESTING USDCHF - 12 months
+2025-12-29 15:27:51,186 - INFO - ============================================================
+2025-12-29 15:27:51,186 - INFO - 📦 Loading USDCHF D1 from cache...
+2025-12-29 15:27:51,188 - INFO - 📦 Loading USDCHF H4 from cache...
+2025-12-29 15:27:51,190 - INFO - 📊 Replaying 365 days of data...
+2025-12-29 15:27:51,190 - INFO - ⏰ Starting from index 100 (need context for swing detection)
+2025-12-29 15:27:51,260 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:27:51,260 - INFO - 📍 Setup found on 2025-04-22: READY
+2025-12-29 15:27:51,261 - INFO - 📊 Trade #1 @ 2025-04-22: LOSS | Pips: -16.7 | USD: $-20.00 | R:R: -1.00x | Lot: 0.12
+2025-12-29 15:27:51,271 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:27:51,271 - INFO - 📍 Setup found on 2025-04-23: READY
+2025-12-29 15:27:51,273 - INFO - 📊 Trade #2 @ 2025-04-23: LOSS | Pips: -16.7 | USD: $-20.00 | R:R: -1.00x | Lot: 0.12
+2025-12-29 15:27:51,309 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:27:51,309 - INFO - 📍 Setup found on 2025-04-24: READY
+2025-12-29 15:27:51,311 - INFO - 📊 Trade #3 @ 2025-04-24: LOSS | Pips: -16.7 | USD: $-20.00 | R:R: -1.00x | Lot: 0.12
+2025-12-29 15:27:51,339 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:27:51,339 - INFO - 📍 Setup found on 2025-04-29: READY
+2025-12-29 15:27:51,341 - INFO - 📊 Trade #4 @ 2025-04-29: LOSS | Pips: -16.7 | USD: $-20.00 | R:R: -1.00x | Lot: 0.12
+2025-12-29 15:27:51,351 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:27:51,351 - INFO - 📍 Setup found on 2025-04-30: READY
+2025-12-29 15:27:51,352 - INFO - 📊 Trade #5 @ 2025-04-30: LOSS | Pips: -16.7 | USD: $-20.00 | R:R: -1.00x | Lot: 0.12
+2025-12-29 15:27:51,363 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:27:51,363 - INFO - 📍 Setup found on 2025-05-01: READY
+2025-12-29 15:27:51,365 - INFO - 📊 Trade #6 @ 2025-05-01: LOSS | Pips: -16.7 | USD: $-20.00 | R:R: -1.00x | Lot: 0.12
+2025-12-29 15:27:51,419 - INFO - 🎯 Setup found: REVERSAL bullish
+2025-12-29 15:27:51,419 - INFO - 📍 Setup found on 2025-05-14: READY
+2025-12-29 15:27:51,420 - INFO - 📊 Trade #7 @ 2025-05-14: WIN | Pips: 171.9 | USD: $206.10 | R:R: 10.30x | Lot: 0.12
+2025-12-29 15:27:51,432 - INFO - 🎯 Setup found: REVERSAL bullish
+2025-12-29 15:27:51,432 - INFO - 📍 Setup found on 2025-05-15: READY
+2025-12-29 15:27:51,433 - INFO - 📊 Trade #8 @ 2025-05-15: WIN | Pips: 171.9 | USD: $206.10 | R:R: 10.30x | Lot: 0.12
+2025-12-29 15:27:51,445 - INFO - 🎯 Setup found: REVERSAL bullish
+2025-12-29 15:27:51,445 - INFO - 📍 Setup found on 2025-05-18: READY
+2025-12-29 15:27:51,446 - INFO - 📊 Trade #9 @ 2025-05-18: WIN | Pips: 171.9 | USD: $206.10 | R:R: 10.30x | Lot: 0.12
+2025-12-29 15:27:51,730 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:27:51,730 - INFO - 📍 Setup found on 2025-07-02: READY
+2025-12-29 15:27:51,731 - INFO - 📊 Trade #10 @ 2025-07-02: LOSS | Pips: -15.9 | USD: $-20.00 | R:R: -1.00x | Lot: 0.13
+2025-12-29 15:27:51,784 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:27:51,784 - INFO - 📍 Setup found on 2025-07-07: READY
+2025-12-29 15:27:51,784 - INFO - 📊 Trade #11 @ 2025-07-07: LOSS | Pips: -15.9 | USD: $-20.00 | R:R: -1.00x | Lot: 0.13
+2025-12-29 15:27:51,809 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:27:51,809 - INFO - 📍 Setup found on 2025-07-09: READY
+2025-12-29 15:27:51,809 - INFO - 📊 Trade #12 @ 2025-07-09: LOSS | Pips: -15.9 | USD: $-20.00 | R:R: -1.00x | Lot: 0.13
+2025-12-29 15:27:51,828 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:27:51,828 - INFO - 📍 Setup found on 2025-07-10: READY
+2025-12-29 15:27:51,828 - INFO - 📊 Trade #13 @ 2025-07-10: LOSS | Pips: -15.9 | USD: $-20.00 | R:R: -1.00x | Lot: 0.13
+2025-12-29 15:27:51,905 - INFO - 🎯 Setup found: REVERSAL bullish
+2025-12-29 15:27:51,905 - INFO - 📍 Setup found on 2025-07-17: READY
+2025-12-29 15:27:51,906 - INFO - 📊 Trade #14 @ 2025-07-17: LOSS | Pips: -9.5 | USD: $-20.00 | R:R: -1.00x | Lot: 0.21
+2025-12-29 15:27:51,960 - INFO - 🎯 Setup found: REVERSAL bullish
+2025-12-29 15:27:51,960 - INFO - 📍 Setup found on 2025-07-21: READY
+2025-12-29 15:27:51,961 - INFO - 📊 Trade #15 @ 2025-07-21: WIN | Pips: 93.7 | USD: $867.92 | R:R: 43.40x | Lot: 0.93
+2025-12-29 15:27:51,988 - INFO - 🎯 Setup found: REVERSAL bullish
+2025-12-29 15:27:51,989 - INFO - 📍 Setup found on 2025-07-22: READY
+2025-12-29 15:27:51,989 - INFO - 📊 Trade #16 @ 2025-07-22: WIN | Pips: 93.2 | USD: $1062.28 | R:R: 53.11x | Lot: 1.14
+2025-12-29 15:27:52,017 - INFO - 🎯 Setup found: REVERSAL bullish
+2025-12-29 15:27:52,017 - INFO - 📍 Setup found on 2025-07-23: READY
+2025-12-29 15:27:52,018 - INFO - 📊 Trade #17 @ 2025-07-23: WIN | Pips: 156.3 | USD: $1407.40 | R:R: 70.37x | Lot: 0.90
+2025-12-29 15:27:52,046 - INFO - 🎯 Setup found: REVERSAL bullish
+2025-12-29 15:27:52,046 - INFO - 📍 Setup found on 2025-07-24: READY
+2025-12-29 15:27:52,046 - INFO - 📊 Trade #18 @ 2025-07-24: WIN | Pips: 156.1 | USD: $7806.91 | R:R: 390.35x | Lot: 5.00
+2025-12-29 15:27:52,150 - INFO - 🎯 Setup found: REVERSAL bullish
+2025-12-29 15:27:52,150 - INFO - 📍 Setup found on 2025-08-03: READY
+2025-12-29 15:27:52,150 - INFO - 📊 Trade #19 @ 2025-08-03: WIN | Pips: 154.0 | USD: $190.58 | R:R: 9.53x | Lot: 0.12
+2025-12-29 15:27:52,172 - INFO - 🎯 Setup found: REVERSAL bullish
+2025-12-29 15:27:52,172 - INFO - 📍 Setup found on 2025-08-04: READY
+2025-12-29 15:27:52,172 - INFO - 📊 Trade #20 @ 2025-08-04: WIN | Pips: 154.0 | USD: $190.58 | R:R: 9.53x | Lot: 0.12
+2025-12-29 15:27:52,265 - INFO - 🎯 Setup found: REVERSAL bullish
+2025-12-29 15:27:52,265 - INFO - 📍 Setup found on 2025-08-07: READY
+2025-12-29 15:27:52,266 - INFO - 📊 Trade #21 @ 2025-08-07: WIN | Pips: 154.0 | USD: $190.58 | R:R: 9.53x | Lot: 0.12
+2025-12-29 15:27:53,052 - INFO - 🎯 Setup found: CONTINUATION bearish
+2025-12-29 15:27:53,052 - INFO - 📍 Setup found on 2025-10-26: READY
+2025-12-29 15:27:53,053 - INFO - 📊 Trade #22 @ 2025-10-26: LOSS | Pips: -13.7 | USD: $-20.00 | R:R: -1.00x | Lot: 0.15
+2025-12-29 15:27:53,135 - INFO - 🎯 Setup found: CONTINUATION bearish
+2025-12-29 15:27:53,135 - INFO - 📍 Setup found on 2025-10-28: READY
+2025-12-29 15:27:53,136 - INFO - 📊 Trade #23 @ 2025-10-28: LOSS | Pips: -14.1 | USD: $-20.00 | R:R: -1.00x | Lot: 0.14
+2025-12-29 15:27:53,178 - INFO - 🎯 Setup found: CONTINUATION bearish
+2025-12-29 15:27:53,178 - INFO - 📍 Setup found on 2025-10-29: READY
+2025-12-29 15:27:53,178 - INFO - 📊 Trade #24 @ 2025-10-29: LOSS | Pips: -21.2 | USD: $-20.00 | R:R: -1.00x | Lot: 0.09
+2025-12-29 15:27:53,220 - INFO - 🎯 Setup found: CONTINUATION bearish
+2025-12-29 15:27:53,220 - INFO - 📍 Setup found on 2025-10-30: READY
+2025-12-29 15:27:53,221 - INFO - 📊 Trade #25 @ 2025-10-30: LOSS | Pips: -23.7 | USD: $-20.00 | R:R: -1.00x | Lot: 0.08
+2025-12-29 15:27:53,263 - INFO - 🎯 Setup found: CONTINUATION bearish
+2025-12-29 15:27:53,263 - INFO - 📍 Setup found on 2025-11-02: READY
+2025-12-29 15:27:53,263 - INFO - 📊 Trade #26 @ 2025-11-02: LOSS | Pips: -24.7 | USD: $-20.00 | R:R: -1.00x | Lot: 0.08
+2025-12-29 15:27:53,436 - INFO - 🎯 Setup found: CONTINUATION bearish
+2025-12-29 15:27:53,436 - INFO - 📍 Setup found on 2025-11-05: READY
+2025-12-29 15:27:53,436 - INFO - 📊 Trade #27 @ 2025-11-05: LOSS | Pips: -17.1 | USD: $-20.00 | R:R: -1.00x | Lot: 0.12
+2025-12-29 15:27:53,479 - INFO - 🎯 Setup found: CONTINUATION bearish
+2025-12-29 15:27:53,479 - INFO - 📍 Setup found on 2025-11-06: READY
+2025-12-29 15:27:53,480 - INFO - 📊 Trade #28 @ 2025-11-06: WIN | Pips: 139.0 | USD: $174.03 | R:R: 8.70x | Lot: 0.13
+2025-12-29 15:27:53,523 - INFO - 🎯 Setup found: CONTINUATION bearish
+2025-12-29 15:27:53,523 - INFO - 📍 Setup found on 2025-11-09: READY
+2025-12-29 15:27:53,524 - INFO - 📊 Trade #29 @ 2025-11-09: WIN | Pips: 138.8 | USD: $158.81 | R:R: 7.94x | Lot: 0.11
+2025-12-29 15:27:53,567 - INFO - 🎯 Setup found: CONTINUATION bearish
+2025-12-29 15:27:53,567 - INFO - 📍 Setup found on 2025-11-10: READY
+2025-12-29 15:27:53,568 - INFO - 📊 Trade #30 @ 2025-11-10: WIN | Pips: 139.3 | USD: $164.01 | R:R: 8.20x | Lot: 0.12
+2025-12-29 15:27:54,303 - INFO - ✅ Scan complete: 30 setups found, 30 trades executed
+2025-12-29 15:27:54,303 - INFO - 
+✅ USDCHF RESULTS:
+2025-12-29 15:27:54,303 - INFO -    Trades: 30
+2025-12-29 15:27:54,303 - INFO -    Win Rate: 43.3%
+2025-12-29 15:27:54,303 - INFO -    Avg R:R (USD): 49.35x
+2025-12-29 15:27:54,303 - INFO -    Total Pips: 1606.2
+2025-12-29 15:27:54,303 - INFO -    Total USD: $12,491
+2025-12-29 15:27:54,303 - INFO -    Return: 1249.1%
+2025-12-29 15:27:54,303 - INFO -    Max Drawdown: 12.0%
+2025-12-29 15:27:54,303 - INFO - 
+============================================================
+2025-12-29 15:27:54,303 - INFO - 🔍 BACKTESTING AUDUSD - 12 months
+2025-12-29 15:27:54,303 - INFO - ============================================================
+2025-12-29 15:27:54,304 - INFO - 📦 Loading AUDUSD D1 from cache...
+2025-12-29 15:27:54,305 - INFO - 📦 Loading AUDUSD H4 from cache...
+2025-12-29 15:27:54,306 - INFO - 📊 Replaying 365 days of data...
+2025-12-29 15:27:54,306 - INFO - ⏰ Starting from index 100 (need context for swing detection)
+2025-12-29 15:27:54,355 - INFO - 🎯 Setup found: REVERSAL bullish
+2025-12-29 15:27:54,355 - INFO - 📍 Setup found on 2025-04-13: READY
+2025-12-29 15:27:54,356 - INFO - 📊 Trade #1 @ 2025-04-13: WIN | Pips: 107.8 | USD: $170.20 | R:R: 8.51x | Lot: 0.16
+2025-12-29 15:27:55,010 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:27:55,010 - INFO - 📍 Setup found on 2025-07-21: READY
+2025-12-29 15:27:55,011 - INFO - 📊 Trade #2 @ 2025-07-21: LOSS | Pips: -23.4 | USD: $-20.00 | R:R: -1.00x | Lot: 0.09
+2025-12-29 15:27:55,038 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:27:55,038 - INFO - 📍 Setup found on 2025-07-22: READY
+2025-12-29 15:27:55,039 - INFO - 📊 Trade #3 @ 2025-07-22: LOSS | Pips: -21.8 | USD: $-20.00 | R:R: -1.00x | Lot: 0.09
+2025-12-29 15:27:55,066 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:27:55,066 - INFO - 📍 Setup found on 2025-07-23: READY
+2025-12-29 15:27:55,067 - INFO - 📊 Trade #4 @ 2025-07-23: LOSS | Pips: -23.1 | USD: $-20.00 | R:R: -1.00x | Lot: 0.09
+2025-12-29 15:27:55,094 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:27:55,095 - INFO - 📍 Setup found on 2025-07-24: READY
+2025-12-29 15:27:55,095 - INFO - 📊 Trade #5 @ 2025-07-24: WIN | Pips: 115.8 | USD: $99.50 | R:R: 4.98x | Lot: 0.09
+2025-12-29 15:27:56,404 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:27:56,404 - INFO - 📍 Setup found on 2025-10-22: READY
+2025-12-29 15:27:56,405 - INFO - 📊 Trade #6 @ 2025-10-22: WIN | Pips: 154.9 | USD: $125.57 | R:R: 6.28x | Lot: 0.08
+2025-12-29 15:27:56,445 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:27:56,446 - INFO - 📍 Setup found on 2025-10-23: READY
+2025-12-29 15:27:56,446 - INFO - 📊 Trade #7 @ 2025-10-23: WIN | Pips: 154.4 | USD: $140.30 | R:R: 7.01x | Lot: 0.09
+2025-12-29 15:27:56,487 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:27:56,487 - INFO - 📍 Setup found on 2025-10-26: READY
+2025-12-29 15:27:56,488 - INFO - 📊 Trade #8 @ 2025-10-26: WIN | Pips: 153.5 | USD: $117.61 | R:R: 5.88x | Lot: 0.08
+2025-12-29 15:27:56,528 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:27:56,528 - INFO - 📍 Setup found on 2025-10-27: READY
+2025-12-29 15:27:56,529 - INFO - 📊 Trade #9 @ 2025-10-27: WIN | Pips: 154.9 | USD: $126.72 | R:R: 6.34x | Lot: 0.08
+2025-12-29 15:27:56,570 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:27:56,570 - INFO - 📍 Setup found on 2025-10-28: READY
+2025-12-29 15:27:56,571 - INFO - 📊 Trade #10 @ 2025-10-28: WIN | Pips: 154.0 | USD: $125.89 | R:R: 6.29x | Lot: 0.08
+2025-12-29 15:27:56,612 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:27:56,612 - INFO - 📍 Setup found on 2025-10-29: READY
+2025-12-29 15:27:56,612 - INFO - 📊 Trade #11 @ 2025-10-29: WIN | Pips: 145.9 | USD: $94.88 | R:R: 4.74x | Lot: 0.07
+2025-12-29 15:27:56,654 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:27:56,654 - INFO - 📍 Setup found on 2025-10-30: READY
+2025-12-29 15:27:56,655 - INFO - 📊 Trade #12 @ 2025-10-30: WIN | Pips: 142.8 | USD: $82.36 | R:R: 4.12x | Lot: 0.06
+2025-12-29 15:27:56,696 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:27:56,696 - INFO - 📍 Setup found on 2025-11-02: READY
+2025-12-29 15:27:56,696 - INFO - 📊 Trade #13 @ 2025-11-02: WIN | Pips: 135.1 | USD: $82.56 | R:R: 4.13x | Lot: 0.06
+2025-12-29 15:27:57,015 - INFO - ✅ Scan complete: 13 setups found, 13 trades executed
+2025-12-29 15:27:57,015 - INFO - 
+✅ AUDUSD RESULTS:
+2025-12-29 15:27:57,015 - INFO -    Trades: 13
+2025-12-29 15:27:57,015 - INFO -    Win Rate: 76.9%
+2025-12-29 15:27:57,015 - INFO -    Avg R:R (USD): 5.83x
+2025-12-29 15:27:57,015 - INFO -    Total Pips: 1350.8
+2025-12-29 15:27:57,015 - INFO -    Total USD: $1,106
+2025-12-29 15:27:57,015 - INFO -    Return: 110.6%
+2025-12-29 15:27:57,015 - INFO -    Max Drawdown: 5.1%
+2025-12-29 15:27:57,015 - INFO - 
+============================================================
+2025-12-29 15:27:57,015 - INFO - 🔍 BACKTESTING AUDJPY - 12 months
+2025-12-29 15:27:57,015 - INFO - ============================================================
+2025-12-29 15:27:57,015 - INFO - 📦 Loading AUDJPY D1 from cache...
+2025-12-29 15:27:57,017 - INFO - 📦 Loading AUDJPY H4 from cache...
+2025-12-29 15:27:57,018 - INFO - 📊 Replaying 365 days of data...
+2025-12-29 15:27:57,018 - INFO - ⏰ Starting from index 100 (need context for swing detection)
+2025-12-29 15:27:57,037 - INFO - 🎯 Setup found: CONTINUATION bearish
+2025-12-29 15:27:57,037 - INFO - 📍 Setup found on 2025-04-08: READY
+2025-12-29 15:27:57,038 - INFO - 📊 Trade #1 @ 2025-04-08: WIN | Pips: 318.7 | USD: $345.33 | R:R: 17.27x | Lot: 0.11
+2025-12-29 15:27:57,057 - INFO - 🎯 Setup found: CONTINUATION bearish
+2025-12-29 15:27:57,057 - INFO - 📍 Setup found on 2025-04-13: READY
+2025-12-29 15:27:57,058 - INFO - 📊 Trade #2 @ 2025-04-13: LOSS | Pips: -18.5 | USD: $-20.00 | R:R: -1.00x | Lot: 0.11
+2025-12-29 15:27:57,067 - INFO - 🎯 Setup found: CONTINUATION bearish
+2025-12-29 15:27:57,067 - INFO - 📍 Setup found on 2025-04-14: READY
+2025-12-29 15:27:57,068 - INFO - 📊 Trade #3 @ 2025-04-14: LOSS | Pips: -18.5 | USD: $-20.00 | R:R: -1.00x | Lot: 0.11
+2025-12-29 15:27:57,083 - INFO - 🎯 Setup found: CONTINUATION bearish
+2025-12-29 15:27:57,083 - INFO - 📍 Setup found on 2025-04-16: READY
+2025-12-29 15:27:57,084 - INFO - 📊 Trade #4 @ 2025-04-16: LOSS | Pips: -18.5 | USD: $-20.00 | R:R: -1.00x | Lot: 0.11
+2025-12-29 15:27:57,093 - INFO - 🎯 Setup found: CONTINUATION bearish
+2025-12-29 15:27:57,093 - INFO - 📍 Setup found on 2025-04-17: READY
+2025-12-29 15:27:57,094 - INFO - 📊 Trade #5 @ 2025-04-17: LOSS | Pips: -18.5 | USD: $-20.00 | R:R: -1.00x | Lot: 0.11
+2025-12-29 15:27:57,115 - INFO - 🎯 Setup found: CONTINUATION bearish
+2025-12-29 15:27:57,115 - INFO - 📍 Setup found on 2025-04-22: READY
+2025-12-29 15:27:57,116 - INFO - 📊 Trade #6 @ 2025-04-22: LOSS | Pips: -18.5 | USD: $-20.00 | R:R: -1.00x | Lot: 0.11
+2025-12-29 15:27:57,126 - INFO - 🎯 Setup found: CONTINUATION bearish
+2025-12-29 15:27:57,126 - INFO - 📍 Setup found on 2025-04-23: READY
+2025-12-29 15:27:57,127 - INFO - 📊 Trade #7 @ 2025-04-23: LOSS | Pips: -18.5 | USD: $-20.00 | R:R: -1.00x | Lot: 0.11
+2025-12-29 15:27:57,137 - INFO - 🎯 Setup found: CONTINUATION bearish
+2025-12-29 15:27:57,137 - INFO - 📍 Setup found on 2025-04-24: READY
+2025-12-29 15:27:57,138 - INFO - 📊 Trade #8 @ 2025-04-24: LOSS | Pips: -18.5 | USD: $-20.00 | R:R: -1.00x | Lot: 0.11
+2025-12-29 15:27:57,148 - INFO - 🎯 Setup found: CONTINUATION bearish
+2025-12-29 15:27:57,149 - INFO - 📍 Setup found on 2025-04-27: READY
+2025-12-29 15:27:57,149 - INFO - 📊 Trade #9 @ 2025-04-27: LOSS | Pips: -18.5 | USD: $-20.00 | R:R: -1.00x | Lot: 0.11
+2025-12-29 15:27:57,160 - INFO - 🎯 Setup found: CONTINUATION bearish
+2025-12-29 15:27:57,160 - INFO - 📍 Setup found on 2025-04-28: READY
+2025-12-29 15:27:57,161 - INFO - 📊 Trade #10 @ 2025-04-28: LOSS | Pips: -18.5 | USD: $-20.00 | R:R: -1.00x | Lot: 0.11
+2025-12-29 15:27:57,171 - INFO - 🎯 Setup found: CONTINUATION bearish
+2025-12-29 15:27:57,172 - INFO - 📍 Setup found on 2025-04-29: READY
+2025-12-29 15:27:57,172 - INFO - 📊 Trade #11 @ 2025-04-29: LOSS | Pips: -18.5 | USD: $-20.00 | R:R: -1.00x | Lot: 0.11
+2025-12-29 15:27:57,246 - INFO - 🎯 Setup found: CONTINUATION bearish
+2025-12-29 15:27:57,246 - INFO - 📍 Setup found on 2025-05-06: READY
+2025-12-29 15:27:57,247 - INFO - 📊 Trade #12 @ 2025-05-06: LOSS | Pips: -18.5 | USD: $-20.00 | R:R: -1.00x | Lot: 0.11
+2025-12-29 15:27:57,313 - INFO - 🎯 Setup found: REVERSAL bullish
+2025-12-29 15:27:57,313 - INFO - 📍 Setup found on 2025-05-14: READY
+2025-12-29 15:27:57,314 - INFO - 📊 Trade #13 @ 2025-05-14: WIN | Pips: 704.9 | USD: $782.90 | R:R: 39.15x | Lot: 0.11
+2025-12-29 15:27:57,330 - INFO - 🎯 Setup found: REVERSAL bullish
+2025-12-29 15:27:57,330 - INFO - 📍 Setup found on 2025-05-15: READY
+2025-12-29 15:27:57,331 - INFO - 📊 Trade #14 @ 2025-05-15: WIN | Pips: 704.9 | USD: $782.90 | R:R: 39.15x | Lot: 0.11
+2025-12-29 15:27:57,348 - INFO - 🎯 Setup found: REVERSAL bullish
+2025-12-29 15:27:57,348 - INFO - 📍 Setup found on 2025-05-18: READY
+2025-12-29 15:27:57,349 - INFO - 📊 Trade #15 @ 2025-05-18: WIN | Pips: 704.9 | USD: $782.90 | R:R: 39.15x | Lot: 0.11
+2025-12-29 15:27:57,386 - INFO - 🎯 Setup found: REVERSAL bullish
+2025-12-29 15:27:57,386 - INFO - 📍 Setup found on 2025-05-20: READY
+2025-12-29 15:27:57,386 - INFO - 📊 Trade #16 @ 2025-05-20: WIN | Pips: 682.2 | USD: $757.76 | R:R: 37.89x | Lot: 0.11
+2025-12-29 15:27:57,404 - INFO - 🎯 Setup found: REVERSAL bullish
+2025-12-29 15:27:57,404 - INFO - 📍 Setup found on 2025-05-21: READY
+2025-12-29 15:27:57,405 - INFO - 📊 Trade #17 @ 2025-05-21: WIN | Pips: 682.2 | USD: $757.76 | R:R: 37.89x | Lot: 0.11
+2025-12-29 15:27:57,423 - INFO - 🎯 Setup found: REVERSAL bullish
+2025-12-29 15:27:57,423 - INFO - 📍 Setup found on 2025-05-22: READY
+2025-12-29 15:27:57,423 - INFO - 📊 Trade #18 @ 2025-05-22: WIN | Pips: 682.2 | USD: $757.76 | R:R: 37.89x | Lot: 0.11
+2025-12-29 15:27:57,441 - INFO - 🎯 Setup found: REVERSAL bullish
+2025-12-29 15:27:57,441 - INFO - 📍 Setup found on 2025-05-25: READY
+2025-12-29 15:27:57,442 - INFO - 📊 Trade #19 @ 2025-05-25: WIN | Pips: 682.2 | USD: $757.76 | R:R: 37.89x | Lot: 0.11
+2025-12-29 15:27:57,666 - INFO - 🎯 Setup found: REVERSAL bullish
+2025-12-29 15:27:57,666 - INFO - 📍 Setup found on 2025-06-11: READY
+2025-12-29 15:27:57,667 - INFO - 📊 Trade #20 @ 2025-06-11: WIN | Pips: 153.9 | USD: $164.07 | R:R: 8.20x | Lot: 0.11
+2025-12-29 15:27:58,063 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:27:58,064 - INFO - 📍 Setup found on 2025-08-11: READY
+2025-12-29 15:27:58,065 - INFO - 📊 Trade #21 @ 2025-08-11: WIN | Pips: 214.5 | USD: $174.69 | R:R: 8.73x | Lot: 0.08
+2025-12-29 15:27:58,097 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:27:58,097 - INFO - 📍 Setup found on 2025-08-12: READY
+2025-12-29 15:27:58,098 - INFO - 📊 Trade #22 @ 2025-08-12: WIN | Pips: 214.3 | USD: $151.87 | R:R: 7.59x | Lot: 0.07
+2025-12-29 15:27:58,129 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:27:58,129 - INFO - 📍 Setup found on 2025-08-13: READY
+2025-12-29 15:27:58,130 - INFO - 📊 Trade #23 @ 2025-08-13: WIN | Pips: 214.7 | USD: $144.51 | R:R: 7.23x | Lot: 0.07
+2025-12-29 15:27:58,196 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:27:58,196 - INFO - 📍 Setup found on 2025-08-24: READY
+2025-12-29 15:27:58,197 - INFO - 📊 Trade #24 @ 2025-08-24: LOSS | Pips: -19.1 | USD: $-20.00 | R:R: -1.00x | Lot: 0.10
+2025-12-29 15:27:58,221 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:27:58,221 - INFO - 📍 Setup found on 2025-08-25: READY
+2025-12-29 15:27:58,221 - INFO - 📊 Trade #25 @ 2025-08-25: LOSS | Pips: -19.1 | USD: $-20.00 | R:R: -1.00x | Lot: 0.10
+2025-12-29 15:27:58,580 - INFO - 🎯 Setup found: CONTINUATION bullish
+2025-12-29 15:27:58,580 - INFO - 📍 Setup found on 2025-09-15: READY
+2025-12-29 15:27:58,581 - INFO - 📊 Trade #26 @ 2025-09-15: WIN | Pips: 166.7 | USD: $170.56 | R:R: 8.53x | Lot: 0.10
+2025-12-29 15:27:58,607 - INFO - 🎯 Setup found: CONTINUATION bullish
+2025-12-29 15:27:58,607 - INFO - 📍 Setup found on 2025-09-16: READY
+2025-12-29 15:27:58,607 - INFO - 📊 Trade #27 @ 2025-09-16: WIN | Pips: 166.7 | USD: $170.56 | R:R: 8.53x | Lot: 0.10
+2025-12-29 15:27:58,634 - INFO - 🎯 Setup found: CONTINUATION bullish
+2025-12-29 15:27:58,634 - INFO - 📍 Setup found on 2025-09-17: READY
+2025-12-29 15:27:58,634 - INFO - 📊 Trade #28 @ 2025-09-17: WIN | Pips: 166.7 | USD: $170.56 | R:R: 8.53x | Lot: 0.10
+2025-12-29 15:27:59,262 - INFO - ✅ Scan complete: 28 setups found, 28 trades executed
+2025-12-29 15:27:59,262 - INFO - 
+✅ AUDJPY RESULTS:
+2025-12-29 15:27:59,263 - INFO -    Trades: 28
+2025-12-29 15:27:59,263 - INFO -    Win Rate: 53.6%
+2025-12-29 15:27:59,263 - INFO -    Avg R:R (USD): 22.91x
+2025-12-29 15:27:59,263 - INFO -    Total Pips: 6218.5
+2025-12-29 15:27:59,263 - INFO -    Total USD: $6,612
+2025-12-29 15:27:59,263 - INFO -    Return: 661.2%
+2025-12-29 15:27:59,263 - INFO -    Max Drawdown: 16.4%
+2025-12-29 15:27:59,263 - INFO - 
+============================================================
+2025-12-29 15:27:59,263 - INFO - 🔍 BACKTESTING USDJPY - 12 months
+2025-12-29 15:27:59,263 - INFO - ============================================================
+2025-12-29 15:27:59,263 - INFO - 📦 Loading USDJPY D1 from cache...
+2025-12-29 15:27:59,265 - INFO - 📦 Loading USDJPY H4 from cache...
+2025-12-29 15:27:59,266 - INFO - 📊 Replaying 365 days of data...
+2025-12-29 15:27:59,266 - INFO - ⏰ Starting from index 100 (need context for swing detection)
+2025-12-29 15:27:59,290 - INFO - 🎯 Setup found: REVERSAL bullish
+2025-12-29 15:27:59,290 - INFO - 📍 Setup found on 2025-04-08: READY
+2025-12-29 15:27:59,291 - INFO - 📊 Trade #1 @ 2025-04-08: WIN | Pips: 410.5 | USD: $446.25 | R:R: 22.31x | Lot: 0.11
+2025-12-29 15:27:59,479 - INFO - 🎯 Setup found: REVERSAL bullish
+2025-12-29 15:27:59,479 - INFO - 📍 Setup found on 2025-04-27: READY
+2025-12-29 15:27:59,480 - INFO - 📊 Trade #2 @ 2025-04-27: WIN | Pips: 274.3 | USD: $193.63 | R:R: 9.68x | Lot: 0.07
+2025-12-29 15:27:59,546 - INFO - 🎯 Setup found: REVERSAL bullish
+2025-12-29 15:27:59,546 - INFO - 📍 Setup found on 2025-05-13: READY
+2025-12-29 15:27:59,547 - INFO - 📊 Trade #3 @ 2025-05-13: WIN | Pips: 340.0 | USD: $232.55 | R:R: 11.63x | Lot: 0.07
+2025-12-29 15:27:59,937 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:27:59,937 - INFO - 📍 Setup found on 2025-07-03: READY
+2025-12-29 15:27:59,938 - INFO - 📊 Trade #4 @ 2025-07-03: LOSS | Pips: -17.9 | USD: $-20.00 | R:R: -1.00x | Lot: 0.11
+2025-12-29 15:27:59,963 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:27:59,963 - INFO - 📍 Setup found on 2025-07-06: READY
+2025-12-29 15:27:59,964 - INFO - 📊 Trade #5 @ 2025-07-06: LOSS | Pips: -32.5 | USD: $-20.00 | R:R: -1.00x | Lot: 0.06
+2025-12-29 15:28:00,026 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:28:00,026 - INFO - 📍 Setup found on 2025-07-08: READY
+2025-12-29 15:28:00,027 - INFO - 📊 Trade #6 @ 2025-07-08: LOSS | Pips: -27.4 | USD: $-20.00 | R:R: -1.00x | Lot: 0.07
+2025-12-29 15:28:00,052 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:28:00,052 - INFO - 📍 Setup found on 2025-07-09: READY
+2025-12-29 15:28:00,053 - INFO - 📊 Trade #7 @ 2025-07-09: LOSS | Pips: -30.8 | USD: $-20.00 | R:R: -1.00x | Lot: 0.06
+2025-12-29 15:28:00,396 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:28:00,396 - INFO - 📍 Setup found on 2025-07-28: READY
+2025-12-29 15:28:00,397 - INFO - 📊 Trade #8 @ 2025-07-28: LOSS | Pips: -29.6 | USD: $-20.00 | R:R: -1.00x | Lot: 0.07
+2025-12-29 15:28:00,445 - INFO - 🎯 Setup found: CONTINUATION bullish
+2025-12-29 15:28:00,445 - INFO - 📍 Setup found on 2025-08-03: READY
+2025-12-29 15:28:00,446 - INFO - 📊 Trade #9 @ 2025-08-03: WIN | Pips: 260.9 | USD: $105.35 | R:R: 5.27x | Lot: 0.04
+2025-12-29 15:28:00,475 - INFO - 🎯 Setup found: CONTINUATION bullish
+2025-12-29 15:28:00,475 - INFO - 📍 Setup found on 2025-08-04: READY
+2025-12-29 15:28:00,475 - INFO - 📊 Trade #10 @ 2025-08-04: WIN | Pips: 259.8 | USD: $142.72 | R:R: 7.14x | Lot: 0.05
+2025-12-29 15:28:00,505 - INFO - 🎯 Setup found: CONTINUATION bullish
+2025-12-29 15:28:00,505 - INFO - 📍 Setup found on 2025-08-05: READY
+2025-12-29 15:28:00,505 - INFO - 📊 Trade #11 @ 2025-08-05: WIN | Pips: 259.3 | USD: $377.55 | R:R: 18.88x | Lot: 0.15
+2025-12-29 15:28:00,534 - INFO - 🎯 Setup found: CONTINUATION bullish
+2025-12-29 15:28:00,534 - INFO - 📍 Setup found on 2025-08-06: READY
+2025-12-29 15:28:00,535 - INFO - 📊 Trade #12 @ 2025-08-06: WIN | Pips: 434.7 | USD: $85.16 | R:R: 4.26x | Lot: 0.02
+2025-12-29 15:28:00,624 - INFO - 🎯 Setup found: CONTINUATION bullish
+2025-12-29 15:28:00,624 - INFO - 📍 Setup found on 2025-08-11: READY
+2025-12-29 15:28:00,624 - INFO - 📊 Trade #13 @ 2025-08-11: WIN | Pips: 406.8 | USD: $85.79 | R:R: 4.29x | Lot: 0.02
+2025-12-29 15:28:00,655 - INFO - 🎯 Setup found: CONTINUATION bullish
+2025-12-29 15:28:00,655 - INFO - 📍 Setup found on 2025-08-12: READY
+2025-12-29 15:28:00,655 - INFO - 📊 Trade #14 @ 2025-08-12: WIN | Pips: 404.9 | USD: $85.68 | R:R: 4.28x | Lot: 0.02
+2025-12-29 15:28:01,556 - INFO - 🎯 Setup found: REVERSAL bullish
+2025-12-29 15:28:01,556 - INFO - 📍 Setup found on 2025-09-29: READY
+2025-12-29 15:28:01,556 - INFO - 📊 Trade #15 @ 2025-09-29: WIN | Pips: 218.2 | USD: $96.80 | R:R: 4.84x | Lot: 0.04
+2025-12-29 15:28:01,593 - INFO - 🎯 Setup found: REVERSAL bullish
+2025-12-29 15:28:01,593 - INFO - 📍 Setup found on 2025-09-30: READY
+2025-12-29 15:28:01,594 - INFO - 📊 Trade #16 @ 2025-09-30: WIN | Pips: 218.7 | USD: $115.64 | R:R: 5.78x | Lot: 0.05
+2025-12-29 15:28:01,631 - INFO - 🎯 Setup found: REVERSAL bullish
+2025-12-29 15:28:01,631 - INFO - 📍 Setup found on 2025-10-01: READY
+2025-12-29 15:28:01,632 - INFO - 📊 Trade #17 @ 2025-10-01: WIN | Pips: 326.3 | USD: $379.39 | R:R: 18.97x | Lot: 0.12
+2025-12-29 15:28:01,669 - INFO - 🎯 Setup found: REVERSAL bullish
+2025-12-29 15:28:01,669 - INFO - 📍 Setup found on 2025-10-02: READY
+2025-12-29 15:28:01,670 - INFO - 📊 Trade #18 @ 2025-10-02: WIN | Pips: 330.8 | USD: $332.36 | R:R: 16.62x | Lot: 0.10
+2025-12-29 15:28:01,827 - INFO - 🎯 Setup found: REVERSAL bullish
+2025-12-29 15:28:01,827 - INFO - 📍 Setup found on 2025-10-27: READY
+2025-12-29 15:28:01,828 - INFO - 📊 Trade #19 @ 2025-10-27: WIN | Pips: 247.3 | USD: $162.62 | R:R: 8.13x | Lot: 0.07
+2025-12-29 15:28:02,005 - INFO - 🎯 Setup found: REVERSAL bullish
+2025-12-29 15:28:02,005 - INFO - 📍 Setup found on 2025-11-20: READY
+2025-12-29 15:28:02,006 - INFO - 📊 Trade #20 @ 2025-11-20: WIN | Pips: 350.1 | USD: $224.82 | R:R: 11.24x | Lot: 0.06
+2025-12-29 15:28:02,049 - INFO - 🎯 Setup found: REVERSAL bullish
+2025-12-29 15:28:02,049 - INFO - 📍 Setup found on 2025-11-24: READY
+2025-12-29 15:28:02,050 - INFO - 📊 Trade #21 @ 2025-11-24: WIN | Pips: 350.1 | USD: $224.82 | R:R: 11.24x | Lot: 0.06
+2025-12-29 15:28:02,084 - INFO - 🎯 Setup found: REVERSAL bullish
+2025-12-29 15:28:02,084 - INFO - 📍 Setup found on 2025-11-25: READY
+2025-12-29 15:28:02,085 - INFO - 📊 Trade #22 @ 2025-11-25: WIN | Pips: 350.1 | USD: $224.82 | R:R: 11.24x | Lot: 0.06
+2025-12-29 15:28:02,120 - INFO - 🎯 Setup found: REVERSAL bullish
+2025-12-29 15:28:02,120 - INFO - 📍 Setup found on 2025-11-26: READY
+2025-12-29 15:28:02,120 - INFO - 📊 Trade #23 @ 2025-11-26: WIN | Pips: 350.1 | USD: $224.82 | R:R: 11.24x | Lot: 0.06
+2025-12-29 15:28:02,155 - INFO - 🎯 Setup found: REVERSAL bullish
+2025-12-29 15:28:02,155 - INFO - 📍 Setup found on 2025-11-27: READY
+2025-12-29 15:28:02,156 - INFO - 📊 Trade #24 @ 2025-11-27: WIN | Pips: 350.1 | USD: $224.82 | R:R: 11.24x | Lot: 0.06
+2025-12-29 15:28:02,191 - INFO - 🎯 Setup found: REVERSAL bullish
+2025-12-29 15:28:02,191 - INFO - 📍 Setup found on 2025-11-30: READY
+2025-12-29 15:28:02,191 - INFO - 📊 Trade #25 @ 2025-11-30: WIN | Pips: 350.1 | USD: $224.82 | R:R: 11.24x | Lot: 0.06
+2025-12-29 15:28:02,226 - INFO - 🎯 Setup found: REVERSAL bullish
+2025-12-29 15:28:02,226 - INFO - 📍 Setup found on 2025-12-01: READY
+2025-12-29 15:28:02,227 - INFO - 📊 Trade #26 @ 2025-12-01: WIN | Pips: 350.1 | USD: $224.82 | R:R: 11.24x | Lot: 0.06
+2025-12-29 15:28:02,446 - INFO - 🎯 Setup found: REVERSAL bullish
+2025-12-29 15:28:02,446 - INFO - 📍 Setup found on 2025-12-07: READY
+2025-12-29 15:28:02,447 - INFO - 📊 Trade #27 @ 2025-12-07: WIN | Pips: 350.1 | USD: $224.82 | R:R: 11.24x | Lot: 0.06
+2025-12-29 15:28:02,492 - INFO - 🎯 Setup found: REVERSAL bullish
+2025-12-29 15:28:02,493 - INFO - 📍 Setup found on 2025-12-09: READY
+2025-12-29 15:28:02,493 - INFO - 📊 Trade #28 @ 2025-12-09: WIN | Pips: 350.1 | USD: $224.82 | R:R: 11.24x | Lot: 0.06
+2025-12-29 15:28:02,530 - INFO - 🎯 Setup found: REVERSAL bullish
+2025-12-29 15:28:02,530 - INFO - 📍 Setup found on 2025-12-10: READY
+2025-12-29 15:28:02,530 - INFO - 📊 Trade #29 @ 2025-12-10: WIN | Pips: 350.1 | USD: $224.82 | R:R: 11.24x | Lot: 0.06
+2025-12-29 15:28:02,567 - INFO - 🎯 Setup found: REVERSAL bullish
+2025-12-29 15:28:02,567 - INFO - 📍 Setup found on 2025-12-11: READY
+2025-12-29 15:28:02,567 - INFO - 📊 Trade #30 @ 2025-12-11: WIN | Pips: 350.1 | USD: $224.82 | R:R: 11.24x | Lot: 0.06
+2025-12-29 15:28:02,567 - INFO - ✅ Scan complete: 30 setups found, 30 trades executed
+2025-12-29 15:28:02,567 - INFO - 
+✅ USDJPY RESULTS:
+2025-12-29 15:28:02,567 - INFO -    Trades: 30
+2025-12-29 15:28:02,567 - INFO -    Win Rate: 83.3%
+2025-12-29 15:28:02,567 - INFO -    Avg R:R (USD): 10.63x
+2025-12-29 15:28:02,567 - INFO -    Total Pips: 8105.6
+2025-12-29 15:28:02,567 - INFO -    Total USD: $5,215
+2025-12-29 15:28:02,567 - INFO -    Return: 521.5%
+2025-12-29 15:28:02,567 - INFO -    Max Drawdown: 5.3%
+2025-12-29 15:28:02,567 - INFO - 
+============================================================
+2025-12-29 15:28:02,567 - INFO - 🔍 BACKTESTING EURGBP - 12 months
+2025-12-29 15:28:02,567 - INFO - ============================================================
+2025-12-29 15:28:02,567 - INFO - 📦 Loading EURGBP D1 from cache...
+2025-12-29 15:28:02,569 - INFO - 📦 Loading EURGBP H4 from cache...
+2025-12-29 15:28:02,571 - INFO - 📊 Replaying 365 days of data...
+2025-12-29 15:28:02,571 - INFO - ⏰ Starting from index 100 (need context for swing detection)
+2025-12-29 15:28:04,059 - INFO - 🎯 Setup found: CONTINUATION bullish
+2025-12-29 15:28:04,059 - INFO - 📍 Setup found on 2025-11-02: READY
+2025-12-29 15:28:04,060 - INFO - 📊 Trade #1 @ 2025-11-02: WIN | Pips: 167.4 | USD: $191.59 | R:R: 9.58x | Lot: 0.11
+2025-12-29 15:28:04,312 - INFO - ✅ Scan complete: 1 setups found, 1 trades executed
+2025-12-29 15:28:04,312 - INFO - 
+✅ EURGBP RESULTS:
+2025-12-29 15:28:04,312 - INFO -    Trades: 1
+2025-12-29 15:28:04,312 - INFO -    Win Rate: 100.0%
+2025-12-29 15:28:04,312 - INFO -    Avg R:R (USD): 9.58x
+2025-12-29 15:28:04,312 - INFO -    Total Pips: 167.4
+2025-12-29 15:28:04,312 - INFO -    Total USD: $192
+2025-12-29 15:28:04,312 - INFO -    Return: 19.2%
+2025-12-29 15:28:04,312 - INFO -    Max Drawdown: 0.0%
+2025-12-29 15:28:04,312 - INFO - 
+============================================================
+2025-12-29 15:28:04,312 - INFO - 🔍 BACKTESTING GBPCAD - 12 months
+2025-12-29 15:28:04,312 - INFO - ============================================================
+2025-12-29 15:28:04,312 - INFO - 📦 Loading GBPCAD D1 from cache...
+2025-12-29 15:28:04,314 - INFO - 📦 Loading GBPCAD H4 from cache...
+2025-12-29 15:28:04,315 - INFO - 📊 Replaying 365 days of data...
+2025-12-29 15:28:04,315 - INFO - ⏰ Starting from index 100 (need context for swing detection)
+2025-12-29 15:28:04,421 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:28:04,421 - INFO - 📍 Setup found on 2025-04-16: READY
+2025-12-29 15:28:04,425 - INFO - 📊 Trade #1 @ 2025-04-16: LOSS | Pips: -120.1 | USD: $-20.00 | R:R: -1.00x | Lot: 0.02
+2025-12-29 15:28:04,439 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:28:04,439 - INFO - 📍 Setup found on 2025-04-17: READY
+2025-12-29 15:28:04,443 - INFO - 📊 Trade #2 @ 2025-04-17: LOSS | Pips: -111.5 | USD: $-20.00 | R:R: -1.00x | Lot: 0.02
+2025-12-29 15:28:04,458 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:28:04,458 - INFO - 📍 Setup found on 2025-04-20: READY
+2025-12-29 15:28:04,462 - INFO - 📊 Trade #3 @ 2025-04-20: LOSS | Pips: -104.9 | USD: $-20.00 | R:R: -1.00x | Lot: 0.02
+2025-12-29 15:28:04,477 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:28:04,477 - INFO - 📍 Setup found on 2025-04-21: READY
+2025-12-29 15:28:04,481 - INFO - 📊 Trade #4 @ 2025-04-21: LOSS | Pips: -102.1 | USD: $-20.00 | R:R: -1.00x | Lot: 0.02
+2025-12-29 15:28:04,496 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:28:04,496 - INFO - 📍 Setup found on 2025-04-22: READY
+2025-12-29 15:28:04,500 - INFO - 📊 Trade #5 @ 2025-04-22: LOSS | Pips: -117.5 | USD: $-20.00 | R:R: -1.00x | Lot: 0.02
+2025-12-29 15:28:04,515 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:28:04,516 - INFO - 📍 Setup found on 2025-04-23: READY
+2025-12-29 15:28:04,519 - INFO - 📊 Trade #6 @ 2025-04-23: LOSS | Pips: -118.0 | USD: $-20.00 | R:R: -1.00x | Lot: 0.02
+2025-12-29 15:28:04,550 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:28:04,550 - INFO - 📍 Setup found on 2025-04-27: READY
+2025-12-29 15:28:04,554 - INFO - 📊 Trade #7 @ 2025-04-27: LOSS | Pips: -113.4 | USD: $-20.00 | R:R: -1.00x | Lot: 0.02
+2025-12-29 15:28:04,909 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:28:04,909 - INFO - 📍 Setup found on 2025-06-12: READY
+2025-12-29 15:28:04,910 - INFO - 📊 Trade #8 @ 2025-06-12: WIN | Pips: 192.3 | USD: $140.66 | R:R: 7.03x | Lot: 0.07
+2025-12-29 15:28:05,275 - INFO - 🎯 Setup found: REVERSAL bullish
+2025-12-29 15:28:05,276 - INFO - 📍 Setup found on 2025-08-11: READY
+2025-12-29 15:28:05,276 - INFO - 📊 Trade #9 @ 2025-08-11: LOSS | Pips: -22.9 | USD: $-20.00 | R:R: -1.00x | Lot: 0.09
+2025-12-29 15:28:05,962 - INFO - 🎯 Setup found: REVERSAL bullish
+2025-12-29 15:28:05,963 - INFO - 📍 Setup found on 2025-10-20: READY
+2025-12-29 15:28:05,963 - INFO - 📊 Trade #10 @ 2025-10-20: WIN | Pips: 323.0 | USD: $172.25 | R:R: 8.61x | Lot: 0.05
+2025-12-29 15:28:06,502 - INFO - 🎯 Setup found: REVERSAL bullish
+2025-12-29 15:28:06,503 - INFO - 📍 Setup found on 2025-12-01: READY
+2025-12-29 15:28:06,503 - INFO - 📊 Trade #11 @ 2025-12-01: WIN | Pips: 217.1 | USD: $87.44 | R:R: 4.37x | Lot: 0.04
+2025-12-29 15:28:06,798 - INFO - ✅ Scan complete: 11 setups found, 11 trades executed
+2025-12-29 15:28:06,799 - INFO - 
+✅ GBPCAD RESULTS:
+2025-12-29 15:28:06,799 - INFO -    Trades: 11
+2025-12-29 15:28:06,799 - INFO -    Win Rate: 27.3%
+2025-12-29 15:28:06,799 - INFO -    Avg R:R (USD): 6.67x
+2025-12-29 15:28:06,799 - INFO -    Total Pips: -78.1
+2025-12-29 15:28:06,799 - INFO -    Total USD: $240
+2025-12-29 15:28:06,799 - INFO -    Return: 24.0%
+2025-12-29 15:28:06,799 - INFO -    Max Drawdown: 14.0%
+2025-12-29 15:28:06,799 - INFO - 
+============================================================
+2025-12-29 15:28:06,799 - INFO - 🔍 BACKTESTING BTCUSD - 12 months
+2025-12-29 15:28:06,799 - INFO - ============================================================
+2025-12-29 15:28:06,799 - INFO - 📦 Loading BTCUSD D1 from cache...
+2025-12-29 15:28:06,801 - INFO - 📦 Loading BTCUSD H4 from cache...
+2025-12-29 15:28:06,803 - INFO - 📊 Replaying 365 days of data...
+2025-12-29 15:28:06,803 - INFO - ⏰ Starting from index 100 (need context for swing detection)
+2025-12-29 15:28:06,999 - INFO - 🎯 Setup found: REVERSAL bullish
+2025-12-29 15:28:06,999 - INFO - 📍 Setup found on 2025-05-24: READY
+2025-12-29 15:28:07,000 - INFO - 📊 Trade #1 @ 2025-05-24: WIN | Pips: 2361.8 | USD: $219.97 | R:R: 11.00x | Lot: 0.09
+2025-12-29 15:28:07,026 - INFO - 🎯 Setup found: REVERSAL bullish
+2025-12-29 15:28:07,026 - INFO - 📍 Setup found on 2025-05-27: READY
+2025-12-29 15:28:07,026 - INFO - 📊 Trade #2 @ 2025-05-27: WIN | Pips: 2361.8 | USD: $219.97 | R:R: 11.00x | Lot: 0.09
+2025-12-29 15:28:07,732 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:28:07,732 - INFO - 📍 Setup found on 2025-06-24: READY
+2025-12-29 15:28:07,734 - INFO - 📊 Trade #3 @ 2025-06-24: LOSS | Pips: -1536.4 | USD: $-20.00 | R:R: -1.00x | Lot: 0.01
+2025-12-29 15:28:07,761 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:28:07,761 - INFO - 📍 Setup found on 2025-06-25: READY
+2025-12-29 15:28:07,762 - INFO - 📊 Trade #4 @ 2025-06-25: LOSS | Pips: -2029.7 | USD: $-20.00 | R:R: -1.00x | Lot: 0.01
+2025-12-29 15:28:08,188 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:28:08,189 - INFO - 📍 Setup found on 2025-08-02: READY
+2025-12-29 15:28:08,189 - INFO - 📊 Trade #5 @ 2025-08-02: WIN | Pips: 3839.6 | USD: $119.55 | R:R: 5.98x | Lot: 0.03
+2025-12-29 15:28:08,224 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:28:08,224 - INFO - 📍 Setup found on 2025-08-03: READY
+2025-12-29 15:28:08,224 - INFO - 📊 Trade #6 @ 2025-08-03: WIN | Pips: 3823.8 | USD: $586.36 | R:R: 29.32x | Lot: 0.15
+2025-12-29 15:28:08,259 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:28:08,259 - INFO - 📍 Setup found on 2025-08-04: READY
+2025-12-29 15:28:08,260 - INFO - 📊 Trade #7 @ 2025-08-04: WIN | Pips: 3809.1 | USD: $370.17 | R:R: 18.51x | Lot: 0.10
+2025-12-29 15:28:08,294 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:28:08,295 - INFO - 📍 Setup found on 2025-08-05: READY
+2025-12-29 15:28:08,295 - INFO - 📊 Trade #8 @ 2025-08-05: WIN | Pips: 3803.7 | USD: $3068.82 | R:R: 153.44x | Lot: 0.81
+2025-12-29 15:28:08,330 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:28:08,330 - INFO - 📍 Setup found on 2025-08-06: READY
+2025-12-29 15:28:08,331 - INFO - 📊 Trade #9 @ 2025-08-06: LOSS | Pips: -609.6 | USD: $-20.00 | R:R: -1.00x | Lot: 0.03
+2025-12-29 15:28:08,366 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:28:08,366 - INFO - 📍 Setup found on 2025-08-07: READY
+2025-12-29 15:28:08,367 - INFO - 📊 Trade #10 @ 2025-08-07: LOSS | Pips: -668.8 | USD: $-20.00 | R:R: -1.00x | Lot: 0.03
+2025-12-29 15:28:08,402 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:28:08,402 - INFO - 📍 Setup found on 2025-08-08: READY
+2025-12-29 15:28:08,403 - INFO - 📊 Trade #11 @ 2025-08-08: LOSS | Pips: -495.0 | USD: $-20.00 | R:R: -1.00x | Lot: 0.04
+2025-12-29 15:28:08,439 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:28:08,439 - INFO - 📍 Setup found on 2025-08-09: READY
+2025-12-29 15:28:08,440 - INFO - 📊 Trade #12 @ 2025-08-09: LOSS | Pips: -185.2 | USD: $-20.00 | R:R: -1.00x | Lot: 0.11
+2025-12-29 15:28:08,475 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:28:08,476 - INFO - 📍 Setup found on 2025-08-10: READY
+2025-12-29 15:28:08,476 - INFO - 📊 Trade #13 @ 2025-08-10: LOSS | Pips: -305.0 | USD: $-20.00 | R:R: -1.00x | Lot: 0.07
+2025-12-29 15:28:08,512 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:28:08,512 - INFO - 📍 Setup found on 2025-08-11: READY
+2025-12-29 15:28:08,513 - INFO - 📊 Trade #14 @ 2025-08-11: LOSS | Pips: -1057.1 | USD: $-20.00 | R:R: -1.00x | Lot: 0.02
+2025-12-29 15:28:08,607 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:28:08,607 - INFO - 📍 Setup found on 2025-08-13: READY
+2025-12-29 15:28:08,608 - INFO - 📊 Trade #15 @ 2025-08-13: LOSS | Pips: -855.0 | USD: $-20.00 | R:R: -1.00x | Lot: 0.02
+2025-12-29 15:28:08,644 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:28:08,644 - INFO - 📍 Setup found on 2025-08-14: READY
+2025-12-29 15:28:08,645 - INFO - 📊 Trade #16 @ 2025-08-14: WIN | Pips: 8245.7 | USD: $115.83 | R:R: 5.79x | Lot: 0.01
+2025-12-29 15:28:08,681 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:28:08,681 - INFO - 📍 Setup found on 2025-08-15: READY
+2025-12-29 15:28:08,682 - INFO - 📊 Trade #17 @ 2025-08-15: WIN | Pips: 8229.0 | USD: $126.19 | R:R: 6.31x | Lot: 0.02
+2025-12-29 15:28:08,719 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:28:08,719 - INFO - 📍 Setup found on 2025-08-16: READY
+2025-12-29 15:28:08,720 - INFO - 📊 Trade #18 @ 2025-08-16: WIN | Pips: 8212.6 | USD: $179.86 | R:R: 8.99x | Lot: 0.02
+2025-12-29 15:28:08,757 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:28:08,757 - INFO - 📍 Setup found on 2025-08-17: READY
+2025-12-29 15:28:08,758 - INFO - 📊 Trade #19 @ 2025-08-17: WIN | Pips: 8230.7 | USD: $2500.71 | R:R: 125.04x | Lot: 0.30
+2025-12-29 15:28:09,361 - INFO - 🎯 Setup found: REVERSAL bullish
+2025-12-29 15:28:09,361 - INFO - 📍 Setup found on 2025-10-27: READY
+2025-12-29 15:28:09,362 - INFO - 📊 Trade #20 @ 2025-10-27: WIN | Pips: 2649.2 | USD: $236.61 | R:R: 11.83x | Lot: 0.09
+2025-12-29 15:28:09,828 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:28:09,828 - INFO - 📍 Setup found on 2025-11-05: READY
+2025-12-29 15:28:09,829 - INFO - 📊 Trade #21 @ 2025-11-05: WIN | Pips: 8025.0 | USD: $480.56 | R:R: 24.03x | Lot: 0.06
+2025-12-29 15:28:09,883 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:28:09,883 - INFO - 📍 Setup found on 2025-11-06: READY
+2025-12-29 15:28:09,883 - INFO - 📊 Trade #22 @ 2025-11-06: WIN | Pips: 8046.1 | USD: $224.35 | R:R: 11.22x | Lot: 0.03
+2025-12-29 15:28:09,938 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:28:09,938 - INFO - 📍 Setup found on 2025-11-07: READY
+2025-12-29 15:28:09,939 - INFO - 📊 Trade #23 @ 2025-11-07: WIN | Pips: 8058.3 | USD: $195.56 | R:R: 9.78x | Lot: 0.02
+2025-12-29 15:28:10,047 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:28:10,047 - INFO - 📍 Setup found on 2025-11-09: READY
+2025-12-29 15:28:10,047 - INFO - 📊 Trade #24 @ 2025-11-09: WIN | Pips: 12239.0 | USD: $152.04 | R:R: 7.60x | Lot: 0.01
+2025-12-29 15:28:10,480 - INFO - ✅ Scan complete: 24 setups found, 24 trades executed
+2025-12-29 15:28:10,481 - INFO - 
+✅ BTCUSD RESULTS:
+2025-12-29 15:28:10,481 - INFO -    Trades: 24
+2025-12-29 15:28:10,481 - INFO -    Win Rate: 62.5%
+2025-12-29 15:28:10,481 - INFO -    Avg R:R (USD): 29.32x
+2025-12-29 15:28:10,481 - INFO -    Total Pips: 84193.3
+2025-12-29 15:28:10,481 - INFO -    Total USD: $8,617
+2025-12-29 15:28:10,481 - INFO -    Return: 861.7%
+2025-12-29 15:28:10,481 - INFO -    Max Drawdown: 2.8%
+2025-12-29 15:28:10,481 - INFO - 
+============================================================
+2025-12-29 15:28:10,481 - INFO - 🔍 BACKTESTING XTIUSD - 12 months
+2025-12-29 15:28:10,481 - INFO - ============================================================
+2025-12-29 15:28:10,481 - INFO - 📦 Loading XTIUSD D1 from cache...
+2025-12-29 15:28:10,483 - INFO - 📦 Loading XTIUSD H4 from cache...
+2025-12-29 15:28:10,484 - INFO - 📊 Replaying 365 days of data...
+2025-12-29 15:28:10,484 - INFO - ⏰ Starting from index 100 (need context for swing detection)
+2025-12-29 15:28:11,145 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:28:11,145 - INFO - 📍 Setup found on 2025-08-07: READY
+2025-12-29 15:28:11,146 - INFO - 📊 Trade #1 @ 2025-08-07: WIN | Pips: 53623.2 | USD: $12778.30 | R:R: 638.91x | Lot: 0.02
+2025-12-29 15:28:11,175 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:28:11,175 - INFO - 📍 Setup found on 2025-08-10: READY
+2025-12-29 15:28:11,176 - INFO - 📊 Trade #2 @ 2025-08-10: WIN | Pips: 53663.9 | USD: $5366.39 | R:R: 268.32x | Lot: 0.01
+2025-12-29 15:28:11,205 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:28:11,205 - INFO - 📍 Setup found on 2025-08-11: READY
+2025-12-29 15:28:11,206 - INFO - 📊 Trade #3 @ 2025-08-11: WIN | Pips: 53690.7 | USD: $5369.07 | R:R: 268.45x | Lot: 0.01
+2025-12-29 15:28:11,556 - INFO - 🎯 Setup found: REVERSAL bullish
+2025-12-29 15:28:11,556 - INFO - 📍 Setup found on 2025-09-07: READY
+2025-12-29 15:28:11,556 - INFO - 📊 Trade #4 @ 2025-09-07: WIN | Pips: 28703.6 | USD: $2870.36 | R:R: 143.52x | Lot: 0.01
+2025-12-29 15:28:11,589 - INFO - 🎯 Setup found: REVERSAL bullish
+2025-12-29 15:28:11,589 - INFO - 📍 Setup found on 2025-09-08: READY
+2025-12-29 15:28:11,590 - INFO - 📊 Trade #5 @ 2025-09-08: WIN | Pips: 35207.9 | USD: $3520.79 | R:R: 176.04x | Lot: 0.01
+2025-12-29 15:28:11,623 - INFO - 🎯 Setup found: REVERSAL bullish
+2025-12-29 15:28:11,623 - INFO - 📍 Setup found on 2025-09-09: READY
+2025-12-29 15:28:11,624 - INFO - 📊 Trade #6 @ 2025-09-09: WIN | Pips: 35229.3 | USD: $3522.93 | R:R: 176.15x | Lot: 0.01
+2025-12-29 15:28:11,756 - INFO - 🎯 Setup found: REVERSAL bullish
+2025-12-29 15:28:11,756 - INFO - 📍 Setup found on 2025-09-14: READY
+2025-12-29 15:28:11,757 - INFO - 📊 Trade #7 @ 2025-09-14: WIN | Pips: 35353.6 | USD: $3535.36 | R:R: 176.77x | Lot: 0.01
+2025-12-29 15:28:11,791 - INFO - 🎯 Setup found: REVERSAL bullish
+2025-12-29 15:28:11,791 - INFO - 📍 Setup found on 2025-09-15: READY
+2025-12-29 15:28:11,791 - INFO - 📊 Trade #8 @ 2025-09-15: WIN | Pips: 35417.9 | USD: $3541.79 | R:R: 177.09x | Lot: 0.01
+2025-12-29 15:28:12,496 - INFO - ✅ Scan complete: 8 setups found, 8 trades executed
+2025-12-29 15:28:12,496 - INFO - 
+✅ XTIUSD RESULTS:
+2025-12-29 15:28:12,496 - INFO -    Trades: 8
+2025-12-29 15:28:12,496 - INFO -    Win Rate: 100.0%
+2025-12-29 15:28:12,496 - INFO -    Avg R:R (USD): 253.16x
+2025-12-29 15:28:12,496 - INFO -    Total Pips: 330890.0
+2025-12-29 15:28:12,496 - INFO -    Total USD: $40,505
+2025-12-29 15:28:12,496 - INFO -    Return: 4050.5%
+2025-12-29 15:28:12,496 - INFO -    Max Drawdown: 0.0%
+2025-12-29 15:28:12,496 - INFO - 
+============================================================
+2025-12-29 15:28:12,496 - INFO - 🔍 BACKTESTING GBPJPY - 12 months
+2025-12-29 15:28:12,496 - INFO - ============================================================
+2025-12-29 15:28:12,496 - INFO - 📦 Loading GBPJPY D1 from cache...
+2025-12-29 15:28:12,498 - INFO - 📦 Loading GBPJPY H4 from cache...
+2025-12-29 15:28:12,500 - INFO - 📊 Replaying 365 days of data...
+2025-12-29 15:28:12,500 - INFO - ⏰ Starting from index 100 (need context for swing detection)
+2025-12-29 15:28:12,548 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:28:12,548 - INFO - 📍 Setup found on 2025-04-02: READY
+2025-12-29 15:28:12,549 - INFO - 📊 Trade #1 @ 2025-04-02: LOSS | Pips: -38.2 | USD: $-20.00 | R:R: -1.00x | Lot: 0.05
+2025-12-29 15:28:12,846 - INFO - 🎯 Setup found: REVERSAL bullish
+2025-12-29 15:28:12,846 - INFO - 📍 Setup found on 2025-05-29: READY
+2025-12-29 15:28:12,847 - INFO - 📊 Trade #2 @ 2025-05-29: WIN | Pips: 326.1 | USD: $168.05 | R:R: 8.40x | Lot: 0.05
+2025-12-29 15:28:13,628 - INFO - 🎯 Setup found: CONTINUATION bullish
+2025-12-29 15:28:13,629 - INFO - 📍 Setup found on 2025-08-31: READY
+2025-12-29 15:28:13,629 - INFO - 📊 Trade #3 @ 2025-08-31: LOSS | Pips: -18.6 | USD: $-20.00 | R:R: -1.00x | Lot: 0.11
+2025-12-29 15:28:13,735 - INFO - 🎯 Setup found: CONTINUATION bullish
+2025-12-29 15:28:13,735 - INFO - 📍 Setup found on 2025-09-03: READY
+2025-12-29 15:28:13,736 - INFO - 📊 Trade #4 @ 2025-09-03: LOSS | Pips: -1.8 | USD: $-20.00 | R:R: -1.00x | Lot: 1.10
+2025-12-29 15:28:14,060 - INFO - 🎯 Setup found: CONTINUATION bullish
+2025-12-29 15:28:14,060 - INFO - 📍 Setup found on 2025-09-21: READY
+2025-12-29 15:28:14,060 - INFO - 📊 Trade #5 @ 2025-09-21: LOSS | Pips: -2.6 | USD: $-20.00 | R:R: -1.00x | Lot: 0.78
+2025-12-29 15:28:14,098 - INFO - 🎯 Setup found: CONTINUATION bullish
+2025-12-29 15:28:14,099 - INFO - 📍 Setup found on 2025-09-22: READY
+2025-12-29 15:28:14,099 - INFO - 📊 Trade #6 @ 2025-09-22: LOSS | Pips: -21.0 | USD: $-20.00 | R:R: -1.00x | Lot: 0.10
+2025-12-29 15:28:14,182 - INFO - 🎯 Setup found: CONTINUATION bullish
+2025-12-29 15:28:14,183 - INFO - 📍 Setup found on 2025-09-24: READY
+2025-12-29 15:28:14,183 - INFO - 📊 Trade #7 @ 2025-09-24: LOSS | Pips: -22.9 | USD: $-20.00 | R:R: -1.00x | Lot: 0.09
+2025-12-29 15:28:14,558 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:28:14,558 - INFO - 📍 Setup found on 2025-11-06: READY
+2025-12-29 15:28:14,558 - INFO - 📊 Trade #8 @ 2025-11-06: LOSS | Pips: -40.4 | USD: $-20.00 | R:R: -1.00x | Lot: 0.05
+2025-12-29 15:28:15,034 - INFO - ✅ Scan complete: 8 setups found, 8 trades executed
+2025-12-29 15:28:15,034 - INFO - 
+✅ GBPJPY RESULTS:
+2025-12-29 15:28:15,034 - INFO -    Trades: 8
+2025-12-29 15:28:15,034 - INFO -    Win Rate: 12.5%
+2025-12-29 15:28:15,034 - INFO -    Avg R:R (USD): 8.40x
+2025-12-29 15:28:15,034 - INFO -    Total Pips: 180.5
+2025-12-29 15:28:15,034 - INFO -    Total USD: $28
+2025-12-29 15:28:15,034 - INFO -    Return: 2.8%
+2025-12-29 15:28:15,034 - INFO -    Max Drawdown: 10.5%
+2025-12-29 15:28:15,034 - INFO - 
+============================================================
+2025-12-29 15:28:15,034 - INFO - 🔍 BACKTESTING GBPNZD - 12 months
+2025-12-29 15:28:15,034 - INFO - ============================================================
+2025-12-29 15:28:15,034 - INFO - 📦 Loading GBPNZD D1 from cache...
+2025-12-29 15:28:15,036 - INFO - 📦 Loading GBPNZD H4 from cache...
+2025-12-29 15:28:15,037 - INFO - 📊 Replaying 365 days of data...
+2025-12-29 15:28:15,037 - INFO - ⏰ Starting from index 100 (need context for swing detection)
+2025-12-29 15:28:15,598 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:28:15,598 - INFO - 📍 Setup found on 2025-08-03: READY
+2025-12-29 15:28:15,599 - INFO - 📊 Trade #1 @ 2025-08-03: LOSS | Pips: -68.9 | USD: $-20.00 | R:R: -1.00x | Lot: 0.03
+2025-12-29 15:28:15,629 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:28:15,629 - INFO - 📍 Setup found on 2025-08-04: READY
+2025-12-29 15:28:15,630 - INFO - 📊 Trade #2 @ 2025-08-04: LOSS | Pips: -58.1 | USD: $-20.00 | R:R: -1.00x | Lot: 0.03
+2025-12-29 15:28:15,660 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:28:15,660 - INFO - 📍 Setup found on 2025-08-05: READY
+2025-12-29 15:28:15,661 - INFO - 📊 Trade #3 @ 2025-08-05: LOSS | Pips: -54.3 | USD: $-20.00 | R:R: -1.00x | Lot: 0.04
+2025-12-29 15:28:15,692 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:28:15,692 - INFO - 📍 Setup found on 2025-08-06: READY
+2025-12-29 15:28:15,693 - INFO - 📊 Trade #4 @ 2025-08-06: LOSS | Pips: -54.4 | USD: $-20.00 | R:R: -1.00x | Lot: 0.04
+2025-12-29 15:28:15,724 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:28:15,724 - INFO - 📍 Setup found on 2025-08-07: READY
+2025-12-29 15:28:15,725 - INFO - 📊 Trade #5 @ 2025-08-07: LOSS | Pips: -74.5 | USD: $-20.00 | R:R: -1.00x | Lot: 0.03
+2025-12-29 15:28:15,756 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:28:15,756 - INFO - 📍 Setup found on 2025-08-10: READY
+2025-12-29 15:28:15,757 - INFO - 📊 Trade #6 @ 2025-08-10: LOSS | Pips: -76.1 | USD: $-20.00 | R:R: -1.00x | Lot: 0.03
+2025-12-29 15:28:15,787 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:28:15,788 - INFO - 📍 Setup found on 2025-08-11: READY
+2025-12-29 15:28:15,788 - INFO - 📊 Trade #7 @ 2025-08-11: LOSS | Pips: -53.1 | USD: $-20.00 | R:R: -1.00x | Lot: 0.04
+2025-12-29 15:28:15,821 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:28:15,821 - INFO - 📍 Setup found on 2025-08-12: READY
+2025-12-29 15:28:15,822 - INFO - 📊 Trade #8 @ 2025-08-12: LOSS | Pips: -63.5 | USD: $-20.00 | R:R: -1.00x | Lot: 0.03
+2025-12-29 15:28:16,844 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:28:16,844 - INFO - 📍 Setup found on 2025-10-06: READY
+2025-12-29 15:28:16,845 - INFO - 📊 Trade #9 @ 2025-10-06: LOSS | Pips: -46.3 | USD: $-20.00 | R:R: -1.00x | Lot: 0.04
+2025-12-29 15:28:16,874 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:28:16,874 - INFO - 📍 Setup found on 2025-10-07: READY
+2025-12-29 15:28:16,874 - INFO - 📊 Trade #10 @ 2025-10-07: LOSS | Pips: -46.3 | USD: $-20.00 | R:R: -1.00x | Lot: 0.04
+2025-12-29 15:28:16,903 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:28:16,903 - INFO - 📍 Setup found on 2025-10-08: READY
+2025-12-29 15:28:16,904 - INFO - 📊 Trade #11 @ 2025-10-08: LOSS | Pips: -46.3 | USD: $-20.00 | R:R: -1.00x | Lot: 0.04
+2025-12-29 15:28:17,390 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:28:17,390 - INFO - 📍 Setup found on 2025-10-22: READY
+2025-12-29 15:28:17,390 - INFO - 📊 Trade #12 @ 2025-10-22: LOSS | Pips: -46.3 | USD: $-20.00 | R:R: -1.00x | Lot: 0.04
+2025-12-29 15:28:17,422 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:28:17,422 - INFO - 📍 Setup found on 2025-10-23: READY
+2025-12-29 15:28:17,422 - INFO - 📊 Trade #13 @ 2025-10-23: LOSS | Pips: -46.3 | USD: $-20.00 | R:R: -1.00x | Lot: 0.04
+2025-12-29 15:28:17,741 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:28:17,741 - INFO - 📍 Setup found on 2025-11-11: READY
+2025-12-29 15:28:17,742 - INFO - 📊 Trade #14 @ 2025-11-11: LOSS | Pips: -46.3 | USD: $-20.00 | R:R: -1.00x | Lot: 0.04
+2025-12-29 15:28:17,831 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:28:17,831 - INFO - 📍 Setup found on 2025-11-13: READY
+2025-12-29 15:28:17,831 - INFO - 📊 Trade #15 @ 2025-11-13: LOSS | Pips: -46.3 | USD: $-20.00 | R:R: -1.00x | Lot: 0.04
+2025-12-29 15:28:18,648 - INFO - ✅ Scan complete: 15 setups found, 15 trades executed
+2025-12-29 15:28:18,648 - INFO - 
+✅ GBPNZD RESULTS:
+2025-12-29 15:28:18,648 - INFO -    Trades: 15
+2025-12-29 15:28:18,648 - INFO -    Win Rate: 0.0%
+2025-12-29 15:28:18,648 - INFO -    Avg R:R (USD): 0.00x
+2025-12-29 15:28:18,648 - INFO -    Total Pips: -826.9
+2025-12-29 15:28:18,648 - INFO -    Total USD: $-300
+2025-12-29 15:28:18,648 - INFO -    Return: -30.0%
+2025-12-29 15:28:18,648 - INFO -    Max Drawdown: 30.0%
+2025-12-29 15:28:18,648 - INFO - 
+============================================================
+2025-12-29 15:28:18,648 - INFO - 🔍 BACKTESTING EURUSD - 12 months
+2025-12-29 15:28:18,648 - INFO - ============================================================
+2025-12-29 15:28:18,648 - INFO - 📦 Loading EURUSD D1 from cache...
+2025-12-29 15:28:18,650 - INFO - 📦 Loading EURUSD H4 from cache...
+2025-12-29 15:28:18,652 - INFO - 📊 Replaying 365 days of data...
+2025-12-29 15:28:18,652 - INFO - ⏰ Starting from index 100 (need context for swing detection)
+2025-12-29 15:28:18,707 - INFO - 🎯 Setup found: REVERSAL bullish
+2025-12-29 15:28:18,707 - INFO - 📍 Setup found on 2025-04-14: READY
+2025-12-29 15:28:18,708 - INFO - 📊 Trade #1 @ 2025-04-14: WIN | Pips: 223.8 | USD: $199.12 | R:R: 9.96x | Lot: 0.09
+2025-12-29 15:28:18,755 - INFO - 🎯 Setup found: REVERSAL bullish
+2025-12-29 15:28:18,755 - INFO - 📍 Setup found on 2025-04-23: READY
+2025-12-29 15:28:18,756 - INFO - 📊 Trade #2 @ 2025-04-23: WIN | Pips: 191.3 | USD: $167.81 | R:R: 8.39x | Lot: 0.09
+2025-12-29 15:28:18,785 - INFO - 🎯 Setup found: REVERSAL bullish
+2025-12-29 15:28:18,785 - INFO - 📍 Setup found on 2025-04-28: READY
+2025-12-29 15:28:18,786 - INFO - 📊 Trade #3 @ 2025-04-28: WIN | Pips: 191.3 | USD: $167.81 | R:R: 8.39x | Lot: 0.09
+2025-12-29 15:28:19,116 - INFO - 🎯 Setup found: REVERSAL bullish
+2025-12-29 15:28:19,116 - INFO - 📍 Setup found on 2025-05-25: READY
+2025-12-29 15:28:19,117 - INFO - 📊 Trade #4 @ 2025-05-25: WIN | Pips: 191.3 | USD: $167.81 | R:R: 8.39x | Lot: 0.09
+2025-12-29 15:28:19,244 - INFO - 🎯 Setup found: REVERSAL bullish
+2025-12-29 15:28:19,244 - INFO - 📍 Setup found on 2025-06-03: READY
+2025-12-29 15:28:19,245 - INFO - 📊 Trade #5 @ 2025-06-03: WIN | Pips: 191.3 | USD: $167.81 | R:R: 8.39x | Lot: 0.09
+2025-12-29 15:28:19,265 - INFO - 🎯 Setup found: REVERSAL bullish
+2025-12-29 15:28:19,265 - INFO - 📍 Setup found on 2025-06-05: READY
+2025-12-29 15:28:19,266 - INFO - 📊 Trade #6 @ 2025-06-05: WIN | Pips: 191.3 | USD: $167.81 | R:R: 8.39x | Lot: 0.09
+2025-12-29 15:28:19,827 - INFO - 🎯 Setup found: REVERSAL bullish
+2025-12-29 15:28:19,827 - INFO - 📍 Setup found on 2025-09-17: READY
+2025-12-29 15:28:19,827 - INFO - 📊 Trade #7 @ 2025-09-17: WIN | Pips: 210.7 | USD: $178.96 | R:R: 8.95x | Lot: 0.08
+2025-12-29 15:28:19,900 - INFO - 🎯 Setup found: REVERSAL bullish
+2025-12-29 15:28:19,900 - INFO - 📍 Setup found on 2025-09-21: READY
+2025-12-29 15:28:19,901 - INFO - 📊 Trade #8 @ 2025-09-21: WIN | Pips: 210.7 | USD: $178.96 | R:R: 8.95x | Lot: 0.08
+2025-12-29 15:28:20,386 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:28:20,386 - INFO - 📍 Setup found on 2025-10-16: READY
+2025-12-29 15:28:20,387 - INFO - 📊 Trade #9 @ 2025-10-16: WIN | Pips: 197.9 | USD: $94.41 | R:R: 4.72x | Lot: 0.05
+2025-12-29 15:28:20,427 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:28:20,428 - INFO - 📍 Setup found on 2025-10-19: READY
+2025-12-29 15:28:20,428 - INFO - 📊 Trade #10 @ 2025-10-19: WIN | Pips: 197.7 | USD: $88.00 | R:R: 4.40x | Lot: 0.04
+2025-12-29 15:28:20,469 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:28:20,469 - INFO - 📍 Setup found on 2025-10-20: READY
+2025-12-29 15:28:20,470 - INFO - 📊 Trade #11 @ 2025-10-20: WIN | Pips: 197.7 | USD: $94.35 | R:R: 4.72x | Lot: 0.05
+2025-12-29 15:28:20,972 - INFO - ✅ Scan complete: 11 setups found, 11 trades executed
+2025-12-29 15:28:20,972 - INFO - 
+✅ EURUSD RESULTS:
+2025-12-29 15:28:20,972 - INFO -    Trades: 11
+2025-12-29 15:28:20,972 - INFO -    Win Rate: 100.0%
+2025-12-29 15:28:20,972 - INFO -    Avg R:R (USD): 7.60x
+2025-12-29 15:28:20,972 - INFO -    Total Pips: 2194.9
+2025-12-29 15:28:20,972 - INFO -    Total USD: $1,673
+2025-12-29 15:28:20,973 - INFO -    Return: 167.3%
+2025-12-29 15:28:20,973 - INFO -    Max Drawdown: 0.0%
+2025-12-29 15:28:20,973 - INFO - 
+============================================================
+2025-12-29 15:28:20,973 - INFO - 🔍 BACKTESTING NZDUSD - 12 months
+2025-12-29 15:28:20,973 - INFO - ============================================================
+2025-12-29 15:28:20,973 - INFO - 📦 Loading NZDUSD D1 from cache...
+2025-12-29 15:28:20,975 - INFO - 📦 Loading NZDUSD H4 from cache...
+2025-12-29 15:28:20,976 - INFO - 📊 Replaying 365 days of data...
+2025-12-29 15:28:20,976 - INFO - ⏰ Starting from index 100 (need context for swing detection)
+2025-12-29 15:28:21,455 - INFO - 🎯 Setup found: CONTINUATION bullish
+2025-12-29 15:28:21,456 - INFO - 📍 Setup found on 2025-05-26: READY
+2025-12-29 15:28:21,456 - INFO - 📊 Trade #1 @ 2025-05-26: WIN | Pips: 126.4 | USD: $212.69 | R:R: 10.63x | Lot: 0.17
+2025-12-29 15:28:21,469 - INFO - 🎯 Setup found: CONTINUATION bullish
+2025-12-29 15:28:21,469 - INFO - 📍 Setup found on 2025-05-27: READY
+2025-12-29 15:28:21,470 - INFO - 📊 Trade #2 @ 2025-05-27: WIN | Pips: 126.4 | USD: $212.69 | R:R: 10.63x | Lot: 0.17
+2025-12-29 15:28:21,483 - INFO - 🎯 Setup found: CONTINUATION bullish
+2025-12-29 15:28:21,483 - INFO - 📍 Setup found on 2025-05-28: READY
+2025-12-29 15:28:21,484 - INFO - 📊 Trade #3 @ 2025-05-28: WIN | Pips: 126.4 | USD: $212.69 | R:R: 10.63x | Lot: 0.17
+2025-12-29 15:28:21,809 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:28:21,809 - INFO - 📍 Setup found on 2025-07-21: READY
+2025-12-29 15:28:21,809 - INFO - 📊 Trade #4 @ 2025-07-21: WIN | Pips: 159.3 | USD: $92.39 | R:R: 4.62x | Lot: 0.06
+2025-12-29 15:28:21,836 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:28:21,837 - INFO - 📍 Setup found on 2025-07-22: READY
+2025-12-29 15:28:21,838 - INFO - 📊 Trade #5 @ 2025-07-22: WIN | Pips: 161.9 | USD: $98.80 | R:R: 4.94x | Lot: 0.06
+2025-12-29 15:28:21,865 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:28:21,865 - INFO - 📍 Setup found on 2025-07-23: READY
+2025-12-29 15:28:21,866 - INFO - 📊 Trade #6 @ 2025-07-23: WIN | Pips: 161.7 | USD: $96.42 | R:R: 4.82x | Lot: 0.06
+2025-12-29 15:28:21,894 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:28:21,894 - INFO - 📍 Setup found on 2025-07-24: READY
+2025-12-29 15:28:21,894 - INFO - 📊 Trade #7 @ 2025-07-24: WIN | Pips: 155.4 | USD: $88.98 | R:R: 4.45x | Lot: 0.06
+2025-12-29 15:28:22,295 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:28:22,295 - INFO - 📍 Setup found on 2025-10-05: READY
+2025-12-29 15:28:22,295 - INFO - 📊 Trade #8 @ 2025-10-05: WIN | Pips: 101.3 | USD: $173.26 | R:R: 8.66x | Lot: 0.17
+2025-12-29 15:28:22,692 - INFO - 🎯 Setup found: REVERSAL bullish
+2025-12-29 15:28:22,692 - INFO - 📍 Setup found on 2025-12-02: READY
+2025-12-29 15:28:22,692 - INFO - 📊 Trade #9 @ 2025-12-02: LOSS | Pips: -13.7 | USD: $-20.00 | R:R: -1.00x | Lot: 0.15
+2025-12-29 15:28:22,753 - INFO - ✅ Scan complete: 9 setups found, 9 trades executed
+2025-12-29 15:28:22,753 - INFO - 
+✅ NZDUSD RESULTS:
+2025-12-29 15:28:22,753 - INFO -    Trades: 9
+2025-12-29 15:28:22,753 - INFO -    Win Rate: 88.9%
+2025-12-29 15:28:22,753 - INFO -    Avg R:R (USD): 7.42x
+2025-12-29 15:28:22,753 - INFO -    Total Pips: 1105.1
+2025-12-29 15:28:22,753 - INFO -    Total USD: $1,168
+2025-12-29 15:28:22,753 - INFO -    Return: 116.8%
+2025-12-29 15:28:22,753 - INFO -    Max Drawdown: 0.9%
+2025-12-29 15:28:22,753 - INFO - 
+============================================================
+2025-12-29 15:28:22,753 - INFO - 🔍 BACKTESTING GBPUSD - 12 months
+2025-12-29 15:28:22,753 - INFO - ============================================================
+2025-12-29 15:28:22,754 - INFO - 📦 Loading GBPUSD D1 from cache...
+2025-12-29 15:28:22,755 - INFO - 📦 Loading GBPUSD H4 from cache...
+2025-12-29 15:28:22,757 - INFO - 📊 Replaying 365 days of data...
+2025-12-29 15:28:22,757 - INFO - ⏰ Starting from index 100 (need context for swing detection)
+2025-12-29 15:28:23,056 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:28:23,056 - INFO - 📍 Setup found on 2025-05-05: READY
+2025-12-29 15:28:23,057 - INFO - 📊 Trade #1 @ 2025-05-05: WIN | Pips: 235.0 | USD: $175.62 | R:R: 8.78x | Lot: 0.07
+2025-12-29 15:28:23,109 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:28:23,110 - INFO - 📍 Setup found on 2025-05-18: READY
+2025-12-29 15:28:23,110 - INFO - 📊 Trade #2 @ 2025-05-18: LOSS | Pips: -26.8 | USD: $-20.00 | R:R: -1.00x | Lot: 0.07
+2025-12-29 15:28:23,124 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:28:23,124 - INFO - 📍 Setup found on 2025-05-19: READY
+2025-12-29 15:28:23,124 - INFO - 📊 Trade #3 @ 2025-05-19: LOSS | Pips: -26.8 | USD: $-20.00 | R:R: -1.00x | Lot: 0.07
+2025-12-29 15:28:23,260 - INFO - 🎯 Setup found: CONTINUATION bullish
+2025-12-29 15:28:23,260 - INFO - 📍 Setup found on 2025-06-01: READY
+2025-12-29 15:28:23,261 - INFO - 📊 Trade #4 @ 2025-06-01: LOSS | Pips: -57.0 | USD: $-20.00 | R:R: -1.00x | Lot: 0.04
+2025-12-29 15:28:23,282 - INFO - 🎯 Setup found: CONTINUATION bullish
+2025-12-29 15:28:23,282 - INFO - 📍 Setup found on 2025-06-02: READY
+2025-12-29 15:28:23,283 - INFO - 📊 Trade #5 @ 2025-06-02: LOSS | Pips: -56.6 | USD: $-20.00 | R:R: -1.00x | Lot: 0.04
+2025-12-29 15:28:23,391 - INFO - 🎯 Setup found: CONTINUATION bullish
+2025-12-29 15:28:23,392 - INFO - 📍 Setup found on 2025-06-10: READY
+2025-12-29 15:28:23,392 - INFO - 📊 Trade #6 @ 2025-06-10: LOSS | Pips: -59.1 | USD: $-20.00 | R:R: -1.00x | Lot: 0.03
+2025-12-29 15:28:23,535 - INFO - 🎯 Setup found: CONTINUATION bullish
+2025-12-29 15:28:23,535 - INFO - 📍 Setup found on 2025-06-22: READY
+2025-12-29 15:28:23,536 - INFO - 📊 Trade #7 @ 2025-06-22: WIN | Pips: 293.9 | USD: $111.89 | R:R: 5.59x | Lot: 0.04
+2025-12-29 15:28:23,868 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:28:23,869 - INFO - 📍 Setup found on 2025-08-03: READY
+2025-12-29 15:28:23,869 - INFO - 📊 Trade #8 @ 2025-08-03: LOSS | Pips: -26.6 | USD: $-20.00 | R:R: -1.00x | Lot: 0.08
+2025-12-29 15:28:23,892 - INFO - 🎯 Setup found: REVERSAL bearish
+2025-12-29 15:28:23,892 - INFO - 📍 Setup found on 2025-08-04: READY
+2025-12-29 15:28:23,892 - INFO - 📊 Trade #9 @ 2025-08-04: LOSS | Pips: -26.6 | USD: $-20.00 | R:R: -1.00x | Lot: 0.08
+2025-12-29 15:28:25,613 - INFO - ✅ Scan complete: 9 setups found, 9 trades executed
+2025-12-29 15:28:25,613 - INFO - 
+✅ GBPUSD RESULTS:
+2025-12-29 15:28:25,613 - INFO -    Trades: 9
+2025-12-29 15:28:25,613 - INFO -    Win Rate: 22.2%
+2025-12-29 15:28:25,613 - INFO -    Avg R:R (USD): 7.19x
+2025-12-29 15:28:25,613 - INFO -    Total Pips: 249.4
+2025-12-29 15:28:25,613 - INFO -    Total USD: $148
+2025-12-29 15:28:25,613 - INFO -    Return: 14.8%
+2025-12-29 15:28:25,613 - INFO -    Max Drawdown: 8.5%
+2025-12-29 15:28:25,613 - INFO - 
+====================================================================================================
+2025-12-29 15:28:25,613 - INFO - 📊 GLITCH IN MATRIX - BACKTEST SUMMARY
+2025-12-29 15:28:25,613 - INFO - Account: $1,000 | Risk: 2.0% | Leverage: 1:500
+2025-12-29 15:28:25,613 - INFO - ====================================================================================================
+
+2025-12-29 15:28:25,613 - INFO - Pair       Trades   Win%     Total Pips   Total USD      Return%    Avg R:R    Max DD%   
+2025-12-29 15:28:25,613 - INFO - ----------------------------------------------------------------------------------------------------
+2025-12-29 15:28:25,613 - INFO - XTIUSD     8        100.0    330890.0     $40,505        4050.5    % 253.16    x 0.0       %
+2025-12-29 15:28:25,613 - INFO - USDCHF     30       43.3     1606.2       $12,491        1249.1    % 49.35     x 12.0      %
+2025-12-29 15:28:25,613 - INFO - BTCUSD     24       62.5     84193.3      $8,617         861.7     % 29.32     x 2.8       %
+2025-12-29 15:28:25,613 - INFO - AUDJPY     28       53.6     6218.5       $6,612         661.2     % 22.91     x 16.4      %
+2025-12-29 15:28:25,613 - INFO - USDCAD     24       100.0    6966.5       $5,864         586.4     % 12.22     x 0.0       %
+2025-12-29 15:28:25,613 - INFO - USDJPY     30       83.3     8105.6       $5,215         521.5     % 10.63     x 5.3       %
+2025-12-29 15:28:25,613 - INFO - XAUUSD     26       46.2     7781.5       $2,324         232.4     % 10.85     x 12.5      %
+2025-12-29 15:28:25,613 - INFO - EURUSD     11       100.0    2194.9       $1,673         167.3     % 7.60      x 0.0       %
+2025-12-29 15:28:25,613 - INFO - NZDUSD     9        88.9     1105.1       $1,168         116.8     % 7.42      x 0.9       %
+2025-12-29 15:28:25,613 - INFO - AUDUSD     13       76.9     1350.8       $1,106         110.6     % 5.83      x 5.1       %
+2025-12-29 15:28:25,613 - INFO - GBPCAD     11       27.3     -78.1        $240           24.0      % 6.67      x 14.0      %
+2025-12-29 15:28:25,613 - INFO - EURGBP     1        100.0    167.4        $192           19.2      % 9.58      x 0.0       %
+2025-12-29 15:28:25,613 - INFO - GBPUSD     9        22.2     249.4        $148           14.8      % 7.19      x 8.5       %
+2025-12-29 15:28:25,613 - INFO - GBPJPY     8        12.5     180.5        $28            2.8       % 8.40      x 10.5      %
+2025-12-29 15:28:25,613 - INFO - GBPNZD     15       0.0      -826.9       $-300          -30.0     % 0.00      x 30.0      %
+2025-12-29 15:28:25,613 - INFO - ----------------------------------------------------------------------------------------------------
+2025-12-29 15:28:25,613 - INFO - OVERALL: 247 trades | 450,104.7 pips | $85,881 profit | 8588.1% return
+2025-12-29 15:28:25,614 - INFO - 
+🏆 TOP PERFORMERS (USD):
+2025-12-29 15:28:25,614 - INFO - 1. XTIUSD: $40,505 (4050.5% return) - 100% WR over 8 trades
+2025-12-29 15:28:25,614 - INFO - 2. USDCHF: $12,491 (1249.1% return) - 43% WR over 30 trades
+2025-12-29 15:28:25,614 - INFO - 3. BTCUSD: $8,617 (861.7% return) - 62% WR over 24 trades
+2025-12-29 15:28:25,614 - INFO - 
+❌ WEAK PERFORMERS (USD):
+2025-12-29 15:28:25,614 - INFO - 1. GBPNZD: $-300 (-30.0% return) - 0% WR over 15 trades
+2025-12-29 15:28:25,614 - INFO - 2. GBPJPY: $28 (2.8% return) - 12% WR over 8 trades
+2025-12-29 15:28:25,614 - INFO - 3. GBPUSD: $148 (14.8% return) - 22% WR over 9 trades
+2025-12-29 15:28:25,615 - INFO - 
+✅ Full results saved to: data/backtest_results.json

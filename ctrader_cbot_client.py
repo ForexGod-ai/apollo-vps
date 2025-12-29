@@ -47,6 +47,12 @@ class CTraderCBotClient:
             
             response = requests.get(f"{self.base_url}/data", params=params, timeout=10)
             
+            # DETAILED LOGGING FOR DEBUGGING
+            logger.debug(f"🔍 Request URL: {response.url}")
+            logger.debug(f"🔍 Response Status: {response.status_code}")
+            logger.debug(f"🔍 Response Headers: {response.headers}")
+            logger.debug(f"🔍 Response Text (first 200 chars): {response.text[:200]}")
+            
             if response.status_code != 200:
                 logger.error(f"❌ HTTP {response.status_code}: {response.text}")
                 return None

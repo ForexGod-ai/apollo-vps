@@ -1,19 +1,4 @@
 {
-  "setups": [
-    {
-      "symbol": "GBPJPY",
-      "direction": "buy",
-      "entry_price": 207.806,
-      "stop_loss": 207.390388,
-      "take_profit": 211.36055499999998,
-      "risk_reward": 8.552580291232879,
-      "strategy_type": "continuation",
-      "setup_time": "2025-12-16T14:00:00",
-      "priority": 1,
-      "fvg_zone_top": 208.237,
-      "fvg_zone_bottom": 207.806,
-      "lot_size": 0.01
-    }
-  ],
-  "last_updated": "2025-12-16T19:28:54.412602"
+  "setups": [],
+  "last_updated": "2025-12-29T15:46:29.415090"
 }
