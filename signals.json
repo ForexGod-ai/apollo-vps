@@ -1,14 +1,13 @@
 {
-  "SignalId": "SIGNAL_20251229_154629",
-  "Symbol": "NZDUSD",
+  "SignalId": "AUDUSD_BUY_1767609711",
+  "Symbol": "AUDUSD",
   "Direction": "buy",
-  "EntryPrice": 0.58014,
-  "StopLoss": 0.57897972,
-  "TakeProfit": 0.5910141999999999,
-  "StopLossPips": 11.602800000000135,
-  "TakeProfitPips": 108.74199999999945,
-  "Volume": 0.01,
-  "RiskReward": 9.372048126314182,
-  "StrategyType": "reversal - MONITORING_CONFIRMED",
-  "Timestamp": "2025-12-29T15:46:29.413391"
+  "StrategyType": "PULLBACK",
+  "EntryPrice": 0.66007,
+  "StopLoss": 0.65874986,
+  "TakeProfit": 0.6811259,
+  "StopLossPips": 13.2,
+  "TakeProfitPips": 210.6,
+  "RiskReward": 15.95,
+  "Timestamp": "2026-01-05T12:41:51.731706"
 }

@@ -104,9 +104,24 @@ namespace cAlgo.Robots
                         return;
                     _lastFileCheck = fileInfo.LastWriteTime;
                     var json = File.ReadAllText(SignalFilePath);
+                    Print($"🔍 Raw JSON: {json}");
+                    
                     var signal = JsonSerializer.Deserialize<TradeSignal>(json);
-                    if (signal == null || signal.SignalId == _lastProcessedSignal)
+                    
+                    if (signal == null)
+                    {
+                        Print("❌ Failed to deserialize signal (NULL)");
                         return;
+                    }
+                    
+                    Print($"✅ Signal deserialized: {signal.SignalId}");
+                    
+                    if (signal.SignalId == _lastProcessedSignal)
+                    {
+                        Print($"⏭️  Signal already processed: {signal.SignalId}");
+                        return;
+                    }
+                    
                     _lastProcessedSignal = signal.SignalId;
                     Print($"📊 NEW SIGNAL RECEIVED: {signal.Symbol} {signal.Direction.ToUpper()}");
                     Print($"   Strategy: {signal.StrategyType}");
@@ -115,6 +130,17 @@ namespace cAlgo.Robots
                     Print($"   TP: {signal.TakeProfit}");
                     Print($"   R:R: 1:{signal.RiskReward}");
                     ExecuteSignal(signal);
+                    
+                    // Clear signal file after processing
+                    try
+                    {
+                        File.Delete(SignalFilePath);
+                        Print($"🗑️  Signal file cleared");
+                    }
+                    catch (Exception deleteEx)
+                    {
+                        Print($"⚠️  Could not delete signal file: {deleteEx.Message}");
+                    }
                 }
                 catch (Exception ex)
                 {

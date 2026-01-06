@@ -21,7 +21,7 @@ class CTraderExecutor:
     
     def execute_trade(self, symbol: str, direction: str, entry_price: float, 
                      stop_loss: float, take_profit: float, lot_size: float = 0.01,
-                     comment: str = ""):
+                     comment: str = "", status: str = "READY"):
         """
         Write a trade signal to signals.json for PythonSignalExecutor to execute
         
@@ -31,41 +31,61 @@ class CTraderExecutor:
             entry_price: Entry price
             stop_loss: Stop loss price
             take_profit: Take profit price
-            lot_size: Position size in lots (default 0.01)
+            lot_size: Position size in lots (ignored - cBot calculates based on risk %)
             comment: Optional comment for the trade
+            status: Setup status - MUST be 'READY' to execute (V3.0)
+        
+        Note: cBot expects prices AND pips. Direction must be lowercase.
         """
+        # V3.0 STRICT EXECUTION BLOCKER:
+        # Only execute if status is 'READY' (4H confirmed + price in FVG)
+        if status != 'READY':
+            logger.warning(f"⛔ EXECUTION BLOCKED: {symbol} status is '{status}' (must be 'READY')")
+            logger.info(f"   Setup is in MONITORING phase - waiting for:")
+            logger.info(f"   1. 4H CHoCH confirmation (same direction as Daily)")
+            logger.info(f"   2. Price to enter FVG zone")
+            return False
+        
         try:
+            # Generate unique signal ID
+            signal_id = f"{symbol}_{direction}_{int(datetime.now().timestamp())}"
+            
+            # Calculate pip size based on instrument type
+            # Crypto (BTC, ETH, etc.): 1 pip = 1.0 (whole price)
+            # JPY pairs: 1 pip = 0.01
+            # Other forex: 1 pip = 0.0001
+            # Gold/Silver: 1 pip = 0.01
+            if symbol in ['BTCUSD', 'ETHUSD', 'XRPUSD', 'LTCUSD']:
+                pip_size = 1.0
+            elif 'JPY' in symbol:
+                pip_size = 0.01
+            elif symbol in ['XAUUSD', 'XAGUSD']:  # Gold, Silver
+                pip_size = 0.01
+            else:
+                pip_size = 0.0001
+            
+            sl_pips = abs(entry_price - stop_loss) / pip_size
+            tp_pips = abs(take_profit - entry_price) / pip_size
+            
             signal = {
-                "symbol": symbol,
-                "action": direction.upper(),
-                "entry_price": entry_price,
-                "stop_loss": stop_loss,
-                "take_profit": take_profit,
-                "lot_size": lot_size,
-                "comment": comment or f"AI {direction} {symbol}",
-                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "source": "morning_scanner"
+                "SignalId": signal_id,
+                "Symbol": symbol,
+                "Direction": direction.lower(),  # CRITICAL: cBot expects lowercase!
+                "StrategyType": "PULLBACK",
+                "EntryPrice": entry_price,
+                "StopLoss": stop_loss,
+                "TakeProfit": take_profit,
+                "StopLossPips": round(sl_pips, 1),
+                "TakeProfitPips": round(tp_pips, 1),
+                "RiskReward": round(tp_pips / sl_pips, 2),
+                "Timestamp": datetime.now().isoformat()
             }
             
-            # Read existing signals
-            signals = []
-            if os.path.exists(self.signals_file):
-                try:
-                    with open(self.signals_file, 'r') as f:
-                        signals = json.load(f)
-                        if not isinstance(signals, list):
-                            signals = []
-                except:
-                    signals = []
-            
-            # Add new signal
-            signals.append(signal)
-            
-            # Write back
+            # Write SINGLE signal (cBot expects object, not array)
             with open(self.signals_file, 'w') as f:
-                json.dump(signals, f, indent=2)
+                json.dump(signal, f, indent=2)
             
-            logger.success(f"✅ Signal written: {direction} {symbol} @ {entry_price} (SL: {stop_loss}, TP: {take_profit})")
+            logger.success(f"✅ Signal written: {direction} {symbol} @ {entry_price} (SL: {sl_pips:.1f} pips, TP: {tp_pips:.1f} pips)")
             return True
             
         except Exception as e:

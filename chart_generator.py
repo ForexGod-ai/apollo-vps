@@ -53,7 +53,13 @@ class ChartGenerator:
             if not isinstance(df.index, pd.DatetimeIndex):
                 if 'time' in df.columns:
                     df = df.set_index('time')
+                elif 'Time' in df.columns:
+                    df = df.set_index('Time')
                 df.index = pd.to_datetime(df.index)
+            else:
+                # Already has DatetimeIndex, ensure it's datetime type
+                if not pd.api.types.is_datetime64_any_dtype(df.index):
+                    df.index = pd.to_datetime(df.index)
             
             # Rename to CAPITAL letters (mplfinance requirement)
             df = df.rename(columns={

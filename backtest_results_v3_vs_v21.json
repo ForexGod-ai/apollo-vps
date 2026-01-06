@@ -1,0 +1,83 @@
+{
+  "NZDUSD": {
+    "v21": {
+      "total_trades": 0,
+      "win_rate": 0,
+      "total_profit": 0,
+      "max_drawdown": 0,
+      "avg_rr": 0,
+      "blocked_count": 0
+    },
+    "v3": {
+      "total_trades": 0,
+      "win_rate": 0,
+      "total_profit": 0,
+      "max_drawdown": 0,
+      "avg_rr": 0,
+      "blocked_count": 0
+    },
+    "blocked": {
+      "blocked_total": 0,
+      "blocked_winners": 0,
+      "blocked_losers": 0,
+      "blocked_win_rate": 0,
+      "saved_capital": 0,
+      "missed_profit": 0,
+      "net_benefit": 0
+    }
+  },
+  "GBPUSD": {
+    "v21": {
+      "total_trades": 0,
+      "win_rate": 0,
+      "total_profit": 0,
+      "max_drawdown": 0,
+      "avg_rr": 0,
+      "blocked_count": 0
+    },
+    "v3": {
+      "total_trades": 0,
+      "win_rate": 0,
+      "total_profit": 0,
+      "max_drawdown": 0,
+      "avg_rr": 0,
+      "blocked_count": 0
+    },
+    "blocked": {
+      "blocked_total": 0,
+      "blocked_winners": 0,
+      "blocked_losers": 0,
+      "blocked_win_rate": 0,
+      "saved_capital": 0,
+      "missed_profit": 0,
+      "net_benefit": 0
+    }
+  },
+  "XTIUSD": {
+    "v21": {
+      "total_trades": 0,
+      "win_rate": 0,
+      "total_profit": 0,
+      "max_drawdown": 0,
+      "avg_rr": 0,
+      "blocked_count": 0
+    },
+    "v3": {
+      "total_trades": 0,
+      "win_rate": 0,
+      "total_profit": 0,
+      "max_drawdown": 0,
+      "avg_rr": 0,
+      "blocked_count": 0
+    },
+    "blocked": {
+      "blocked_total": 0,
+      "blocked_winners": 0,
+      "blocked_losers": 0,
+      "blocked_win_rate": 0,
+      "saved_capital": 0,
+      "missed_profit": 0,
+      "net_benefit": 0
+    }
+  }
+}

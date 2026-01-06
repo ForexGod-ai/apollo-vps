@@ -100,8 +100,10 @@ class HistoricalDataDownloader:
             # Get bar count based on timeframe (match scanner settings!)
             if timeframe == "D1":
                 bar_count = 365  # 1 year (same as scanner)
-            else:  # H4
+            elif timeframe == "H4":
                 bar_count = 2190  # 1 year synchronized (365 × 6)
+            else:  # H1
+                bar_count = 100  # Last 100 hours (~4 days) for GBP 2-TF confirmation
             
             # Use query string format (not path params)
             url = f"http://localhost:8767/bars?symbol={symbol}&timeframe={timeframe}&bars={bar_count}"
@@ -176,6 +178,15 @@ class GlitchBacktester:
         d1_data = self.downloader.download_pair_data(pair, start_date, end_date, "D1")
         h4_data = self.downloader.download_pair_data(pair, start_date, end_date, "H4")
         
+        # V3.0: Download 1H data for GBP pairs (2-TF confirmation)
+        h1_data = None
+        is_gbp = 'GBP' in pair
+        if is_gbp:
+            logger.info(f"📊 Downloading 1H data for {pair} (GBP 2-TF confirmation)")
+            h1_data = self.downloader.download_pair_data(pair, start_date, end_date, "H1")
+            if h1_data is None:
+                logger.warning(f"⚠️ No 1H data for {pair} (GBP filter may downgrade setups)")
+        
         if d1_data is None or h4_data is None or d1_data.empty or h4_data.empty:
             logger.error(f"❌ Failed to get data for {pair}")
             return None
@@ -195,11 +206,16 @@ class GlitchBacktester:
             d1_slice = d1_data.iloc[:i+1].copy()
             h4_slice = h4_data[h4_data['timestamp'] <= current_date].copy()
             
+            # V3.0: Slice 1H data if available (for GBP)
+            h1_slice = None
+            if h1_data is not None:
+                h1_slice = h1_data[h1_data['timestamp'] <= current_date].copy()
+            
             if len(d1_slice) < 100 or len(h4_slice) < 100:
                 continue  # Not enough data
             
             # Run Glitch detection
-            setup = self._detect_glitch_setup(pair, d1_slice, h4_slice)
+            setup = self._detect_glitch_setup(pair, d1_slice, h4_slice, h1_slice)
             
             if setup:
                 setups_found += 1
@@ -242,7 +258,7 @@ class GlitchBacktester:
         return stats
     
     def _detect_glitch_setup(self, pair: str, d1_data: pd.DataFrame, 
-                            h4_data: pd.DataFrame) -> Dict:
+                            h4_data: pd.DataFrame, h1_data: pd.DataFrame = None) -> Dict:
         """Run Glitch detection logic (same as morning scanner)"""
         try:
             # Prepare DataFrames - rename timestamp to time (required by SMCDetector)
@@ -251,8 +267,20 @@ class GlitchBacktester:
             d1_df['time'] = d1_df['timestamp']
             h4_df['time'] = h4_df['timestamp']
             
+            # V3.0: Prepare 1H data for GBP pairs
+            df_1h = None
+            if h1_data is not None:
+                df_1h = h1_data.copy()
+                df_1h['time'] = df_1h['timestamp']
+            
             # Use SMCDetector.scan_for_setup() directly (same as morning scanner!)
-            setup = self.smc_detector.scan_for_setup(pair, d1_df, h4_df, priority=1)
+            setup = self.smc_detector.scan_for_setup(
+                symbol=pair,
+                df_daily=d1_df,
+                df_4h=h4_df,
+                priority=1,
+                df_1h=df_1h  # V3.0: GBP 2-TF confirmation
+            )
             
             if setup is None:
                 return None

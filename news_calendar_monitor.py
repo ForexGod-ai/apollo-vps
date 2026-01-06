@@ -10,6 +10,7 @@ from typing import List, Dict, Optional
 from dotenv import load_dotenv
 from bs4 import BeautifulSoup
 import logging
+import requests  # For Telegram API and cTrader calendar
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
@@ -102,10 +103,23 @@ class NewsCalendarMonitor:
                 logger.error("❌ economic_calendar.json not found!")
                 return []
             
+            now = datetime.now()  # Define now BEFORE using it
+            
             with open(calendar_file, 'r') as f:
                 data = json.load(f)
             
-            custom_events = data.get('custom_events_december_2025', [])
+            # Try current month first, then fallback to other sections
+            current_month = now.strftime("%B_%Y").lower()  # e.g., "january_2026"
+            section_name = f'custom_events_{current_month}'
+            
+            custom_events = data.get(section_name, [])
+            
+            # Fallback to December 2025 if current month not found
+            if not custom_events:
+                custom_events = data.get('custom_events_december_2025', [])
+                logger.warning(f"⚠️ Section '{section_name}' not found, using December 2025 events")
+            else:
+                logger.info(f"✅ Using events from '{section_name}'")
             
             now = datetime.now()
             end_date = now + timedelta(days=days_ahead)
@@ -256,17 +270,28 @@ class NewsCalendarMonitor:
             driver = webdriver.Chrome(service=service, options=chrome_options)
             
             # Fetch each day individually (not week view!)
-            for fetch_date, day_param in days_to_fetch:
+            for i, (fetch_date, day_param) in enumerate(days_to_fetch):
+                # Add delay between requests to avoid rate limiting (except first request)
+                if i > 0:
+                    delay = 3  # 3 seconds between requests
+                    logger.info(f"⏳ Waiting {delay}s before next request...")
+                    time.sleep(delay)
+                
                 url = f"https://www.forexfactory.com/calendar?day={day_param}"
                 
                 logger.info(f"🌐 Loading {fetch_date.strftime('%a %b %d')}: {url}")
-                driver.get(url)
                 
-                # Wait for calendar table
-                WebDriverWait(driver, 15).until(
-                    EC.presence_of_element_located((By.CLASS_NAME, "calendar__table"))
-                )
-                time.sleep(2)  # Extra wait for dynamic content
+                try:
+                    driver.get(url)
+                    
+                    # Wait for calendar table
+                    WebDriverWait(driver, 15).until(
+                        EC.presence_of_element_located((By.CLASS_NAME, "calendar__table"))
+                    )
+                    time.sleep(2)  # Extra wait for dynamic content
+                except Exception as e:
+                    logger.warning(f"⚠️ Failed to load {day_param}: {e}")
+                    continue
                 
                 # Get page source and parse
                 html = driver.page_source
@@ -376,9 +401,9 @@ class NewsCalendarMonitor:
                         logger.debug(f"Error parsing row: {e}")
                         continue
                 
-                # Add events from this week to all_events
+                # Add events from this day to all_events
                 all_events.extend(events)
-                logger.info(f"✅ Found {len(events)} events in week {week_param}")
+                logger.info(f"✅ Found {len(events)} events on {day_param}")
             
             # Filter events within next N days
             now = datetime.now()
@@ -520,19 +545,22 @@ class NewsCalendarMonitor:
         logger.info("🚀 Starting Daily News Check...")
         logger.info(f"⏰ Current time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         
-        # Try manual calendar first (most reliable)
+        # Try manual calendar first (most reliable - updated monthly)
         logger.info("📖 Loading manual economic calendar...")
         all_events = self.fetch_manual_calendar(days_ahead=7)
         
-        # Try cTrader if manual calendar is empty
+        # Try cTrader Desktop API as backup (if EconomicCalendarBot is running)
         if not all_events:
-            logger.warning("⚠️ Manual calendar empty, trying cTrader Desktop...")
+            logger.warning("⚠️ Manual calendar empty, trying cTrader Desktop API...")
             all_events = self.fetch_ctrader_calendar(days_ahead=7)
         
-        # Fallback to ForexFactory if still nothing
+        # NO ForexFactory fallback - it crashes Chrome and has Cloudflare protection
+        # Manual calendar should be updated monthly using add_monthly_events.py
+        
         if not all_events:
-            logger.warning("⚠️ cTrader unavailable, falling back to ForexFactory...")
-            all_events = self.fetch_forexfactory_calendar(days_ahead=2)
+            logger.error("❌ No events found! Update economic_calendar.json or start cTrader Desktop")
+            logger.error("💡 Run: python3 add_monthly_events.py")
+            return
         
         # Filter high impact only
         high_impact = self.filter_high_impact_events(all_events)

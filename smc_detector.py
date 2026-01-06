@@ -60,6 +60,7 @@ class FVG:
     candle_time: datetime
     is_filled: bool = False
     associated_choch: Optional[CHoCH] = None
+    quality_score: int = 0  # V3.0: FVG quality score (0-100)
 
 
 @dataclass
@@ -75,11 +76,8 @@ class TradeSetup:
     risk_reward: float
     setup_time: datetime
     priority: int
-    strategy_type: str  # 'reversal' or 'continuation'
-    status: str = 'MONITORING'  # 'MONITORING' (watching) or 'READY' (can execute)
-    setup_time: datetime
-    priority: int
     strategy_type: str = "reversal"  # 'reversal' or 'continuation'
+    status: str = 'MONITORING'  # 'MONITORING' (watching) or 'READY' (can execute)
 
 
 class SMCDetector:
@@ -607,6 +605,203 @@ class SMCDetector:
         
         return True
     
+    def calculate_fvg_quality_score(
+        self, 
+        fvg: FVG, 
+        df: pd.DataFrame, 
+        symbol: str,
+        debug: bool = False
+    ) -> int:
+        """
+        V3.0 FVG QUALITY SCORING SYSTEM
+        
+        Returns score 0-100:
+        - ≥70: HIGH QUALITY (execute)
+        - 50-69: MEDIUM QUALITY (monitor)
+        - <50: LOW QUALITY (reject)
+        
+        Scoring Components:
+        1. Gap Size (0-25 points):
+           - ≥0.20%: 25 pts (excellent)
+           - ≥0.15%: 20 pts (good)
+           - ≥0.10%: 15 pts (acceptable)
+           - <0.10%: 0 pts (reject)
+        
+        2. Body Dominance (0-30 points):
+           - ≥80%: 30 pts (strong momentum) [GBP requires this]
+           - ≥70%: 25 pts (good momentum) [Normal pairs min]
+           - ≥60%: 15 pts (moderate)
+           - <60%: 0 pts (weak)
+        
+        3. Consecutive Strength (0-25 points):
+           - 3+ candles same direction: 25 pts
+           - 2 candles same direction: 15 pts
+           - 1 candle: 5 pts
+           - Mixed: 0 pts
+        
+        4. Gap Clarity (0-20 points):
+           - Clean gap (no overlap): 20 pts
+           - Partial overlap: 10 pts
+           - Heavy overlap: 0 pts
+        
+        GBP ADAPTIVE FILTERING:
+        - GBP pairs need ≥80% body dominance (vs 70% normal)
+        - Minimum score: 75 (vs 70 normal)
+        """
+        score = 0
+        is_gbp = 'GBP' in symbol
+        
+        if debug:
+            print(f"\n🎯 FVG QUALITY SCORING:")
+            print(f"   Symbol: {symbol} {'[GBP - STRICT MODE]' if is_gbp else ''}")
+        
+        # 1. GAP SIZE SCORING (0-25 points)
+        gap_size = fvg.top - fvg.bottom
+        gap_pct = (gap_size / fvg.bottom) * 100
+        
+        if gap_pct >= 0.20:
+            gap_score = 25
+            gap_tier = "EXCELLENT"
+        elif gap_pct >= 0.15:
+            gap_score = 20
+            gap_tier = "GOOD"
+        elif gap_pct >= 0.10:
+            gap_score = 15
+            gap_tier = "ACCEPTABLE"
+        else:
+            gap_score = 0
+            gap_tier = "TOO SMALL"
+        
+        score += gap_score
+        
+        if debug:
+            print(f"   1. Gap Size: {gap_pct:.3f}% → {gap_score}/25 pts ({gap_tier})")
+        
+        # 2. BODY DOMINANCE SCORING (0-30 points)
+        if fvg.index < len(df):
+            gap_candle = df.iloc[fvg.index]
+            candle_body = abs(gap_candle['close'] - gap_candle['open'])
+            candle_range = gap_candle['high'] - gap_candle['low']
+            
+            if candle_range > 0:
+                body_ratio = (candle_body / candle_range) * 100
+                
+                # GBP: Requires ≥70% body dominance (RELAXED from 80%)
+                if is_gbp:
+                    if body_ratio >= 80:
+                        body_score = 30
+                        body_tier = "STRONG (GBP OK)"
+                    elif body_ratio >= 70:
+                        body_score = 25
+                        body_tier = "GOOD (GBP OK)"
+                    else:
+                        body_score = 0
+                        body_tier = f"WEAK (GBP needs ≥70%, got {body_ratio:.1f}%)"
+                else:
+                    # Normal pairs: ≥60% acceptable (RELAXED from 70%)
+                    if body_ratio >= 80:
+                        body_score = 30
+                        body_tier = "STRONG"
+                    elif body_ratio >= 70:
+                        body_score = 25
+                        body_tier = "GOOD"
+                    elif body_ratio >= 60:
+                        body_score = 15
+                        body_tier = "MODERATE"
+                    else:
+                        body_score = 0
+                        body_tier = f"WEAK ({body_ratio:.1f}% < 60%)"
+                
+                score += body_score
+                
+                if debug:
+                    print(f"   2. Body Dominance: {body_ratio:.1f}% → {body_score}/30 pts ({body_tier})")
+            else:
+                if debug:
+                    print(f"   2. Body Dominance: N/A (zero range candle) → 0/30 pts")
+        else:
+            if debug:
+                print(f"   2. Body Dominance: N/A (index out of range) → 0/30 pts")
+        
+        # 3. CONSECUTIVE STRENGTH SCORING (0-25 points)
+        # Check 2-3 candles BEFORE FVG for trend strength
+        if fvg.index >= 3:
+            lookback_start = max(0, fvg.index - 3)
+            lookback_candles = df.iloc[lookback_start:fvg.index]
+            
+            # Count consecutive candles in same direction as FVG
+            consecutive_count = 0
+            for idx in range(len(lookback_candles)):
+                candle = lookback_candles.iloc[idx]
+                candle_direction = 'bullish' if candle['close'] > candle['open'] else 'bearish'
+                
+                if candle_direction == fvg.direction:
+                    consecutive_count += 1
+            
+            if consecutive_count >= 3:
+                consec_score = 25
+                consec_tier = "STRONG (3+ candles)"
+            elif consecutive_count >= 2:
+                consec_score = 15
+                consec_tier = "GOOD (2 candles)"
+            elif consecutive_count >= 1:
+                consec_score = 5
+                consec_tier = "WEAK (1 candle)"
+            else:
+                consec_score = 0
+                consec_tier = "NONE (mixed)"
+            
+            score += consec_score
+            
+            if debug:
+                print(f"   3. Consecutive Strength: {consecutive_count} candles → {consec_score}/25 pts ({consec_tier})")
+        else:
+            if debug:
+                print(f"   3. Consecutive Strength: N/A (not enough history) → 0/25 pts")
+        
+        # 4. GAP CLARITY SCORING (0-20 points)
+        # Check if gap is clean (no candle wicks overlap the gap zone)
+        if fvg.index >= 2:
+            candle_before = df.iloc[fvg.index - 2]
+            candle_after = df.iloc[fvg.index]
+            
+            if fvg.direction == 'bullish':
+                # Bullish gap: check if no overlap between before.high and after.low
+                overlap = max(0, candle_before['high'] - candle_after['low'])
+            else:
+                # Bearish gap: check if no overlap between before.low and after.high
+                overlap = max(0, candle_after['high'] - candle_before['low'])
+            
+            overlap_pct = (overlap / gap_size) * 100 if gap_size > 0 else 100
+            
+            if overlap_pct == 0:
+                clarity_score = 20
+                clarity_tier = "CLEAN GAP"
+            elif overlap_pct < 30:
+                clarity_score = 10
+                clarity_tier = "PARTIAL OVERLAP"
+            else:
+                clarity_score = 0
+                clarity_tier = "HEAVY OVERLAP"
+            
+            score += clarity_score
+            
+            if debug:
+                print(f"   4. Gap Clarity: {overlap_pct:.1f}% overlap → {clarity_score}/20 pts ({clarity_tier})")
+        else:
+            if debug:
+                print(f"   4. Gap Clarity: N/A (not enough history) → 0/20 pts")
+        
+        # FINAL SCORE
+        min_required = 75 if is_gbp else 70
+        quality_rating = "✅ HIGH QUALITY" if score >= min_required else "⚠️ LOW QUALITY"
+        
+        if debug:
+            print(f"\n   📊 TOTAL SCORE: {score}/100 ({quality_rating})")
+            print(f"   Required: ≥{min_required} pts")
+        
+        return score
+    
     def detect_microtrend(self, df_4h: pd.DataFrame, fvg: FVG, choch_4h_index: int) -> bool:
         """
         Check if 4H was in microtrend toward the FVG before the 4H CHoCH
@@ -863,18 +1058,24 @@ class SMCDetector:
         """
         Analyze structure BEFORE CHoCH to determine previous trend
         
-        Returns:
-            {'pattern': 'HH_HL' | 'LH_LL' | 'mixed', 'confidence': 0-100}
-        """
-        # IMPROVED: Analyze MACRO trend (last 50 candles) instead of relying on CHoCH.previous_trend
-        # This gives us the REAL market trend, not just micro swing breaks
+        V3.0 UPGRADE: Extended macro context (100-120 candles)
+        - Identifies TRUE reversals (5-6 months trend change)
+        - Separates major reversals from micro pullbacks
         
-        # Get 50 candles before CHoCH
-        macro_start = max(0, choch.index - 60)
-        macro_end = max(macro_start + 10, choch.index - 10)  # Stop 10 candles before CHoCH
+        Returns:
+            {'pattern': 'HH_HL' | 'LH_LL' | 'mixed', 'confidence': 0-100, 'duration': int}
+        """
+        # V3.0: Extended MACRO window (100-120 candles = 5-6 months)
+        # Purpose: Confirm REAL trend, not just short-term fluctuations
+        
+        # Get 100-120 candles before CHoCH
+        macro_start = max(0, choch.index - 120)  # V3.0: 120 candles back (was 60)
+        macro_end = max(macro_start + 10, choch.index - 5)  # V3.0: Stop 5 candles before (was 10)
         macro_df = df.iloc[macro_start:macro_end]
         
-        if len(macro_df) >= 20:
+        trend_duration = len(macro_df)  # Track how long the trend lasted
+        
+        if len(macro_df) >= 30:  # V3.0: Minimum 30 candles for valid macro (was 20)
             # Analyze MACRO trend using price action
             first_third = macro_df.iloc[:len(macro_df)//3]
             last_third = macro_df.iloc[-len(macro_df)//3:]
@@ -884,36 +1085,61 @@ class SMCDetector:
             last_high = last_third['high'].max()
             last_low = last_third['low'].min()
             
-            # Calculate trend strength
+            # V3.0: Calculate trend strength with percentage move
+            price_range = max(first_high, last_high) - min(first_low, last_low)
             high_change = last_high - first_high
             low_change = last_low - first_low
+            high_change_pct = (high_change / first_high) * 100 if first_high > 0 else 0
+            low_change_pct = (low_change / first_low) * 100 if first_low > 0 else 0
             
-            # Determine MACRO trend
+            # Determine MACRO trend with strength validation
             if high_change > 0 and low_change > 0:
                 # Higher highs AND higher lows = BULLISH MACRO TREND
                 macro_trend = 'bullish'
-                confidence = 85
+                # V3.0: Confidence based on trend duration and strength
+                if trend_duration >= 80 and high_change_pct > 5:
+                    confidence = 95  # Very strong trend (5%+ move over 80+ candles)
+                elif trend_duration >= 50:
+                    confidence = 90  # Strong trend
+                else:
+                    confidence = 85  # Moderate trend
             elif high_change < 0 and low_change < 0:
                 # Lower highs AND lower lows = BEARISH MACRO TREND
                 macro_trend = 'bearish'
-                confidence = 85
+                # V3.0: Confidence based on trend duration and strength
+                if trend_duration >= 80 and abs(low_change_pct) > 5:
+                    confidence = 95  # Very strong trend (5%+ move over 80+ candles)
+                elif trend_duration >= 50:
+                    confidence = 90  # Strong trend
+                else:
+                    confidence = 85  # Moderate trend
             else:
                 # Mixed = use CHoCH previous_trend as fallback
                 macro_trend = choch.previous_trend if hasattr(choch, 'previous_trend') else None
                 confidence = 60
             
-            # Return pattern based on MACRO trend
+            # Return pattern based on MACRO trend with duration tracking
             if macro_trend == 'bearish':
-                return {'pattern': 'LH_LL', 'confidence': confidence}
+                return {
+                    'pattern': 'LH_LL', 
+                    'confidence': confidence,
+                    'duration': trend_duration,  # V3.0: Track trend strength
+                    'strength_pct': abs(low_change_pct)  # V3.0: Percentage move
+                }
             elif macro_trend == 'bullish':
-                return {'pattern': 'HH_HL', 'confidence': confidence}
+                return {
+                    'pattern': 'HH_HL', 
+                    'confidence': confidence,
+                    'duration': trend_duration,  # V3.0: Track trend strength
+                    'strength_pct': high_change_pct  # V3.0: Percentage move
+                }
         
         # FALLBACK: Use CHoCH's previous_trend field if macro analysis fails
         if hasattr(choch, 'previous_trend') and choch.previous_trend:
             if choch.previous_trend == 'bearish':
-                return {'pattern': 'LH_LL', 'confidence': 90}
+                return {'pattern': 'LH_LL', 'confidence': 90, 'duration': 0, 'strength_pct': 0}
             elif choch.previous_trend == 'bullish':
-                return {'pattern': 'HH_HL', 'confidence': 90}
+                return {'pattern': 'HH_HL', 'confidence': 90, 'duration': 0, 'strength_pct': 0}
         
         # LAST RESORT: Analyze swings if previous_trend not available
         # Get candles BEFORE CHoCH (30-50 bars before for MAJOR trend analysis)
@@ -1040,58 +1266,104 @@ class SMCDetector:
         symbol: str,
         df_daily: pd.DataFrame, 
         df_4h: pd.DataFrame,
-        priority: int
+        priority: int,
+        df_1h: Optional[pd.DataFrame] = None,  # V3.0: For GBP pairs 2-TF confirmation
+        require_4h_choch: bool = True,  # V3.0: Strict entry, V2.1: False for original logic
+        skip_fvg_quality: bool = False  # For backtesting: skip quality check to find more trades
     ) -> Optional[TradeSetup]:
         """
         Main scanner: Check if "Glitch in Matrix" setup exists
         
-        FINAL LOGIC (Dec 2025 - CHoCH + BOS):
-        - CHoCH = SCHIMBAREA trendului (o dată când se inversează)
-        - BOS = CONTINUAREA trendului (HH în bullish, LL în bearish)
-        - Ultimul CHoCH pe Daily = trendul ACTUAL
-        - Doar trades în direcția ultimului CHoCH
+        FINAL LOGIC (V3.0 - CHoCH + BOS CORRECT USAGE):
+        
+        TWO SETUP TYPES:
+        1. REVERSAL: Daily CHoCH (trend changes) + FVG + 4H CHoCH from pullback
+           - Previous trend OPPOSITE to new trend
+           - Example: BEARISH → CHoCH BULLISH → Pullback → H4 CHoCH BULLISH
+        
+        2. CONTINUITY: Daily BOS (trend continues) + FVG + 4H CHoCH from pullback
+           - Previous trend SAME as current (BOS = HH in bullish, LL in bearish)
+           - Example: BULLISH → BOS HH → Pullback → H4 CHoCH BULLISH
+        
+        WHY 4H CHoCH FOR BOTH?
+        - Confirms pullback finished
+        - Confirms momentum returns to Daily direction
+        - Safer entry (prevents SL hit during extended pullbacks)
+        
+        V3.0 GBP ADAPTIVE FILTERING:
+        - GBP pairs require 2-timeframe confirmation (4H + 1H)
+        - Stricter FVG quality (≥70 vs ≥60)
+        - Body dominance ≥70%
         
         Steps:
-        1. Detect Daily CHoCH (ultimul = trendul curent)
-        2. Find FVG after CHoCH
+        1. Detect Daily CHoCH (REVERSAL) or Daily BOS (CONTINUITY)
+        2. Find FVG after signal
         3. Check if price is retesting FVG
-        4. Check 4H for confirmation (CHoCH sau BOS în aceeași direcție)
+        4. Check 4H for CHoCH confirmation (pullback finished)
         5. Return complete setup
         """
         # DEBUG MODE for specific symbols
         debug = symbol == "NZDCAD"
         
-        # Step 1: Detect Daily CHoCH
-        daily_chochs = self.detect_choch(df_daily)
+        # Step 1: Detect Daily CHoCH AND BOS
+        daily_chochs, daily_bos_list = self.detect_choch_and_bos(df_daily)
         
         if debug:
             print(f"\n{'='*60}")
             print(f"🔍 DEBUG: {symbol} - GLITCH IN MATRIX SCAN")
             print(f"{'='*60}")
             print(f"📊 Daily CHoCH detected: {len(daily_chochs)}")
+            print(f"📊 Daily BOS detected: {len(daily_bos_list)}")
             if daily_chochs:
                 for i, choch in enumerate(daily_chochs[-3:]):  # Last 3
-                    print(f"   [{i}] {choch.direction.upper()} @ {choch.break_price:.5f} (index {choch.index})")
+                    print(f"   CHoCH [{i}] {choch.direction.upper()} @ {choch.break_price:.5f} (index {choch.index})")
+            if daily_bos_list:
+                for i, bos in enumerate(daily_bos_list[-3:]):  # Last 3
+                    print(f"   BOS [{i}] {bos.direction.upper()} @ {bos.break_price:.5f} (index {bos.index})")
         
-        if not daily_chochs:
+        # V3.0 LOGIC: TWO SETUP TYPES
+        # REVERSAL: Requires Daily CHoCH (trend change)
+        # CONTINUITY: Requires Daily BOS (trend continuation)
+        
+        # Try both strategies and pick the most recent valid signal
+        latest_choch = daily_chochs[-1] if daily_chochs else None
+        latest_bos = daily_bos_list[-1] if daily_bos_list else None
+        
+        # Determine which signal is more recent and use that
+        latest_signal = None
+        strategy_type = None
+        
+        if latest_choch and latest_bos:
+            # Both exist - use the more recent one
+            if latest_choch.index > latest_bos.index:
+                latest_signal = latest_choch
+                strategy_type = 'reversal'
+            else:
+                latest_signal = latest_bos
+                strategy_type = 'continuation'
+        elif latest_choch:
+            latest_signal = latest_choch
+            strategy_type = 'reversal'
+        elif latest_bos:
+            latest_signal = latest_bos
+            strategy_type = 'continuation'
+        else:
             if debug:
-                print(f"❌ REJECTED: No Daily CHoCH found")
-            return None  # No CHoCH found
+                print(f"❌ REJECTED: No Daily CHoCH or BOS found")
+            return None
         
-        # Get most recent CHoCH = TRENDUL ACTUAL
-        latest_choch = daily_chochs[-1]
-        current_trend = latest_choch.direction  # 'bullish' or 'bearish'
+        current_trend = latest_signal.direction  # 'bullish' or 'bearish'
         
         if debug:
-            print(f"\n✅ Latest CHoCH: {current_trend.upper()} @ {latest_choch.break_price:.5f}")
+            print(f"\n✅ Latest Signal: {strategy_type.upper()} - {current_trend.upper()} @ {latest_signal.break_price:.5f}")
         
-        # Step 2: Find FVG after CHoCH (closest to current price)
+        # Step 2: Find FVG after signal (CHoCH or BOS) - closest to current price
         current_price = df_daily['close'].iloc[-1]
-        fvg = self.detect_fvg(df_daily, latest_choch, current_price)
+        fvg = self.detect_fvg(df_daily, latest_signal, current_price)
         
         if not fvg:
             if debug:
-                print(f"❌ REJECTED: No FVG found after CHoCH")
+                print(f"❌ REJECTED: No FVG found after {strategy_type.upper()} signal")
             return None  # No FVG found
         
         if debug:
@@ -1103,22 +1375,26 @@ class SMCDetector:
             print(f"   Gap Size: {gap_size:.5f} ({gap_pct:.3f}%)")
             print(f"   Middle: {fvg.middle:.5f}")
         
-        # Step 2.5: Validate FVG quality
-        if not self.is_high_quality_fvg(fvg, df_daily):
-            if debug:
-                gap_size = fvg.top - fvg.bottom
-                gap_pct = (gap_size / fvg.bottom) * 100
-                print(f"❌ REJECTED: Low quality FVG")
-                print(f"   Gap: {gap_pct:.3f}% (need ≥0.10%)")
-                
-                # Check body momentum
-                if fvg.index < len(df_daily):
-                    candle = df_daily.iloc[fvg.index]
-                    candle_body = abs(candle['close'] - candle['open'])
-                    candle_range = candle['high'] - candle['low']
-                    body_ratio = candle_body / candle_range if candle_range > 0 else 0
-                    print(f"   Body: {body_ratio:.1%} (need ≥25%)")
-            return None  # Low quality FVG (micro-gap or weak)
+        # V3.0: Calculate FVG Quality Score (0-100) - OPTIONAL for backtest
+        if not skip_fvg_quality:
+            fvg_score = self.calculate_fvg_quality_score(fvg, df_daily, symbol, debug=debug)
+            fvg.quality_score = fvg_score  # Store score in FVG object
+            
+            # V3.0 QUALITY THRESHOLD (only when not skipped)
+            # - Normal pairs: ≥60 required (RELAXED from 70)
+            # - GBP pairs: ≥70 required (RELAXED from 75)
+            is_gbp = 'GBP' in symbol
+            min_score = 70 if is_gbp else 60
+            
+            if fvg_score < min_score:
+                if debug:
+                    print(f"\n❌ REJECTED: FVG score {fvg_score}/100 < {min_score} (minimum)")
+                    if is_gbp:
+                        print(f"   GBP pair requires stricter quality (≥70)")
+                return None  # Low quality FVG
+        else:
+            # Skip quality check for backtest - accept all FVGs
+            fvg.quality_score = 100  # Default high score when skipped
         
         # FVG direction must match current trend
         fvg.direction = current_trend
@@ -1133,14 +1409,18 @@ class SMCDetector:
         price_approaching_fvg = False
         price_in_fvg = self.is_price_in_fvg(current_price, fvg)
         
-        if current_trend == 'bullish':
-            # BULLISH: Price should be BELOW or IN FVG (waiting for pullback to buy)
-            if current_price <= fvg.top:
-                price_approaching_fvg = True
+        # For backtesting: skip price proximity check
+        if skip_fvg_quality:
+            price_approaching_fvg = True  # Accept all price positions for backtest
         else:
-            # BEARISH: Price should be ABOVE or IN FVG (waiting for pullback to sell)
-            if current_price >= fvg.bottom:
-                price_approaching_fvg = True
+            if current_trend == 'bullish':
+                # BULLISH: Price should be BELOW or IN FVG (waiting for pullback to buy)
+                if current_price <= fvg.top:
+                    price_approaching_fvg = True
+            else:
+                # BEARISH: Price should be ABOVE or IN FVG (waiting for pullback to sell)
+                if current_price >= fvg.bottom:
+                    price_approaching_fvg = True
         
         if debug:
             print(f"   In FVG: {price_in_fvg}")
@@ -1152,13 +1432,13 @@ class SMCDetector:
                 distance = fvg.bottom - current_price
                 print(f"   Distance from FVG bottom: {distance:.5f} ({(distance/current_price)*100:.2f}%)")
         
-        if not price_approaching_fvg:
+        if not price_approaching_fvg and not skip_fvg_quality:
             if debug:
                 print(f"❌ REJECTED: Price too far from FVG")
             return None  # Price too far from FVG
         
-        # Step 5: Detect strategy type (pass FVG for validation)
-        strategy_type = self.detect_strategy_type(df_daily, latest_choch, fvg)
+        # Step 5: Strategy type already determined from signal type (CHoCH=REVERSAL, BOS=CONTINUITY)
+        # No need to re-detect strategy_type
         
         if debug:
             print(f"\n📋 Strategy Type: {strategy_type.upper()}")
@@ -1178,70 +1458,160 @@ class SMCDetector:
         # Find H4 CHoCH that matches current trend AND happens FROM FVG zone
         valid_h4_choch = None
         
-        # BOTH STRATEGIES USE H4 CHoCH:
-        # REVERSAL: Daily CHoCH (trend change) → H4 CHoCH confirms new trend FROM FVG
-        # CONTINUITY: Daily BOS (trend continues) → Pullback → H4 CHoCH (from pullback back to main trend) FROM FVG
-        # 
-        # Example CONTINUITY:
-        # Daily BULLISH (BOS = HH) → Pullback în FVG (4H becomes bearish) → H4 CHoCH BULLISH (from bearish pullback to bullish continuation)
+        # V2.1 vs V3.0 DIFFERENCE:
+        # V2.1: Daily CHoCH + FVG = READY (original $88k profit logic)
+        # V3.0: Daily CHoCH + FVG + 4H CHoCH = READY (strict entry confirmation)
         
-        for h4_choch in reversed(h4_chochs):
-            # H4 CHoCH direction must match Daily trend direction
-            if h4_choch.direction != current_trend:
-                continue
+        if require_4h_choch:
+            # V3.0 STRICT CONFIRMATION:
+            # BOTH STRATEGIES (REVERSAL & CONTINUITY) USE H4 CHoCH FROM PULLBACK:
+            # 
+            # REVERSAL: Daily CHoCH (trend change) → Pullback în FVG → H4 CHoCH (confirms reversal continuation) FROM FVG
+            # Example: Was BEARISH → Daily CHoCH BULLISH → Pullback → H4 CHoCH BULLISH (confirms bulls taking over)
+            # 
+            # CONTINUITY: Daily BOS (trend continues) → Pullback în FVG → H4 CHoCH (from pullback back to main trend) FROM FVG
+            # Example: Daily BULLISH BOS (HH) → Pullback bearish → H4 CHoCH BULLISH (from pullback back to bullish)
+            # 
+            # WHY H4 CHoCH FOR BOTH?
+            # - Confirms pullback is FINISHED
+            # - Confirms momentum returning in Daily trend direction
+            # - Prevents entries during extended pullbacks (risk SL hit)
             
-            # CRITICAL: CHoCH break_price must be WITHIN FVG zone
-            if fvg.bottom <= h4_choch.break_price <= fvg.top:
-                valid_h4_choch = h4_choch
-                if debug:
-                    print(f"   ✅ Valid H4 CHoCH found @ {h4_choch.break_price:.5f}")
-                break
-        
-        if debug and not valid_h4_choch:
-            print(f"   ❌ No valid H4 CHoCH FROM FVG zone")
-        
-        # 🎯 PULLBACK-BASED ENTRY LOGIC
-        # Detect pullback consolidation for safer entries
-        pullback_info = self.detect_pullback_zone(
-            df_4h, 
-            fvg, 
-            current_trend,
-            len(df_4h) - 1
-        )
-        
-        h4_confirmation = valid_h4_choch
-        
-        # STATUS LOGIC:
-        # READY = H4 confirmation + (price in FVG OR pullback breakout confirmed)
-        # MONITORING = waiting for pullback formation or H4 confirmation
-        
-        if h4_confirmation:
-            if pullback_info:
-                # In pullback zone - check if breakout happened
-                pullback_breakout = self.check_pullback_breakout(df_4h, pullback_info, len(df_4h) - 1)
-                if pullback_breakout:
-                    status = 'READY'  # 🚀 Pullback BREAKOUT entry!
+            # V3.0: Expand lookback window from 10 to 30 candles (5 days of 4H data)
+            recent_h4_chochs = [ch for ch in h4_chochs if ch.index >= len(df_4h) - 30]
+            
+            for h4_choch in reversed(recent_h4_chochs):
+                # H4 CHoCH direction must match Daily trend direction
+                if h4_choch.direction != current_trend:
+                    continue
+                
+                # CRITICAL: CHoCH break_price must be WITHIN FVG zone
+                if fvg.bottom <= h4_choch.break_price <= fvg.top:
+                    valid_h4_choch = h4_choch
                     if debug:
-                        print(f"\n✅ PULLBACK BREAKOUT ENTRY!")
-                        print(f"   Pullback Depth: {pullback_info.get('pullback_depth_pct', 0):.2f}%")
-                else:
-                    status = 'MONITORING'  # In pullback, waiting for breakout
-                    if debug:
-                        print(f"\n⏳ IN PULLBACK CONSOLIDATION")
-                        print(f"   Pullback Depth: {pullback_info.get('pullback_depth_pct', 0):.2f}%")
-                        print(f"   Waiting for breakout confirmation...")
-            elif price_in_fvg:
-                status = 'READY'  # H4 confirmed + price in FVG
-            else:
-                status = 'MONITORING'  # H4 confirmed but waiting for pullback
+                        print(f"   ✅ Valid H4 CHoCH found @ {h4_choch.break_price:.5f} (within last 30 candles)")
+                    break
+            
+            if debug and not valid_h4_choch:
+                print(f"   ❌ No valid H4 CHoCH FROM FVG zone (checked last 30 candles)")
         else:
-            status = 'MONITORING'  # No H4 yet
+            # V2.1 MODE: Skip 4H CHoCH requirement (original logic)
+            if debug:
+                print(f"   ⚠️  V2.1 MODE: Skipping 4H CHoCH requirement")
         
-        if debug:
-            print(f"\n📊 Setup Status: {status}")
-            print(f"   H4 Confirmation: {h4_confirmation is not None}")
-            print(f"   Price in FVG: {price_in_fvg}")
-            print(f"   Pullback Detected: {pullback_info is not None}")
+        # V3.0 GBP ADAPTIVE FILTERING: Require 1H confirmation
+        # GBP pairs are volatile - need 2-timeframe confirmation (4H + 1H)
+        is_gbp = 'GBP' in symbol
+        valid_1h_choch = None
+        
+        if is_gbp and valid_h4_choch and df_1h is not None:
+            if debug:
+                print(f"\n🔍 1H Analysis (GBP requirement):")
+            
+            # Detect 1H CHoCH
+            h1_chochs, _ = self.detect_choch_and_bos(df_1h)
+            
+            if debug:
+                print(f"   Total 1H CHoCH: {len(h1_chochs)}")
+            
+            # Look for 1H CHoCH in last 20 candles (~20 hours)
+            recent_h1_chochs = [ch for ch in h1_chochs if ch.index >= len(df_1h) - 20]
+            
+            for h1_choch in reversed(recent_h1_chochs):
+                # 1H CHoCH direction must match Daily trend
+                if h1_choch.direction != current_trend:
+                    continue
+                
+                # 1H CHoCH should be in or near FVG zone
+                if fvg.bottom <= h1_choch.break_price <= fvg.top:
+                    valid_1h_choch = h1_choch
+                    if debug:
+                        print(f"   ✅ Valid 1H CHoCH found @ {h1_choch.break_price:.5f}")
+                    break
+            
+            if debug and not valid_1h_choch:
+                print(f"   ❌ No valid 1H CHoCH (GBP requires 2-TF confirmation)")
+        
+        # V3.0 STRICT STATUS LOGIC:
+        # READY = 4H CHoCH confirmed (same direction as Daily) AND price currently IN FVG
+        # MONITORING = waiting for 4H CHoCH OR waiting for price to enter FVG
+        #
+        # This prevents premature entries during aggressive pullbacks (like NZDUSD case)
+        
+        # V3.0 CONTINUITY FILTER (skip for backtest to match original V2.1 logic)
+        # For CONTINUITY setups (Daily BOS), require additional BOS in same direction (last 90 candles)
+        # This ensures we have multiple BOS confirming strong trend continuation
+        # REVERSAL setups (Daily CHoCH) skip this - trend just changed, no need for multiple BOS
+        continuity_validated = True
+        if not skip_fvg_quality and strategy_type == 'continuation':
+            # Already have the latest_signal as BOS, check for additional BOS before it
+            # Check last 90 candles for BOS in same direction (RELAXED from 60)
+            recent_bos = [bos for bos in daily_bos_list if bos.index >= len(df_daily) - 90 and bos.index < latest_signal.index]
+            matching_bos = [bos for bos in recent_bos if bos.direction == current_trend]
+            
+            if not matching_bos:
+                continuity_validated = False
+                if debug:
+                    print(f"\n⚠️  CONTINUITY FILTER: No additional BOS found before latest BOS")
+                    print(f"   Trend: {current_trend.upper()}")
+                    print(f"   Need at least 1 more BOS to confirm strong continuation")
+            else:
+                if debug:
+                    print(f"\n✅ CONTINUITY FILTER: {len(matching_bos)} additional BOS found (strong continuation)")
+                    print(f"   Latest additional BOS: {matching_bos[-1].direction.upper()} @ candle {matching_bos[-1].index}")
+        
+        # V3.0 GBP 2-TIMEFRAME FILTER (skip for backtest)
+        # GBP pairs need BOTH 4H AND 1H confirmation
+        gbp_confirmed = True
+        if not skip_fvg_quality:
+            is_gbp = 'GBP' in symbol
+            if is_gbp and valid_h4_choch:
+                if df_1h is not None and not valid_1h_choch:
+                    gbp_confirmed = False
+                    if debug:
+                        print(f"\n⚠️  GBP FILTER: Missing 1H confirmation")
+                        print(f"   GBP pairs require 2-timeframe confirmation (4H + 1H)")
+                elif df_1h is None:
+                    if debug:
+                        print(f"\n⚠️  GBP FILTER: 1H data not provided")
+                        print(f"   Cannot validate 2-TF confirmation for GBP")
+                    gbp_confirmed = False
+        
+        # STATUS LOGIC: V2.1 vs V3.0
+        if not require_4h_choch:
+            # V2.1 MODE: Daily CHoCH + FVG + price in FVG = READY
+            if price_in_fvg:
+                status = 'READY'
+                if debug:
+                    print(f"\n✅ STATUS: READY TO EXECUTE (V2.1 MODE)")
+                    print(f"   ✓ Daily CHoCH: {current_trend.upper()}")
+                    print(f"   ✓ Price IN FVG: {current_price:.5f} (FVG: {fvg.bottom:.5f} - {fvg.top:.5f})")
+            else:
+                status = 'MONITORING'
+                if debug:
+                    print(f"\n⏳ STATUS: MONITORING (V2.1 MODE - waiting for price in FVG)")
+                    print(f"   ✓ Daily CHoCH: {current_trend.upper()}")
+                    print(f"   ✗ Price NOT in FVG (current: {current_price:.5f})")
+        elif valid_h4_choch:
+            # V3.0 SIMPLIFIED: Only need 4H CHoCH aligned with Daily
+            # Price will naturally move to FVG (that's where the action is)
+            # No need for: BOS filter, GBP 2-TF, or exact price in FVG
+            status = 'READY'  # ✅ 4H trend confirmed - READY to execute
+            if debug:
+                print(f"\n✅ STATUS: READY TO EXECUTE (V3.0 SIMPLIFIED)")
+                print(f"   ✓ Daily CHoCH: {current_trend.upper()}")
+                print(f"   ✓ 4H CHoCH confirmed: {valid_h4_choch.direction.upper()} @ {valid_h4_choch.break_price:.5f}")
+                print(f"   ✓ FVG Zone: {fvg.bottom:.5f} - {fvg.top:.5f} (entry target)")
+                print(f"   📊 Current Price: {current_price:.5f}")
+        else:
+            # No 4H CHoCH yet - keep monitoring
+            status = 'MONITORING'
+            if debug:
+                print(f"\n⏳ STATUS: MONITORING (waiting for 4H CHoCH confirmation)")
+                print(f"   ✓ Daily CHoCH: {current_trend.upper()}")
+                print(f"   ✓ FVG Zone: {fvg.bottom:.5f} - {fvg.top:.5f}")
+                print(f"   ✗ No 4H CHoCH yet (checked last 30 candles)")
+                print(f"   📊 Current Price: {current_price:.5f}")
         
         # Step 7: Calculate entry, SL, TP
         # Use H4 CHoCH for both REVERSAL and CONTINUITY
@@ -1396,14 +1766,14 @@ class SMCDetector:
         # Return setup (MONITORING or READY)
         return TradeSetup(
             symbol=symbol,
-            daily_choch=latest_choch,
+            daily_choch=latest_signal,  # Daily CHoCH (REVERSAL) or BOS (CONTINUITY)
             fvg=fvg,
             h4_choch=h4_signal,  # H4 CHoCH (same for both REVERSAL and CONTINUITY)
             entry_price=entry,
             stop_loss=sl,
             take_profit=tp,
             risk_reward=risk_reward,
-            setup_time=df_4h['time'].iloc[-1],
+            setup_time=df_4h.index[-1],  # Use index instead of 'time' column
             priority=priority,
             strategy_type=strategy_type,
             status=status

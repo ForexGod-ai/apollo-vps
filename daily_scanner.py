@@ -113,14 +113,26 @@ class DailyScanner:
         print(f"⏰ Scan Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         print("="*60 + "\n")
         
-        # Connect to MT5
+        # Connect to cTrader
         if not self.data_provider.connect():
-            error_msg = "Failed to connect to MT5"
+            error_msg = "Failed to connect to cTrader cBot API (localhost:8767)"
             print(f"❌ {error_msg}")
             self.telegram.send_error_alert(error_msg)
             return []
         
         setups_found = []
+        
+        # V3.0: Load existing monitoring setups to re-evaluate their status
+        monitoring_symbols = set()
+        try:
+            with open('monitoring_setups.json', 'r') as f:
+                data = json.load(f)
+                existing_setups = data.get("setups", [])
+                monitoring_symbols = {s['symbol'] for s in existing_setups if s.get('status') == 'MONITORING'}
+                if monitoring_symbols:
+                    print(f"\n🔄 Re-evaluating {len(monitoring_symbols)} MONITORING setups: {', '.join(monitoring_symbols)}")
+        except FileNotFoundError:
+            pass
         
         try:
             # Scan each pair
@@ -128,7 +140,11 @@ class DailyScanner:
                 symbol = pair_config['mt5_symbol']
                 priority = pair_config['priority']
                 
-                print(f"\n🔍 Scanning {symbol} (Priority {priority})...")
+                # Check if this symbol is in monitoring (needs re-evaluation)
+                is_monitoring = symbol in monitoring_symbols
+                scan_reason = "Re-evaluating MONITORING" if is_monitoring else f"Priority {priority}"
+                
+                print(f"\n🔍 Scanning {symbol} ({scan_reason})...")
                 
                 # Download Daily data
                 df_daily = self.data_provider.get_historical_data(
@@ -152,12 +168,27 @@ class DailyScanner:
                     print(f"⚠️ Skipping {symbol} - no 4H data")
                     continue
                 
+                # V3.0: Download 1H data for GBP pairs (2-timeframe confirmation)
+                df_1h = None
+                is_gbp = 'GBP' in symbol
+                
+                if is_gbp:
+                    print(f"   📊 Downloading 1H data (GBP requires 2-TF confirmation)...")
+                    df_1h = self.data_provider.get_historical_data(
+                        symbol,
+                        "H1",
+                        100  # Last 100 hours (~4 days)
+                    )
+                    if df_1h is None:
+                        print(f"⚠️ Warning: {symbol} has no 1H data (GBP filter may downgrade to MONITORING)")
+                
                 # Run SMC detection
                 setup = self.smc_detector.scan_for_setup(
                     symbol=symbol,
                     df_daily=df_daily,
                     df_4h=df_4h,
-                    priority=priority
+                    priority=priority,
+                    df_1h=df_1h  # V3.0: Pass 1H data for GBP pairs
                 )
                 
                 if setup:
@@ -172,7 +203,7 @@ class DailyScanner:
                     print(f"✓ {symbol} - No setup detected")
         
         finally:
-            # Disconnect MT5 unless keep_connection=True
+            # Disconnect cTrader unless keep_connection=True
             if not keep_connection:
                 self.data_provider.disconnect()
         
@@ -200,16 +231,37 @@ class DailyScanner:
         except Exception as e:
             logger.debug(f"Could not check open positions: {e}")
         
-        # FILTER OUT setups that are already in open positions (don't report as NEW)
-        new_setups = [s for s in setups_found if s.symbol not in open_position_symbols]
+        # NEW LOGIC: Don't filter out setups with open positions
+        # They need to stay in monitoring until TP/SL is hit
+        # Split into: truly_new (no position) and active_with_position (has position, still monitoring)
+        truly_new_setups = [s for s in setups_found if s.symbol not in open_position_symbols]
+        active_with_position = [s for s in setups_found if s.symbol in open_position_symbols]
+        
+        # All setups (new + active with positions) should be saved for monitoring
+        all_active_setups = setups_found  # Keep ALL detected setups active
 
-        # Send daily summary
+        # SAVE first, then show final summary
+        save_monitoring_setups(all_active_setups)
+        
+        # Now reload to get accurate count
+        final_monitoring_count = 0
+        try:
+            with open('monitoring_setups.json', 'r') as f:
+                data = json.load(f)
+                final_monitoring_count = len(data.get("setups", []))
+        except:
+            pass
+        
+        # Send daily summary AFTER saving
         print("\n" + "="*60)
         print(f"✅ Scan Complete!")
         print(f"📊 Total Pairs Scanned: {len(self.pairs)}")
-        print(f"🎯 New Setups Found (not already open): {len(new_setups)}")
-        print(f"📋 Total Active Setups: {active_setups_count}")
-        print(f"    └─ Monitoring: {len(monitoring_setups)} | Executed & Open: {len(all_open_positions)}")
+        print(f"🆕 New Setups Found: {len(setups_found)}")
+        print(f"    └─ Truly New (no position): {len(truly_new_setups)}")
+        print(f"    └─ Re-detected (has position): {len(active_with_position)}")
+        print(f"📋 Total Active Tracking:")
+        print(f"    └─ Saved in Monitoring: {final_monitoring_count}")
+        print(f"    └─ Open Positions: {len(all_open_positions)}")
         print("="*60 + "\n")
 
         if self.scanner_settings['telegram_alerts']:
@@ -236,22 +288,23 @@ class DailyScanner:
                 })
             self.telegram.send_daily_summary(
                 scanned_pairs=len(self.pairs),
-                setups_found=len(new_setups),
+                setups_found=len(truly_new_setups),  # Only truly new setups in summary
                 active_setups=combined_active
             )
         # DEBUG: Print status for each setup found
         print('\n--- DEBUG: Status setup-uri returnate de run_daily_scan ---')
-        for s in new_setups:
-            print(f"{getattr(s, 'symbol', 'N/A')}: status={getattr(s, 'status', 'N/A')}")
+        for s in all_active_setups:
+            status_tag = "🆕 NEW" if s.symbol not in open_position_symbols else "🔄 ACTIVE"
+            print(f"{status_tag} {getattr(s, 'symbol', 'N/A')}: status={getattr(s, 'status', 'N/A')}")
         print('----------------------------------------------------------')
-        return new_setups
+        return all_active_setups  # Return ALL setups (new + active with positions)
     
     def scan_single_pair(self, symbol: str) -> Optional[TradeSetup]:
         """Scan a single pair (for testing)"""
         print(f"\n🔍 Testing single pair: {symbol}")
         
         if not self.data_provider.connect():
-            print("❌ Failed to connect to MT5")
+            print("❌ Failed to connect to cTrader cBot API")
             return None
         
         try:
@@ -298,7 +351,11 @@ class DailyScanner:
 
 
 def save_monitoring_setups(setups: List[TradeSetup]):
-    """Salvează setup-urile MONITORING în monitoring_setups.json
+    """Salvează setup-urile MONITORING și READY în monitoring_setups.json
+    
+    V3.0: Salvăm AMBELE statusuri:
+    - MONITORING: așteptăm 4H CHoCH + price in FVG
+    - READY: poate fi executat (4H confirmat + price în FVG)
     
     IMPORTANT: Păstrează setups existente și adaugă doar pe cele noi.
     Doar dacă același symbol are setup nou, îl înlocuiește.
@@ -314,9 +371,10 @@ def save_monitoring_setups(setups: List[TradeSetup]):
         except FileNotFoundError:
             pass  # No existing file, start fresh
         
-        # Add/update with new setups
+        # Add/update with new setups (both MONITORING and READY)
         for setup in setups:
-            if setup.status == "MONITORING":
+            # V3.0: Save BOTH MONITORING and READY status
+            if setup.status in ["MONITORING", "READY"]:
                 monitoring_setup = {
                     "symbol": setup.symbol,
                     "direction": "buy" if setup.daily_choch.direction == "bullish" else "sell",
@@ -325,8 +383,11 @@ def save_monitoring_setups(setups: List[TradeSetup]):
                     "take_profit": setup.take_profit,
                     "risk_reward": setup.risk_reward,
                     "strategy_type": setup.strategy_type,
-                    "setup_time": setup.setup_time.isoformat(),
+                    "setup_time": (datetime.fromtimestamp(setup.setup_time).isoformat() if isinstance(setup.setup_time, int) 
+                                  else setup.setup_time if isinstance(setup.setup_time, str) 
+                                  else setup.setup_time.isoformat()),
                     "priority": setup.priority,
+                    "status": setup.status,  # V3.0: Include status field
                     "fvg_zone_top": setup.fvg.top if setup.fvg else None,
                     "fvg_zone_bottom": setup.fvg.bottom if setup.fvg else None,
                     "lot_size": 0.01  # Default lot size

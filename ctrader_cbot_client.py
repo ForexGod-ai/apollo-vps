@@ -55,6 +55,34 @@ class CTraderCBotClient:
             
             if response.status_code != 200:
                 logger.error(f"❌ HTTP {response.status_code}: {response.text}")
+                
+                # FALLBACK: Try with fewer bars if 500 error (cTrader data availability issue)
+                if response.status_code == 500 and count > 100:
+                    fallback_counts = [200, 100, 50]
+                    for fallback in fallback_counts:
+                        if fallback >= count:
+                            continue
+                        logger.warning(f"⚠️ Retrying {symbol} {timeframe} with {fallback} bars (fallback from {count})")
+                        try:
+                            fallback_response = requests.get(
+                                f"{self.base_url}/bars",
+                                params={'symbol': symbol, 'timeframe': timeframe, 'count': fallback},
+                                timeout=10
+                            )
+                            if fallback_response.status_code == 200:
+                                data = fallback_response.json()
+                                if 'bars' in data and len(data['bars']) > 0:
+                                    df = pd.DataFrame(data['bars'])
+                                    df['time'] = pd.to_datetime(df['time'])
+                                    df = df.set_index('time')
+                                    for col in ['open', 'high', 'low', 'close', 'volume']:
+                                        df[col] = pd.to_numeric(df[col])
+                                    logger.success(f"✅ Fallback success: Got {len(df)} bars for {symbol} (requested {count}, got {fallback})")
+                                    return df
+                        except Exception as fallback_error:
+                            logger.debug(f"Fallback {fallback} failed: {fallback_error}")
+                            continue
+                
                 return None
             
             data = response.json()

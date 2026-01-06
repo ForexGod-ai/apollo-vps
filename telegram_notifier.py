@@ -183,7 +183,7 @@ Take Profit: `{setup.take_profit:.5f}`
 💵 Risk Amount: `${risk_amount:.2f}`
 
 ⭐ Priority: `{setup.priority}`
-⏰ Setup Time: `{setup.setup_time.strftime('%Y-%m-%d %H:%M UTC')}`
+⏰ Setup Time: `{setup.setup_time if isinstance(setup.setup_time, str) else (datetime.fromtimestamp(setup.setup_time).strftime('%Y-%m-%d %H:%M UTC') if isinstance(setup.setup_time, int) else setup.setup_time.strftime('%Y-%m-%d %H:%M UTC'))}`
 
 ━━━━━━━━━━━━━━━━━━━━
 📊 *VIEW CHARTS:*
@@ -306,20 +306,24 @@ Take Profit: `{setup.take_profit:.5f}`
     
     def send_daily_summary(self, scanned_pairs: int, setups_found: int, active_setups: list = None) -> bool:
         """Send daily scan summary with ACTIVE monitoring setups"""
+        # Separate monitoring setups from executed positions
+        monitoring_setups = [s for s in (active_setups or []) if s.get('status') != 'EXECUTED']
+        executed_positions = [s for s in (active_setups or []) if s.get('status') == 'EXECUTED']
+        
         message = f"""
 📊 *Daily Scan Complete*
 
 🔍 Pairs Scanned: `{scanned_pairs}`
 🎯 New Setups Found: `{setups_found}`
-📋 Total Active Setups: `{len(active_setups) if active_setups else 0}`
+📋 Monitoring: `{len(monitoring_setups)}` | Active Trades: `{len(executed_positions)}`
 ⏰ Scan Time: `{datetime.now().strftime('%Y-%m-%d %H:%M UTC')}`
 """
         
-        # Add active setups list
-        if active_setups:
+        # Add monitoring setups
+        if monitoring_setups:
             message += "\n━━━━━━━━━━━━━━━━━━━━\n"
-            message += "🎯 *ACTIVE MONITORING SETUPS:*\n\n"
-            for setup in active_setups:
+            message += "📊 *MONITORING SETUPS:*\n\n"
+            for setup in monitoring_setups:
                 symbol = setup.get('symbol', 'Unknown')
                 dir_raw = str(setup.get('direction', '')).strip().lower()
                 direction = "🟢 LONG" if dir_raw == 'buy' else ("🔴 SHORT" if dir_raw == 'sell' else dir_raw.upper())
@@ -327,6 +331,21 @@ Take Profit: `{setup.take_profit:.5f}`
                 rr = setup.get('risk_reward', 0)
                 message += f"• *{symbol}* - {direction}\n"
                 message += f"  Entry: `{entry:.5f}` | R:R `1:{rr:.1f}`\n"
+        
+        # Add active positions
+        if executed_positions:
+            message += "\n━━━━━━━━━━━━━━━━━━━━\n"
+            message += "🔥 *ACTIVE TRADES:*\n\n"
+            for pos in executed_positions:
+                symbol = pos.get('symbol', 'Unknown')
+                dir_raw = str(pos.get('direction', '')).strip().lower()
+                direction = "🟢 LONG" if dir_raw == 'buy' else ("🔴 SHORT" if dir_raw == 'sell' else dir_raw.upper())
+                entry = pos.get('entry_price', 0)
+                rr = pos.get('risk_reward', 0)
+                profit = pos.get('profit', 0)
+                profit_emoji = "💚" if profit > 0 else ("❤️" if profit < 0 else "💛")
+                message += f"• *{symbol}* - {direction} {profit_emoji}\n"
+                message += f"  Entry: `{entry:.5f}` | R:R `1:{rr:.1f}` | P/L: `${profit:.2f}`\n"
         
         message += """
 ━━━━━━━━━━━━━━━━━━━━

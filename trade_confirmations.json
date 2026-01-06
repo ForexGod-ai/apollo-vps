@@ -1,12 +1,12 @@
 {
-  "signal_id": "SIGNAL_20251226_122935",
-  "position_id": "558456792",
-  "symbol": "NZDUSD",
+  "signal_id": "AUDUSD_BUY_1767609711",
+  "position_id": "562537047",
+  "symbol": "AUDUSD",
   "direction": "buy",
-  "volume": 29000,
-  "entry_price": 0.58218,
-  "sl": 0.58102,
-  "tp": 0.59305,
-  "executed_at": "2025-12-26T12:29:45.153185+02:00",
+  "volume": 11000,
+  "entry_price": 0.67148,
+  "sl": 0.67016,
+  "tp": 0.69254,
+  "executed_at": "2026-01-05T23:45:19.279853+02:00",
   "status": "executed"
 }
