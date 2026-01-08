@@ -125,7 +125,7 @@
     "max_setups_per_scan": 5,
     "lookback_candles": {
       "daily": 365,
-      "h4": 2190
+      "h4": 250
     },
     "telegram_alerts": true,
     "chart_generation": true

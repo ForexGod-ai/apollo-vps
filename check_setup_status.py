@@ -15,7 +15,7 @@ print(f"Checking {symbol} Setup Status (V3.0 Requirements)")
 print(f"{'='*60}\n")
 
 df_daily = client.get_historical_data(symbol, "D1", 365)
-df_4h = client.get_historical_data(symbol, "H4", 2190)
+df_4h = client.get_historical_data(symbol, "H4", 250)
 
 setup = detector.scan_for_setup(
     symbol=symbol,

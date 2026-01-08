@@ -26,7 +26,7 @@ def test_choch_whipsaw_protection():
     
     # Get GBPUSD data (known to have CHoCH patterns)
     df_daily = client.get_historical_data('GBPUSD', 'D1', 365)
-    df_4h = client.get_historical_data('GBPUSD', 'H4', 2190)
+    df_4h = client.get_historical_data('GBPUSD', 'H4', 250)
     
     if df_daily is None or df_4h is None:
         logger.warning("⚠️ Could not get GBPUSD data")
@@ -101,7 +101,7 @@ def test_atr_sl_tp_buffers():
     
     # Test on GBPJPY setup
     df_daily = client.get_historical_data('GBPJPY', 'D1', 365)
-    df_4h = client.get_historical_data('GBPJPY', 'H4', 2190)
+    df_4h = client.get_historical_data('GBPJPY', 'H4', 250)
     
     if df_daily is None or df_4h is None:
         logger.warning("⚠️ Could not get GBPJPY data")

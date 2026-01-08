@@ -868,20 +868,18 @@ class SMCDetector:
         if fvg.direction == 'bullish':
             # LONG TRADE (Daily bullish trend)
             
-            # Calculate ATR-based entry tolerance (30% of daily ATR)
-            daily_atr = (df_daily['high'] - df_daily['low']).rolling(14).mean().iloc[-1]
-            atr_pct = daily_atr / fvg.bottom
-            tolerance = atr_pct * 0.3  # 30% of ATR as tolerance
+            # Entry = WITHIN FVG zone (35% from bottom = optimal discount zone)
+            # NOT below FVG - that defeats the purpose of FVG retracement!
+            fvg_range = fvg.top - fvg.bottom
+            entry = fvg.bottom + (fvg_range * 0.35)  # 35% from bottom, inside FVG
             
-            # Entry = FVG BOTTOM (discount zone entry for LONG)
-            # Slightly below bottom for better fill probability
-            entry = fvg.bottom * (1 - tolerance * 0.5)  # Small buffer below bottom
-            
-            # SL = Last Low on 4H with ATR buffer
-            # Look at 4H candles around FVG formation time
+            # SL = Last Low on 4H from PULLBACK in FVG zone
+            # Look at 4H candles AROUND and INSIDE FVG (pullback zone)
+            # This is the swing low that 4H CHoCH breaks!
             fvg_index_4h = df_4h[df_4h['time'] <= fvg.candle_time].index[-1] if len(df_4h[df_4h['time'] <= fvg.candle_time]) > 0 else len(df_4h) - 20
-            lookback_start = max(0, fvg_index_4h - 30)
-            lookback_end = min(len(df_4h), fvg_index_4h + 10)
+            # Look 20 candles AFTER FVG forms (this is the pullback period)
+            lookback_start = fvg_index_4h
+            lookback_end = min(len(df_4h), fvg_index_4h + 20)
             recent_lows = df_4h['low'].iloc[lookback_start:lookback_end]
             swing_low = recent_lows.min()
             
@@ -911,20 +909,18 @@ class SMCDetector:
         else:
             # SHORT TRADE (Daily bearish trend)
             
-            # Calculate ATR-based entry tolerance (30% of daily ATR)
-            daily_atr = (df_daily['high'] - df_daily['low']).rolling(14).mean().iloc[-1]
-            atr_pct = daily_atr / fvg.top
-            tolerance = atr_pct * 0.3  # 30% of ATR as tolerance
+            # Entry = WITHIN FVG zone (35% from top = optimal premium zone)
+            # NOT above FVG - that defeats the purpose of FVG retracement!
+            fvg_range = fvg.top - fvg.bottom
+            entry = fvg.top - (fvg_range * 0.35)  # 35% from top, inside FVG
             
-            # Entry = FVG TOP (premium zone entry for SHORT)
-            # Slightly above top for better fill probability
-            entry = fvg.top * (1 + tolerance * 0.5)  # Small buffer above top
-            
-            # SL = Last High on 4H with ATR buffer
-            # Look at 4H candles around FVG formation time (not just last 20!)
+            # SL = Last High on 4H from PULLBACK in FVG zone
+            # Look at 4H candles AROUND and INSIDE FVG (pullback zone)
+            # This is the swing high that 4H CHoCH breaks!
             fvg_index_4h = df_4h[df_4h['time'] <= fvg.candle_time].index[-1] if len(df_4h[df_4h['time'] <= fvg.candle_time]) > 0 else len(df_4h) - 20
-            lookback_start = max(0, fvg_index_4h - 30)
-            lookback_end = min(len(df_4h), fvg_index_4h + 10)
+            # Look 20 candles AFTER FVG forms (this is the pullback period)
+            lookback_start = fvg_index_4h
+            lookback_end = min(len(df_4h), fvg_index_4h + 20)
             recent_highs = df_4h['high'].iloc[lookback_start:lookback_end]
             swing_high = recent_highs.max()
             
@@ -1477,8 +1473,10 @@ class SMCDetector:
             # - Confirms momentum returning in Daily trend direction
             # - Prevents entries during extended pullbacks (risk SL hit)
             
-            # V3.0: Expand lookback window from 10 to 30 candles (5 days of 4H data)
-            recent_h4_chochs = [ch for ch in h4_chochs if ch.index >= len(df_4h) - 30]
+            # V3.0 FIXED: Scanează ultimele 50 candles pentru CONTEXT complet
+            # Dar acceptă doar CHoCH RECENT (max 12 candles = 48 ore vechi)
+            # Asta permite: detectare cu context + validare că e fresh (nu vechi de 3-5 zile)
+            recent_h4_chochs = [ch for ch in h4_chochs if ch.index >= len(df_4h) - 50]
             
             for h4_choch in reversed(recent_h4_chochs):
                 # H4 CHoCH direction must match Daily trend direction
@@ -1486,14 +1484,48 @@ class SMCDetector:
                     continue
                 
                 # CRITICAL: CHoCH break_price must be WITHIN FVG zone
-                if fvg.bottom <= h4_choch.break_price <= fvg.top:
-                    valid_h4_choch = h4_choch
+                if not (fvg.bottom <= h4_choch.break_price <= fvg.top):
+                    continue
+                
+                # NEW CHECK: Verify CHoCH is RECENT (not older than 12 candles = 48 hours)
+                # This ensures we catch pullback CHoCH, not old CHoCH from before
+                choch_age = len(df_4h) - 1 - h4_choch.index
+                if choch_age > 12:  # More than 48 hours old (12 × 4h)
                     if debug:
-                        print(f"   ✅ Valid H4 CHoCH found @ {h4_choch.break_price:.5f} (within last 30 candles)")
-                    break
+                        print(f"   ⏭️  H4 CHoCH @ {h4_choch.break_price:.5f} too old ({choch_age} candles = {choch_age*4}h)")
+                    continue
+                
+                # NEW CHECK: Verify momentum AFTER CHoCH confirms trend continuation
+                # Need at least 1 candle after CHoCH to confirm
+                if h4_choch.index + 1 < len(df_4h):
+                    candles_after = df_4h.iloc[h4_choch.index + 1:]
+                    if len(candles_after) >= 1:
+                        # Check if recent candle(s) support the trend
+                        last_candle = candles_after.iloc[-1]
+                        
+                        if current_trend == 'bullish':
+                            # For bullish: last candle should be bullish or price moving up
+                            momentum_ok = (last_candle['close'] > last_candle['open']) or \
+                                        (last_candle['close'] > df_4h.iloc[h4_choch.index]['close'])
+                        else:
+                            # For bearish: last candle should be bearish or price moving down
+                            momentum_ok = (last_candle['close'] < last_candle['open']) or \
+                                        (last_candle['close'] < df_4h.iloc[h4_choch.index]['close'])
+                        
+                        if not momentum_ok:
+                            if debug:
+                                print(f"   ⏭️  H4 CHoCH @ {h4_choch.break_price:.5f} lacks momentum confirmation")
+                            continue
+                
+                # ✅ All checks passed - VALID, RECENT, CONFIRMED CHoCH
+                valid_h4_choch = h4_choch
+                if debug:
+                    print(f"   ✅ Valid H4 CHoCH found @ {h4_choch.break_price:.5f} ({choch_age} candles ago, momentum confirmed)")
+                break
             
             if debug and not valid_h4_choch:
-                print(f"   ❌ No valid H4 CHoCH FROM FVG zone (checked last 30 candles)")
+                print(f"   ❌ No valid RECENT H4 CHoCH FROM FVG zone (scanned 50 candles, accept max 12 candles old = 48h)")
+                print(f"      Waiting for fresh CHoCH to confirm pullback is finished")
         else:
             # V2.1 MODE: Skip 4H CHoCH requirement (original logic)
             if debug:

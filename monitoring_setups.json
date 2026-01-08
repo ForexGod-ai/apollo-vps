@@ -20,13 +20,13 @@
       "direction": "buy",
       "entry_price": 0.66007,
       "stop_loss": 0.65874986,
-      "take_profit": 0.6811259,
-      "risk_reward": 15.949747754025712,
+      "take_profit": 0.6867997499999999,
+      "risk_reward": 20.24766312663761,
       "strategy_type": "continuation",
-      "setup_time": "1970-01-01T02:20:51",
+      "setup_time": "1970-01-01T02:04:09",
       "priority": 1,
       "status": "MONITORING",
-      "fvg_zone_top": 0.67106,
+      "fvg_zone_top": 0.67665,
       "fvg_zone_bottom": 0.66007,
       "lot_size": 0.01
     },
@@ -38,7 +38,7 @@
       "take_profit": 153.938755,
       "risk_reward": 8.829416231669516,
       "strategy_type": "reversal",
-      "setup_time": "1970-01-01T02:20:57",
+      "setup_time": "1970-01-01T02:04:09",
       "priority": 1,
       "status": "MONITORING",
       "fvg_zone_top": 156.706,
@@ -53,13 +53,28 @@
       "take_profit": 0.5928513499999999,
       "risk_reward": 16.34007733978907,
       "strategy_type": "continuation",
-      "setup_time": "1970-01-01T02:20:53",
+      "setup_time": "1970-01-01T02:04:09",
       "priority": 1,
       "status": "MONITORING",
       "fvg_zone_top": 0.58409,
       "fvg_zone_bottom": 0.57409,
       "lot_size": 0.01
+    },
+    {
+      "symbol": "EURGBP",
+      "direction": "sell",
+      "entry_price": 0.87005,
+      "stop_loss": 0.8717901,
+      "take_profit": 0.8533449,
+      "risk_reward": 9.60008045514615,
+      "strategy_type": "reversal",
+      "setup_time": "1970-01-01T02:04:09",
+      "priority": 1,
+      "status": "MONITORING",
+      "fvg_zone_top": 0.87005,
+      "fvg_zone_bottom": 0.86634,
+      "lot_size": 0.01
     }
   ],
-  "last_updated": "2026-01-06T14:06:10.841369"
+  "last_updated": "2026-01-08T11:36:08.410808"
 }

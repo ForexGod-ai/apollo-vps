@@ -57,16 +57,16 @@ class CTraderCBotClient:
                 logger.error(f"❌ HTTP {response.status_code}: {response.text}")
                 
                 # FALLBACK: Try with fewer bars if 500 error (cTrader data availability issue)
-                if response.status_code == 500 and count > 100:
+                if response.status_code == 500 and bars > 100:
                     fallback_counts = [200, 100, 50]
                     for fallback in fallback_counts:
-                        if fallback >= count:
+                        if fallback >= bars:
                             continue
-                        logger.warning(f"⚠️ Retrying {symbol} {timeframe} with {fallback} bars (fallback from {count})")
+                        logger.warning(f"⚠️ Retrying {symbol} {timeframe} with {fallback} bars (fallback from {bars})")
                         try:
                             fallback_response = requests.get(
-                                f"{self.base_url}/bars",
-                                params={'symbol': symbol, 'timeframe': timeframe, 'count': fallback},
+                                f"{self.base_url}/data",
+                                params={'symbol': symbol, 'timeframe': timeframe, 'bars': fallback},
                                 timeout=10
                             )
                             if fallback_response.status_code == 200:
@@ -77,7 +77,7 @@ class CTraderCBotClient:
                                     df = df.set_index('time')
                                     for col in ['open', 'high', 'low', 'close', 'volume']:
                                         df[col] = pd.to_numeric(df[col])
-                                    logger.success(f"✅ Fallback success: Got {len(df)} bars for {symbol} (requested {count}, got {fallback})")
+                                    logger.success(f"✅ Fallback success: Got {len(df)} bars for {symbol} (requested {bars}, got {fallback})")
                                     return df
                         except Exception as fallback_error:
                             logger.debug(f"Fallback {fallback} failed: {fallback_error}")

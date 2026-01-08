@@ -171,17 +171,21 @@ class SetupExecutorMonitor:
             
             for setup in setups:
                 setup_key = self._get_setup_key(setup)
+                symbol = setup['symbol']
+                
+                logger.debug(f"🔍 Processing {symbol} (status: {setup.get('status', 'N/A')})")
                 
                 # Skip if already executed
                 if setup_key in self.executed_setups:
+                    logger.debug(f"  ⏭️  Already executed, skipping")
                     continue
                 
-                symbol = setup['symbol']
                 entry = setup['entry_price']
                 direction = setup['direction']
                 
                 # Check if price hit entry
                 hit, current_price = self._check_price_hit_entry(symbol, entry, direction)
+                logger.debug(f"  💰 Price check: entry={entry}, current={current_price}, hit={hit}")
                 
                 if hit:
                     logger.info(f"\n🎯 ENTRY HIT: {symbol} {direction.upper()}")
@@ -195,6 +199,9 @@ class SetupExecutorMonitor:
                         # Mark as executed
                         self._save_executed_setup(setup_key)
                         logger.success(f"✅ {symbol} executed and marked as done")
+                    elif success is False:
+                        # False = SKIP (MONITORING phase) - not an error, continue checking others
+                        logger.debug(f"⏭️  {symbol} skipped (MONITORING), continuing...")
                     else:
                         logger.error(f"❌ Failed to execute {symbol}")
                         # Don't mark as executed so we can retry
