@@ -168,19 +168,18 @@ class DailyScanner:
                     print(f"⚠️ Skipping {symbol} - no 4H data")
                     continue
                 
-                # V3.0: Download 1H data for GBP pairs (2-timeframe confirmation)
-                df_1h = None
-                is_gbp = 'GBP' in symbol
+                # V3.1 SCALE_IN: Download 1H data for ALL pairs (Entry 1 validation)
+                print(f"   📊 Downloading 1H data (SCALE_IN strategy)...")
+                df_1h = self.data_provider.get_historical_data(
+                    symbol,
+                    "H1",
+                    self.scanner_settings['lookback_candles'].get('h1', 225)
+                )
+                if df_1h is None:
+                    print(f"⚠️ Warning: {symbol} has no 1H data (Entry 1 disabled)")
                 
-                if is_gbp:
-                    print(f"   📊 Downloading 1H data (GBP requires 2-TF confirmation)...")
-                    df_1h = self.data_provider.get_historical_data(
-                        symbol,
-                        "H1",
-                        100  # Last 100 hours (~4 days)
-                    )
-                    if df_1h is None:
-                        print(f"⚠️ Warning: {symbol} has no 1H data (GBP filter may downgrade to MONITORING)")
+                # GBP pairs still need 1H for additional validation
+                is_gbp = 'GBP' in symbol
                 
                 # Run SMC detection
                 setup = self.smc_detector.scan_for_setup(
@@ -195,10 +194,10 @@ class DailyScanner:
                     print(f"🎯 SETUP FOUND on {symbol}!")
                     setups_found.append(setup)
                     
-                    # Send Telegram alert
+                    # Send Telegram alert (include df_1h for SCALE_IN strategy)
                     if self.scanner_settings['telegram_alerts']:
                         print(f"📱 Sending Telegram alert for {symbol}...")
-                        self.telegram.send_setup_alert(setup, df_daily, df_4h)
+                        self.telegram.send_setup_alert(setup, df_daily, df_4h, df_1h)
                 else:
                     print(f"✓ {symbol} - No setup detected")
         
@@ -315,19 +314,24 @@ class DailyScanner:
                 print(f"❌ {symbol} not found in pairs_config.json")
                 return None
             
-            # Download data
+            # Download data (add 1H for SCALE_IN strategy)
             df_daily = self.data_provider.get_historical_data(symbol, "D1", 100)
             df_4h = self.data_provider.get_historical_data(symbol, "H4", 200)
+            df_1h = self.data_provider.get_historical_data(symbol, "H1", 225)  # NEW: 1H data
             
             if df_daily is None or df_4h is None:
                 print(f"❌ Failed to download data for {symbol}")
                 return None
             
-            # Run detection
+            if df_1h is None:
+                print(f"⚠️  Warning: 1H data unavailable for {symbol}, SCALE_IN disabled")
+            
+            # Run detection (pass df_1h for SCALE_IN validation)
             setup = self.smc_detector.scan_for_setup(
                 symbol=symbol,
                 df_daily=df_daily,
                 df_4h=df_4h,
+                df_1h=df_1h,  # NEW: pass 1H data
                 priority=pair_config['priority']
             )
             

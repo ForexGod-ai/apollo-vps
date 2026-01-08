@@ -134,3 +134,13 @@ class ChartGenerator:
     ) -> Optional[str]:
         """Create 4H chart - same as daily"""
         return self.create_daily_chart(symbol, df, setup, save_path)
+    
+    def create_1h_chart(
+        self, 
+        symbol: str,
+        df: pd.DataFrame,
+        setup: TradeSetup,
+        save_path: Optional[str] = None
+    ) -> Optional[str]:
+        """Create 1H chart for SCALE_IN Entry 1 validation"""
+        return self.create_daily_chart(symbol, df, setup, save_path)

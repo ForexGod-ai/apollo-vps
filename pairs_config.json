@@ -125,7 +125,30 @@
     "max_setups_per_scan": 5,
     "lookback_candles": {
       "daily": 365,
-      "h4": 250
+      "h4": 365,
+      "h1": 500
+    },
+    "choch_validation": {
+      "h1": {
+        "lookback": 50,
+        "max_age": 12,
+        "momentum_confirmation": true
+      },
+      "h4": {
+        "lookback": 50,
+        "max_age": 12,
+        "momentum_confirmation": true
+      }
+    },
+    "execution_strategy": {
+      "mode": "SCALE_IN",
+      "entry1_timeframe": "1H",
+      "entry1_position_size": 0.5,
+      "entry2_timeframe": "4H",
+      "entry2_position_size": 0.5,
+      "entry2_timeout_hours": 48,
+      "entry1_profit_threshold_pips": 20,
+      "setup_expiry_hours": 72
     },
     "telegram_alerts": true,
     "chart_generation": true

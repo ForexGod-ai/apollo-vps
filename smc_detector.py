@@ -887,6 +887,9 @@ class SMCDetector:
             atr_4h = (df_4h['high'] - df_4h['low']).rolling(14).mean().iloc[-1]
             stop_loss = swing_low - (1.5 * atr_4h)
             
+            # Daily ATR for TP distance cap
+            daily_atr = (df_daily['high'] - df_daily['low']).rolling(14).mean().iloc[-1]
+            
             # TP = Next Daily HIGH structure (body-based, not wick)
             # STRATEGY: Find the next resistance level (previous swing high)
             daily_swing_highs = self.detect_swing_highs(df_daily)
@@ -927,6 +930,9 @@ class SMCDetector:
             # ATR buffer for SL (1.5x 4H ATR)
             atr_4h = (df_4h['high'] - df_4h['low']).rolling(14).mean().iloc[-1]
             stop_loss = swing_high + (1.5 * atr_4h)
+            
+            # Daily ATR for TP distance cap
+            daily_atr = (df_daily['high'] - df_daily['low']).rolling(14).mean().iloc[-1]
             
             # TP = Next Daily LOW structure (body-based, not wick)
             # STRATEGY: Find the next support level (previous swing low)
@@ -1851,3 +1857,281 @@ def format_setup_message(setup: TradeSetup) -> str:
 """
     
     return message.strip()
+
+def validate_1h_choch(df_1h, daily_trend, fvg, debug=False):
+    """
+    Validate 1H CHoCH for Entry 1 in SCALE_IN strategy.
+    
+    Args:
+        df_1h: DataFrame with 1H OHLC data (min 225 candles)
+        daily_trend: Current Daily trend direction ('bullish' or 'bearish')
+        fvg: FVG object with .bottom and .top
+        debug: Print debug messages
+    
+    Requirements:
+        - 1H CHoCH direction matches Daily trend
+        - CHoCH break_price WITHIN FVG zone
+        - CHoCH age <= 12 candles (12 hours max)
+        - Momentum confirmation (1 candle after CHoCH)
+    
+    Returns:
+        CHoCH object if valid, None otherwise
+    """
+    if df_1h is None or len(df_1h) < 50:
+        return None
+    
+    if debug:
+        print(f"\n🔍 1H CHoCH Validation for Entry 1:")
+    
+    # Detect 1H CHoCH using SMCDetector
+    from smc_detector import SMCDetector
+    detector = SMCDetector()
+    h1_chochs, _ = detector.detect_choch_and_bos(df_1h)
+    
+    if debug:
+        print(f"   Total 1H CHoCH detected: {len(h1_chochs)}")
+    
+    # Look in last 50 candles for context
+    recent_h1_chochs = [ch for ch in h1_chochs if ch.index >= len(df_1h) - 50]
+    
+    for h1_choch in reversed(recent_h1_chochs):
+        # Direction must match Daily trend
+        if h1_choch.direction != daily_trend:
+            continue
+        
+        # CHoCH break_price must be WITHIN FVG zone
+        if not (fvg.bottom <= h1_choch.break_price <= fvg.top):
+            continue
+        
+        # Check age (max 12 candles = 12 hours)
+        choch_age = len(df_1h) - 1 - h1_choch.index
+        if choch_age > 12:
+            if debug:
+                print(f"   ⏭️  1H CHoCH @ {h1_choch.break_price:.5f} too old ({choch_age} candles = {choch_age}h)")
+            continue
+        
+        # Momentum confirmation
+        if h1_choch.index + 1 < len(df_1h):
+            candles_after = df_1h.iloc[h1_choch.index + 1:]
+            if len(candles_after) >= 1:
+                last_candle = candles_after.iloc[-1]
+                
+                if daily_trend == 'bullish':
+                    momentum_ok = (last_candle['close'] > last_candle['open']) or \
+                                (last_candle['close'] > df_1h.iloc[h1_choch.index]['close'])
+                else:
+                    momentum_ok = (last_candle['close'] < last_candle['open']) or \
+                                (last_candle['close'] < df_1h.iloc[h1_choch.index]['close'])
+                
+                if not momentum_ok:
+                    if debug:
+                        print(f"   ⏭️  1H CHoCH @ {h1_choch.break_price:.5f} lacks momentum")
+                    continue
+        
+        # ✅ Valid 1H CHoCH found
+        if debug:
+            print(f"   ✅ Valid 1H CHoCH @ {h1_choch.break_price:.5f} ({choch_age} candles ago)")
+        return h1_choch
+    
+    if debug:
+        print(f"   ❌ No valid 1H CHoCH found (max 12 candles old = 12h)")
+    return None
+
+
+def validate_choch_confirmation_scale_in(setup, current_time, df_daily, df_4h, df_1h, config, debug=False):
+    """
+    SCALE_IN strategy validation with dual entry logic.
+    
+    Priority cascade:
+    1. Check setup expiry (72h total)
+    2. If Entry 1 not filled → Try 1H CHoCH validation
+    3. If Entry 1 filled → Try 4H CHoCH validation (with 48h timeout)
+    4. If Entry 1 filled + timeout expired → Evaluate Entry 1 P&L
+    
+    Args:
+        setup: Setup object with entry1_filled, entry1_time, entry1_price, etc.
+        current_time: datetime object
+        df_daily, df_4h, df_1h: OHLC DataFrames
+        config: pairs_config.json execution_strategy section
+        debug: Print debug messages
+    
+    Returns:
+        dict with:
+            - action: 'EXECUTE_ENTRY1', 'EXECUTE_ENTRY2', 'CLOSE_ENTRY1', 'KEEP_MONITORING', 'EXPIRE'
+            - reason: str explanation
+            - entry_price: float (if action = EXECUTE_*)
+            - stop_loss: float
+            - take_profit: float
+            - position_size: float (0.5 for scale in)
+    """
+    if debug:
+        print(f"\n🔍 SCALE_IN Validation for {setup.symbol}:")
+    
+    # Setup age check (72h expiry)
+    setup_age_hours = (current_time - setup.setup_time).total_seconds() / 3600
+    if setup_age_hours > config['setup_expiry_hours']:
+        return {
+            'action': 'EXPIRE',
+            'reason': f'Setup expired ({setup_age_hours:.1f}h > {config["setup_expiry_hours"]}h)',
+        }
+    
+    # Entry 1 status check
+    entry1_filled = getattr(setup, 'entry1_filled', False)
+    
+    if not entry1_filled:
+        # ========== ENTRY 1 LOGIC (1H CHoCH) ==========
+        if debug:
+            print(f"   Entry 1 not filled, checking 1H CHoCH...")
+        
+        # Validate 1H CHoCH
+        valid_1h_choch = validate_1h_choch(
+            df_1h, 
+            setup.daily_choch.direction, 
+            setup.fvg, 
+            debug=debug
+        )
+        
+        if valid_1h_choch:
+            # ✅ Execute Entry 1 (50% position size)
+            return {
+                'action': 'EXECUTE_ENTRY1',
+                'reason': f'1H CHoCH confirmed @ {valid_1h_choch.break_price:.5f}',
+                'entry_price': setup.entry_price,
+                'stop_loss': setup.stop_loss,
+                'take_profit': setup.take_profit,
+                'position_size': config['entry1_position_size'],  # 0.5
+                'choch': valid_1h_choch
+            }
+        else:
+            # Keep monitoring for 1H CHoCH
+            return {
+                'action': 'KEEP_MONITORING',
+                'reason': 'Waiting for 1H CHoCH confirmation',
+            }
+    
+    else:
+        # ========== ENTRY 2 LOGIC (4H CHoCH) ==========
+        entry1_time = getattr(setup, 'entry1_time', None)
+        entry1_price = getattr(setup, 'entry1_price', None)
+        
+        if not entry1_time or not entry1_price:
+            return {
+                'action': 'KEEP_MONITORING',
+                'reason': 'Entry 1 data incomplete',
+            }
+        
+        # Check Entry 2 timeout (48h after Entry 1)
+        entry1_age_hours = (current_time - entry1_time).total_seconds() / 3600
+        timeout_hours = config['entry2_timeout_hours']
+        
+        if debug:
+            print(f"   Entry 1 filled @ {entry1_price:.5f}, age: {entry1_age_hours:.1f}h")
+        
+        if entry1_age_hours <= timeout_hours:
+            # Within timeout - try 4H CHoCH validation
+            if debug:
+                print(f"   Within timeout ({entry1_age_hours:.1f}h <= {timeout_hours}h), checking 4H CHoCH...")
+            
+            # Validate 4H CHoCH (similar to existing validate_choch_confirmation)
+            from smc_detector import SMCDetector
+            detector = SMCDetector()
+            h4_chochs, _ = detector.detect_choch_and_bos(df_4h)
+            
+            recent_h4_chochs = [ch for ch in h4_chochs if ch.index >= len(df_4h) - 50]
+            
+            for h4_choch in reversed(recent_h4_chochs):
+                # Direction match
+                if h4_choch.direction != setup.daily_choch.direction:
+                    continue
+                
+                # Within FVG zone
+                if not (setup.fvg.bottom <= h4_choch.break_price <= setup.fvg.top):
+                    continue
+                
+                # Age check (max 12 candles = 48h)
+                choch_age = len(df_4h) - 1 - h4_choch.index
+                if choch_age > 12:
+                    continue
+                
+                # Momentum confirmation
+                if h4_choch.index + 1 < len(df_4h):
+                    candles_after = df_4h.iloc[h4_choch.index + 1:]
+                    if len(candles_after) >= 1:
+                        last_candle = candles_after.iloc[-1]
+                        
+                        if setup.daily_choch.direction == 'bullish':
+                            momentum_ok = (last_candle['close'] > last_candle['open']) or \
+                                        (last_candle['close'] > df_4h.iloc[h4_choch.index]['close'])
+                        else:
+                            momentum_ok = (last_candle['close'] < last_candle['open']) or \
+                                        (last_candle['close'] < df_4h.iloc[h4_choch.index]['close'])
+                        
+                        if not momentum_ok:
+                            continue
+                
+                # ✅ Valid 4H CHoCH found - Execute Entry 2
+                if debug:
+                    print(f"   ✅ Valid 4H CHoCH @ {h4_choch.break_price:.5f} ({choch_age} candles ago)")
+                
+                return {
+                    'action': 'EXECUTE_ENTRY2',
+                    'reason': f'4H CHoCH confirmed @ {h4_choch.break_price:.5f}',
+                    'entry_price': setup.entry_price,
+                    'stop_loss': setup.stop_loss,
+                    'take_profit': setup.take_profit,
+                    'position_size': config['entry2_position_size'],  # 0.5
+                    'choch': h4_choch,
+                    'move_entry1_sl_to_breakeven': True  # Important!
+                }
+            
+            # No 4H CHoCH yet, keep monitoring
+            if debug:
+                print(f"   ❌ No valid 4H CHoCH yet, keep monitoring...")
+            
+            return {
+                'action': 'KEEP_MONITORING',
+                'reason': f'Waiting for 4H CHoCH (timeout in {timeout_hours - entry1_age_hours:.1f}h)',
+            }
+        
+        else:
+            # ========== TIMEOUT EXPIRED - EVALUATE ENTRY 1 P&L ==========
+            if debug:
+                print(f"   ⏰ Timeout expired ({entry1_age_hours:.1f}h > {timeout_hours}h)")
+            
+            # Get current price
+            current_price = df_1h.iloc[-1]['close']
+            
+            # Calculate Entry 1 P&L
+            if setup.daily_choch.direction == 'bullish':
+                entry1_pnl_pips = (current_price - entry1_price) * 10000
+            else:
+                entry1_pnl_pips = (entry1_price - current_price) * 10000
+            
+            profit_threshold = config['entry1_profit_threshold_pips']
+            
+            if debug:
+                print(f"   Entry 1 P&L: {entry1_pnl_pips:.1f} pips (threshold: {profit_threshold} pips)")
+            
+            if entry1_pnl_pips >= profit_threshold:
+                # ✅ Entry 1 profitable - KEEP IT
+                if debug:
+                    print(f"   ✅ Entry 1 profitable ({entry1_pnl_pips:.1f} pips >= {profit_threshold}), KEEP")
+                
+                return {
+                    'action': 'KEEP_MONITORING',
+                    'reason': f'Entry 1 profitable (+{entry1_pnl_pips:.1f} pips), keeping position',
+                    'note': 'No Entry 2, but Entry 1 is winning'
+                }
+            
+            else:
+                # ⚠️ Entry 1 not profitable - CLOSE @ breakeven/small loss
+                if debug:
+                    print(f"   ⚠️ Entry 1 not profitable ({entry1_pnl_pips:.1f} pips < {profit_threshold}), CLOSE")
+                
+                return {
+                    'action': 'CLOSE_ENTRY1',
+                    'reason': f'Timeout expired, Entry 1 negative ({entry1_pnl_pips:.1f} pips)',
+                    'close_price': current_price,
+                    'pnl_pips': entry1_pnl_pips
+                }
+

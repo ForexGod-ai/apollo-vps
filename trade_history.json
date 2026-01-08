@@ -1,11 +1,11 @@
 {
     "account": {
         "number": "9709773",
-        "balance": 679.32,
-        "equity": 825.63,
-        "open_pl": 146.31,
+        "balance": 648.11,
+        "equity": 854.00,
+        "open_pl": 205.89,
         "currency": "USD",
-        "last_update": "2026-01-08 11:42:09"
+        "last_update": "2026-01-08 23:48:13"
     },
     "open_positions": [
         {
@@ -13,11 +13,11 @@
             "symbol": "GBPJPY",
             "direction": "BUY",
             "entry_price": 208.785,
-            "current_price": 210.588,
+            "current_price": 210.842,
             "lot_size": 0.10,
             "open_time": "2025-12-19T07:02:15",
-            "profit": 134.16,
-            "pips": 180.3,
+            "profit": 150.26,
+            "pips": 205.7,
             "stop_loss": 208.369,
             "take_profit": 212.34,
             "comment": ""
@@ -27,41 +27,13 @@
             "symbol": "GBPJPY",
             "direction": "BUY",
             "entry_price": 210.459,
-            "current_price": 210.588,
+            "current_price": 210.842,
             "lot_size": 0.13,
             "open_time": "2025-12-23T10:46:26",
-            "profit": 33.21,
-            "pips": 12.9,
+            "profit": 54.25,
+            "pips": 38.3,
             "stop_loss": 210.031,
             "take_profit": 215.165,
-            "comment": ""
-        },
-        {
-            "ticket": 562253666,
-            "symbol": "USDJPY",
-            "direction": "SELL",
-            "entry_price": 156.735,
-            "current_price": 156.708,
-            "lot_size": 0.06,
-            "open_time": "2026-01-05T10:32:59",
-            "profit": -2.48,
-            "pips": 2.7,
-            "stop_loss": 157.048,
-            "take_profit": 153.968,
-            "comment": ""
-        },
-        {
-            "ticket": 562255200,
-            "symbol": "USDJPY",
-            "direction": "SELL",
-            "entry_price": 156.701,
-            "current_price": 156.708,
-            "lot_size": 0.06,
-            "open_time": "2026-01-05T10:37:59",
-            "profit": -3.78,
-            "pips": -0.7,
-            "stop_loss": 157.014,
-            "take_profit": 153.934,
             "comment": ""
         },
         {
@@ -69,11 +41,11 @@
             "symbol": "NZDUSD",
             "direction": "BUY",
             "entry_price": 0.57561,
-            "current_price": 0.57432,
+            "current_price": 0.57532,
             "lot_size": 0.06,
             "open_time": "2026-01-08T06:49:24",
-            "profit": -7.94,
-            "pips": -12.9,
+            "profit": -1.94,
+            "pips": -2.9,
             "stop_loss": 0.57348,
             "take_profit": 0.58621,
             "comment": ""
@@ -83,13 +55,27 @@
             "symbol": "NZDUSD",
             "direction": "BUY",
             "entry_price": 0.57543,
-            "current_price": 0.57432,
+            "current_price": 0.57532,
             "lot_size": 0.06,
             "open_time": "2026-01-08T07:44:04",
-            "profit": -6.86,
-            "pips": -11.1,
+            "profit": -0.86,
+            "pips": -1.1,
             "stop_loss": 0.5733,
             "take_profit": 0.58603,
+            "comment": ""
+        },
+        {
+            "ticket": 563732567,
+            "symbol": "NZDUSD",
+            "direction": "BUY",
+            "entry_price": 0.57459,
+            "current_price": 0.57532,
+            "lot_size": 0.06,
+            "open_time": "2026-01-08T10:07:28",
+            "profit": 4.18,
+            "pips": 7.3,
+            "stop_loss": 0.57246,
+            "take_profit": 0.58519,
             "comment": ""
         }
     ],
@@ -953,6 +939,19 @@
             "comment": ""
         },
         {
+            "ticket": 562253666,
+            "symbol": "USDJPY",
+            "direction": "SELL",
+            "entry_price": 156.735,
+            "closing_price": 157.055,
+            "lot_size": 0.06,
+            "open_time": "2026-01-05T10:32:59",
+            "close_time": "2026-01-08T14:16:28",
+            "profit": -15.74,
+            "pips": -32.0,
+            "comment": ""
+        },
+        {
             "ticket": 562254097,
             "symbol": "NZDUSD",
             "direction": "BUY",
@@ -963,6 +962,19 @@
             "close_time": "2026-01-05T13:09:08",
             "profit": -13.03,
             "pips": -11.5,
+            "comment": ""
+        },
+        {
+            "ticket": 562255200,
+            "symbol": "USDJPY",
+            "direction": "SELL",
+            "entry_price": 156.701,
+            "closing_price": 157.014,
+            "lot_size": 0.06,
+            "open_time": "2026-01-05T10:37:59",
+            "close_time": "2026-01-08T14:12:22",
+            "profit": -15.47,
+            "pips": -31.3,
             "comment": ""
         },
         {

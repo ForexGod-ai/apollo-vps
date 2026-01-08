@@ -87,13 +87,15 @@ class TelegramNotifier:
         self, 
         setup: TradeSetup, 
         df_daily: pd.DataFrame,
-        df_4h: pd.DataFrame
+        df_4h: pd.DataFrame,
+        df_1h: pd.DataFrame = None
     ) -> bool:
         """
         Send complete trade setup alert with:
         - Formatted message
         - Daily chart screenshot
         - 4H chart screenshot
+        - 1H chart screenshot (for SCALE_IN strategy)
         - Interactive buttons
         """
         # 1. Send main alert message
@@ -122,7 +124,20 @@ class TelegramNotifier:
                 print(f"[ERROR] 4H chart NOT generated for {setup.symbol}")
         except Exception as e:
             print(f"[EXCEPTION] Error generating 4H chart for {setup.symbol}: {e}")
-        # 4. Send interactive buttons
+        
+        # 4. Generate and send 1H chart (for SCALE_IN strategy)
+        if df_1h is not None:
+            try:
+                h1_chart = self._create_1h_chart(setup, df_1h)
+                if h1_chart:
+                    print(f"[DEBUG] 1H chart generated for {setup.symbol}")
+                    self.send_photo(h1_chart, caption=f"⏰ {setup.symbol} - 1H Timeframe (Entry 1)")
+                else:
+                    print(f"[ERROR] 1H chart NOT generated for {setup.symbol}")
+            except Exception as e:
+                print(f"[EXCEPTION] Error generating 1H chart for {setup.symbol}: {e}")
+        
+        # 5. Send interactive buttons
         self._send_action_buttons(setup)
         return True
     
@@ -142,11 +157,22 @@ class TelegramNotifier:
         strategy_emoji = "🔥🚨" if setup.strategy_type == 'reversal' else "🎯"
         strategy_text = "*REVERSAL - MAJOR TREND CHANGE!*" if setup.strategy_type == 'reversal' else "*CONTINUATION - Pullback Entry*"
         
-        # 4H CHoCH info
+        # 1H CHoCH info (for SCALE_IN Entry 1)
+        h1_choch_obj = getattr(setup, 'h1_choch', None)
+        if h1_choch_obj:
+            h1_info = f"⚡ 1H CHoCH: {h1_choch_obj.direction.upper()} @ {h1_choch_obj.break_price:.5f} ✅"
+            h1_status = "✅ *Entry 1 Ready* (50% position)"
+        else:
+            h1_info = "⏳ *Waiting for 1H CHoCH*"
+            h1_status = "⏰ Monitoring for Entry 1..."
+        
+        # 4H CHoCH info (for SCALE_IN Entry 2)
         if setup.h4_choch:
-            h4_info = f"🔄 4H CHoCH: {setup.h4_choch.direction.upper()} @ {setup.h4_choch.break_price:.5f}"
+            h4_info = f"🔄 4H CHoCH: {setup.h4_choch.direction.upper()} @ {setup.h4_choch.break_price:.5f} ✅"
+            h4_status = "✅ *Entry 2 Ready* (50% position)"
         else:
             h4_info = "⏳ *Waiting for 4H confirmation*"
+            h4_status = "⏰ Monitoring for Entry 2..."
         
         # Calculate lot size (example: $10k account, 2% risk)
         account_balance = float(os.getenv('ACCOUNT_BALANCE', '10000'))
@@ -169,8 +195,13 @@ class TelegramNotifier:
 CHoCH Direction: `{setup.daily_choch.direction.upper()}`
 FVG Zone: `{setup.fvg.bottom:.5f} - {setup.fvg.top:.5f}`
 
-🔍 *4H STATUS:*
+⚡ *1H STATUS (Entry 1):*
+{h1_info}
+{h1_status}
+
+🔍 *4H STATUS (Entry 2):*
 {h4_info}
+{h4_status}
 
 ━━━━━━━━━━━━━━━━━━━━
 💰 *TRADE DETAILS:*
@@ -188,6 +219,7 @@ Take Profit: `{setup.take_profit:.5f}`
 ━━━━━━━━━━━━━━━━━━━━
 📊 *VIEW CHARTS:*
 [📈 Daily Chart](https://www.tradingview.com/chart/?symbol={self._get_tv_symbol(setup.symbol)}&interval=D)
+[⚡ 1H Chart](https://www.tradingview.com/chart/?symbol={self._get_tv_symbol(setup.symbol)}&interval=60)
 [🔍 4H Chart](https://www.tradingview.com/chart/?symbol={self._get_tv_symbol(setup.symbol)}&interval=240)
 
 ━━━━━━━━━━━━━━━━━━━━
@@ -255,6 +287,21 @@ Take Profit: `{setup.take_profit:.5f}`
             return chart_bytes
         except Exception as e:
             print(f"❌ Error creating 4H chart: {e}")
+            return None
+    
+    def _create_1h_chart(self, setup: TradeSetup, df: pd.DataFrame) -> Optional[bytes]:
+        """Create 1H timeframe chart using ChartGenerator (for SCALE_IN Entry 1)"""
+        try:
+            # Use ChartGenerator to create professional chart
+            chart_bytes = self.chart_generator.create_1h_chart(
+                symbol=setup.symbol,
+                df=df,
+                setup=setup,
+                save_path=None  # Return bytes instead of saving
+            )
+            return chart_bytes
+        except Exception as e:
+            print(f"❌ Error creating 1H chart: {e}")
             return None
     
     def _send_action_buttons(self, setup: TradeSetup) -> bool:
