@@ -15,6 +15,8 @@ from loguru import logger
 from smc_detector import SMCDetector, TradeSetup
 from telegram_notifier import TelegramNotifier
 from ctrader_cbot_client import CTraderCBotClient
+from strategy_optimizer import StrategyOptimizer
+from ai_probability_analyzer import AIProbabilityAnalyzer
 
 load_dotenv()
 
@@ -94,11 +96,67 @@ class DailyScanner:
         self.smc_detector = SMCDetector(swing_lookback=5)
         self.telegram = TelegramNotifier()
         
+        # NEW: Load ML optimizer for setup scoring
+        self.ml_optimizer = StrategyOptimizer()
+        self.learned_rules = self._load_learned_rules()
+        
+        # NEW: Load AI Probability Analyzer (1-10 scoring)
+        self.ai_analyzer = AIProbabilityAnalyzer()
+        
         # Load pairs configuration
         with open('pairs_config.json', 'r') as f:
             config = json.load(f)
             self.pairs = config['pairs']
             self.scanner_settings = config['scanner_settings']
+    
+    def _load_learned_rules(self) -> dict:
+        """Load learned rules from ML optimizer"""
+        try:
+            with open('learned_rules.json', 'r') as f:
+                rules = json.load(f)
+                print(f"✅ Loaded learned rules (analyzed {rules['total_trades_analyzed']} trades)")
+                return rules
+        except FileNotFoundError:
+            print("⚠️  No learned_rules.json found - run strategy_optimizer.py first")
+            return {}
+        except Exception as e:
+            print(f"⚠️  Error loading learned rules: {e}")
+            return {}
+    
+    def _calculate_ml_score(self, setup: TradeSetup, df_4h: pd.DataFrame) -> dict:
+        """
+        Calculate ML confidence score for a setup
+        Uses learned_rules.json to score based on historical performance
+        """
+        if not self.learned_rules:
+            return {
+                'score': 50,
+                'confidence': 'UNKNOWN',
+                'recommendation': 'REVIEW',
+                'factors': {'ml_status': 'No learned rules available'}
+            }
+        
+        # Extract setup details
+        current_hour = datetime.now().hour
+        
+        # Determine timeframe (from setup or default to 4H)
+        timeframe = '4H'  # Default since we use 4H confirmation
+        
+        # Determine pattern type from setup
+        pattern = 'UNKNOWN'
+        if hasattr(setup, 'strategy_type') and setup.strategy_type:
+            pattern = setup.strategy_type.upper()
+        
+        # Build setup dict for ML optimizer
+        setup_data = {
+            'symbol': setup.symbol,
+            'timeframe': timeframe,
+            'hour': current_hour,
+            'pattern': pattern
+        }
+        
+        # Use ML optimizer to calculate score
+        return self.ml_optimizer.calculate_setup_score(setup_data)
     
     def run_daily_scan(self, keep_connection: bool = False) -> List[TradeSetup]:
         """
@@ -192,12 +250,59 @@ class DailyScanner:
                 
                 if setup:
                     print(f"🎯 SETUP FOUND on {symbol}!")
+                    
+                    # NEW: ML SCORING - Calculate AI confidence score (0-100)
+                    ml_score = self._calculate_ml_score(setup, df_4h)
+                    setup.ml_score = ml_score['score']
+                    setup.ml_confidence = ml_score['confidence']
+                    setup.ml_recommendation = ml_score['recommendation']
+                    setup.ml_factors = ml_score['factors']
+                    
+                    # NEW: AI PROBABILITY SCORING (1-10 scale)
+                    ai_prob = self.ai_analyzer.calculate_probability_score(
+                        symbol=symbol,
+                        timeframe='4H',
+                        hour=datetime.now().hour,
+                        pattern=setup.strategy_type if hasattr(setup, 'strategy_type') else None
+                    )
+                    setup.ai_probability_score = ai_prob['score']
+                    setup.ai_probability_confidence = ai_prob['confidence']
+                    setup.ai_probability_factors = ai_prob['factors']
+                    setup.ai_probability_warning = ai_prob['warning']
+                    
+                    # Print ML analysis
+                    score_emoji = "🟢" if ml_score['score'] >= 75 else "🟡" if ml_score['score'] >= 60 else "🔴"
+                    print(f"   {score_emoji} ML SCORE: {ml_score['score']}/100 ({ml_score['confidence']})")
+                    print(f"   🤖 AI Recommendation: {ml_score['recommendation']}")
+                    for factor, desc in ml_score['factors'].items():
+                        print(f"      • {factor}: {desc}")
+                    
+                    # Print AI Probability analysis
+                    prob_emoji = "🟢" if ai_prob['score'] >= 7 else "🟡" if ai_prob['score'] >= 5 else "🔴"
+                    print(f"   {prob_emoji} AI PROBABILITY: {ai_prob['score']}/10 ({ai_prob['confidence']})")
+                    if ai_prob['warning']:
+                        print(f"   {ai_prob['warning']}")
+                    
                     setups_found.append(setup)
                     
-                    # Send Telegram alert (include df_1h for SCALE_IN strategy)
-                    if self.scanner_settings['telegram_alerts']:
-                        print(f"📱 Sending Telegram alert for {symbol}...")
-                        self.telegram.send_setup_alert(setup, df_daily, df_4h, df_1h)
+                    # V3.3: ALWAYS send chart alert when setup is found
+                    # User expects automatic Telegram notifications with 3 charts for EVERY scan
+                    if self.scanner_settings.get('telegram_alerts', True):
+                        is_reevaluation = symbol in monitoring_symbols
+                        status = "Re-evaluating" if is_reevaluation else "New setup"
+                        print(f"   📸 {status} - Generating and sending charts for {symbol}...")
+                        try:
+                            self.telegram.send_setup_alert(
+                                setup=setup,
+                                df_daily=df_daily,
+                                df_4h=df_4h,
+                                df_1h=df_1h
+                            )
+                            print(f"   ✅ Charts sent to Telegram for {symbol}")
+                        except Exception as e:
+                            print(f"   ⚠️ Failed to send charts: {e}")
+                    
+                    print(f"✓ {symbol} added to morning scan report")
                 else:
                     print(f"✓ {symbol} - No setup detected")
         
@@ -379,6 +484,16 @@ def save_monitoring_setups(setups: List[TradeSetup]):
         for setup in setups:
             # V3.0: Save BOTH MONITORING and READY status
             if setup.status in ["MONITORING", "READY"]:
+                # Convert setup_time to proper datetime string
+                if isinstance(setup.setup_time, (int, float)):
+                    setup_time_str = datetime.fromtimestamp(setup.setup_time).isoformat()
+                elif isinstance(setup.setup_time, str):
+                    setup_time_str = setup.setup_time
+                elif hasattr(setup.setup_time, 'isoformat'):
+                    setup_time_str = setup.setup_time.isoformat()
+                else:
+                    setup_time_str = datetime.now().isoformat()
+                
                 monitoring_setup = {
                     "symbol": setup.symbol,
                     "direction": "buy" if setup.daily_choch.direction == "bullish" else "sell",
@@ -387,9 +502,7 @@ def save_monitoring_setups(setups: List[TradeSetup]):
                     "take_profit": setup.take_profit,
                     "risk_reward": setup.risk_reward,
                     "strategy_type": setup.strategy_type,
-                    "setup_time": (datetime.fromtimestamp(setup.setup_time).isoformat() if isinstance(setup.setup_time, int) 
-                                  else setup.setup_time if isinstance(setup.setup_time, str) 
-                                  else setup.setup_time.isoformat()),
+                    "setup_time": setup_time_str,
                     "priority": setup.priority,
                     "status": setup.status,  # V3.0: Include status field
                     "fvg_zone_top": setup.fvg.top if setup.fvg else None,

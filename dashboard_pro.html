@@ -1,0 +1,780 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ForexGod Trading Dashboard PRO 📊</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #1e1e2e 0%, #2d2d44 100%);
+            color: #fff;
+            padding: 20px;
+            min-height: 100vh;
+        }
+        .container { max-width: 1600px; margin: 0 auto; }
+        
+        /* Header */
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+            padding: 25px;
+            background: rgba(255,255,255,0.05);
+            border-radius: 15px;
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        .live-indicator {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            background: #4ade80;
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+            margin-right: 5px;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; box-shadow: 0 0 10px #4ade80; }
+            50% { opacity: 0.5; box-shadow: 0 0 5px #4ade80; }
+        }
+        
+        /* Stats Grid */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 25px;
+        }
+        .stat-card {
+            background: rgba(255,255,255,0.05);
+            padding: 20px;
+            border-radius: 12px;
+            border: 1px solid rgba(255,255,255,0.1);
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        .stat-card:hover { 
+            transform: translateY(-3px);
+            box-shadow: 0 5px 20px rgba(102, 126, 234, 0.3);
+        }
+        .stat-label {
+            font-size: 0.85em;
+            opacity: 0.7;
+            margin-bottom: 8px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .stat-value {
+            font-size: 1.8em;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+        .stat-subvalue {
+            font-size: 0.75em;
+            opacity: 0.6;
+        }
+        .positive { color: #4ade80; }
+        .negative { color: #f87171; }
+        
+        /* Charts Section */
+        .charts-section {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(500px, 1fr));
+            gap: 20px;
+            margin-bottom: 25px;
+        }
+        .chart-card {
+            background: rgba(255,255,255,0.05);
+            padding: 25px;
+            border-radius: 12px;
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+        .chart-title {
+            font-size: 1.2em;
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .chart-container {
+            position: relative;
+            height: 300px;
+        }
+        
+        /* Tables */
+        .table-section {
+            background: rgba(255,255,255,0.05);
+            padding: 25px;
+            border-radius: 12px;
+            border: 1px solid rgba(255,255,255,0.1);
+            margin-bottom: 20px;
+        }
+        .section-title {
+            font-size: 1.3em;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid rgba(102, 126, 234, 0.3);
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        th, td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+        }
+        th {
+            background: rgba(255,255,255,0.05);
+            font-weight: 600;
+            font-size: 0.9em;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        tr:hover {
+            background: rgba(255,255,255,0.02);
+        }
+        
+        /* Trades List */
+        .trades-list {
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        .trade-item {
+            background: rgba(255,255,255,0.03);
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 8px;
+            display: grid;
+            grid-template-columns: 80px 80px 140px 1fr 100px;
+            gap: 12px;
+            align-items: center;
+            font-size: 0.9em;
+            border: 1px solid rgba(255,255,255,0.05);
+        }
+        .trade-symbol {
+            font-weight: bold;
+            font-size: 1em;
+        }
+        .trade-direction {
+            padding: 4px 8px;
+            border-radius: 4px;
+            text-align: center;
+            font-size: 0.85em;
+            font-weight: 600;
+        }
+        .trade-direction.buy { background: rgba(74, 222, 128, 0.2); color: #4ade80; }
+        .trade-direction.sell { background: rgba(248, 113, 113, 0.2); color: #f87171; }
+        
+        /* Gauge */
+        .gauge-container {
+            position: relative;
+            width: 200px;
+            height: 200px;
+            margin: 20px auto;
+        }
+        
+        /* Controls */
+        .controls {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+            flex-wrap: wrap;
+        }
+        .control-btn {
+            padding: 8px 16px;
+            background: rgba(102, 126, 234, 0.2);
+            border: 1px solid rgba(102, 126, 234, 0.4);
+            border-radius: 6px;
+            color: #fff;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .control-btn:hover {
+            background: rgba(102, 126, 234, 0.3);
+            border-color: rgba(102, 126, 234, 0.6);
+        }
+        .control-btn.active {
+            background: rgba(102, 126, 234, 0.5);
+            border-color: #667eea;
+        }
+        select {
+            padding: 8px 12px;
+            background: rgba(255,255,255,0.05);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 6px;
+            color: #fff;
+            cursor: pointer;
+        }
+        
+        /* Scrollbar */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: rgba(255,255,255,0.05); }
+        ::-webkit-scrollbar-thumb { background: rgba(102, 126, 234, 0.5); border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: rgba(102, 126, 234, 0.7); }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <h1>📊 ForexGod Trading Dashboard PRO</h1>
+            <div class="subtitle">
+                <span class="live-indicator"></span>
+                <span id="lastUpdate">Loading...</span>
+            </div>
+        </div>
+
+        <!-- Stats Grid -->
+        <div class="stats-grid" id="statsGrid"></div>
+
+        <!-- Charts Section -->
+        <div class="charts-section">
+            <!-- Equity Curve -->
+            <div class="chart-card">
+                <div class="chart-title">📈 Equity Curve</div>
+                <div class="chart-container">
+                    <canvas id="equityCurveChart"></canvas>
+                </div>
+            </div>
+
+            <!-- P/L Distribution -->
+            <div class="chart-card">
+                <div class="chart-title">💰 P/L Distribution</div>
+                <div class="controls">
+                    <button class="control-btn active" onclick="changePLPeriod('daily')">Daily</button>
+                    <button class="control-btn" onclick="changePLPeriod('weekly')">Weekly</button>
+                    <button class="control-btn" onclick="changePLPeriod('monthly')">Monthly</button>
+                </div>
+                <div class="chart-container">
+                    <canvas id="plDistributionChart"></canvas>
+                </div>
+            </div>
+
+            <!-- Win Rate Gauge -->
+            <div class="chart-card">
+                <div class="chart-title">🎯 Win Rate Meter</div>
+                <div class="chart-container">
+                    <canvas id="winRateGauge"></canvas>
+                </div>
+            </div>
+
+            <!-- Per-Pair Performance -->
+            <div class="chart-card">
+                <div class="chart-title">🏆 Top Pairs Performance</div>
+                <div class="chart-container">
+                    <canvas id="pairPerformanceChart"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- Pair Statistics Table -->
+        <div class="table-section">
+            <div class="section-title">📊 Per-Pair Statistics</div>
+            <table id="pairStatsTable">
+                <thead>
+                    <tr>
+                        <th>Pair</th>
+                        <th>Trades</th>
+                        <th>Win Rate</th>
+                        <th>Avg R:R</th>
+                        <th>Total P/L</th>
+                        <th>Best Trade</th>
+                        <th>Worst Trade</th>
+                    </tr>
+                </thead>
+                <tbody id="pairStatsBody"></tbody>
+            </table>
+        </div>
+
+        <!-- Open Positions -->
+        <div class="table-section" id="openPositions" style="display: none;">
+            <div class="section-title">🔓 Open Positions</div>
+            <div class="trades-list" id="openTradesList"></div>
+        </div>
+
+        <!-- Recent Closed Trades -->
+        <div class="table-section">
+            <div class="section-title">📋 Recent Closed Trades</div>
+            <div class="controls">
+                <select id="tradesLimit" onchange="loadDashboardData()">
+                    <option value="30">Last 30 trades</option>
+                    <option value="50">Last 50 trades</option>
+                    <option value="100">Last 100 trades</option>
+                    <option value="all">Show ALL</option>
+                </select>
+            </div>
+            <div class="trades-list" id="closedTradesList"></div>
+        </div>
+    </div>
+
+    <script>
+        let equityCurveChart, plDistributionChart, winRateGauge, pairPerformanceChart;
+        let currentPLPeriod = 'daily';
+        let dashboardData = null;
+
+        async function loadDashboardData() {
+            try {
+                const response = await fetch('trade_history.json?t=' + Date.now());
+                if (!response.ok) throw new Error('Failed to fetch data');
+                
+                dashboardData = await response.json();
+                const account = dashboardData.account || {};
+                const openTrades = dashboardData.open_positions || [];
+                const closedTrades = dashboardData.closed_trades || [];
+
+                // Calculate statistics
+                const stats = calculateStatistics(account, openTrades, closedTrades);
+                
+                // Update all sections
+                updateStatsGrid(stats);
+                updateEquityCurve(closedTrades, account.balance);
+                updatePLDistribution(closedTrades, currentPLPeriod);
+                updateWinRateGauge(stats.winRate);
+                updatePairPerformance(closedTrades);
+                updatePairStatsTable(closedTrades);
+                updateOpenPositions(openTrades);
+                updateClosedTrades(closedTrades);
+
+                document.getElementById('lastUpdate').textContent = 
+                    '⏰ ' + new Date().toLocaleTimeString();
+
+            } catch (error) {
+                console.error('Error loading dashboard:', error);
+                document.getElementById('lastUpdate').textContent = 
+                    '❌ Error loading data';
+            }
+        }
+
+        function calculateStatistics(account, openTrades, closedTrades) {
+            const totalClosed = closedTrades.length;
+            const winningTrades = closedTrades.filter(t => t.profit > 0);
+            const losingTrades = closedTrades.filter(t => t.profit < 0);
+            
+            const totalProfit = closedTrades.reduce((sum, t) => sum + (t.profit || 0), 0);
+            const totalWin = winningTrades.reduce((sum, t) => sum + t.profit, 0);
+            const totalLoss = Math.abs(losingTrades.reduce((sum, t) => sum + t.profit, 0));
+            
+            const winRate = totalClosed > 0 ? (winningTrades.length / totalClosed * 100) : 0;
+            const profitFactor = totalLoss > 0 ? (totalWin / totalLoss) : 0;
+            
+            // Average R:R realized
+            const avgRR = winningTrades.length > 0 
+                ? (totalWin / winningTrades.length) / (totalLoss / Math.max(losingTrades.length, 1))
+                : 0;
+
+            return {
+                balance: account.balance || 1000,
+                equity: account.equity || 1000,
+                openPL: account.open_pl || 0,
+                totalProfit,
+                winRate,
+                winning: winningTrades.length,
+                losing: losingTrades.length,
+                profitFactor,
+                avgRR,
+                openPositions: openTrades.length,
+                totalTrades: totalClosed
+            };
+        }
+
+        function updateStatsGrid(stats) {
+            const statsGrid = document.getElementById('statsGrid');
+            statsGrid.innerHTML = `
+                <div class="stat-card">
+                    <div class="stat-label">💰 Balance</div>
+                    <div class="stat-value">$${stats.balance.toFixed(2)}</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">💎 Equity</div>
+                    <div class="stat-value ${stats.equity >= stats.balance ? 'positive' : 'negative'}">
+                        $${stats.equity.toFixed(2)}
+                    </div>
+                    <div class="stat-subvalue">Open P/L: ${stats.openPL >= 0 ? '+' : ''}$${stats.openPL.toFixed(2)}</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">📊 Total P/L</div>
+                    <div class="stat-value ${stats.totalProfit >= 0 ? 'positive' : 'negative'}">
+                        ${stats.totalProfit >= 0 ? '+' : ''}$${stats.totalProfit.toFixed(2)}
+                    </div>
+                    <div class="stat-subvalue">${((stats.totalProfit / 1000) * 100).toFixed(1)}% ROI</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">📈 Win Rate</div>
+                    <div class="stat-value ${stats.winRate >= 50 ? 'positive' : 'negative'}">
+                        ${stats.winRate.toFixed(1)}%
+                    </div>
+                    <div class="stat-subvalue">✅ ${stats.winning} | ❌ ${stats.losing}</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">💎 Profit Factor</div>
+                    <div class="stat-value ${stats.profitFactor >= 1 ? 'positive' : 'negative'}">
+                        ${stats.profitFactor.toFixed(2)}
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">🎯 Avg R:R</div>
+                    <div class="stat-value ${stats.avgRR >= 2 ? 'positive' : 'negative'}">
+                        ${stats.avgRR.toFixed(2)}x
+                    </div>
+                    <div class="stat-subvalue">Realized</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">🔓 Open Positions</div>
+                    <div class="stat-value">${stats.openPositions}</div>
+                    <div class="stat-subvalue">Total: ${stats.totalTrades} trades</div>
+                </div>
+            `;
+        }
+
+        function updateEquityCurve(closedTrades, currentBalance) {
+            const sortedTrades = [...closedTrades].sort((a, b) => 
+                new Date(a.close_time) - new Date(b.close_time)
+            );
+
+            let runningBalance = 1000; // Initial balance
+            const equityData = [{ x: 'Start', y: runningBalance }];
+
+            sortedTrades.forEach(trade => {
+                runningBalance += (trade.profit || 0);
+                const date = new Date(trade.close_time).toLocaleDateString();
+                equityData.push({ x: date, y: runningBalance });
+            });
+
+            const ctx = document.getElementById('equityCurveChart');
+            if (equityCurveChart) equityCurveChart.destroy();
+
+            equityCurveChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    datasets: [{
+                        label: 'Equity',
+                        data: equityData,
+                        borderColor: '#667eea',
+                        backgroundColor: 'rgba(102, 126, 234, 0.1)',
+                        fill: true,
+                        tension: 0.4
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false }
+                    },
+                    scales: {
+                        x: {
+                            display: true,
+                            grid: { color: 'rgba(255,255,255,0.05)' },
+                            ticks: { color: '#fff', maxTicksLimit: 10 }
+                        },
+                        y: {
+                            display: true,
+                            grid: { color: 'rgba(255,255,255,0.05)' },
+                            ticks: { color: '#fff' }
+                        }
+                    }
+                }
+            });
+        }
+
+        function updatePLDistribution(closedTrades, period) {
+            const plByPeriod = {};
+            
+            closedTrades.forEach(trade => {
+                const date = new Date(trade.close_time);
+                let key;
+                
+                if (period === 'daily') {
+                    key = date.toLocaleDateString();
+                } else if (period === 'weekly') {
+                    const weekNum = getWeekNumber(date);
+                    key = `W${weekNum}`;
+                } else { // monthly
+                    key = date.toLocaleDateString('en-US', { year: 'numeric', month: 'short' });
+                }
+                
+                plByPeriod[key] = (plByPeriod[key] || 0) + (trade.profit || 0);
+            });
+
+            const labels = Object.keys(plByPeriod).slice(-20); // Last 20 periods
+            const data = labels.map(label => plByPeriod[label]);
+
+            const ctx = document.getElementById('plDistributionChart');
+            if (plDistributionChart) plDistributionChart.destroy();
+
+            plDistributionChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels,
+                    datasets: [{
+                        label: 'P/L',
+                        data,
+                        backgroundColor: data.map(v => v >= 0 ? 'rgba(74, 222, 128, 0.6)' : 'rgba(248, 113, 113, 0.6)'),
+                        borderColor: data.map(v => v >= 0 ? '#4ade80' : '#f87171'),
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false }
+                    },
+                    scales: {
+                        x: {
+                            grid: { color: 'rgba(255,255,255,0.05)' },
+                            ticks: { color: '#fff', maxTicksLimit: 10 }
+                        },
+                        y: {
+                            grid: { color: 'rgba(255,255,255,0.05)' },
+                            ticks: { color: '#fff' }
+                        }
+                    }
+                }
+            });
+        }
+
+        function updateWinRateGauge(winRate) {
+            const ctx = document.getElementById('winRateGauge');
+            if (winRateGauge) winRateGauge.destroy();
+
+            winRateGauge = new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                    datasets: [{
+                        data: [winRate, 100 - winRate],
+                        backgroundColor: [
+                            winRate >= 60 ? '#4ade80' : winRate >= 50 ? '#fbbf24' : '#f87171',
+                            'rgba(255,255,255,0.1)'
+                        ],
+                        borderWidth: 0
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    circumference: 180,
+                    rotation: 270,
+                    cutout: '75%',
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: { enabled: false }
+                    }
+                },
+                plugins: [{
+                    afterDraw: (chart) => {
+                        const { ctx, chartArea: { width, height } } = chart;
+                        ctx.save();
+                        ctx.font = 'bold 32px sans-serif';
+                        ctx.fillStyle = '#fff';
+                        ctx.textAlign = 'center';
+                        ctx.fillText(`${winRate.toFixed(1)}%`, width / 2, height / 2 + 40);
+                        ctx.font = '14px sans-serif';
+                        ctx.fillStyle = 'rgba(255,255,255,0.6)';
+                        ctx.fillText('Win Rate', width / 2, height / 2 + 60);
+                        ctx.restore();
+                    }
+                }]
+            });
+        }
+
+        function updatePairPerformance(closedTrades) {
+            const pairStats = {};
+            
+            closedTrades.forEach(trade => {
+                const symbol = trade.symbol;
+                if (!pairStats[symbol]) {
+                    pairStats[symbol] = { total: 0, count: 0 };
+                }
+                pairStats[symbol].total += (trade.profit || 0);
+                pairStats[symbol].count++;
+            });
+
+            const sortedPairs = Object.entries(pairStats)
+                .sort((a, b) => b[1].total - a[1].total)
+                .slice(0, 10); // Top 10
+
+            const labels = sortedPairs.map(([pair]) => pair);
+            const data = sortedPairs.map(([, stats]) => stats.total);
+
+            const ctx = document.getElementById('pairPerformanceChart');
+            if (pairPerformanceChart) pairPerformanceChart.destroy();
+
+            pairPerformanceChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels,
+                    datasets: [{
+                        label: 'Total P/L',
+                        data,
+                        backgroundColor: 'rgba(118, 75, 162, 0.6)',
+                        borderColor: '#764ba2',
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    indexAxis: 'y',
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false }
+                    },
+                    scales: {
+                        x: {
+                            grid: { color: 'rgba(255,255,255,0.05)' },
+                            ticks: { color: '#fff' }
+                        },
+                        y: {
+                            grid: { display: false },
+                            ticks: { color: '#fff' }
+                        }
+                    }
+                }
+            });
+        }
+
+        function updatePairStatsTable(closedTrades) {
+            const pairStats = {};
+            
+            closedTrades.forEach(trade => {
+                const symbol = trade.symbol;
+                if (!pairStats[symbol]) {
+                    pairStats[symbol] = {
+                        trades: [],
+                        wins: 0,
+                        total: 0
+                    };
+                }
+                pairStats[symbol].trades.push(trade);
+                if (trade.profit > 0) pairStats[symbol].wins++;
+                pairStats[symbol].total += (trade.profit || 0);
+            });
+
+            const tbody = document.getElementById('pairStatsBody');
+            tbody.innerHTML = Object.entries(pairStats)
+                .sort((a, b) => b[1].total - a[1].total)
+                .map(([pair, stats]) => {
+                    const winRate = (stats.wins / stats.trades.length * 100).toFixed(1);
+                    const wins = stats.trades.filter(t => t.profit > 0);
+                    const losses = stats.trades.filter(t => t.profit < 0);
+                    const avgWin = wins.length ? wins.reduce((s, t) => s + t.profit, 0) / wins.length : 0;
+                    const avgLoss = losses.length ? Math.abs(losses.reduce((s, t) => s + t.profit, 0) / losses.length) : 1;
+                    const avgRR = avgLoss > 0 ? (avgWin / avgLoss).toFixed(2) : 0;
+                    
+                    const best = Math.max(...stats.trades.map(t => t.profit || 0));
+                    const worst = Math.min(...stats.trades.map(t => t.profit || 0));
+
+                    return `
+                        <tr>
+                            <td><strong>${pair}</strong></td>
+                            <td>${stats.trades.length}</td>
+                            <td class="${parseFloat(winRate) >= 50 ? 'positive' : 'negative'}">${winRate}%</td>
+                            <td class="${parseFloat(avgRR) >= 2 ? 'positive' : 'negative'}">${avgRR}x</td>
+                            <td class="${stats.total >= 0 ? 'positive' : 'negative'}">
+                                ${stats.total >= 0 ? '+' : ''}$${stats.total.toFixed(2)}
+                            </td>
+                            <td class="positive">+$${best.toFixed(2)}</td>
+                            <td class="negative">$${worst.toFixed(2)}</td>
+                        </tr>
+                    `;
+                }).join('');
+        }
+
+        function updateOpenPositions(trades) {
+            const section = document.getElementById('openPositions');
+            const list = document.getElementById('openTradesList');
+            
+            if (trades.length === 0) {
+                section.style.display = 'none';
+                return;
+            }
+
+            section.style.display = 'block';
+            list.innerHTML = trades.map(trade => `
+                <div class="trade-item">
+                    <div class="trade-symbol">${trade.symbol || 'N/A'}</div>
+                    <div class="trade-direction ${(trade.direction || '').toLowerCase()}">
+                        ${trade.direction || 'N/A'}
+                    </div>
+                    <div>Entry: ${(trade.entry_price || 0).toFixed(5)}</div>
+                    <div>
+                        SL: ${(trade.stop_loss || 0).toFixed(5)}<br>
+                        TP: ${(trade.take_profit || 0).toFixed(5)}
+                    </div>
+                    <div class="${(trade.profit || 0) >= 0 ? 'positive' : 'negative'}">
+                        ${(trade.profit || 0) >= 0 ? '+' : ''}$${(trade.profit || 0).toFixed(2)}<br>
+                        <span style="font-size:0.85em">${(trade.pips || 0).toFixed(1)} pips</span>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function updateClosedTrades(trades) {
+            const limit = document.getElementById('tradesLimit')?.value || '30';
+            const sortedTrades = [...trades].sort((a, b) => 
+                new Date(b.close_time) - new Date(a.close_time)
+            );
+            const tradesToShow = limit === 'all' ? sortedTrades : sortedTrades.slice(0, parseInt(limit));
+
+            const list = document.getElementById('closedTradesList');
+            list.innerHTML = tradesToShow.map(trade => {
+                const profit = trade.profit || 0;
+                const outcome = profit > 0 ? '✅ WIN' : '❌ LOSS';
+                const closeTime = (trade.close_time || '').substring(0, 16).replace('T', ' ');
+                
+                return `
+                    <div class="trade-item">
+                        <div class="trade-symbol">${trade.symbol || 'N/A'}</div>
+                        <div class="trade-direction ${(trade.direction || '').toLowerCase()}">
+                            ${trade.direction || 'N/A'}
+                        </div>
+                        <div>${closeTime}</div>
+                        <div>${outcome}</div>
+                        <div class="${profit >= 0 ? 'positive' : 'negative'}">
+                            ${profit >= 0 ? '+' : ''}$${profit.toFixed(2)}<br>
+                            <span style="font-size:0.85em">${(trade.pips || 0).toFixed(1)} pips</span>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function changePLPeriod(period) {
+            currentPLPeriod = period;
+            
+            // Update button states
+            document.querySelectorAll('.control-btn').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            event.target.classList.add('active');
+            
+            if (dashboardData) {
+                updatePLDistribution(dashboardData.closed_trades || [], period);
+            }
+        }
+
+        function getWeekNumber(date) {
+            const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+            const dayNum = d.getUTCDay() || 7;
+            d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+            const yearStart = new Date(Date.UTC(d.getUTCFullYear(),0,1));
+            return Math.ceil((((d - yearStart) / 86400000) + 1)/7);
+        }
+
+        // Load data immediately
+        loadDashboardData();
+
+        // Reload every 10 seconds
+        setInterval(loadDashboardData, 10000);
+    </script>
+</body>
+</html>

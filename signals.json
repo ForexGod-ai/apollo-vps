@@ -1,13 +1,13 @@
 {
-  "SignalId": "NZDUSD_BUY_1767854957",
-  "Symbol": "NZDUSD",
-  "Direction": "buy",
+  "SignalId": "USDCAD_SELL_1770123465",
+  "Symbol": "USDCAD",
+  "Direction": "sell",
   "StrategyType": "PULLBACK",
-  "EntryPrice": 0.5734882857142857,
-  "StopLoss": 0.5713607142857143,
-  "TakeProfit": 0.58409,
-  "StopLossPips": 21.3,
-  "TakeProfitPips": 106.0,
-  "RiskReward": 4.98,
-  "Timestamp": "2026-01-08T08:49:17.164042"
+  "EntryPrice": 1.36603,
+  "StopLoss": 1.36849,
+  "TakeProfit": 1.3279868499999998,
+  "StopLossPips": 24.6,
+  "TakeProfitPips": 380.4,
+  "RiskReward": 15.46,
+  "Timestamp": "2026-02-03T14:57:45.161009"
 }

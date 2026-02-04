@@ -1,3 +1,0 @@
-#!/bin/bash
-cd "/Users/forexgod/Desktop/Glitch in Matrix/trading-ai-agent apollo"
-/usr/bin/python3 realtime_monitor.py >> logs/realtime_monitor.log 2>&1

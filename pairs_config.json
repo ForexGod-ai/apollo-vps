@@ -4,8 +4,28 @@
       "symbol": "XAUUSD",
       "mt5_symbol": "XAUUSD",
       "priority": 1,
-      "description": "Gold vs US Dollar - Best performer: +146% return, 86% WR",
-      "category": "commodity"
+      "description": "Gold vs US Dollar - V3.3 HYBRID ENTRY (Pullback OR Momentum)",
+      "category": "commodity",
+      "use_immediate_entry": false,
+      "pullback_strategy": {
+        "enabled": true,
+        "scale_in_enabled": true,
+        "continuation_check_hours": 6,
+        "continuation_momentum_threshold": 60,
+        "pullback_timeout_hours": 12,
+        "entry1_timeframe": "1H",
+        "entry2_timeframe": "4H",
+        "entry1_percent": 50,
+        "entry2_percent": 50,
+        "note": "V3.3 HYBRID: Pullback (classic) OR Continuation momentum after 6h (score ≥60)"
+      },
+      "quality_filters": {
+        "fvg_validation": "v2.0_strict",
+        "allow_only_continuation": true,
+        "preferred_direction": "bearish",
+        "max_trades_per_fvg": 4,
+        "note": "V2.0 FVG filter (Gap ≥0.15%, Body ≥40%) + max 4 trades per zone"
+      }
     },
     {
       "symbol": "USDCAD",
@@ -149,6 +169,17 @@
       "entry2_timeout_hours": 48,
       "entry1_profit_threshold_pips": 20,
       "setup_expiry_hours": 72
+    },
+    "pullback_strategy": {
+      "enabled": true,
+      "fibo_level": 0.5,
+      "tolerance_pips": 10,
+      "pullback_timeout_hours": 12,
+      "continuation_check_hours": 6,
+      "swing_lookback_candles": 5,
+      "sl_buffer_pips": 10,
+      "on_timeout_action": "force_entry",
+      "continuation_momentum_threshold": 60
     },
     "telegram_alerts": true,
     "chart_generation": true

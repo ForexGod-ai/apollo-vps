@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- ================================================================ -->
+    <!-- 💾 GLITCH IN MATRIX - Database Backup with Telegram Delivery    -->
+    <!-- ================================================================ -->
+    <!-- Rulează: Duminică 03:00 (weekly automatic backup)               -->
+    <!-- Acțiuni: Backup SQLite + Send to Telegram + Cleanup old files   -->
+    <!-- ================================================================ -->
+    
+    <key>Label</key>
+    <string>com.forexgod.dbbackup</string>
+    
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/forexgod/Desktop/Glitch in Matrix/trading-ai-agent apollo/.venv/bin/python</string>
+        <string>/Users/forexgod/Desktop/Glitch in Matrix/trading-ai-agent apollo/db_backup.py</string>
+        <string>--create</string>
+        <string>--telegram</string>
+        <string>--cleanup-days</string>
+        <string>30</string>
+    </array>
+    
+    <!-- Rulează în fiecare Duminică la 03:00 -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Weekday</key>
+        <integer>0</integer>
+        <key>Hour</key>
+        <integer>3</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+    
+    <!-- Working directory -->
+    <key>WorkingDirectory</key>
+    <string>/Users/forexgod/Desktop/Glitch in Matrix/trading-ai-agent apollo</string>
+    
+    <!-- Logs -->
+    <key>StandardOutPath</key>
+    <string>/Users/forexgod/Desktop/Glitch in Matrix/trading-ai-agent apollo/logs/db_backup.log</string>
+    
+    <key>StandardErrorPath</key>
+    <string>/Users/forexgod/Desktop/Glitch in Matrix/trading-ai-agent apollo/logs/db_backup_error.log</string>
+    
+    <!-- Run on load (doar dacă a ratat ultima executare) -->
+    <key>RunAtLoad</key>
+    <false/>
+    
+    <!-- Environment variables (pentru Telegram credentials) -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+</dict>
+</plist>

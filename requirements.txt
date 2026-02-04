@@ -13,4 +13,5 @@ pydantic>=2.5.0
 loguru>=0.7.0
 selenium>=4.15.0
 matplotlib>=3.8.0
+python-telegram-bot==20.7
 # yfinance>=0.2.49  # REMOVED - replaced with Twelve Data API for LIVE data

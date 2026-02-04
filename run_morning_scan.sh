@@ -17,17 +17,27 @@ echo ""
 # source venv/bin/activate
 
 # Run morning scanner (GLITCH IN MATRIX 2.0)
-echo "🔍 Scanning markets for trading setups with Glitch 2.0..."
+echo "🔍 Step 1: Scanning markets for trading setups..."
 python3 daily_scanner.py
 
-# Check exit code
+# Check scanner exit code
 if [ $? -eq 0 ]; then
     echo ""
-    echo "✅ Morning scan completed successfully!"
-    echo "📱 Check Telegram for results"
+    echo "✅ Scanner completed successfully!"
+    echo ""
+    echo "📱 Step 2: Sending Telegram report with setups..."
+    python3 send_morning_scan_report.py
+    
+    if [ $? -eq 0 ]; then
+        echo ""
+        echo "✅ Morning report sent to Telegram!"
+    else
+        echo ""
+        echo "⚠️ Report send failed (code $?)"
+    fi
 else
     echo ""
-    echo "❌ Morning scan failed with error code $?"
+    echo "❌ Scanner failed with error code $?"
     echo "📋 Check logs/morning_scan.log for details"
 fi
 

@@ -83,6 +83,24 @@
             backdrop-filter: blur(10px);
             margin-bottom: 20px;
         }
+        #closedTradesList {
+            max-height: none;
+            overflow-y: visible;
+        }
+        #closedTradesList::-webkit-scrollbar {
+            width: 8px;
+        }
+        #closedTradesList::-webkit-scrollbar-track {
+            background: rgba(255,255,255,0.1);
+            border-radius: 10px;
+        }
+        #closedTradesList::-webkit-scrollbar-thumb {
+            background: rgba(255,255,255,0.3);
+            border-radius: 10px;
+        }
+        #closedTradesList::-webkit-scrollbar-thumb:hover {
+            background: rgba(255,255,255,0.5);
+        }
         .section-title {
             font-size: 1.5em;
             margin-bottom: 20px;
@@ -152,7 +170,17 @@
         </div>
 
         <div class="trades-section" id="closedTrades" style="display: none;">
-            <div class="section-title">✅ RECENT CLOSED TRADES</div>
+            <div class="section-title" style="display: flex; justify-content: space-between; align-items: center;">
+                <span>📋 Recent Closed Trades</span>
+                <select id="tradesLimit" onchange="loadDashboardData()" style="padding: 10px 18px; background: #2a2a2a; border: 2px solid #555; color: #fff; border-radius: 10px; cursor: pointer; font-size: 15px; font-weight: bold; box-shadow: 0 2px 8px rgba(0,0,0,0.3);">
+                    <option value="10" selected>Last 10 trades</option>
+                    <option value="20">Last 20 trades</option>
+                    <option value="30">Last 30 trades</option>
+                    <option value="50">Last 50 trades</option>
+                    <option value="100">Last 100 trades</option>
+                    <option value="all">Show ALL</option>
+                </select>
+            </div>
             <div id="closedTradesList"></div>
         </div>
 
@@ -223,8 +251,23 @@
                 // Update open positions
                 updateOpenPositions(openTrades);
 
-                // Update closed trades
-                updateClosedTrades(closedTrades.slice(-10).reverse());
+                // Update dropdown ALL option with total count
+                const allOption = document.querySelector('#tradesLimit option[value="all"]');
+                if (allOption) {
+                    allOption.textContent = `Show ALL (${totalClosed})`;
+                }
+
+                // Sort closed trades by close_time (most recent first)
+                const sortedClosedTrades = [...closedTrades].sort((a, b) => {
+                    const timeA = new Date(a.close_time || 0).getTime();
+                    const timeB = new Date(b.close_time || 0).getTime();
+                    return timeB - timeA; // Descending (newest first)
+                });
+
+                // Update closed trades based on dropdown selection
+                const limit = document.getElementById('tradesLimit')?.value || '10';
+                const tradesToShow = limit === 'all' ? sortedClosedTrades : sortedClosedTrades.slice(0, parseInt(limit));
+                updateClosedTrades(tradesToShow);
 
                 // Update last update time
                 document.getElementById('lastUpdate').textContent = 
@@ -313,10 +356,15 @@
             }
 
             section.style.display = 'block';
-            list.innerHTML = trades.map(trade => {
+            
+            // Get current limit from dropdown
+            const limit = document.getElementById('tradesLimit')?.value || '10';
+            const tradesToShow = limit === 'all' ? trades : trades.slice(0, parseInt(limit));
+            
+            list.innerHTML = tradesToShow.map(trade => {
                 const profit = trade.profit || 0;
-                const outcome = profit > 0 ? '✅ TP' : '❌ SL';
-                const closeTime = (trade.close_time || '').substring(0, 16);
+                const outcome = profit > 0 ? '✅ WIN' : '❌ LOSS';
+                const closeTime = (trade.close_time || '').substring(0, 16).replace('T', ' ');
                 
                 return `
                     <div class="trade-item">
@@ -337,8 +385,18 @@
         // Load data immediately
         loadDashboardData();
 
-        // Refresh every 10 seconds
+        // Reload every 10 seconds
         setInterval(loadDashboardData, 10000);
+
+        // Add event listener for trades limit dropdown
+        document.addEventListener('DOMContentLoaded', () => {
+            const tradesLimitSelect = document.getElementById('tradesLimit');
+            if (tradesLimitSelect) {
+                tradesLimitSelect.addEventListener('change', () => {
+                    loadDashboardData(); // Reload data when selection changes
+                });
+            }
+        });
     </script>
 </body>
 </html>

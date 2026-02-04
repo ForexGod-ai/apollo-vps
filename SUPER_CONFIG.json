@@ -1,0 +1,86 @@
+{
+  "system_info": {
+    "name": "Glitch in Matrix Trading System",
+    "owner": "ФорексГод",
+    "version": "3.1",
+    "last_updated": "2026-02-04",
+    "comment": "SINGLE SOURCE OF TRUTH - Used by both Python and cBot"
+  },
+  
+  "risk_management": {
+    "risk_per_trade_percent": 5.0,
+    "max_risk_per_trade_percent": 7.0,
+    "min_risk_per_trade_percent": 2.0,
+    "comment": "AGGRESSIVE: 5% risk per trade for faster growth"
+  },
+  
+  "position_limits": {
+    "max_open_positions": 15,
+    "max_positions_per_symbol": 1,
+    "max_trades_per_day": 8,
+    "comment": "Temporary 15 for current 11 positions, reduce to 5 on live"
+  },
+  
+  "daily_limits": {
+    "max_daily_loss_percent": 10.0,
+    "daily_loss_warning_percent": 7.0,
+    "max_daily_profit_percent": 50.0,
+    "comment": "10% daily loss = KILL SWITCH activated"
+  },
+  
+  "lot_size": {
+    "min_lot": 0.01,
+    "max_lot": 2.0,
+    "step_lot": 0.01,
+    "comment": "Dynamic calculation based on SL distance"
+  },
+  
+  "exposure_limits": {
+    "max_exposure_per_currency_percent": 30.0,
+    "max_total_exposure_percent": 80.0,
+    "comment": "Prevent over-concentration in single currency"
+  },
+  
+  "kill_switch": {
+    "enabled": true,
+    "trigger_daily_loss_percent": 10.0,
+    "flag_file": "trading_disabled.flag",
+    "reset_hour": 0,
+    "comment": "Auto-disable trading if daily loss >= 10%"
+  },
+  
+  "auto_management": {
+    "breakeven_trigger_pips": 50.0,
+    "auto_close_profit_pips": 100.0,
+    "trailing_stop_enabled": false,
+    "trailing_stop_distance_pips": 30.0,
+    "comment": "Automatic position management by cBot"
+  },
+  
+  "telegram_alerts": {
+    "enabled": true,
+    "send_on_risk_violation": true,
+    "send_on_kill_switch": true,
+    "send_daily_summary": true,
+    "branding": "✨ Glitch in Matrix by ФорексГод ✨",
+    "comment": "All risk alerts include branding signature"
+  },
+  
+  "execution": {
+    "slippage_points": 20,
+    "magic_number": 234000,
+    "order_comment": "Glitch Matrix v3.1",
+    "retry_on_error": true,
+    "max_retries": 3,
+    "comment": "Trade execution parameters"
+  },
+  
+  "validation": {
+    "check_balance_before_trade": true,
+    "check_positions_count": true,
+    "check_daily_loss": true,
+    "check_kill_switch": true,
+    "check_currency_exposure": true,
+    "comment": "Pre-execution validation checklist"
+  }
+}

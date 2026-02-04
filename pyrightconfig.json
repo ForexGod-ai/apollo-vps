@@ -1,0 +1,11 @@
+{
+  "extraPaths": [
+    "/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/site-packages"
+  ],
+  "reportMissingImports": false,
+  "reportMissingModuleSource": false,
+  "reportUndefinedVariable": false,
+  "pythonVersion": "3.14",
+  "typeCheckingMode": "off",
+  "stubPath": ""
+}

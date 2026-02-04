@@ -19,6 +19,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 import time
+import pytz
 
 load_dotenv()
 
@@ -53,6 +54,10 @@ class NewsCalendarMonitor:
         self.bot_token = os.getenv('TELEGRAM_BOT_TOKEN')
         self.chat_id = os.getenv('TELEGRAM_CHAT_ID')
         self.base_url = f"https://api.telegram.org/bot{self.bot_token}"
+        
+        # Timezone for Romania (GMT+2 / EET)
+        self.local_tz = pytz.timezone('Europe/Bucharest')
+        self.utc_tz = pytz.UTC
         
         if not self.bot_token or not self.chat_id:
             raise ValueError("TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID must be set in .env")
@@ -121,7 +126,8 @@ class NewsCalendarMonitor:
             else:
                 logger.info(f"✅ Using events from '{section_name}'")
             
-            now = datetime.now()
+            # Use timezone-aware now
+            now = datetime.now(self.local_tz)
             end_date = now + timedelta(days=days_ahead)
             
             events = []
@@ -136,8 +142,11 @@ class NewsCalendarMonitor:
                             hour=int(time_parts[0]),
                             minute=int(time_parts[1])
                         )
+                        # Assume time in economic_calendar.json is UTC, convert to local
+                        event_date = self.utc_tz.localize(event_date).astimezone(self.local_tz)
                     else:
                         event_date = event_date.replace(hour=12, minute=0)
+                        event_date = self.local_tz.localize(event_date)
                     
                     # Check if within date range
                     if event_date < now or event_date > end_date:
@@ -453,9 +462,18 @@ class NewsCalendarMonitor:
         return high_impact
     
     def format_telegram_message(self, events: List[NewsEvent]) -> str:
-        """Format news events into Telegram message"""
+        """Format news events into professional Telegram message - UPGRADED v3.0"""
         if not events:
-            return "✅ No high-impact news in the next 48 hours. Safe to trade! 💰"
+            return """
+✅ *ALL CLEAR - NO HIGH IMPACT NEWS*
+
+🟢 *Market Status:* SAFE TO TRADE
+📊 *Next 48h:* No major economic events
+💎 *Risk Level:* LOW
+━━━━━━━━━━━━━━━━━━━━
+✨ *Glitch in Matrix* by ФорексГод
+🧠 AI-Powered • 💎 Smart Money
+"""
         
         # Currency flag emojis
         flags = {
@@ -463,9 +481,20 @@ class NewsCalendarMonitor:
             'AUD': '🇦🇺', 'NZD': '🇳🇿', 'CAD': '🇨🇦', 'CHF': '🇨🇭'
         }
         
-        message = "⚠️ *HIGH IMPACT NEWS ALERT* ⚠️\n\n"
-        message += "🚨 *AVOID TRADING DURING THESE TIMES* 🚨\n"
-        message += "━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        # Count critical events
+        critical_count = sum(1 for e in events if any(keyword.lower() in e.event.lower() for keyword in ['NFP', 'FOMC', 'CPI', 'Interest Rate', 'GDP']))
+        
+        # Header - UPGRADED
+        now = datetime.now()
+        message = f"⚡ *NEWS ALERT* • {now.strftime('%H:%M %Z')} ⚡\n"
+        message += f"📅 {now.strftime('%A, %B %d, %Y')}\n\n"
+        
+        if critical_count > 0:
+            message += f"🔥 *{critical_count} CRITICAL EVENT{'S' if critical_count > 1 else ''}* 🔥\n"
+        
+        message += f"📊 {len(events)} HIGH impact event{'s' if len(events) > 1 else ''} next 48h\n"
+        message += "⚠️ Avoid trading 30min before/during\n"
+        message += "━━━━━━━━━━━━━━━━━━━━\n\n"
         
         # Group by date
         events_by_date = {}
@@ -475,45 +504,122 @@ class NewsCalendarMonitor:
                 events_by_date[date_key] = []
             events_by_date[date_key].append(event)
         
+        # Display each day
         for date, date_events in events_by_date.items():
-            message += f"📅 *{date}*\n\n"
+            message += f"📍 *{date}*\n"
+            message += "─────────────────────\n\n"
             
             for event in date_events:
                 flag = flags.get(event.currency, '🏴')
-                time_str = event.time.strftime("%I:%M %p")
+                time_str = event.time.strftime("%H:%M")
                 
-                # Time until event
-                now = datetime.now()
-                time_diff = event.time - now
+                # Time until event - SIMPLIFIED
+                now = datetime.now(self.local_tz)
+                if event.time.tzinfo is None:
+                    event_time_aware = self.local_tz.localize(event.time)
+                else:
+                    event_time_aware = event.time.astimezone(self.local_tz)
+                
+                time_diff = event_time_aware - now
                 hours = int(time_diff.total_seconds() // 3600)
                 
-                if hours < 1:
-                    countdown = "⏰ *SOON*"
-                elif hours < 24:
-                    countdown = f"⏰ in {hours}h"
+                # Countdown with urgency
+                if hours < 0:
+                    countdown_emoji = "🔴"
+                    countdown = "LIVE NOW"
+                elif hours < 1:
+                    countdown_emoji = "🔴"
+                    countdown = f"< 1 HOUR"
+                elif hours < 3:
+                    countdown_emoji = "🟠"
+                    countdown = f"{hours}h"
+                elif hours < 12:
+                    countdown_emoji = "🟡"
+                    countdown = f"{hours}h"
                 else:
+                    countdown_emoji = "🟢"
                     days = hours // 24
-                    countdown = f"⏰ in {days}d {hours % 24}h"
+                    if days > 0:
+                        countdown = f"{days}d {hours % 24}h"
+                    else:
+                        countdown = f"{hours}h"
                 
-                # Critical marker
-                critical_marker = "🔥 *CRITICAL* " if hasattr(event, 'is_critical') and event.is_critical else ""
+                # Detect CRITICAL events
+                is_critical = any(keyword.lower() in event.event.lower() 
+                                for keyword in ['NFP', 'Non-Farm', 'Payroll', 'FOMC', 'Interest Rate', 'CPI', 'GDP'])
                 
-                message += f"{flag} *{event.currency}* - {time_str} {countdown}\n"
-                message += f"{critical_marker}{event.event}\n"
+                critical_marker = "⚠️ " if is_critical else ""
+                
+                # Format event line - CLEAN & PRO
+                message += f"\n{critical_marker}{flag} *{event.currency}* - {event.event}\n"
+                message += f"   🕐 {time_str}\n"
+                message += f"   🔴 Impact: *High*\n"
                 
                 if event.forecast:
-                    message += f"📊 Forecast: {event.forecast}\n"
+                    message += f"   📊 Forecast: `{event.forecast}`\n"
                 if event.previous:
-                    message += f"📈 Previous: {event.previous}\n"
+                    message += f"   📈 Previous: `{event.previous}`\n"
                 
-                message += "\n"
+                # Add specific warnings for CRITICAL events
+                if is_critical:
+                    if 'NFP' in event.event.upper() or 'PAYROLL' in event.event.upper():
+                        message += f"   💥 *EXTREME VOLATILITY - Avoid USD pairs*\n"
+                    elif 'FOMC' in event.event.upper():
+                        message += f"   💥 *FED DECISION - Major USD impact*\n"
+                    elif 'CPI' in event.event.upper() or 'INFLATION' in event.event.upper():
+                        message += f"   📊 *Inflation data - High volatility*\n"
+                    elif 'INTEREST RATE' in event.event.upper():
+                        message += f"   💰 *Rate Decision - Avoid {event.currency} pairs*\n"
             
-            message += "─────────────────────\n\n"
+            message += "\n"
         
-        message += "💡 *Trading Tip:*\n"
-        message += "Close positions 30min before news\n"
-        message += "Wait 15-30min after for volatility to settle\n\n"
-        message += "🤖 ForexGod AI - Glitch in Matrix"
+        # Summary by currency - UPGRADED
+        message += "━━━━━━━━━━━━━━━━━━━━\n"
+        message += "📊 *SUMMARY BY CURRENCY:*\n\n"
+        
+        currency_counts = {}
+        for event in events:
+            if event.currency not in currency_counts:
+                currency_counts[event.currency] = {'total': 0, 'critical': 0}
+            currency_counts[event.currency]['total'] += 1
+            if any(k.lower() in event.event.lower() for k in ['NFP', 'FOMC', 'CPI', 'Interest Rate']):
+                currency_counts[event.currency]['critical'] += 1
+        
+        sorted_currencies = sorted(currency_counts.items(), key=lambda x: x[1]['total'], reverse=True)
+        
+        for currency, counts in sorted_currencies:
+            flag = flags.get(currency, '🏴')
+            critical_marker = f" (⚠️ {counts['critical']} critical)" if counts['critical'] > 0 else ""
+            message += f"{flag} *{currency}*: {counts['total']} event{'s' if counts['total'] > 1 else ''}{critical_marker}\n"
+        
+        # Trading recommendations - UPGRADED
+        message += "\n━━━━━━━━━━━━━━━━━━━━\n"
+        message += "🎯 *TRADING PROTOCOL:*\n\n"
+        
+        if critical_count > 2:
+            message += "🔴 *HIGH VOLATILITY PERIOD*\n"
+            message += "• Reduce position sizes by 50%\n"
+            message += "• Wider stop losses recommended\n"
+            message += "• Close trades 30min before major news\n"
+        elif critical_count > 0:
+            message += "🟠 *MODERATE VOLATILITY*\n"
+            message += "• Standard risk management\n"
+            message += "• Monitor news times closely\n"
+            message += "• Move SL to breakeven before news\n"
+        else:
+            message += "🟢 *NORMAL TRADING CONDITIONS*\n"
+            message += "• Standard position sizing\n"
+            message += "• Still avoid 30min before/during news\n"
+        
+        # Footer - UPGRADED
+        message += "\n━━━━━━━━━━━━━━━━━━━━\n"
+        message += "💡 *REMINDERS:*\n"
+        message += "• Close trades 30min before major news\n"
+        message += "• NFP, FOMC = extreme volatility\n"
+        message += "• Check updates: 8am, 2pm, 8pm, 2am\n\n"
+        message += "━━━━━━━━━━━━━━━━━━━━\n"
+        message += "✨ *Glitch in Matrix* by ФорексГод ✨\n"
+        message += "🧠 Smart Money • 💎 AI-Powered\n"
         
         return message
     

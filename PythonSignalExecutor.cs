@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
+using System.Collections.Generic;
 using cAlgo.API;
 using cAlgo.API.Indicators;
 using cAlgo.API.Internals;
@@ -10,39 +11,6 @@ namespace cAlgo.Robots
 {
     [Robot(TimeZone = TimeZones.UTC, AccessRights = AccessRights.FullAccess)]
     public class PythonSignalExecutor : Robot
-            private void ExportActivePositions()
-            {
-                try
-                {
-                    var positionsList = new List<object>();
-                    foreach (var position in Account.Positions)
-                    {
-                        var symbol = Symbols.GetSymbol(position.SymbolName);
-                        if (symbol == null)
-                            continue;
-
-                        var exportObj = new {
-                            symbol = position.SymbolName,
-                            direction = position.TradeType.ToString().ToLower(),
-                            entry_price = position.EntryPrice,
-                            volume = position.Volume,
-                            opened_at = position.EntryTime,
-                            stop_loss = position.StopLoss,
-                            take_profit = position.TakeProfit
-                        };
-                        Print($"[EXPORT] {exportObj.symbol} | {exportObj.direction} | Entry: {exportObj.entry_price} | Vol: {exportObj.volume}");
-                        positionsList.Add(exportObj);
-                    }
-                    var exportPath = SignalFilePath.Replace("signals.json", "active_positions.json");
-                    var options = new JsonSerializerOptions { WriteIndented = true };
-                    File.WriteAllText(exportPath, JsonSerializer.Serialize(positionsList, options));
-                    Print($"✅ Active positions exported to {exportPath}");
-                }
-                catch (Exception ex)
-                {
-                    Print($"❌ Error exporting active positions: {ex.Message}");
-                }
-            }
     {
         [Parameter("Signal File Path", DefaultValue = "/Users/forexgod/Desktop/Glitch in Matrix/trading-ai-agent apollo/signals.json")]
         public string SignalFilePath { get; set; }
@@ -81,70 +49,81 @@ namespace cAlgo.Robots
                 // FIRST: Manage existing positions
                 ManageOpenPositions();
                 
+                // Export active positions for Telegram sync
+                ExportActivePositions();
+                
                 // THEN: Check for new signals
                 if (!File.Exists(SignalFilePath))
-                try
+                    return;
+                
+                var fileInfo = new FileInfo(SignalFilePath);
+                if (fileInfo.LastWriteTime <= _lastFileCheck)
+                    return;
+                
+                _lastFileCheck = fileInfo.LastWriteTime;
+                
+                var json = File.ReadAllText(SignalFilePath);
+                Print($"🔍 Raw JSON: {json}");
+                
+                var signal = JsonSerializer.Deserialize<TradeSignal>(json);
+                
+                if (signal == null)
                 {
-                    // FIRST: Manage existing positions
-                    ManageOpenPositions();
-                    // Export active positions for Telegram sync (forțat la fiecare tick)
-                    ExportActivePositions();
-                    // DEBUG: Log toate pozițiile exportate
-                    var exportPath = SignalFilePath.Replace("signals.json", "active_positions.json");
-                    if (File.Exists(exportPath))
+                    Print("❌ Failed to deserialize signal (NULL)");
+                    return;
+                }
+                
+                Print($"✅ Signal deserialized: {signal.SignalId}");
+                
+                // Check if signal was already processed (persistent check)
+                string processedSignalsFile = Path.Combine(Path.GetDirectoryName(SignalFilePath), "processed_signals.txt");
+                if (File.Exists(processedSignalsFile))
+                {
+                    string[] processedSignals = File.ReadAllLines(processedSignalsFile);
+                    if (processedSignals.Contains(signal.SignalId))
                     {
-                        var exported = File.ReadAllText(exportPath);
-                        Print($"[DEBUG] active_positions.json: {exported}");
-                    }
-                    // THEN: Check for new signals
-                    if (!File.Exists(SignalFilePath))
+                        Print($"⏭️  Signal already processed (persistent): {signal.SignalId}");
                         return;
-                    var fileInfo = new FileInfo(SignalFilePath);
-                    if (fileInfo.LastWriteTime <= _lastFileCheck)
-                        return;
-                    _lastFileCheck = fileInfo.LastWriteTime;
-                    var json = File.ReadAllText(SignalFilePath);
-                    Print($"🔍 Raw JSON: {json}");
-                    
-                    var signal = JsonSerializer.Deserialize<TradeSignal>(json);
-                    
-                    if (signal == null)
-                    {
-                        Print("❌ Failed to deserialize signal (NULL)");
-                        return;
-                    }
-                    
-                    Print($"✅ Signal deserialized: {signal.SignalId}");
-                    
-                    if (signal.SignalId == _lastProcessedSignal)
-                    {
-                        Print($"⏭️  Signal already processed: {signal.SignalId}");
-                        return;
-                    }
-                    
-                    _lastProcessedSignal = signal.SignalId;
-                    Print($"📊 NEW SIGNAL RECEIVED: {signal.Symbol} {signal.Direction.ToUpper()}");
-                    Print($"   Strategy: {signal.StrategyType}");
-                    Print($"   Entry: {signal.EntryPrice}");
-                    Print($"   SL: {signal.StopLoss}");
-                    Print($"   TP: {signal.TakeProfit}");
-                    Print($"   R:R: 1:{signal.RiskReward}");
-                    ExecuteSignal(signal);
-                    
-                    // Clear signal file after processing
-                    try
-                    {
-                        File.Delete(SignalFilePath);
-                        Print($"🗑️  Signal file cleared");
-                    }
-                    catch (Exception deleteEx)
-                    {
-                        Print($"⚠️  Could not delete signal file: {deleteEx.Message}");
                     }
                 }
-                catch (Exception ex)
+                
+                // Skip if already processed in current session
+                if (signal.SignalId == _lastProcessedSignal)
                 {
-                    Print($"❌ ERROR: {ex.Message}");
+                    Print($"⏭️  Signal already processed (session): {signal.SignalId}");
+                    return;
+                }
+                
+                _lastProcessedSignal = signal.SignalId;
+                Print($"📊 NEW SIGNAL RECEIVED: {signal.Symbol} {signal.Direction.ToUpper()}");
+                Print($"   Strategy: {signal.StrategyType}");
+                Print($"   Entry: {signal.EntryPrice}");
+                Print($"   SL: {signal.StopLoss}");
+                Print($"   TP: {signal.TakeProfit}");
+                Print($"   R:R: 1:{signal.RiskReward}");
+                
+                ExecuteSignal(signal);
+                
+                // Mark signal as processed (persistent) - reuse variable from above
+                try
+                {
+                    File.AppendAllText(processedSignalsFile, signal.SignalId + Environment.NewLine);
+                    Print($"✅ Signal marked as processed: {signal.SignalId}");
+                }
+                catch (Exception markEx)
+                {
+                    Print($"⚠️  Could not mark signal as processed: {markEx.Message}");
+                }
+                
+                // Clear signal file after processing
+                try
+                {
+                    File.Delete(SignalFilePath);
+                    Print($"🗑️  Signal file cleared");
+                }
+                catch (Exception deleteEx)
+                {
+                    Print($"⚠️  Could not delete signal file: {deleteEx.Message}");
                 }
             }
             catch (Exception ex)
@@ -177,66 +156,28 @@ namespace cAlgo.Robots
         {
             foreach (var position in Positions)
             {
+                // Skip positions not from this bot
                 if (!position.Label.StartsWith("Glitch Matrix"))
-                    try
-                    {
-                        // FIRST: Manage existing positions
-                        ManageOpenPositions();
-                        // Export active positions for Telegram sync
-                        ExportActivePositions();
-                        // THEN: Check for new signals
-                        if (!File.Exists(SignalFilePath))
-                            return;
-                        var fileInfo = new FileInfo(SignalFilePath);
-                        if (fileInfo.LastWriteTime <= _lastFileCheck)
-                            return;
-                        _lastFileCheck = fileInfo.LastWriteTime;
-                        var json = File.ReadAllText(SignalFilePath);
-                        var signal = JsonSerializer.Deserialize<TradeSignal>(json);
-                        if (signal == null || signal.SignalId == _lastProcessedSignal)
-                            return;
-                        _lastProcessedSignal = signal.SignalId;
-                        Print($"📊 NEW SIGNAL RECEIVED: {signal.Symbol} {signal.Direction.ToUpper()}");
-                        Print($"   Strategy: {signal.StrategyType}");
-                        Print($"   Entry: {signal.EntryPrice}");
-                        ExecuteSignal(signal);
-                    }
-                    catch (Exception ex)
-                    {
-                        Print($"❌ Error in OnTimer: {ex.Message}");
-                    }
-                    {
-                        Print($"✅ POSITION CLOSED: ${position.NetProfit:F2} profit");
-                        LogTradeClosure(position, profitPips, "auto_close_100pips");
-                    }
+                    continue;
+                
+                var symbol = Symbols.GetSymbol(position.SymbolName);
+                if (symbol == null)
+                    continue;
+                
+                double profitPips = position.Pips;
+                
+                // AUTO CLOSE at 100 pips profit
+                if (profitPips >= AutoCloseProfitPips)
+                {
+                    Print($"🎯 AUTO-CLOSE TRIGGERED: {position.SymbolName} at +{profitPips:F1} pips");
+                    ClosePosition(position);
+                    Print($"✅ POSITION CLOSED: ${position.NetProfit:F2} profit");
+                    LogTradeClosure(position, profitPips, "auto_close_100pips");
                     continue;
                 }
 
-                // MOVE SL TO BREAKEVEN at 50 pips
-                if (profitPips >= BreakevenTriggerPips && position.StopLoss.HasValue)
-                {
-                    double currentSL = position.StopLoss.Value;
-                    double breakevenPrice = position.EntryPrice;
-                    
-                    bool shouldMove = false;
-                    if (position.TradeType == TradeType.Buy && currentSL < breakevenPrice)
-                    {
-                        shouldMove = true;
-                    }
-                    else if (position.TradeType == TradeType.Sell && currentSL > breakevenPrice)
-                    {
-                        shouldMove = true;
-                    }
-
-                    if (shouldMove)
-                    {
-                        Print($"🔒 MOVING TO BREAKEVEN: {position.SymbolName}");
-                        Print($"   Current profit: +{profitPips:F1} pips");
-                        Print($"   Moving SL: {currentSL:F5} → {breakevenPrice:F5}");
-                        
-                        ModifyPosition(position, breakevenPrice, position.TakeProfit);
-                    }
-                }
+                // TODO: BREAKEVEN FEATURE DISABLED (cTrader API deprecation)
+                // Will be re-implemented later with new ProtectionType parameter
             }
         }
 
@@ -359,6 +300,42 @@ namespace cAlgo.Robots
             Print($"📊 Volume calculated: {symbol.VolumeInUnitsToQuantity(volumeInLots)} lots");
             
             return volumeInLots;
+        }
+        
+        private void ExportActivePositions()
+        {
+            try
+            {
+                var positionsList = new List<object>();
+                foreach (var position in Positions)
+                {
+                    var symbol = Symbols.GetSymbol(position.SymbolName);
+                    if (symbol == null)
+                        continue;
+
+                    var exportObj = new
+                    {
+                        symbol = position.SymbolName,
+                        direction = position.TradeType.ToString().ToLower(),
+                        entry_price = position.EntryPrice,
+                        volume = position.VolumeInUnits,
+                        opened_at = position.EntryTime,
+                        stop_loss = position.StopLoss,
+                        take_profit = position.TakeProfit,
+                        net_profit = position.NetProfit,
+                        pips = position.Pips
+                    };
+                    positionsList.Add(exportObj);
+                }
+                
+                var exportPath = SignalFilePath.Replace("signals.json", "active_positions.json");
+                var options = new JsonSerializerOptions { WriteIndented = true };
+                File.WriteAllText(exportPath, JsonSerializer.Serialize(positionsList, options));
+            }
+            catch (Exception ex)
+            {
+                Print($"❌ Error exporting active positions: {ex.Message}");
+            }
         }
 
         protected override void OnStop()

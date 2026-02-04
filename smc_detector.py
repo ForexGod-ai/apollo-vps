@@ -1,18 +1,12 @@
-"""
-Smart Money Concepts (SMC) Detector
-Implements: CHoCH, FVG, Multi-timeframe Analysis for "Glitch in Matrix" Strategy
-"""
-
 import pandas as pd
 import numpy as np
-from typing import Dict, List, Tuple, Optional
 from dataclasses import dataclass
+from typing import List, Optional, Dict, Tuple
 from datetime import datetime
 
 
 @dataclass
 class SwingPoint:
-    """Represents a swing high or swing low"""
     index: int
     price: float
     swing_type: str  # 'high' or 'low'
@@ -21,29 +15,18 @@ class SwingPoint:
 
 @dataclass
 class CHoCH:
-    """
-    Change of Character - SCHIMBAREA TRENDULUI
-    Se întâmplă O SINGURĂ DATĂ când trendul se inversează
-    BULLISH → BEARISH sau BEARISH → BULLISH
-    """
     index: int
-    direction: str  # 'bullish' or 'bearish' (NOUL trend după schimbare)
+    direction: str
     break_price: float
     previous_trend: str
     candle_time: datetime
     swing_broken: SwingPoint
-
+ 
 
 @dataclass
 class BOS:
-    """
-    Break of Structure - CONTINUAREA TRENDULUI
-    Se întâmplă REPETAT în același trend
-    BULLISH: BOS = Higher High (HH)
-    BEARISH: BOS = Lower Low (LL)
-    """
     index: int
-    direction: str  # 'bullish' or 'bearish' (direcția break-ului)
+    direction: str
     break_price: float
     candle_time: datetime
     swing_broken: SwingPoint
@@ -51,140 +34,168 @@ class BOS:
 
 @dataclass
 class FVG:
-    """Fair Value Gap / Imbalance"""
     index: int
-    direction: str  # 'bullish' or 'bearish'
+    direction: str
     top: float
     bottom: float
     middle: float
     candle_time: datetime
     is_filled: bool = False
     associated_choch: Optional[CHoCH] = None
-    quality_score: int = 0  # V3.0: FVG quality score (0-100)
+    quality_score: int = 0
 
 
 @dataclass
 class TradeSetup:
-    """Complete Glitch in Matrix setup"""
     symbol: str
     daily_choch: CHoCH
     fvg: FVG
-    h4_choch: Optional[CHoCH]  # May be None for MONITORING status
-    entry_price: float
-    stop_loss: float
-    take_profit: float
-    risk_reward: float
-    setup_time: datetime
-    priority: int
-    strategy_type: str = "reversal"  # 'reversal' or 'continuation'
-    status: str = 'MONITORING'  # 'MONITORING' (watching) or 'READY' (can execute)
+    h4_choch: Optional[CHoCH]
+    h1_choch: Optional[CHoCH] = None  # V3.0: 1H CHoCH for GBP pairs
+    entry_price: float = 0.0
+    stop_loss: float = 0.0
+    take_profit: float = 0.0
+    risk_reward: float = 0.0
+    setup_time: datetime = None
+    priority: int = 0
+    strategy_type: str = "reversal"
+    status: str = 'MONITORING'
+
+# ------------------- SMCDetector -------------------
 
 
 class SMCDetector:
-    """Detects Smart Money Concepts patterns"""
-    
     def __init__(self, swing_lookback: int = 5):
-        """
-        Args:
-            swing_lookback: Number of candles to look back for swing points
-                          Keep at 5 for sensitivity, but analyze LONGER range for trend
-        """
         self.swing_lookback = swing_lookback
-    
-    def detect_swing_highs(self, df: pd.DataFrame) -> List[SwingPoint]:
+        # Track FVG zones with trade count for ALL pairs (UNIVERSAL anti-overtrading)
+        # Format: {symbol: [(top, bottom, date, trade_count), ...]}
+        self.fvg_zones_tracker = {}  # UNIVERSAL for all pairs
+
+    def detect_choch(self, df: pd.DataFrame) -> List[CHoCH]:
         """
-        Detect swing highs using BODY-ONLY (NO WICKS!)
-        Swing high = highest BODY with lower BODIES on both sides
-        BODY HIGH = max(open, close) - wicks are MANIPULATION!
+        Wrapper simplu: returnează doar lista de CHoCH folosind detect_choch_and_bos.
         """
-        swing_highs = []
-        
-        # Calculate BODY highs for all candles (ignore wicks!)
-        body_highs = df[['open', 'close']].max(axis=1)
-        
-        for i in range(self.swing_lookback, len(df) - self.swing_lookback):
-            current_high = body_highs.iloc[i]
-            
-            # Check left side - all bodies lower
-            left_check = all(
-                current_high > body_highs.iloc[i - j] 
-                for j in range(1, self.swing_lookback + 1)
-            )
-            
-            # Check right side - all bodies lower
-            right_check = all(
-                current_high > body_highs.iloc[i + j] 
-                for j in range(1, self.swing_lookback + 1)
-            )
-            
-            if left_check and right_check:
-                candle_time = df['time'].iloc[i] if 'time' in df.columns else i
-                swing_highs.append(SwingPoint(
-                    index=i,
-                    price=current_high,
-                    swing_type='high',
-                    candle_time=candle_time
-                ))
-        
-        return swing_highs
-    
+        chochs, _ = self.detect_choch_and_bos(df)
+        return chochs
+
+    def detect_fvg(self, df: pd.DataFrame, choch, current_price) -> Optional[FVG]:
+        all_fvgs = []
+        start_idx = choch.index if hasattr(choch, 'index') else 0
+        end_idx = len(df)
+        # METHOD 1: Strict 3-candle gap (classic FVG)
+        for i in range(start_idx + 2, end_idx):
+            if choch.direction == 'bullish':
+                if df['high'].iloc[i - 2] < df['low'].iloc[i]:
+                    gap_top = df['low'].iloc[i]
+                    gap_bottom = df['high'].iloc[i - 2]
+                    fvg = FVG(
+                        index=i,
+                        direction='bullish',
+                        top=gap_top,
+                        bottom=gap_bottom,
+                        middle=(gap_top + gap_bottom) / 2,
+                        candle_time=df['time'].iloc[i] if 'time' in df.columns else i,
+                        is_filled=False,
+                        associated_choch=choch
+                    )
+                    all_fvgs.append(fvg)
+            elif choch.direction == 'bearish':
+                if df['low'].iloc[i - 2] > df['high'].iloc[i]:
+                    gap_top = df['low'].iloc[i - 2]
+                    gap_bottom = df['high'].iloc[i]
+                    fvg = FVG(
+                        index=i,
+                        direction='bearish',
+                        top=gap_top,
+                        bottom=gap_bottom,
+                        middle=(gap_top + gap_bottom) / 2,
+                        candle_time=df['time'].iloc[i] if 'time' in df.columns else i,
+                        is_filled=False,
+                        associated_choch=choch
+                    )
+                    all_fvgs.append(fvg)
+        # METHOD 2: Large imbalance zone (REVERSAL setup)
+        if not all_fvgs:
+            swing_highs = self.detect_swing_highs(df)
+            swing_lows = self.detect_swing_lows(df)
+            if choch.direction == 'bullish':
+                lows_before = [sl for sl in swing_lows if sl.index < choch.index]
+                highs_after = [sh for sh in swing_highs if sh.index >= choch.index and sh.index < end_idx]
+                if lows_before:
+                    last_low = lows_before[-1]
+                    gap_bottom = last_low.price
+                    if highs_after:
+                        gap_top = max([sh.price for sh in highs_after])
+                        fvg_index = highs_after[0].index
+                    else:
+                        # Use body highs (not wicks) for consistent FVG zone definition
+                        body_highs = df[['open', 'close']].max(axis=1)
+                        gap_top = body_highs.iloc[start_idx:end_idx].max()
+                        fvg_index = start_idx + body_highs.iloc[start_idx:end_idx].argmax()
+                    if (gap_top - gap_bottom) / gap_bottom > 0.005:
+                        all_fvgs.append(FVG(
+                            index=fvg_index,
+                            direction='bullish',
+                            top=gap_top,
+                            bottom=gap_bottom,
+                            middle=(gap_top + gap_bottom) / 2,
+                            candle_time=df['time'].iloc[fvg_index] if 'time' in df.columns else fvg_index,
+                            is_filled=False,
+                            associated_choch=choch
+                        ))
+            elif choch.direction == 'bearish':
+                highs_before = [sh for sh in swing_highs if sh.index < choch.index]
+                lows_after = [sl for sl in swing_lows if sl.index >= choch.index and sl.index < end_idx]
+                if highs_before:
+                    last_high = highs_before[-1]
+                    gap_top = last_high.price
+                    if lows_after:
+                        gap_bottom = min([sl.price for sl in lows_after])
+                        fvg_index = lows_after[0].index
+                    else:
+                        gap_bottom = df['low'].iloc[start_idx:end_idx].min()
+                        fvg_index = start_idx + df['low'].iloc[start_idx:end_idx].argmin()
+                    if (gap_top - gap_bottom) / gap_bottom > 0.005:
+                        all_fvgs.append(FVG(
+                            index=fvg_index,
+                            direction='bearish',
+                            top=gap_top,
+                            bottom=gap_bottom,
+                            middle=(gap_top + gap_bottom) / 2,
+                            candle_time=df['time'].iloc[fvg_index] if 'time' in df.columns else fvg_index,
+                            is_filled=False,
+                            associated_choch=choch
+                        ))
+        if all_fvgs:
+            all_fvgs.sort(key=lambda fvg: fvg.index)
+            return all_fvgs[-1]
+        return None
+
     def detect_swing_lows(self, df: pd.DataFrame) -> List[SwingPoint]:
-        """
-        Detect swing lows using BODY-ONLY (NO WICKS!)
-        Swing low = lowest BODY with higher BODIES on both sides
-        BODY LOW = min(open, close) - wicks are MANIPULATION!
-        """
+        if df is None or len(df) == 0:
+            return []
         swing_lows = []
-        
-        # Calculate BODY lows for all candles (ignore wicks!)
         body_lows = df[['open', 'close']].min(axis=1)
-        
         for i in range(self.swing_lookback, len(df) - self.swing_lookback):
             current_low = body_lows.iloc[i]
-            
-            # Check left side - all bodies higher
             left_check = all(
-                current_low < body_lows.iloc[i - j] 
+                current_low < body_lows.iloc[i - j]
                 for j in range(1, self.swing_lookback + 1)
             )
-            
-            # Check right side - all bodies higher
             right_check = all(
-                current_low < body_lows.iloc[i + j] 
+                current_low < body_lows.iloc[i + j]
                 for j in range(1, self.swing_lookback + 1)
             )
-            
             if left_check and right_check:
-                candle_time = df['time'].iloc[i] if 'time' in df.columns else i
                 swing_lows.append(SwingPoint(
                     index=i,
                     price=current_low,
                     swing_type='low',
-                    candle_time=candle_time
+                    candle_time=df['time'].iloc[i] if 'time' in df.columns else i
                 ))
-        
         return swing_lows
-    
-    def detect_choch_and_bos(self, df: pd.DataFrame) -> Tuple[List[CHoCH], List[BOS]]:
-        """
-        Detect CHoCH (Change of Character) and BOS (Break of Structure)
-        
-        REAL-TIME LOGIC - SPAȚIU-TIMP:
-        Chart-ul se mișcă în timp real → prețul evoluează → structura se schimbă!
-        
-        1. Găsesc toate swing highs/lows
-        2. Caut BREAK-URI RECENTE ale acestor swing-uri
-        3. CHoCH = break care SCHIMBĂ direcția (bearish → bullish sau invers)
-        4. BOS = break care CONTINUĂ direcția
-        
-        IMPORTANT: Prioritizez break-urile RECENTE (ultimele candles)
-        
-        Returns:
-            Tuple[List[CHoCH], List[BOS]]
-        """
-        chochs = []
-        bos_list = []
-        
+
+    # ...restul metodelor din SMCDetector (detect_choch_and_bos, detect_swing_highs, calculate_entry_sl_tp etc.)...
         swing_highs = self.detect_swing_highs(df)
         swing_lows = self.detect_swing_lows(df)
         
@@ -252,9 +263,10 @@ class SMCDetector:
                             if len(recent_lows) >= 2:
                                 ll_pattern = recent_lows[-1].price < recent_lows[-2].price
                             
-                            # RELAXED VALIDATION: Accept CHoCH if has LH or LL pattern
-                            # Strong CHoCH has BOTH, but accept partial for early detection
-                            if lh_pattern or ll_pattern:  # OR - either pattern is enough
+                            # STRICT VALIDATION: CHoCH requires BOTH LH AND LL patterns
+                            # This ensures we only detect TRUE structure changes (REVERSAL)
+                            # If only one pattern exists → it's BOS, not CHoCH!
+                            if lh_pattern and ll_pattern:  # AND - both patterns required!
                                 # POST-BREAK VALIDATION: Check if price CONFIRMS the change
                                 # Look for swings AFTER the break to confirm HH or HL
                                 swings_after_break = [s for s in swing_highs if s.index > j] + \
@@ -328,9 +340,10 @@ class SMCDetector:
                             if len(recent_lows) >= 2:
                                 hl_pattern = recent_lows[-1].price > recent_lows[-2].price
                             
-                            # RELAXED VALIDATION: Accept CHoCH if has HH or HL pattern
-                            # Strong CHoCH has BOTH, but accept partial for early detection
-                            if hh_pattern or hl_pattern:  # OR - either pattern is enough
+                            # STRICT VALIDATION: CHoCH requires BOTH HH AND HL patterns
+                            # This ensures we only detect TRUE structure changes (REVERSAL)
+                            # If only one pattern exists → it's BOS, not CHoCH!
+                            if hh_pattern and hl_pattern:  # AND - both patterns required!
                                 # POST-BREAK VALIDATION: Check if price CONFIRMS the change
                                 # Look for swings AFTER the break to confirm LH or LL
                                 swings_after_break = [s for s in swing_highs if s.index > j] + \
@@ -385,74 +398,112 @@ class SMCDetector:
         
         return chochs, bos_list
     
-    def detect_choch(self, df: pd.DataFrame) -> List[CHoCH]:
-        """
-        Wrapper function to maintain compatibility
-        Returns only CHoCH (without BOS)
-        """
-        chochs, _ = self.detect_choch_and_bos(df)
-        return chochs
-    
-    def detect_fvg(self, df: pd.DataFrame, choch: CHoCH, current_price: float) -> Optional[FVG]:
-        """
-        Detect Fair Value Gap (FVG) / Imbalance Zone after a CHoCH
+    def detect_swing_highs(self, df: pd.DataFrame) -> List[SwingPoint]:
+        """Detect swing highs using BODY CLOSURE (not wicks) - Smart Money Concepts principle."""
+        if df is None or len(df) == 0:
+            return []
+        swing_highs = []
+        # Calculate body highs (max of open/close) - ignores wicks
+        body_highs = df[['open', 'close']].max(axis=1)
         
-        NEW LOGIC - FLEXIBLE FVG DETECTION:
-        - Accepts both SMALL gaps (3-candle strict) and LARGE imbalance zones
-        - REVERSAL setups = large FVG zones after CHoCH
-        - CONTINUATION setups = smaller pullback gaps
-        
-        Method:
-        1. Look for traditional 3-candle gaps (strict)
-        2. If none found, create imbalance zone from CHoCH to last pullback swing
-        3. Return FVG that makes sense for current price action
-        """
-        all_fvgs = []
-        
-        # Extended range after CHoCH (up to 50 candles to catch large reversals)
-        start_idx = choch.index + 1
-        end_idx = min(choch.index + 51, len(df))
-        
-        if end_idx - start_idx < 3:
-            return None
-        
-        # METHOD 1: Find traditional 3-candle gaps (SMALL FVGs)
-        for i in range(start_idx + 2, end_idx):
-            if choch.direction == 'bullish':
-                # Bullish FVG: gap up (candle[i-2].high < candle[i].low)
-                if df['high'].iloc[i - 2] < df['low'].iloc[i]:
-                    gap_bottom = df['high'].iloc[i - 2]
-                    gap_top = df['low'].iloc[i]
-                    
-                    fvg = FVG(
-                        index=i,
+        for i in range(2, len(df) - 2):
+            if (
+                body_highs.iloc[i] > body_highs.iloc[i - 1]
+                and body_highs.iloc[i] > body_highs.iloc[i - 2]
+                and body_highs.iloc[i] > body_highs.iloc[i + 1]
+                and body_highs.iloc[i] > body_highs.iloc[i + 2]
+            ):
+                swing_highs.append(SwingPoint(
+                    index=i,
+                    price=body_highs.iloc[i],  # Use body high, not wick
+                    swing_type='high',
+                    candle_time=df['time'].iloc[i] if 'time' in df.columns else i
+                ))
+        return swing_highs
+
+    def detect_swing_lows(self, df: pd.DataFrame) -> List[SwingPoint]:
+        if df is None or len(df) == 0:
+            return []
+        swing_lows = []
+        for i in range(2, len(df) - 2):
+            if (
+                df['low'].iloc[i] < df['low'].iloc[i - 1]
+                and df['low'].iloc[i] < df['low'].iloc[i - 2]
+                and df['low'].iloc[i] < df['low'].iloc[i + 1]
+                and df['low'].iloc[i] < df['low'].iloc[i + 2]
+            ):
+                swing_lows.append(SwingPoint(
+                    index=i,
+                    price=df['low'].iloc[i],
+                    swing_type='low',
+                    candle_time=df['time'].iloc[i] if 'time' in df.columns else i
+                ))
+        return swing_lows
+
+    def detect_choch_and_bos(self, df: pd.DataFrame) -> Tuple[List[CHoCH], List[BOS]]:
+        chochs = []
+        bos_list = []
+        swing_highs = self.detect_swing_highs(df)
+        swing_lows = self.detect_swing_lows(df)
+        prev_trend = None
+        for i in range(1, len(swing_highs)):
+            if swing_highs[i].price > swing_highs[i - 1].price:
+                bos_list.append(BOS(
+                    index=swing_highs[i].index,
+                    direction='bullish',
+                    break_price=swing_highs[i].price,
+                    candle_time=swing_highs[i].candle_time,
+                    swing_broken=swing_highs[i-1]
+                ))
+        for i in range(1, len(swing_lows)):
+            if swing_lows[i].price < swing_lows[i - 1].price:
+                bos_list.append(BOS(
+                    index=swing_lows[i].index,
+                    direction='bearish',
+                    break_price=swing_lows[i].price,
+                    candle_time=swing_lows[i].candle_time,
+                    swing_broken=swing_lows[i-1]
+                ))
+        # CHoCH detection with CLOSE confirmation
+        for i in range(1, min(len(swing_highs), len(swing_lows))):
+            if prev_trend == 'bearish' and swing_highs[i].price > swing_highs[i - 1].price:
+                # VALIDATION: Confirm Close price is above previous swing high
+                swing_idx = swing_highs[i].index
+                close_price = df['close'].iloc[swing_idx]
+                prev_swing_high = swing_highs[i - 1].price
+                
+                if close_price > prev_swing_high:
+                    chochs.append(CHoCH(
+                        index=swing_highs[i].index,
                         direction='bullish',
-                        top=gap_top,
-                        bottom=gap_bottom,
-                        middle=(gap_top + gap_bottom) / 2,
-                        candle_time=df['time'].iloc[i] if 'time' in df.columns else i,
-                        is_filled=False,
-                        associated_choch=choch
-                    )
-                    all_fvgs.append(fvg)
-            
-            elif choch.direction == 'bearish':
-                # Bearish FVG: gap down (candle[i-2].low > candle[i].high)
-                if df['low'].iloc[i - 2] > df['high'].iloc[i]:
-                    gap_top = df['low'].iloc[i - 2]
-                    gap_bottom = df['high'].iloc[i]
-                    
-                    fvg = FVG(
-                        index=i,
+                        break_price=swing_highs[i].price,
+                        previous_trend=prev_trend,
+                        candle_time=swing_highs[i].candle_time,
+                        swing_broken=swing_highs[i-1]
+                    ))
+                    prev_trend = 'bullish'
+            elif prev_trend == 'bullish' and swing_lows[i].price < swing_lows[i - 1].price:
+                # VALIDATION: Confirm Close price is below previous swing low
+                swing_idx = swing_lows[i].index
+                close_price = df['close'].iloc[swing_idx]
+                prev_swing_low = swing_lows[i - 1].price
+                
+                if close_price < prev_swing_low:
+                    chochs.append(CHoCH(
+                        index=swing_lows[i].index,
                         direction='bearish',
-                        top=gap_top,
-                        bottom=gap_bottom,
-                        middle=(gap_top + gap_bottom) / 2,
-                        candle_time=df['time'].iloc[i] if 'time' in df.columns else i,
-                        is_filled=False,
-                        associated_choch=choch
-                    )
-                    all_fvgs.append(fvg)
+                        break_price=swing_lows[i].price,
+                        previous_trend=prev_trend,
+                        candle_time=swing_lows[i].candle_time,
+                        swing_broken=swing_lows[i-1]
+                    ))
+                    prev_trend = 'bearish'
+            else:
+                if swing_highs[i].price > swing_highs[i - 1].price:
+                    prev_trend = 'bullish'
+                elif swing_lows[i].price < swing_lows[i - 1].price:
+                    prev_trend = 'bearish'
+        return chochs, bos_list
         
         # METHOD 2: If no strict gaps found, create LARGE imbalance zone (REVERSAL setup)
         if not all_fvgs:
@@ -842,7 +893,8 @@ class SMCDetector:
         fvg: FVG, 
         h4_choch: CHoCH, 
         df_4h: pd.DataFrame,
-        df_daily: pd.DataFrame
+        df_daily: pd.DataFrame,
+        df_1h: Optional[pd.DataFrame] = None  # pentru fallback dacă e nevoie
     ) -> Tuple[float, float, float]:
         """
         Calculate Entry, Stop Loss, and Take Profit
@@ -865,6 +917,7 @@ class SMCDetector:
         """
         
         # Trade direction = DAILY CHoCH direction = FVG direction
+        min_pips = 0.0030  # 30 pips pentru AUDUSD (sau 0.0030 la 5 zecimale)
         if fvg.direction == 'bullish':
             # LONG TRADE (Daily bullish trend)
             
@@ -886,6 +939,18 @@ class SMCDetector:
             # ATR buffer for SL (1.5x 4H ATR)
             atr_4h = (df_4h['high'] - df_4h['low']).rolling(14).mean().iloc[-1]
             stop_loss = swing_low - (1.5 * atr_4h)
+            # Protecție: SL minim 30 pips distanță de entry (valabil și la buy și la sell)
+            if abs(entry - stop_loss) < min_pips:
+                if entry > stop_loss:
+                    stop_loss = entry - min_pips
+                else:
+                    stop_loss = entry + min_pips
+                # Fallback pe 1H dacă există și distanța e ok
+                if df_1h is not None:
+                    recent_lows_1h = df_1h['low'].iloc[-40:]
+                    swing_low_1h = recent_lows_1h.min()
+                    if abs(entry - swing_low_1h) >= min_pips:
+                        stop_loss = swing_low_1h
             
             # Daily ATR for TP distance cap
             daily_atr = (df_daily['high'] - df_daily['low']).rolling(14).mean().iloc[-1]
@@ -894,11 +959,17 @@ class SMCDetector:
             # STRATEGY: Find the next resistance level (previous swing high)
             daily_swing_highs = self.detect_swing_highs(df_daily)
             
-            # Get swing highs BEFORE current position
-            previous_highs = [sh for sh in daily_swing_highs if sh.index < len(df_daily) - 5]
+            # ✅ FILTER: Get swing highs from last 60 days ONLY (not ancient highs)
+            # AND before current position (last 5 bars)
+            recent_lookback = min(60, len(df_daily) - 5)  # Last 60 days or less
+            previous_highs = [
+                sh for sh in daily_swing_highs 
+                if sh.index >= len(df_daily) - recent_lookback 
+                and sh.index < len(df_daily) - 5
+            ]
             
             if previous_highs:
-                # Use last significant high as TP (next resistance)
+                # Use last significant high as TP (next resistance from recent structure)
                 take_profit = previous_highs[-1].price
             else:
                 # Fallback: Use recent high from last 30 days
@@ -930,6 +1001,17 @@ class SMCDetector:
             # ATR buffer for SL (1.5x 4H ATR)
             atr_4h = (df_4h['high'] - df_4h['low']).rolling(14).mean().iloc[-1]
             stop_loss = swing_high + (1.5 * atr_4h)
+            # Protecție: SL minim 30 pips distanță de entry (valabil și la buy și la sell)
+            if abs(entry - stop_loss) < min_pips:
+                if entry > stop_loss:
+                    stop_loss = entry - min_pips
+                else:
+                    stop_loss = entry + min_pips
+                if df_1h is not None:
+                    recent_highs_1h = df_1h['high'].iloc[-40:]
+                    swing_high_1h = recent_highs_1h.max()
+                    if abs(entry - swing_high_1h) >= min_pips:
+                        stop_loss = swing_high_1h
             
             # Daily ATR for TP distance cap
             daily_atr = (df_daily['high'] - df_daily['low']).rolling(14).mean().iloc[-1]
@@ -938,11 +1020,17 @@ class SMCDetector:
             # STRATEGY: Find the next support level (previous swing low)
             daily_swing_lows = self.detect_swing_lows(df_daily)
             
-            # Get swing lows BEFORE current position
-            previous_lows = [sl for sl in daily_swing_lows if sl.index < len(df_daily) - 5]
+            # ✅ FILTER: Get swing lows from last 60 days ONLY (not ancient lows)
+            # AND before current position (last 5 bars)
+            recent_lookback = min(60, len(df_daily) - 5)  # Last 60 days or less
+            previous_lows = [
+                sl for sl in daily_swing_lows 
+                if sl.index >= len(df_daily) - recent_lookback 
+                and sl.index < len(df_daily) - 5
+            ]
             
             if previous_lows:
-                # Use last significant low as TP (next support)
+                # Use last significant low as TP (next support from recent structure)
                 take_profit = previous_lows[-1].price
             else:
                 # Fallback: Use recent low from last 30 days
@@ -1385,18 +1473,87 @@ class SMCDetector:
             # V3.0 QUALITY THRESHOLD (only when not skipped)
             # - Normal pairs: ≥60 required (RELAXED from 70)
             # - GBP pairs: ≥70 required (RELAXED from 75)
+            # - XAUUSD: SKIP quality check - filtered later by ATR + anti-loss-streak
             is_gbp = 'GBP' in symbol
-            min_score = 70 if is_gbp else 60
+            is_gold = symbol == 'XAUUSD'
             
-            if fvg_score < min_score:
+            if is_gold:
+                # XAUUSD: Use V2.0 simple validation (86% WR logic)
+                # V2.0 had strict FVG requirements → fewer but better setups
+                # Gap ≥ 0.10% + Body ≥ 25% (no complex scoring)
+                
+                gap_size = fvg.top - fvg.bottom
+                gap_pct = (gap_size / fvg.bottom) * 100
+                
+                if gap_pct < 0.15:  # V2.0 threshold (stricter than 0.10%)
+                    if debug:
+                        print(f"\n❌ REJECTED XAUUSD FVG: Gap {gap_pct:.3f}% < 0.15%")
+                    return None
+                
+                # Check body strength (V2.0 logic)
+                gap_candle = df_daily.iloc[fvg.index]
+                candle_body = abs(gap_candle['close'] - gap_candle['open'])
+                candle_range = gap_candle['high'] - gap_candle['low']
+                body_ratio = candle_body / candle_range if candle_range > 0 else 0
+                
+                if body_ratio < 0.40:  # V2.0 threshold (strict momentum)
+                    if debug:
+                        print(f"\n❌ REJECTED XAUUSD FVG: Body {body_ratio:.1%} < 40%")
+                    return None
+                
                 if debug:
-                    print(f"\n❌ REJECTED: FVG score {fvg_score}/100 < {min_score} (minimum)")
-                    if is_gbp:
+                    print(f"\n✅ XAUUSD FVG V2.0 PASSED: Gap {gap_pct:.3f}%, Body {body_ratio:.1%}")
+                    
+            elif is_gbp:
+                min_score = 70
+                if fvg_score < min_score:
+                    if debug:
+                        print(f"\n❌ REJECTED: FVG score {fvg_score}/100 < {min_score} (minimum)")
                         print(f"   GBP pair requires stricter quality (≥70)")
-                return None  # Low quality FVG
+                    return None
+            else:
+                min_score = 60
+                if fvg_score < min_score:
+                    if debug:
+                        print(f"\n❌ REJECTED: FVG score {fvg_score}/100 < {min_score} (minimum)")
+                    return None  # Low quality FVG
+            
+            # XAUUSD ADDITIONAL FILTERS: FVG quality + ATR volatility (NO ADX - Gold moves differently)
+            if is_gold and not skip_fvg_quality:
+                # Skip ADX check for Gold - momentum works differently than forex
+                # Gold can have strong directional moves even with lower ADX
+                
+                # Calculate ATR ratio (current ATR / 20-period average)
+                current_atr = calculate_atr(df_daily, period=14)
+                avg_atr_20 = current_atr  # Fallback
+                
+                # Calculate 20-period average ATR more safely
+                if len(df_daily) >= 35:
+                    atr_values = []
+                    for i in range(len(df_daily) - 20, len(df_daily)):
+                        if i >= 15:
+                            atr_val = calculate_atr(df_daily.iloc[max(0, i-14):i+1], period=14)
+                            if atr_val > 0:
+                                atr_values.append(atr_val)
+                    if atr_values:
+                        avg_atr_20 = np.mean(atr_values)
+                
+                atr_ratio = current_atr / avg_atr_20 if avg_atr_20 > 0 else 1.0
+                
+                if atr_ratio > 3.0:
+                    if debug:
+                        print(f"\n❌ REJECTED XAUUSD: ATR ratio {atr_ratio:.2f} > 3.0 (extreme volatility, unstable setup)")
+                    return None
+                
+                if debug:
+                    print(f"\n✅ XAUUSD FILTERS PASSED:")
+                    print(f"   FVG Quality: {fvg_score}/100 (≥65) ✓")
+                    print(f"   ATR Ratio: {atr_ratio:.2f} (≤3.0) ✓")
+                    print(f"   (ADX check skipped - Gold momentum patterns differ from forex)")
         else:
             # Skip quality check for backtest - accept all FVGs
             fvg.quality_score = 100  # Default high score when skipped
+            is_gbp = 'GBP' in symbol
         
         # FVG direction must match current trend
         fvg.direction = current_trend
@@ -1576,24 +1733,37 @@ class SMCDetector:
         #
         # This prevents premature entries during aggressive pullbacks (like NZDUSD case)
         
-        # V3.0 CONTINUITY FILTER (skip for backtest to match original V2.1 logic)
-        # For CONTINUITY setups (Daily BOS), require additional BOS in same direction (last 90 candles)
-        # This ensures we have multiple BOS confirming strong trend continuation
-        # REVERSAL setups (Daily CHoCH) skip this - trend just changed, no need for multiple BOS
+        # V3.3 CONTINUITY FILTER RELAXED
+        # CONTINUITY setups (Daily BOS) accept:
+        # 1. Single recent BOS (< 30 candles) with strong FVG (quality ≥ 70)
+        # 2. Multiple BOS (any age) = strong continuation
+        # REVERSAL setups (Daily CHoCH) skip this - trend just changed
         continuity_validated = True
         if not skip_fvg_quality and strategy_type == 'continuation':
-            # Already have the latest_signal as BOS, check for additional BOS before it
-            # Check last 90 candles for BOS in same direction (RELAXED from 60)
+            # Check last 90 candles for additional BOS before latest
             recent_bos = [bos for bos in daily_bos_list if bos.index >= len(df_daily) - 90 and bos.index < latest_signal.index]
             matching_bos = [bos for bos in recent_bos if bos.direction == current_trend]
             
             if not matching_bos:
-                continuity_validated = False
-                if debug:
-                    print(f"\n⚠️  CONTINUITY FILTER: No additional BOS found before latest BOS")
-                    print(f"   Trend: {current_trend.upper()}")
-                    print(f"   Need at least 1 more BOS to confirm strong continuation")
+                # Single BOS - validate based on recency and FVG quality
+                bos_age = len(df_daily) - latest_signal.index
+                
+                if bos_age <= 30 and fvg.quality_score >= 70:
+                    # ✅ Accept: Recent BOS (≤30 candles) + Strong FVG (≥70)
+                    continuity_validated = True
+                    if debug:
+                        print(f"\n✅ CONTINUITY FILTER: Single BOS accepted (recent + strong FVG)")
+                        print(f"   BOS age: {bos_age} candles (≤30)")
+                        print(f"   FVG quality: {fvg.quality_score}/100 (≥70)")
+                else:
+                    # ❌ Reject: Old BOS or weak FVG
+                    continuity_validated = False
+                    if debug:
+                        print(f"\n⚠️  CONTINUITY FILTER: Single BOS rejected (old or weak FVG)")
+                        print(f"   BOS age: {bos_age} candles (need ≤30)")
+                        print(f"   FVG quality: {fvg.quality_score}/100 (need ≥70)")
             else:
+                # ✅ Multiple BOS found = strong continuation
                 if debug:
                     print(f"\n✅ CONTINUITY FILTER: {len(matching_bos)} additional BOS found (strong continuation)")
                     print(f"   Latest additional BOS: {matching_bos[-1].direction.upper()} @ candle {matching_bos[-1].index}")
@@ -1801,17 +1971,94 @@ class SMCDetector:
         
         # ✅ Setup still valid! Price hasn't hit SL or TP yet (or re-entry found)
         
+        # 🟡 XAUUSD SPECIAL FILTER: Only CONTINUATION bearish (V2.0 Logic - 86% WR)
+        if symbol == 'XAUUSD' and not skip_fvg_quality:
+            if strategy_type != 'continuation' or current_trend != 'bearish':
+                if debug:
+                    print(f"\n❌ REJECTED XAUUSD: Only CONTINUATION bearish")
+                return None
+        
+        # 🌍 UNIVERSAL ANTI-OVERTRADING FILTER: Max 4 trades per FVG zone (ALL PAIRS)
+        # This prevents NZDUSD-style hemorrhaging (-$1,054 on 26 trades with small SLs)
+        # Preserves winning clusters (Mai 4-7) while blocking endless overtrading
+        if not skip_fvg_quality:
+            # Initialize symbol tracker if needed
+            if symbol not in self.fvg_zones_tracker:
+                self.fvg_zones_tracker[symbol] = []
+            
+            current_fvg_top = fvg.top
+            current_fvg_bottom = fvg.bottom
+            current_date = df_daily.index[-1]
+            
+            # Find matching FVG zone (>50% overlap)
+            matched_zone_idx = None
+            for idx, (prev_top, prev_bottom, prev_date, trade_count) in enumerate(self.fvg_zones_tracker[symbol]):
+                # Calculate overlap percentage
+                overlap_top = min(current_fvg_top, prev_top)
+                overlap_bottom = max(current_fvg_bottom, prev_bottom)
+                
+                if overlap_bottom < overlap_top:
+                    overlap_size = overlap_top - overlap_bottom
+                    current_size = current_fvg_top - current_fvg_bottom
+                    prev_size = prev_top - prev_bottom
+                    
+                    overlap_pct = overlap_size / min(current_size, prev_size) if min(current_size, prev_size) > 0 else 0
+                    
+                    if overlap_pct > 0.50:  # 50% overlap = same zone
+                        matched_zone_idx = idx
+                        break
+            
+            if matched_zone_idx is not None:
+                # Existing FVG zone - check trade count
+                prev_top, prev_bottom, prev_date, trade_count = self.fvg_zones_tracker[symbol][matched_zone_idx]
+                
+                if trade_count >= 4:
+                    # Too many trades in this zone already
+                    if debug:
+                        print(f"\n❌ REJECTED {symbol}: FVG zone exhausted ({trade_count} trades already)")
+                        print(f"   Zone: {prev_bottom:.5f}-{prev_top:.5f}")
+                        print(f"   🛡️ UNIVERSAL anti-overtrading protection active!")
+                    return None
+                
+                # Increment trade count for this zone
+                self.fvg_zones_tracker[symbol][matched_zone_idx] = (prev_top, prev_bottom, prev_date, trade_count + 1)
+                
+                if debug:
+                    print(f"\n✅ {symbol} ACCEPTED: FVG zone trade #{trade_count + 1}/4")
+            else:
+                # New FVG zone - add with trade_count = 1
+                self.fvg_zones_tracker[symbol].append((current_fvg_top, current_fvg_bottom, current_date, 1))
+                
+                if debug:
+                    print(f"\n✅ {symbol} ACCEPTED: New FVG zone {current_fvg_bottom:.5f}-{current_fvg_top:.5f}")
+                    print(f"   Total tracked zones for {symbol}: {len(self.fvg_zones_tracker[symbol])}")
+        
         # Return setup (MONITORING or READY)
+        # Convert pandas Timestamp to Python datetime properly
+        # Get the actual timestamp value (not the index position!)
+        try:
+            setup_timestamp = df_4h.index[-1]
+            # If it's a pandas Timestamp, convert to Python datetime
+            if hasattr(setup_timestamp, 'to_pydatetime'):
+                setup_timestamp = setup_timestamp.to_pydatetime()
+            # If it's somehow an int (position), use current time
+            elif isinstance(setup_timestamp, (int, np.integer)):
+                setup_timestamp = datetime.now()
+        except Exception as e:
+            print(f"⚠️ Warning: Could not convert setup_time properly: {e}")
+            setup_timestamp = datetime.now()
+        
         return TradeSetup(
             symbol=symbol,
             daily_choch=latest_signal,  # Daily CHoCH (REVERSAL) or BOS (CONTINUITY)
             fvg=fvg,
             h4_choch=h4_signal,  # H4 CHoCH (same for both REVERSAL and CONTINUITY)
+            h1_choch=valid_1h_choch,  # V3.0: 1H CHoCH for GBP pairs (None if not detected)
             entry_price=entry,
             stop_loss=sl,
             take_profit=tp,
             risk_reward=risk_reward,
-            setup_time=df_4h.index[-1],  # Use index instead of 'time' column
+            setup_time=setup_timestamp,  # Properly converted Python datetime
             priority=priority,
             strategy_type=strategy_type,
             status=status
@@ -1858,6 +2105,95 @@ def format_setup_message(setup: TradeSetup) -> str:
     
     return message.strip()
 
+
+def calculate_atr(df: pd.DataFrame, period: int = 14) -> float:
+    """
+    Calculate Average True Range (ATR)
+    
+    Args:
+        df: DataFrame with high, low, close columns
+        period: ATR period (default 14)
+    
+    Returns:
+        Current ATR value
+    """
+    if len(df) < period + 1:
+        return 0.0
+    
+    # True Range = max(high-low, abs(high-prev_close), abs(low-prev_close))
+    high = df['high'].values
+    low = df['low'].values
+    close = df['close'].values
+    
+    tr = []
+    for i in range(1, len(df)):
+        hl = high[i] - low[i]
+        hc = abs(high[i] - close[i-1])
+        lc = abs(low[i] - close[i-1])
+        tr.append(max(hl, hc, lc))
+    
+    # Simple Moving Average of TR
+    tr_series = pd.Series(tr)
+    atr = tr_series.rolling(window=period).mean().iloc[-1]
+    
+    return atr if not np.isnan(atr) else 0.0
+
+
+def calculate_adx(df: pd.DataFrame, period: int = 14) -> float:
+    """
+    Calculate Average Directional Index (ADX) - measures trend strength
+    
+    Args:
+        df: DataFrame with high, low, close columns
+        period: ADX period (default 14)
+    
+    Returns:
+        Current ADX value (0-100, >25 = strong trend)
+    """
+    if len(df) < period + 1:
+        return 0.0
+    
+    high = df['high'].values
+    low = df['low'].values
+    close = df['close'].values
+    
+    # Calculate +DM and -DM
+    plus_dm = []
+    minus_dm = []
+    
+    for i in range(1, len(df)):
+        high_diff = high[i] - high[i-1]
+        low_diff = low[i-1] - low[i]
+        
+        plus_dm.append(high_diff if high_diff > low_diff and high_diff > 0 else 0)
+        minus_dm.append(low_diff if low_diff > high_diff and low_diff > 0 else 0)
+    
+    # Calculate True Range
+    tr = []
+    for i in range(1, len(df)):
+        hl = high[i] - low[i]
+        hc = abs(high[i] - close[i-1])
+        lc = abs(low[i] - close[i-1])
+        tr.append(max(hl, hc, lc))
+    
+    # Smooth using EMA
+    plus_dm_series = pd.Series(plus_dm).ewm(span=period, adjust=False).mean()
+    minus_dm_series = pd.Series(minus_dm).ewm(span=period, adjust=False).mean()
+    tr_series = pd.Series(tr).ewm(span=period, adjust=False).mean()
+    
+    # Calculate +DI and -DI
+    plus_di = 100 * (plus_dm_series / tr_series)
+    minus_di = 100 * (minus_dm_series / tr_series)
+    
+    # Calculate DX
+    dx = 100 * abs(plus_di - minus_di) / (plus_di + minus_di)
+    
+    # Calculate ADX (smoothed DX)
+    adx = dx.ewm(span=period, adjust=False).mean().iloc[-1]
+    
+    return adx if not np.isnan(adx) else 0.0
+
+
 def validate_1h_choch(df_1h, daily_trend, fvg, debug=False):
     """
     Validate 1H CHoCH for Entry 1 in SCALE_IN strategy.
@@ -1871,7 +2207,6 @@ def validate_1h_choch(df_1h, daily_trend, fvg, debug=False):
     Requirements:
         - 1H CHoCH direction matches Daily trend
         - CHoCH break_price WITHIN FVG zone
-        - CHoCH age <= 12 candles (12 hours max)
         - Momentum confirmation (1 candle after CHoCH)
     
     Returns:
@@ -1903,13 +2238,6 @@ def validate_1h_choch(df_1h, daily_trend, fvg, debug=False):
         if not (fvg.bottom <= h1_choch.break_price <= fvg.top):
             continue
         
-        # Check age (max 12 candles = 12 hours)
-        choch_age = len(df_1h) - 1 - h1_choch.index
-        if choch_age > 12:
-            if debug:
-                print(f"   ⏭️  1H CHoCH @ {h1_choch.break_price:.5f} too old ({choch_age} candles = {choch_age}h)")
-            continue
-        
         # Momentum confirmation
         if h1_choch.index + 1 < len(df_1h):
             candles_after = df_1h.iloc[h1_choch.index + 1:]
@@ -1928,13 +2256,16 @@ def validate_1h_choch(df_1h, daily_trend, fvg, debug=False):
                         print(f"   ⏭️  1H CHoCH @ {h1_choch.break_price:.5f} lacks momentum")
                     continue
         
+        # Calculate CHoCH age for logging
+        choch_age = len(df_1h) - 1 - h1_choch.index
+        
         # ✅ Valid 1H CHoCH found
         if debug:
-            print(f"   ✅ Valid 1H CHoCH @ {h1_choch.break_price:.5f} ({choch_age} candles ago)")
+            print(f"   ✅ Valid 1H CHoCH @ {h1_choch.break_price:.5f} ({choch_age} candles ago = {choch_age}h)")
         return h1_choch
     
     if debug:
-        print(f"   ❌ No valid 1H CHoCH found (max 12 candles old = 12h)")
+        print(f"   ❌ No valid 1H CHoCH found")
     return None
 
 
@@ -2134,4 +2465,278 @@ def validate_choch_confirmation_scale_in(setup, current_time, df_daily, df_4h, d
                     'close_price': current_price,
                     'pnl_pips': entry1_pnl_pips
                 }
+
+
+# ============================================================
+# V3.2 PULLBACK STRATEGY FUNCTIONS
+# ============================================================
+
+def calculate_choch_fibonacci(df_h1: pd.DataFrame, choch_idx: int, direction: str) -> dict:
+    """
+    Calculate Fibonacci 50% retracement level from CHoCH swing
+    
+    Args:
+        df_h1: 1H timeframe dataframe
+        choch_idx: Index where CHoCH occurred
+        direction: 'bullish' or 'bearish'
+    
+    Returns:
+        {
+            'fibo_50': float,
+            'swing_high': float,
+            'swing_low': float,
+            'swing_range': float (in pips),
+            'swing_start_idx': int,
+            'swing_end_idx': int
+        }
+    """
+    # Get last 5 candles before CHoCH for swing calculation
+    lookback = 5
+    start_idx = max(0, choch_idx - lookback)
+    end_idx = choch_idx
+    
+    swing_data = df_h1.iloc[start_idx:end_idx]
+    
+    # Find swing high and low
+    swing_high = swing_data['high'].max()
+    swing_low = swing_data['low'].min()
+    swing_range = swing_high - swing_low
+    
+    # Calculate Fibonacci 50% level
+    fibo_50 = swing_low + (swing_range * 0.5)
+    
+    # Convert swing range to pips (assuming 5-digit quotes for forex, 2-digit for JPY pairs)
+    # For now, use 10000 multiplier (standard forex), adjust for JPY in production
+    swing_range_pips = swing_range * 10000
+    
+    return {
+        'fibo_50': round(fibo_50, 5),
+        'swing_high': round(swing_high, 5),
+        'swing_low': round(swing_low, 5),
+        'swing_range': round(swing_range_pips, 1),
+        'swing_start_idx': start_idx,
+        'swing_end_idx': end_idx,
+        'direction': direction
+    }
+
+
+def validate_pullback_entry(
+    df_h1: pd.DataFrame, 
+    fibo_data: dict, 
+    direction: str, 
+    tolerance_pips: int = 10,
+    sl_buffer_pips: int = 10,
+    swing_lookback: int = 5,
+    check_momentum: bool = True,  # V3.3: Enable continuation momentum check
+    hours_elapsed: int = 0  # V3.3: Hours since setup found
+) -> dict:
+    """
+    V3.3 HYBRID ENTRY: Check pullback OR continuation momentum
+    
+    Priority 1: Pullback to Fibo 50% (classic entry)
+    Priority 2: If no pullback after 6h + strong momentum → ENTER anyway!
+    
+    Args:
+        df_h1: 1H timeframe dataframe
+        fibo_data: Dictionary from calculate_choch_fibonacci()
+        direction: 'bullish' or 'bearish'
+        tolerance_pips: Acceptable distance from Fibo 50% (default 10)
+        sl_buffer_pips: Extra pips added to SL beyond swing point (default 10)
+        swing_lookback: Number of candles to find swing low/high for SL (default 5)
+        check_momentum: Enable continuation momentum detection (default True)
+        hours_elapsed: Hours since setup found (for momentum threshold)
+    
+    Returns:
+        {
+            'pullback_reached': bool,
+            'continuation_momentum': bool,  # NEW V3.3
+            'entry_triggered': bool,  # NEW V3.3 (pullback OR momentum)
+            'entry_type': str,  # 'pullback' or 'continuation'
+            'current_price': float,
+            'distance_to_fibo': float (in pips),
+            'stop_loss': float,
+            'entry_price': float,
+            'sl_distance_pips': float,
+            'momentum_score': float  # NEW V3.3
+        }
+    """
+    current_price = df_h1.iloc[-1]['close']
+    fibo_50 = fibo_data['fibo_50']
+
+    pip_multiplier = 10000
+    tolerance = tolerance_pips / pip_multiplier
+
+    # ATR-based buffer (1.5x ATR(14)), fallback la 20 pips dacă ATR nu e disponibil
+    try:
+        atr = (df_h1['high'] - df_h1['low']).rolling(14).mean().iloc[-1]
+        if pd.isna(atr) or atr == 0:
+            atr = 20 / pip_multiplier
+    except Exception:
+        atr = 20 / pip_multiplier
+    sl_buffer = max(sl_buffer_pips / pip_multiplier, 1.5 * atr)
+
+    # Lookback mai mare pentru swing (10 candle-uri)
+    recent_candles = df_h1.iloc[-max(swing_lookback, 10):]
+
+    # Calculate distance to Fibo 50%
+    distance = abs(current_price - fibo_50)
+    distance_pips = distance * pip_multiplier
+    pullback_reached = distance <= tolerance
+    
+    # V3.3: Check continuation momentum if no pullback after 6h
+    continuation_momentum = False
+    momentum_score = 0
+    entry_type = None
+    
+    if check_momentum and not pullback_reached and hours_elapsed >= 6:
+        # Check if price shows strong continuation (won't pullback!)
+        momentum_data = check_continuation_momentum(df_h1, direction, lookback_candles=3)
+        continuation_momentum = momentum_data['has_momentum']
+        momentum_score = momentum_data['momentum_score']
+        
+        if continuation_momentum:
+            entry_type = 'continuation'
+            # Use current price as entry (no pullback happened)
+            entry_price = current_price
+        else:
+            entry_price = None
+    elif pullback_reached:
+        entry_type = 'pullback'
+        entry_price = fibo_50
+    else:
+        entry_price = None
+    
+    # Entry triggered if EITHER pullback reached OR continuation momentum
+    entry_triggered = pullback_reached or continuation_momentum
+
+    if direction == 'bullish':
+        swing_low = recent_candles['low'].min()
+        stop_loss = swing_low - sl_buffer
+        if entry_price:
+            sl_distance_pips = (entry_price - stop_loss) * pip_multiplier
+        else:
+            sl_distance_pips = (fibo_50 - stop_loss) * pip_multiplier
+    else:
+        swing_high = recent_candles['high'].max()
+        stop_loss = swing_high + sl_buffer
+        if entry_price:
+            sl_distance_pips = (stop_loss - entry_price) * pip_multiplier
+        else:
+            sl_distance_pips = (stop_loss - fibo_50) * pip_multiplier
+
+    return {
+        'pullback_reached': pullback_reached,
+        'continuation_momentum': continuation_momentum,  # NEW V3.3
+        'entry_triggered': entry_triggered,  # NEW V3.3
+        'entry_type': entry_type,  # 'pullback', 'continuation', or None
+        'current_price': round(current_price, 5),
+        'distance_to_fibo': round(distance_pips, 1),
+        'stop_loss': round(stop_loss, 5),
+        'entry_price': round(entry_price, 5) if entry_price else None,
+        'sl_distance_pips': round(sl_distance_pips, 1),
+        'fibo_50': round(fibo_50, 5),
+        'momentum_score': round(momentum_score, 1),  # NEW V3.3
+        'hours_elapsed': hours_elapsed  # Track time
+    }
+
+
+def check_continuation_momentum(
+    df_h1: pd.DataFrame,
+    direction: str,
+    lookback_candles: int = 3,
+    atr_multiplier: float = 1.5
+) -> dict:
+    """
+    V3.3: Check if price shows strong continuation momentum
+    
+    Requirements:
+    1. 3+ consecutive candles in trend direction
+    2. ATR not contracting (momentum maintained)
+    3. No significant counter-trend wicks
+    
+    Args:
+        df_h1: 1H timeframe dataframe
+        direction: 'bullish' or 'bearish'
+        lookback_candles: Number of recent candles to check (default 3)
+        atr_multiplier: ATR expansion threshold (default 1.5)
+    
+    Returns:
+        {
+            'has_momentum': bool,
+            'consecutive_candles': int,
+            'atr_expanding': bool,
+            'current_price': float,
+            'momentum_score': float (0-100)
+        }
+    """
+    if len(df_h1) < lookback_candles + 14:  # Need 14 for ATR
+        return {'has_momentum': False, 'reason': 'Insufficient data'}
+    
+    recent_candles = df_h1.iloc[-lookback_candles:]
+    current_price = df_h1.iloc[-1]['close']
+    
+    # Check 1: Consecutive candles in trend direction
+    consecutive_count = 0
+    for idx, candle in recent_candles.iterrows():
+        if direction == 'bullish':
+            is_bullish = candle['close'] > candle['open']
+            if is_bullish:
+                consecutive_count += 1
+            else:
+                break  # Stop if bearish candle found
+        else:
+            is_bearish = candle['close'] < candle['open']
+            if is_bearish:
+                consecutive_count += 1
+            else:
+                break
+    
+    # Check 2: ATR expansion (momentum strength)
+    atr_current = (df_h1['high'] - df_h1['low']).rolling(14).mean().iloc[-1]
+    atr_previous = (df_h1['high'] - df_h1['low']).rolling(14).mean().iloc[-15]
+    atr_expanding = atr_current >= (atr_previous * 0.9)  # Allow slight contraction
+    
+    # Check 3: Price movement strength (total pips moved)
+    price_start = recent_candles.iloc[0]['open']
+    price_end = current_price
+    price_move_pct = abs(price_end - price_start) / price_start * 100
+    
+    # Check 4: Counter-trend wick analysis (rejection wicks reduce confidence)
+    rejection_wicks = 0
+    for idx, candle in recent_candles.iterrows():
+        body = abs(candle['close'] - candle['open'])
+        total_range = candle['high'] - candle['low']
+        
+        if total_range > 0 and body > 0:
+            if direction == 'bullish':
+                upper_wick = candle['high'] - max(candle['open'], candle['close'])
+                if upper_wick > body * 1.5:  # Upper wick > 1.5x body = rejection
+                    rejection_wicks += 1
+            else:
+                lower_wick = min(candle['open'], candle['close']) - candle['low']
+                if lower_wick > body * 1.5:
+                    rejection_wicks += 1
+    
+    # Calculate momentum score (0-100)
+    score = 0
+    score += min(consecutive_count / lookback_candles * 40, 40)  # Max 40 pts
+    score += 20 if atr_expanding else 0  # 20 pts for ATR
+    score += min(price_move_pct * 20, 30)  # Max 30 pts for price move
+    score -= rejection_wicks * 10  # Penalty for rejection wicks
+    score = max(0, min(100, score))
+    
+    # Decision: Has momentum if score ≥ 60
+    has_momentum = (consecutive_count >= 3 and score >= 60)
+    
+    return {
+        'has_momentum': has_momentum,
+        'consecutive_candles': consecutive_count,
+        'atr_expanding': atr_expanding,
+        'current_price': round(current_price, 5),
+        'momentum_score': round(score, 1),
+        'price_move_pct': round(price_move_pct, 2),
+        'rejection_wicks': rejection_wicks
+    }
+
+
 

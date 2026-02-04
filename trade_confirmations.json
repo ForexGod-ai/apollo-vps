@@ -1,12 +1,12 @@
 {
-  "signal_id": "NZDUSD_BUY_1767854957",
-  "position_id": "563732567",
-  "symbol": "NZDUSD",
-  "direction": "buy",
-  "volume": 6000,
-  "entry_price": 0.57459,
-  "sl": 0.57246,
-  "tp": 0.58519,
-  "executed_at": "2026-01-08T12:07:28.36993+02:00",
+  "signal_id": "USDCAD_SELL_1770123465",
+  "position_id": "577446110",
+  "symbol": "USDCAD",
+  "direction": "sell",
+  "volume": 39000,
+  "entry_price": 1.36604,
+  "sl": 1.3685,
+  "tp": 1.328,
+  "executed_at": "2026-02-03T14:57:49.848995+02:00",
   "status": "executed"
 }

@@ -32,7 +32,8 @@ class TradeMonitor:
             try:
                 with open(self.last_check_file, 'r') as f:
                     data = json.load(f)
-                    return set(data.get('processed_tickets', []))
+                    # Convertește toate ticketele la int pentru consistență
+                    return set(int(t) for t in data.get('processed_tickets', []))
             except Exception as e:
                 logger.warning(f"Could not load processed trades: {e}")
         return set()
@@ -149,6 +150,10 @@ class TradeMonitor:
             for trade in closed_trades:
                 ticket = trade.get('ticket')
                 
+                # Normalizează ticket la int pentru comparație consistentă
+                if ticket:
+                    ticket = int(ticket)
+                    
                 # Trade-urile din closed_trades sunt deja închise, nu mai verificăm status
                 if ticket and ticket not in self.processed_trades:
                     new_closed_trades.append(trade)

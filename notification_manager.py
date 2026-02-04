@@ -12,6 +12,13 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
+# Import TelegramNotifier for centralized branding
+try:
+    from telegram_notifier import TelegramNotifier
+    TELEGRAM_NOTIFIER_AVAILABLE = True
+except ImportError:
+    TELEGRAM_NOTIFIER_AVAILABLE = False
+
 
 class NotificationManager:
     """Gestionează notificările pentru alertele de trading"""
@@ -22,9 +29,19 @@ class NotificationManager:
         self.telegram_chat_id = os.getenv('TELEGRAM_CHAT_ID', '')
         self.desktop_notifications = os.getenv('DESKTOP_NOTIFICATIONS', 'True').lower() == 'true'
         
+        # Use centralized TelegramNotifier for automatic branding
+        if TELEGRAM_NOTIFIER_AVAILABLE and self.telegram_bot_token and self.telegram_chat_id:
+            try:
+                self.telegram_notifier = TelegramNotifier()
+                self.use_centralized_telegram = True
+            except:
+                self.use_centralized_telegram = False
+        else:
+            self.use_centralized_telegram = False
+        
         logger.info("📢 Notification Manager inițializat")
         if self.telegram_enabled:
-            logger.info(f"✅ Telegram notifications: ENABLED")
+            logger.info(f"✅ Telegram notifications: ENABLED (Branding: {'ON' if self.use_centralized_telegram else 'OFF'})")
         if self.desktop_notifications:
             logger.info(f"✅ Desktop notifications: ENABLED")
     
@@ -133,32 +150,48 @@ class NotificationManager:
         if execution_result:
             if execution_result.get('success'):
                 message += f"\n✅ *EXECUTAT AUTOMAT în cTrader*\n"
-                message += f"🎫 *Ticket:* {execution_result.get('ticket')}\n"
-            else:
-                message += f"\n⚠️ *Execuție eșuată:* {execution_result.get('error')}\n"
-                message += f"✅ *Execută manual!*"
-        else:
-            # Call to action
-            message += f"\n✅ *Verifică chart-ul și execută manual!*"
-        
-        return message
-    
     def _send_telegram(self, message):
-        """Trimite mesaj pe Telegram"""
+        """Trimite mesaj pe Telegram cu branding automat"""
         if not self.telegram_bot_token or not self.telegram_chat_id:
             logger.warning("⚠️ Telegram credentials lipsă!")
             return False
         
+        # Use centralized notifier with automatic branding
+        if self.use_centralized_telegram:
+            try:
+                success = self.telegram_notifier.send_message(message, parse_mode="HTML")
+                if success:
+                    logger.info("✅ Telegram notification trimisă (with branding)!")
+                return success
+            except Exception as e:
+                logger.error(f"❌ Centralized Telegram error: {e}")
+                # Fallback to direct send
+        
+        # Fallback: direct send without branding
         try:
             url = f"https://api.telegram.org/bot{self.telegram_bot_token}/sendMessage"
+            
+            # Add manual branding if centralized not available
+            branded_message = f"{message}\n\n━━━━━━━━━━━━━━━━━━━━\n✨ *Glitch in Matrix by ФорексГод* ✨\n🧠 AI-Powered • 💎 Smart Money"
+            
             payload = {
                 'chat_id': self.telegram_chat_id,
-                'text': message,
+                'text': branded_message,
                 'parse_mode': 'Markdown'
             }
             
             response = requests.post(url, json=payload, timeout=10)
             
+            if response.status_code == 200:
+                logger.info("✅ Telegram notification trimisă (fallback)!")
+                return True
+            else:
+                logger.error(f"❌ Telegram error: {response.text}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"❌ Eroare Telegram: {e}")
+            return False
             if response.status_code == 200:
                 logger.info("✅ Telegram notification trimisă!")
                 return True
@@ -218,6 +251,7 @@ class NotificationManager:
     def send_telegram_alert(self, message):
         """Trimite mesaj direct pe Telegram (funcție publică)"""
         if self.telegram_enabled:
+            # Signature added automatically by _send_telegram
             return self._send_telegram(message)
         else:
             logger.warning("⚠️ Telegram notifications dezactivate!")
@@ -236,25 +270,26 @@ class NotificationManager:
         sl_pips = abs(entry - sl) / (0.01 if 'JPY' in symbol else 0.0001)
         tp_pips = abs(tp - entry) / (0.01 if 'JPY' in symbol else 0.0001)
         
+        # Direction arrow
+        direction_arrow = "📈 ↗️" if direction == 'BUY' else "📉 ↘️"
+        
         message = f"""
-🚨 *ARMAGEDDON BEGINS!* 🚨
+⚡ *TRADE EXECUTION • LIVE* ⚡
 
-*{symbol} {direction}* 📊
+💎 *{symbol}* • {direction_arrow} *{direction}*
+━━━━━━━━━━━━━━━━━━━━
 
-**Entry:** {entry}
-**SL:** {sl} (-{sl_pips:.1f} pips)
-**TP:** {tp} (+{tp_pips:.1f} pips)
-**R:R:** 1:{rr:.2f}
+💰 *Entry:* `{entry:.5f}`
+🛑 *Stop Loss:* `{sl:.5f}` (-{sl_pips:.1f} pips)
+🎯 *Take Profit:* `{tp:.5f}` (+{tp_pips:.1f} pips)
+📊 *R:R Ratio:* 1:{rr:.2f}
 
-**Status:** ✅ EXECUTED in cTrader
+━━━━━━━━━━━━━━━━━━━━
+✅ *Status:* EXECUTED in cTrader
+🤖 *Execution:* AUTOMATED
+⏰ *Time:* {datetime.now().strftime('%H:%M:%S')}
 
 🔥 *THE GLITCH IS LIVE!* 🔥
-
-⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-
-✨ *Strategy by ForexGod* ✨
-🧠 *Glitch in Matrix Trading System*
-💎 *+ AI Validation*
 """
         
         if self.telegram_enabled:

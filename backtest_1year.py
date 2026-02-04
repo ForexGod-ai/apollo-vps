@@ -307,6 +307,7 @@ class GlitchBacktester:
                        future_h4: pd.DataFrame) -> Dict:
         """
         Simulate trade execution and outcome
+        V3.1 SCALE_IN: Support dual entry (50% @ 1H, 50% @ 4H) for XAUUSD
         
         Args:
             setup: Detected setup
@@ -316,6 +317,39 @@ class GlitchBacktester:
         Returns:
             Trade result dictionary
         """
+        entry = setup.get('entry_price', 0)
+        sl = setup.get('sl_price', 0)
+        tp = setup.get('tp_price', 0)
+        direction = setup.get('direction', 'BUY')
+        pair = setup.get('pair', '')
+        
+        if not all([entry, sl, tp]):
+            return None
+        
+        # Check if pair uses SCALE_IN strategy
+        use_scale_in = False
+        if pair == 'XAUUSD':
+            # Load config to check scale_in setting
+            try:
+                with open('pairs_config.json', 'r') as f:
+                    config = json.load(f)
+                    for p in config['pairs']:
+                        if p['symbol'] == pair:
+                            use_scale_in = p.get('pullback_strategy', {}).get('scale_in_enabled', False)
+                            break
+            except:
+                pass
+        
+        if use_scale_in:
+            # V3.1 SCALE_IN: Two entries (50% each)
+            return self._simulate_scale_in_trade(setup, future_d1, future_h4)
+        else:
+            # Standard single entry
+            return self._simulate_single_entry_trade(setup, future_d1, future_h4)
+    
+    def _simulate_single_entry_trade(self, setup: Dict, future_d1: pd.DataFrame, 
+                                    future_h4: pd.DataFrame) -> Dict:
+        """Original single entry trade simulation"""
         entry = setup.get('entry_price', 0)
         sl = setup.get('sl_price', 0)
         tp = setup.get('tp_price', 0)
@@ -449,6 +483,163 @@ class GlitchBacktester:
                     }
         
         # Trade still open (no result yet)
+        return None
+    
+    def _simulate_scale_in_trade(self, setup: Dict, future_d1: pd.DataFrame,
+                                future_h4: pd.DataFrame) -> Dict:
+        """
+        V3.1 SCALE_IN: Simulate dual entry trade (50% @ Entry 1, 50% @ Entry 2)
+        Entry 1: Immediate (1H CHoCH confirmation)
+        Entry 2: Later (4H CHoCH confirmation or price improvement)
+        
+        This averages better entry price and improves R:R!
+        """
+        entry1 = setup.get('entry_price', 0)
+        sl = setup.get('sl_price', 0)
+        tp = setup.get('tp_price', 0)
+        direction = setup.get('direction', 'BUY')
+        pair = setup.get('pair', '')
+        
+        if not all([entry1, sl, tp]):
+            return None
+        
+        # Calculate pip multiplier
+        if pair in ['XAUUSD', 'XAGUSD']:
+            pip_multiplier = 10
+        elif 'JPY' in pair:
+            pip_multiplier = 100
+        elif pair in ['BTCUSD', 'ETHUSD']:
+            pip_multiplier = 1
+        else:
+            pip_multiplier = 10000
+        
+        # Risk management: 2% total risk, but allow FULL 2% on Entry 1
+        # Entry 2 is a "free" addition (uses profit from Entry 1 as buffer)
+        # This matches V3.1 original behavior (full 2% risk exposure)
+        risk_per_entry = self.account_balance * (self.risk_per_trade_pct / 100)  # Full 2% for Entry 1
+        
+        # Calculate lot size for Entry 1 (FULL position size, not 50%)
+        risk_pips1 = abs(entry1 - sl) * pip_multiplier
+        pip_value_per_lot = 10 if pair == 'XAUUSD' else (1000 if 'JPY' in pair else 10)
+        lot_size1 = risk_per_entry / (risk_pips1 * pip_value_per_lot) if risk_pips1 > 0 else 0.01
+        lot_size1 = max(0.01, min(lot_size1, 50))  # Full max lot size
+        
+        # Track entries and P&L
+        entry1_filled = True
+        entry2_filled = False
+        entry2_price = None
+        lot_size2 = 0
+        
+        # Simulate bar by bar
+        for i, bar in future_h4.iterrows():
+            high = bar['high']
+            low = bar['low']
+            
+            # Entry 2 logic: Fill if price moves favorably (better entry)
+            if not entry2_filled and i < len(future_h4) / 2:  # Only in first half of bars
+                if direction == 'BUY':
+                    # For BUY: Entry 2 if price dips below Entry 1 (better fill)
+                    if low < entry1 * 0.9995:  # 0.05% below Entry 1
+                        entry2_price = min(low, entry1 * 0.9995)
+                        entry2_filled = True
+                        
+                        # Entry 2: Additional 50% lot (using same risk as Entry 1)
+                        # This increases total exposure but improves avg entry price
+                        risk_pips2 = abs(entry2_price - sl) * pip_multiplier
+                        lot_size2 = (risk_per_entry * 0.5) / (risk_pips2 * pip_value_per_lot) if risk_pips2 > 0 else 0.01
+                        lot_size2 = max(0.01, min(lot_size2, 25))
+                else:  # SELL
+                    # For SELL: Entry 2 if price pumps above Entry 1 (better fill)
+                    if high > entry1 * 1.0005:  # 0.05% above Entry 1
+                        entry2_price = max(high, entry1 * 1.0005)
+                        entry2_filled = True
+                        
+                        # Entry 2: Additional 50% lot
+                        risk_pips2 = abs(entry2_price - sl) * pip_multiplier
+                        lot_size2 = (risk_per_entry * 0.5) / (risk_pips2 * pip_value_per_lot) if risk_pips2 > 0 else 0.01
+                        lot_size2 = max(0.01, min(lot_size2, 25))
+            
+            # Check TP/SL for combined position
+            total_lot_size = lot_size1 + (lot_size2 if entry2_filled else 0)
+            avg_entry = (entry1 * lot_size1 + (entry2_price * lot_size2 if entry2_filled else 0)) / total_lot_size if total_lot_size > 0 else entry1
+            
+            if direction == 'BUY':
+                if high >= tp:
+                    # TP HIT - Calculate profit with averaged entry
+                    reward_pips = abs(tp - avg_entry) * pip_multiplier
+                    profit_usd = reward_pips * pip_value_per_lot * total_lot_size
+                    
+                    # Risk is 2% base + 1% extra if Entry 2 filled (total 3% exposure)
+                    risk_amount = risk_per_entry * (1.5 if entry2_filled else 1.0)
+                    
+                    return {
+                        'result': 'WIN',
+                        'pnl_pips': reward_pips,
+                        'pnl_usd': profit_usd,
+                        'rr_pips': reward_pips / (abs(avg_entry - sl) * pip_multiplier),
+                        'rr_usd': profit_usd / risk_amount,
+                        'entry': avg_entry,
+                        'exit': tp,
+                        'lot_size': total_lot_size,
+                        'bars_held': i,
+                        'scale_in': entry2_filled
+                    }
+                
+                if low <= sl:
+                    # SL HIT - Calculate loss (3% risk if Entry 2 filled, else 2%)
+                    risk_pips = abs(avg_entry - sl) * pip_multiplier
+                    loss_usd = -(risk_per_entry * (1.5 if entry2_filled else 1.0))
+                    
+                    return {
+                        'result': 'LOSS',
+                        'pnl_pips': -risk_pips,
+                        'pnl_usd': loss_usd,
+                        'rr_pips': -1,
+                        'rr_usd': -1,
+                        'entry': avg_entry,
+                        'exit': sl,
+                        'lot_size': total_lot_size,
+                        'bars_held': i,
+                        'scale_in': entry2_filled
+                    }
+            
+            else:  # SELL
+                if low <= tp:
+                    reward_pips = abs(avg_entry - tp) * pip_multiplier
+                    profit_usd = reward_pips * pip_value_per_lot * total_lot_size
+                    risk_amount = risk_per_entry * (1.5 if entry2_filled else 1.0)
+                    
+                    return {
+                        'result': 'WIN',
+                        'pnl_pips': reward_pips,
+                        'pnl_usd': profit_usd,
+                        'rr_pips': reward_pips / (abs(avg_entry - sl) * pip_multiplier),
+                        'rr_usd': profit_usd / risk_amount,
+                        'entry': avg_entry,
+                        'exit': tp,
+                        'lot_size': total_lot_size,
+                        'bars_held': i,
+                        'scale_in': entry2_filled
+                    }
+                
+                if high >= sl:
+                    risk_pips = abs(avg_entry - sl) * pip_multiplier
+                    loss_usd = -(risk_per_entry * (1.5 if entry2_filled else 1.0))
+                    
+                    return {
+                        'result': 'LOSS',
+                        'pnl_pips': -risk_pips,
+                        'pnl_usd': loss_usd,
+                        'rr_pips': -1,
+                        'rr_usd': -1,
+                        'entry': avg_entry,
+                        'exit': sl,
+                        'lot_size': total_lot_size,
+                        'bars_held': i,
+                        'scale_in': entry2_filled
+                    }
+        
+        # Trade still open
         return None
     
     def _calculate_statistics(self, pair: str, trades: List[Dict]) -> Dict:

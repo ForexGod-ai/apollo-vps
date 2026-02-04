@@ -1,5 +1,6 @@
 """
 cTrader Signal Executor - writes to signals.json for PythonSignalExecutor cBot
+NOW WITH UNIFIED RISK MANAGER - Validates ALL trades before execution!
 """
 
 import json
@@ -7,16 +8,31 @@ import os
 from datetime import datetime
 from loguru import logger
 from typing import Optional
+from unified_risk_manager import UnifiedRiskManager
 
 
 class CTraderExecutor:
     """
     Writes trading signals to signals.json
     PythonSignalExecutor cBot will read and execute them automatically
+    
+    V3.1: Integrated with Unified Risk Manager
+    - Validates against SUPER_CONFIG.json limits
+    - Checks kill switch before execution
+    - Enforces position limits
     """
     
     def __init__(self, signals_file: str = "signals.json"):
         self.signals_file = signals_file
+        
+        # Initialize Unified Risk Manager
+        try:
+            self.risk_manager = UnifiedRiskManager()
+            logger.success(f"✅ Unified Risk Manager integrated")
+        except Exception as e:
+            logger.error(f"❌ Failed to load Unified Risk Manager: {e}")
+            self.risk_manager = None
+        
         logger.info(f"🤖 CTraderExecutor initialized - writing to {signals_file}")
     
     def execute_trade(self, symbol: str, direction: str, entry_price: float, 
@@ -25,26 +41,64 @@ class CTraderExecutor:
         """
         Write a trade signal to signals.json for PythonSignalExecutor to execute
         
+        V3.1: NOW WITH UNIFIED RISK VALIDATION!
+        - Checks SUPER_CONFIG.json limits
+        - Validates kill switch status
+        - Enforces position limits
+        - Checks daily loss limits
+        
         Args:
             symbol: Trading pair (e.g., 'EURUSD')
             direction: 'BUY' or 'SELL'
             entry_price: Entry price
             stop_loss: Stop loss price
             take_profit: Take profit price
-            lot_size: Position size in lots (ignored - cBot calculates based on risk %)
+            lot_size: Position size in lots (will be recalculated by risk manager)
             comment: Optional comment for the trade
             status: Setup status - MUST be 'READY' to execute (V3.0)
         
-        Note: cBot expects prices AND pips. Direction must be lowercase.
+        Returns:
+            bool: True if signal written, False if rejected
         """
-        # V3.0 STRICT EXECUTION BLOCKER:
-        # Only execute if status is 'READY' (4H confirmed + price in FVG)
+        
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # STEP 1: V3.0 STATUS CHECK (4H confirmation required)
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         if status != 'READY':
             logger.warning(f"⛔ EXECUTION BLOCKED: {symbol} status is '{status}' (must be 'READY')")
             logger.info(f"   Setup is in MONITORING phase - waiting for:")
             logger.info(f"   1. 4H CHoCH confirmation (same direction as Daily)")
             logger.info(f"   2. Price to enter FVG zone")
             return False
+        
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # STEP 2: UNIFIED RISK VALIDATION (NEW IN V3.1!)
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        if self.risk_manager:
+            validation = self.risk_manager.validate_new_trade(
+                symbol=symbol,
+                direction=direction,
+                entry_price=entry_price,
+                stop_loss=stop_loss
+            )
+            
+            if not validation['approved']:
+                logger.error(f"🛑 TRADE REJECTED BY RISK MANAGER")
+                logger.error(f"   Symbol: {symbol} {direction}")
+                logger.error(f"   Reason: {validation['reason']}")
+                logger.error(f"   ✨ Glitch in Matrix by ФорексГод ✨")
+                return False
+            
+            # Use risk manager calculated lot size
+            if validation['lot_size'] > 0:
+                lot_size = validation['lot_size']
+                logger.info(f"💰 Lot size from risk manager: {lot_size}")
+        else:
+            logger.warning("⚠️  Risk manager not available - using default lot size")
+        
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # STEP 3: PREPARE SIGNAL FOR CBOT
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         
         try:
             # Generate unique signal ID
@@ -55,11 +109,14 @@ class CTraderExecutor:
             # JPY pairs: 1 pip = 0.01
             # Other forex: 1 pip = 0.0001
             # Gold/Silver: 1 pip = 0.01
+            # Oil (XTIUSD, WTIUSD, etc.): 1 pip = 0.01
             if symbol in ['BTCUSD', 'ETHUSD', 'XRPUSD', 'LTCUSD']:
                 pip_size = 1.0
             elif 'JPY' in symbol:
                 pip_size = 0.01
             elif symbol in ['XAUUSD', 'XAGUSD']:  # Gold, Silver
+                pip_size = 0.01
+            elif symbol in ['XTIUSD', 'WTIUSD', 'USOIL', 'CL']:  # Oil (WTI, Brent)
                 pip_size = 0.01
             else:
                 pip_size = 0.0001

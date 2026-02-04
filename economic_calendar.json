@@ -516,5 +516,259 @@
       "event": "ECB Press Conference",
       "impact": "High"
     }
+  ],
+  "custom_events_february_2026": [
+    {
+      "date": "2026-02-02",
+      "time": "17:00",
+      "currency": "USD",
+      "event": "ISM Manufacturing PMI",
+      "impact": "High",
+      "forecast": "48.5",
+      "previous": "47.9"
+    },
+    {
+      "date": "2026-02-03",
+      "time": "05:00",
+      "currency": "AUD",
+      "event": "Cash Rate",
+      "impact": "High",
+      "forecast": "3.85%",
+      "previous": "3.60%"
+    },
+    {
+      "date": "2026-02-03",
+      "time": "06:30",
+      "currency": "AUD",
+      "event": "RBA Monetary Policy Statement",
+      "impact": "High",
+      "forecast": "",
+      "previous": ""
+    },
+    {
+      "date": "2026-02-03",
+      "time": "06:30",
+      "currency": "AUD",
+      "event": "RBA Rate Statement",
+      "impact": "High",
+      "forecast": "",
+      "previous": ""
+    },
+    {
+      "date": "2026-02-03",
+      "time": "06:30",
+      "currency": "AUD",
+      "event": "RBA Press Conference",
+      "impact": "High",
+      "forecast": "",
+      "previous": ""
+    },
+    {
+      "date": "2026-02-03",
+      "time": "17:00",
+      "currency": "USD",
+      "event": "JOLTS Job Openings",
+      "impact": "High",
+      "forecast": "7.21M",
+      "previous": "7.15M"
+    },
+    {
+      "date": "2026-02-03",
+      "time": "23:45",
+      "currency": "NZD",
+      "event": "Employment Change q/q",
+      "impact": "High",
+      "forecast": "0.3%",
+      "previous": "0.0%"
+    },
+    {
+      "date": "2026-02-03",
+      "time": "23:45",
+      "currency": "NZD",
+      "event": "Unemployment Rate",
+      "impact": "High",
+      "forecast": "5.3%",
+      "previous": "5.3%"
+    },
+    {
+      "date": "2026-02-04",
+      "time": "15:15",
+      "currency": "USD",
+      "event": "ADP Non-Farm Employment Change",
+      "impact": "High",
+      "forecast": "48K",
+      "previous": "41K"
+    },
+    {
+      "date": "2026-02-04",
+      "time": "17:00",
+      "currency": "USD",
+      "event": "ISM Services PMI",
+      "impact": "High",
+      "forecast": "53.6",
+      "previous": "54.4"
+    },
+    {
+      "date": "2026-02-05",
+      "time": "14:00",
+      "currency": "GBP",
+      "event": "BOE Monetary Policy Report",
+      "impact": "High",
+      "forecast": "",
+      "previous": ""
+    },
+    {
+      "date": "2026-02-05",
+      "time": "14:00",
+      "currency": "GBP",
+      "event": "Monetary Policy Summary",
+      "impact": "High",
+      "forecast": "",
+      "previous": ""
+    },
+    {
+      "date": "2026-02-05",
+      "time": "14:00",
+      "currency": "GBP",
+      "event": "MPC Official Bank Rate Votes",
+      "impact": "High",
+      "forecast": "0-2-7",
+      "previous": "0-5-4"
+    },
+    {
+      "date": "2026-02-05",
+      "time": "14:00",
+      "currency": "GBP",
+      "event": "Official Bank Rate",
+      "impact": "High",
+      "forecast": "3.75%",
+      "previous": "3.75%"
+    },
+    {
+      "date": "2026-02-05",
+      "time": "14:30",
+      "currency": "GBP",
+      "event": "BOE Gov Bailey Speaks",
+      "impact": "High",
+      "forecast": "",
+      "previous": ""
+    },
+    {
+      "date": "2026-02-05",
+      "time": "15:15",
+      "currency": "EUR",
+      "event": "Main Refinancing Rate",
+      "impact": "High",
+      "forecast": "2.15%",
+      "previous": "2.15%"
+    },
+    {
+      "date": "2026-02-05",
+      "time": "15:15",
+      "currency": "EUR",
+      "event": "Monetary Policy Statement",
+      "impact": "High",
+      "forecast": "",
+      "previous": ""
+    },
+    {
+      "date": "2026-02-05",
+      "time": "15:30",
+      "currency": "USD",
+      "event": "Unemployment Claims",
+      "impact": "High",
+      "forecast": "213K",
+      "previous": "209K"
+    },
+    {
+      "date": "2026-02-05",
+      "time": "15:45",
+      "currency": "EUR",
+      "event": "ECB Press Conference",
+      "impact": "High",
+      "forecast": "",
+      "previous": ""
+    },
+    {
+      "date": "2026-02-05",
+      "time": "19:25",
+      "currency": "CAD",
+      "event": "BOC Gov Macklem Speaks",
+      "impact": "High",
+      "forecast": "",
+      "previous": ""
+    },
+    {
+      "date": "2026-02-06",
+      "time": "00:30",
+      "currency": "AUD",
+      "event": "RBA Gov Bullock Speaks",
+      "impact": "High",
+      "forecast": "",
+      "previous": ""
+    },
+    {
+      "date": "2026-02-06",
+      "time": "15:30",
+      "currency": "CAD",
+      "event": "Employment Change",
+      "impact": "High",
+      "forecast": "7.2K",
+      "previous": "8.2K"
+    },
+    {
+      "date": "2026-02-06",
+      "time": "15:30",
+      "currency": "CAD",
+      "event": "Unemployment Rate",
+      "impact": "High",
+      "forecast": "6.8%",
+      "previous": "6.8%"
+    },
+    {
+      "date": "2026-02-06",
+      "time": "15:30",
+      "currency": "USD",
+      "event": "Average Hourly Earnings m/m",
+      "impact": "High",
+      "forecast": "0.3%",
+      "previous": "0.3%"
+    },
+    {
+      "date": "2026-02-06",
+      "time": "15:30",
+      "currency": "USD",
+      "event": "Non-Farm Employment Change (NFP)",
+      "impact": "High",
+      "forecast": "67K",
+      "previous": "50K"
+    },
+    {
+      "date": "2026-02-06",
+      "time": "15:30",
+      "currency": "USD",
+      "event": "Unemployment Rate",
+      "impact": "High",
+      "forecast": "4.4%",
+      "previous": "4.4%"
+    },
+    {
+      "date": "2026-02-06",
+      "time": "17:00",
+      "currency": "USD",
+      "event": "Prelim UoM Consumer Sentiment",
+      "impact": "High",
+      "forecast": "55.4",
+      "previous": "56.4"
+    },
+    {
+      "date": "2026-02-06",
+      "time": "17:00",
+      "currency": "USD",
+      "event": "Prelim UoM Inflation Expectations",
+      "impact": "High",
+      "forecast": "",
+      "previous": "4.0%"
+    }
   ]
 }
