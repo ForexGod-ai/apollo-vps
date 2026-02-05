@@ -46,16 +46,34 @@ class FVG:
 
 
 @dataclass
+class OrderBlock:
+    """📦 Order Block - Ultima lumânare opusă înainte de impuls instituțional (CHoCH)"""
+    index: int
+    direction: str  # 'bullish' or 'bearish'
+    top: float  # Body high pentru bullish, wick high pentru bearish
+    bottom: float  # Wick low pentru bullish, body low pentru bearish
+    middle: float
+    candle_time: datetime
+    associated_choch: Optional[CHoCH] = None
+    associated_fvg: Optional[FVG] = None  # FVG lăsat de impuls
+    has_unfilled_fvg: bool = False  # TRUE = Setup 10/10 (OB + FVG necompletat)
+    ob_score: int = 0  # 1-10 scoring (10 = OB + unfilled FVG)
+    impulse_strength: float = 0.0  # Mărimea impulsului după OB (în pips/pct)
+
+
+@dataclass
 class TradeSetup:
     symbol: str
     daily_choch: CHoCH
     fvg: FVG
     h4_choch: Optional[CHoCH]
     h1_choch: Optional[CHoCH] = None  # V3.0: 1H CHoCH for GBP pairs
+    order_block: Optional['OrderBlock'] = None  # 📦 V3.5: Order Block pentru entry precision
     entry_price: float = 0.0
     stop_loss: float = 0.0
     take_profit: float = 0.0
     risk_reward: float = 0.0
+    estimated_rr: float = 0.0  # 🎯 V3.5: RR estimat pentru swing (minimum 1:5)
     setup_time: datetime = None
     priority: int = 0
     strategy_type: str = "reversal"
@@ -70,6 +88,184 @@ class SMCDetector:
         # Track FVG zones with trade count for ALL pairs (UNIVERSAL anti-overtrading)
         # Format: {symbol: [(top, bottom, date, trade_count), ...]}
         self.fvg_zones_tracker = {}  # UNIVERSAL for all pairs
+        
+        # 🎯 V3.4 ORDER BLOCKS PREPARATION: Store last 2 FVG zones per timeframe as "price magnets"
+        # Format: {symbol: {'4H': [FVG, FVG], '1H': [FVG, FVG]}}
+        self.fvg_magnets = {}  # Zonele de întoarcere pentru preț
+    
+    def store_fvg_magnet(self, symbol: str, timeframe: str, fvg: FVG) -> None:
+        """
+        🎯 V3.4 ORDER BLOCKS: Store last 2 FVG zones per timeframe as price magnets
+        These zones act as "zones of return" where price is likely to react
+        
+        Args:
+            symbol: Trading pair (e.g., 'GBPUSD')
+            timeframe: '4H' or '1H'
+            fvg: FVG object to store
+        """
+        if symbol not in self.fvg_magnets:
+            self.fvg_magnets[symbol] = {'4H': [], '1H': []}
+        
+        # Add new FVG to the list
+        self.fvg_magnets[symbol][timeframe].append(fvg)
+        
+        # Keep only last 2 FVGs (most recent zones)
+        self.fvg_magnets[symbol][timeframe] = self.fvg_magnets[symbol][timeframe][-2:]
+        
+        # DEBUG LOG
+        print(f"🎯 ORDER BLOCK MAGNET: {symbol} {timeframe} - Stored FVG zone {fvg.bottom:.5f}-{fvg.top:.5f}")
+        print(f"   Total magnets for {symbol} {timeframe}: {len(self.fvg_magnets[symbol][timeframe])}")
+    
+    def get_fvg_magnets(self, symbol: str, timeframe: str) -> List[FVG]:
+        """
+        Get stored FVG magnets for a symbol/timeframe
+        Returns empty list if none exist
+        """
+        if symbol not in self.fvg_magnets:
+            return []
+        return self.fvg_magnets[symbol].get(timeframe, [])
+    
+    def detect_order_block(
+        self, 
+        df: pd.DataFrame, 
+        choch: CHoCH, 
+        fvg: Optional[FVG] = None,
+        debug: bool = False
+    ) -> Optional['OrderBlock']:
+        """
+        🎯 V3.5 ORDER BLOCKS: Detectează ultima lumânare opusă înainte de impuls
+        
+        LOGIC:
+        1. Găsește CHoCH (break of structure)
+        2. Identifică ultima lumânare OPUSĂ înainte de impuls (Order Block)
+        3. Verifică dacă impulsul a lăsat FVG (validare instituțională)
+        4. Scorează OB (10/10 dacă FVG necompletat lângă el)
+        
+        Args:
+            df: DataFrame with OHLC data
+            choch: CHoCH object (break point)
+            fvg: Optional FVG object (pentru corelație)
+            debug: Print debug info
+        
+        Returns:
+            OrderBlock object or None
+        """
+        if choch is None:
+            return None
+        
+        choch_idx = choch.index
+        
+        # STEP 1: Identifică ultima lumânare OPUSĂ înainte de CHoCH
+        # Bullish CHoCH → căutăm ultima lumânare BEARISH (red candle)
+        # Bearish CHoCH → căutăm ultima lumânare BULLISH (green candle)
+        
+        # Lookback range: 10 candele înainte de CHoCH (suficient pentru OB detection)
+        lookback_start = max(0, choch_idx - 10)
+        
+        ob_candle_idx = None
+        
+        if choch.direction == 'bullish':
+            # Căutăm ultima lumânare BEARISH (close < open)
+            for i in range(choch_idx - 1, lookback_start - 1, -1):
+                if df['close'].iloc[i] < df['open'].iloc[i]:
+                    ob_candle_idx = i
+                    break
+        
+        elif choch.direction == 'bearish':
+            # Căutăm ultima lumânare BULLISH (close > open)
+            for i in range(choch_idx - 1, lookback_start - 1, -1):
+                if df['close'].iloc[i] > df['open'].iloc[i]:
+                    ob_candle_idx = i
+                    break
+        
+        if ob_candle_idx is None:
+            if debug:
+                print(f"   ⚠️ No Order Block found (no opposite candle before CHoCH)")
+            return None
+        
+        # STEP 2: Extrage zonă Order Block
+        # Bullish OB (după bearish candle): Body high + Wick low
+        # Bearish OB (după bullish candle): Wick high + Body low
+        
+        ob_open = df['open'].iloc[ob_candle_idx]
+        ob_close = df['close'].iloc[ob_candle_idx]
+        ob_high = df['high'].iloc[ob_candle_idx]
+        ob_low = df['low'].iloc[ob_candle_idx]
+        ob_time = df['time'].iloc[ob_candle_idx] if 'time' in df.columns else ob_candle_idx
+        
+        if choch.direction == 'bullish':
+            # Bullish OB: Body high to Wick low (zone unde price se va întoarce)
+            ob_top = max(ob_open, ob_close)  # Body high
+            ob_bottom = ob_low  # Wick low
+        else:
+            # Bearish OB: Wick high to Body low
+            ob_top = ob_high  # Wick high
+            ob_bottom = min(ob_open, ob_close)  # Body low
+        
+        ob_middle = (ob_top + ob_bottom) / 2
+        
+        # STEP 3: Calculează impulse strength (mărimea mișcării după OB)
+        impulse_start = ob_candle_idx
+        impulse_end = min(choch_idx + 5, len(df) - 1)  # 5 candele după CHoCH
+        
+        if choch.direction == 'bullish':
+            impulse_high = df['high'].iloc[impulse_start:impulse_end].max()
+            impulse_strength = impulse_high - ob_bottom
+        else:
+            impulse_low = df['low'].iloc[impulse_start:impulse_end].min()
+            impulse_strength = ob_top - impulse_low
+        
+        impulse_strength_pct = (impulse_strength / ob_middle) * 100
+        
+        # STEP 4: Verifică corelație cu FVG (OB + unfilled FVG = SCOR 10/10)
+        has_unfilled_fvg = False
+        ob_score = 5  # Base score
+        
+        if fvg is not None:
+            # Verifică dacă FVG este LÂNGĂ Order Block (gap < 50 pips sau overlap)
+            fvg_distance = abs(fvg.middle - ob_middle)
+            ob_size = ob_top - ob_bottom
+            
+            # Proximity check: FVG în raza de 2x mărimea OB
+            is_proximate = fvg_distance < (ob_size * 2)
+            
+            # Verifică dacă FVG este NECOMPLETAT (unfilled)
+            if not fvg.is_filled and is_proximate:
+                has_unfilled_fvg = True
+                ob_score = 10  # PERFECT SETUP!
+            elif is_proximate:
+                ob_score = 8  # FVG filled dar proxim
+            else:
+                ob_score = 6  # FVG exists dar departe
+        
+        # STEP 5: Bonus pentru impuls puternic (>1% move)
+        if impulse_strength_pct > 1.0:
+            ob_score = min(10, ob_score + 1)
+        
+        # STEP 6: Creează Order Block object
+        order_block = OrderBlock(
+            index=ob_candle_idx,
+            direction=choch.direction,
+            top=ob_top,
+            bottom=ob_bottom,
+            middle=ob_middle,
+            candle_time=ob_time,
+            associated_choch=choch,
+            associated_fvg=fvg,
+            has_unfilled_fvg=has_unfilled_fvg,
+            ob_score=ob_score,
+            impulse_strength=impulse_strength_pct
+        )
+        
+        if debug:
+            print(f"\n📦 ORDER BLOCK DETECTED:")
+            print(f"   Direction: {choch.direction.upper()}")
+            print(f"   Zone: {ob_bottom:.5f} - {ob_top:.5f} (Middle: {ob_middle:.5f})")
+            print(f"   Impulse Strength: {impulse_strength_pct:.2f}%")
+            print(f"   FVG Correlation: {'✅ UNFILLED FVG!' if has_unfilled_fvg else '⚠️ No FVG' if fvg is None else 'FVG filled'}")
+            print(f"   OB Score: {ob_score}/10")
+        
+        return order_block
 
     def detect_choch(self, df: pd.DataFrame) -> List[CHoCH]:
         """
@@ -174,6 +370,12 @@ class SMCDetector:
     def detect_swing_lows(self, df: pd.DataFrame) -> List[SwingPoint]:
         if df is None or len(df) == 0:
             return []
+        
+        # 🛡️ SAFETY CHECK: Verificare lungime minimă pentru swing_lookback
+        min_length = (self.swing_lookback * 2) + 1
+        if len(df) < min_length:
+            return []  # Nu avem suficiente candele pentru lookback=5 (need 11 minimum)
+        
         swing_lows = []
         body_lows = df[['open', 'close']].min(axis=1)
         for i in range(self.swing_lookback, len(df) - self.swing_lookback):
@@ -402,6 +604,12 @@ class SMCDetector:
         """Detect swing highs using BODY CLOSURE (not wicks) - Smart Money Concepts principle."""
         if df is None or len(df) == 0:
             return []
+        
+        # 🛡️ SAFETY CHECK: Verificare lungime minimă pentru swing_lookback (consistent cu detect_swing_lows)
+        min_length = (self.swing_lookback * 2) + 1
+        if len(df) < min_length:
+            return []  # Nu avem suficiente candele pentru lookback=5 (need 11 minimum)
+        
         swing_highs = []
         # Calculate body highs (max of open/close) - ignores wicks
         body_highs = df[['open', 'close']].max(axis=1)
@@ -424,6 +632,11 @@ class SMCDetector:
     def detect_swing_lows(self, df: pd.DataFrame) -> List[SwingPoint]:
         if df is None or len(df) == 0:
             return []
+        
+        # 🛡️ SAFETY CHECK: Asigurare că avem suficiente candele pentru swing detection
+        if len(df) < 5:
+            return []  # Minimum 5 candele pentru swing points (2 left + 1 center + 2 right)
+        
         swing_lows = []
         for i in range(2, len(df) - 2):
             if (
@@ -2033,6 +2246,35 @@ class SMCDetector:
                     print(f"\n✅ {symbol} ACCEPTED: New FVG zone {current_fvg_bottom:.5f}-{current_fvg_top:.5f}")
                     print(f"   Total tracked zones for {symbol}: {len(self.fvg_zones_tracker[symbol])}")
         
+        # 🎯 V3.5 ORDER BLOCKS: Detect OB pentru entry precision + corelație cu FVG
+        order_block = self.detect_order_block(
+            df=df_daily,
+            choch=latest_signal,
+            fvg=fvg,
+            debug=debug
+        )
+        
+        # Calculate ESTIMATED RR pentru swing trading (minimum 1:5)
+        estimated_rr = risk_reward  # Default to standard RR
+        if order_block and order_block.has_unfilled_fvg:
+            # OB + unfilled FVG = HIGH PROBABILITY swing (boost RR estimate)
+            estimated_rr = risk_reward * 1.5  # 1.5x multiplier pentru OB setups
+        
+        if debug and order_block:
+            print(f"\n🎯 SWING SETUP ENHANCED:")
+            print(f"   OB Score: {order_block.ob_score}/10")
+            print(f"   Estimated RR: 1:{estimated_rr:.1f} (minimum)")
+            print(f"   Entry Zone (OB): {order_block.bottom:.5f} - {order_block.top:.5f}")
+        
+        # 🎯 V3.4 ORDER BLOCKS: Store FVG as price magnet for future reference
+        # This prepares infrastructure for Order Block detection in V3.5
+        self.store_fvg_magnet(symbol, '4H', fvg)  # Store from 4H timeframe
+        if df_1h is not None and valid_1h_choch:
+            # If we have 1H data, detect and store 1H FVG magnets
+            h1_fvg = self.detect_fvg(df_1h, valid_1h_choch, current_price)
+            if h1_fvg:
+                self.store_fvg_magnet(symbol, '1H', h1_fvg)
+        
         # Return setup (MONITORING or READY)
         # Convert pandas Timestamp to Python datetime properly
         # Get the actual timestamp value (not the index position!)
@@ -2054,10 +2296,12 @@ class SMCDetector:
             fvg=fvg,
             h4_choch=h4_signal,  # H4 CHoCH (same for both REVERSAL and CONTINUITY)
             h1_choch=valid_1h_choch,  # V3.0: 1H CHoCH for GBP pairs (None if not detected)
+            order_block=order_block,  # 📦 V3.5: Order Block pentru entry precision
             entry_price=entry,
             stop_loss=sl,
             take_profit=tp,
             risk_reward=risk_reward,
+            estimated_rr=estimated_rr,  # 🎯 V3.5: RR estimat pentru swing (minimum 1:5)
             setup_time=setup_timestamp,  # Properly converted Python datetime
             priority=priority,
             strategy_type=strategy_type,
@@ -2066,7 +2310,7 @@ class SMCDetector:
 
 
 def format_setup_message(setup: TradeSetup) -> str:
-    """Format trade setup for Telegram message"""
+    """Format trade setup for Telegram message - V3.5 with Order Blocks"""
     direction = "🟢 LONG" if setup.daily_choch.direction == 'bullish' else "🔴 SHORT"
     
     # Status icon
@@ -2085,6 +2329,25 @@ def format_setup_message(setup: TradeSetup) -> str:
     else:
         h4_info = "⏳ Waiting for 4H CHoCH confirmation"
     
+    # 📦 V3.5 ORDER BLOCK INFO
+    ob_info = ""
+    rr_info = f"📈 Risk:Reward: 1:{setup.risk_reward:.2f}"
+    
+    if setup.order_block:
+        ob = setup.order_block
+        ob_score_stars = "⭐" * min(5, ob.ob_score // 2)  # 10/10 = 5 stars
+        ob_quality = "🔥 PERFECT!" if ob.has_unfilled_fvg else "✅ VALID"
+        
+        ob_info = f"""
+📦 Entry Zone (OB): {ob.bottom:.5f} - {ob.top:.5f}
+   {ob_quality} Order Block {ob_score_stars}
+   Impulse: {ob.impulse_strength:.2f}%"""
+        
+        # Update RR info with estimated swing RR
+        if setup.estimated_rr > setup.risk_reward:
+            rr_info = f"""📈 Risk:Reward: 1:{setup.risk_reward:.2f}
+🎯 RR Estimat (Swing): Minim 1:{setup.estimated_rr:.1f}"""
+    
     message = f"""
 🚨 SETUP - {setup.symbol}
 {direction} | {status_icon} | {strategy_emoji}
@@ -2092,12 +2355,13 @@ def format_setup_message(setup: TradeSetup) -> str:
 📊 Daily CHoCH: {setup.daily_choch.direction.upper()}
 📍 FVG Zone: {setup.fvg.bottom:.5f} - {setup.fvg.top:.5f}
 {h4_info}
+{ob_info}
 
 💰 Entry: {setup.entry_price:.5f}
 🛑 Stop Loss: {setup.stop_loss:.5f}
 🎯 Take Profit: {setup.take_profit:.5f}
 
-📈 Risk:Reward: 1:{setup.risk_reward:.2f}
+{rr_info}
 ⭐ Priority: {setup.priority}
 
 ⏰ Setup Time: {setup.setup_time.strftime('%Y-%m-%d %H:%M')}

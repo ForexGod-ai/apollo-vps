@@ -8,7 +8,7 @@
       "take_profit": 0.74833405,
       "risk_reward": 34.177798665405824,
       "strategy_type": "continuation",
-      "setup_time": "2026-02-04T14:45:54.720405",
+      "setup_time": "2026-02-05T16:01:21.438996",
       "priority": 1,
       "status": "MONITORING",
       "fvg_zone_top": 0.80324,
@@ -23,7 +23,7 @@
       "take_profit": 149.81456,
       "risk_reward": 27.15423752351419,
       "strategy_type": "continuation",
-      "setup_time": "2026-02-04T14:46:00.485715",
+      "setup_time": "2026-02-05T16:01:28.263894",
       "priority": 1,
       "status": "MONITORING",
       "fvg_zone_top": 158.418,
@@ -40,7 +40,7 @@
       "strategy_type": "reversal",
       "setup_time": "2026-02-02T15:44:35.221349",
       "priority": 1,
-      "status": "MONITORING",
+      "status": "CLOSED",
       "fvg_zone_top": 0.69769,
       "fvg_zone_bottom": 0.69407,
       "lot_size": 0.01,
@@ -56,12 +56,14 @@
         "direction": "bullish"
       },
       "choch_1h_price": 0.69407,
-      "last_check": "2026-02-04T17:37:43.163281",
+      "last_check": "2026-02-04T19:39:30.698831",
       "entry1_filled": true,
       "entry1_price": 0.69601,
       "entry1_time": "2026-02-02T17:14:22.175295",
       "entry1_lots": 0.5,
-      "pullback_status": "PULLBACK_REACHED"
+      "pullback_status": "PULLBACK_REACHED",
+      "close_reason": "Timeout expired, Entry 1 negative (16.3 pips)",
+      "close_time": "2026-02-04T19:40:01.256269"
     },
     {
       "symbol": "USDCAD",
@@ -71,7 +73,7 @@
       "take_profit": 1.3279868499999998,
       "risk_reward": 22.83554551072969,
       "strategy_type": "continuation",
-      "setup_time": "2026-02-04T14:45:52.050728",
+      "setup_time": "2026-02-05T16:01:18.410494",
       "priority": 1,
       "status": "MONITORING",
       "fvg_zone_top": 1.39154,
@@ -86,7 +88,7 @@
       "take_profit": 66.79715,
       "risk_reward": 69.26154763933947,
       "strategy_type": "reversal",
-      "setup_time": "2026-02-04T14:46:06.362920",
+      "setup_time": "2026-02-05T15:54:08.169941",
       "priority": 1,
       "status": "MONITORING",
       "fvg_zone_top": 65.81,
@@ -101,7 +103,7 @@
       "take_profit": 1.40550095,
       "risk_reward": 26.775763458914355,
       "strategy_type": "reversal",
-      "setup_time": "2026-02-04T14:46:12.107957",
+      "setup_time": "2026-02-05T11:00:52.745734",
       "priority": 1,
       "status": "MONITORING",
       "fvg_zone_top": 1.38473,
@@ -109,6 +111,5 @@
       "lot_size": 0.01
     }
   ],
-  "last_updated": "2026-02-04T14:46:14.300529",
-  "last_update": "2026-02-04T17:37:43.444868"
+  "last_updated": "2026-02-05T16:01:36.240612"
 }

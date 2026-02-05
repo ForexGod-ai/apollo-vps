@@ -550,37 +550,39 @@ class TelegramNotifier:
             return False
     
     def send_daily_summary(self, scanned_pairs: int, setups_found: int, active_setups: list = None) -> bool:
-        """Send daily scan summary with ACTIVE monitoring setups"""
+        """Send daily scan summary with ACTIVE monitoring setups - CLEAN HTML FORMAT"""
         # Separate monitoring setups from executed positions
         monitoring_setups = [s for s in (active_setups or []) if s.get('status') != 'EXECUTED']
         executed_positions = [s for s in (active_setups or []) if s.get('status') == 'EXECUTED']
         
-        message = f"""
-📊 *Daily Scan Complete*
+        # Header with clean HTML
+        message = f"""<b>📊 Daily Scan Complete</b>
 
-🔍 Pairs Scanned: `{scanned_pairs}`
-🎯 New Setups Found: `{setups_found}`
-📋 Monitoring: `{len(monitoring_setups)}` | Active Trades: `{len(executed_positions)}`
-⏰ Scan Time: `{datetime.now().strftime('%Y-%m-%d %H:%M UTC')}`
+🔍 Pairs Scanned: <code>{scanned_pairs}</code>
+🎯 New Setups Found: <code>{setups_found}</code>
+📋 Monitoring: <code>{len(monitoring_setups)}</code> | Active Trades: <code>{len(executed_positions)}</code>
+⏰ Scan Time: <code>{datetime.now().strftime('%Y-%m-%d %H:%M UTC')}</code>
 """
         
-        # Add monitoring setups
+        # Add monitoring setups with clean formatting
         if monitoring_setups:
             message += "\n━━━━━━━━━━━━━━━━━━━━\n"
-            message += "📊 *MONITORING SETUPS:*\n\n"
+            message += "<b>📊 MONITORING SETUPS:</b>\n\n"
             for setup in monitoring_setups:
                 symbol = setup.get('symbol', 'Unknown')
                 dir_raw = str(setup.get('direction', '')).strip().lower()
                 direction = "🟢 LONG" if dir_raw == 'buy' else ("🔴 SHORT" if dir_raw == 'sell' else dir_raw.upper())
                 entry = setup.get('entry_price', 0)
                 rr = setup.get('risk_reward', 0)
-                message += f"• *{symbol}* - {direction}\n"
-                message += f"  Entry: `{entry:.5f}` | R:R `1:{rr:.1f}`\n"
+                
+                # Clean HTML formatting - no markdown
+                message += f"• <b>{symbol}</b> - {direction}\n"
+                message += f"  Entry: <code>{entry:.5f}</code> | RR: <code>1:{rr:.1f}</code>\n"
         
-        # Add active positions
+        # Add active positions with clean formatting
         if executed_positions:
             message += "\n━━━━━━━━━━━━━━━━━━━━\n"
-            message += "🔥 *ACTIVE TRADES:*\n\n"
+            message += "<b>🔥 ACTIVE TRADES:</b>\n\n"
             for pos in executed_positions:
                 symbol = pos.get('symbol', 'Unknown')
                 dir_raw = str(pos.get('direction', '')).strip().lower()
@@ -589,10 +591,13 @@ class TelegramNotifier:
                 rr = pos.get('risk_reward', 0)
                 profit = pos.get('profit', 0)
                 profit_emoji = "💚" if profit > 0 else ("❤️" if profit < 0 else "💛")
-                message += f"• *{symbol}* - {direction} {profit_emoji}\n"
-                message += f"  Entry: `{entry:.5f}` | R:R `1:{rr:.1f}` | P/L: `${profit:.2f}`\n"
+                
+                # Clean HTML formatting - no markdown
+                message += f"• <b>{symbol}</b> - {direction} {profit_emoji}\n"
+                message += f"  Entry: <code>{entry:.5f}</code> | RR: <code>1:{rr:.1f}</code> | P/L: <code>${profit:.2f}</code>\n"
         
-        return self.send_message(message.strip())
+        # Send with HTML parse mode
+        return self.send_message(message.strip(), parse_mode="HTML")
     
     def send_execution_confirmation(self, setup: TradeSetup, entry_type: str = 'pullback', 
                                     momentum_score: float = 0, hours_elapsed: float = 0) -> bool:
@@ -602,56 +607,56 @@ class TelegramNotifier:
         
         if entry_type == 'pullback':
             message = f"""
-🎯 *TRADE EXECUTED - PULLBACK ENTRY*
+🎯 <b>TRADE EXECUTED - PULLBACK ENTRY</b>
 
 {setup.symbol} {direction} {direction_emoji}
 ━━━━━━━━━━━━━━━━━━━━
 
 ✅ Pullback reached Fibo 50%
-📍 Entry: `{setup.entry_price:.5f}`
-🛡️ Stop Loss: `{setup.stop_loss:.5f}`
-🎯 Take Profit: `{setup.take_profit:.5f}`
-📊 Risk:Reward: `1:{setup.risk_reward:.1f}`
+📍 Entry: <code>{setup.entry_price:.5f}</code>
+🛡️ Stop Loss: <code>{setup.stop_loss:.5f}</code>
+🎯 Take Profit: <code>{setup.take_profit:.5f}</code>
+📊 RR: <code>1:{setup.risk_reward:.1f}</code>
 
-⏰ Time to entry: {hours_elapsed:.1f}h
+⏰ Time to entry: <code>{hours_elapsed:.1f}h</code>
 🎯 Classic pullback strategy ✅
 
 ━━━━━━━━━━━━━━━━━━━━
-✨ *Glitch in Matrix* - by ForexGod
+✨ <b>Glitch in Matrix</b> - by ForexGod
 """
         else:  # continuation momentum
             message = f"""
-🚀 *TRADE EXECUTED - MOMENTUM ENTRY*
+🚀 <b>TRADE EXECUTED - MOMENTUM ENTRY</b>
 
 {setup.symbol} {direction} {direction_emoji}
 ━━━━━━━━━━━━━━━━━━━━
 
 ✅ Strong continuation detected!
-📊 Momentum Score: {momentum_score:.0f}/100 🔥
-📍 Entry: `{setup.entry_price:.5f}` (market)
-🛡️ Stop Loss: `{setup.stop_loss:.5f}`
-🎯 Take Profit: `{setup.take_profit:.5f}`
-📊 Risk:Reward: `1:{setup.risk_reward:.1f}`
+📊 Momentum Score: <code>{momentum_score:.0f}/100</code> 🔥
+📍 Entry: <code>{setup.entry_price:.5f}</code> (market)
+🛡️ Stop Loss: <code>{setup.stop_loss:.5f}</code>
+🎯 Take Profit: <code>{setup.take_profit:.5f}</code>
+📊 RR: <code>1:{setup.risk_reward:.1f}</code>
 
-⏰ Time to entry: {hours_elapsed:.1f}h (after 6h wait)
+⏰ Time to entry: <code>{hours_elapsed:.1f}h</code> (after 6h wait)
 💨 Riding the momentum! 🚀
 
 ━━━━━━━━━━━━━━━━━━━━
-✨ *Glitch in Matrix* - by ForexGod
+✨ <b>Glitch in Matrix</b> - by ForexGod
 """
         
-        return self.send_message(message.strip())
+        return self.send_message(message.strip(), parse_mode="HTML")
     
     def send_error_alert(self, error_msg: str) -> bool:
         """Send error notification"""
         message = f"""
-⚠️ *Scanner Error*
+⚠️ <b>Scanner Error</b>
 
-`{error_msg}`
+<code>{error_msg}</code>
 
-⏰ Time: `{datetime.now().strftime('%Y-%m-%d %H:%M UTC')}`
+⏰ Time: <code>{datetime.now().strftime('%Y-%m-%d %H:%M UTC')}</code>
 """
-        return self.send_message(message.strip())
+        return self.send_message(message.strip(), parse_mode="HTML")
     
     def test_connection(self) -> bool:
         """Test Telegram bot connection"""
