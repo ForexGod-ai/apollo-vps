@@ -7,6 +7,8 @@ import os
 import requests
 import subprocess
 import platform
+import time
+import hashlib
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -29,6 +31,10 @@ class NotificationManager:
         self.telegram_chat_id = os.getenv('TELEGRAM_CHAT_ID', '')
         self.desktop_notifications = os.getenv('DESKTOP_NOTIFICATIONS', 'True').lower() == 'true'
         
+        # 🛡️ MESSAGE DEDUPLICATION CACHE - Prevents double notifications
+        self.message_cache = {}  # {message_hash: timestamp}
+        self.cache_ttl = 5  # seconds - ignore duplicate messages within this window
+        
         # Use centralized TelegramNotifier for automatic branding
         if TELEGRAM_NOTIFIER_AVAILABLE and self.telegram_bot_token and self.telegram_chat_id:
             try:
@@ -40,6 +46,7 @@ class NotificationManager:
             self.use_centralized_telegram = False
         
         logger.info("📢 Notification Manager inițializat")
+        logger.info(f"🛡️  Message deduplication: ENABLED ({self.cache_ttl}s cooldown)")
         if self.telegram_enabled:
             logger.info(f"✅ Telegram notifications: ENABLED (Branding: {'ON' if self.use_centralized_telegram else 'OFF'})")
         if self.desktop_notifications:
@@ -151,16 +158,34 @@ class NotificationManager:
             if execution_result.get('success'):
                 message += f"\n✅ *EXECUTAT AUTOMAT în cTrader*\n"
     def _send_telegram(self, message):
-        """Trimite mesaj pe Telegram cu branding automat"""
+        """Trimite mesaj pe Telegram cu branding automat + deduplication"""
         if not self.telegram_bot_token or not self.telegram_chat_id:
-            logger.warning("⚠️ Telegram credentials lipsă!")
+            logger.warning("⚠️  Telegram credentials lipsă!")
             return False
+        
+        # 🛡️ DEDUPLICATION CHECK - Prevent double notifications
+        message_hash = hashlib.md5(f"{self.telegram_chat_id}:{message}".encode()).hexdigest()
+        current_time = time.time()
+        
+        # Check if same message was sent recently
+        if message_hash in self.message_cache:
+            last_sent_time = self.message_cache[message_hash]
+            time_diff = current_time - last_sent_time
+            
+            if time_diff < self.cache_ttl:
+                logger.warning(f"🚫 Duplicate message blocked (sent {time_diff:.1f}s ago) - preventing double notification")
+                return False  # Block duplicate
+        
+        # Clean old cache entries (older than TTL)
+        self.message_cache = {h: t for h, t in self.message_cache.items() if current_time - t < self.cache_ttl}
         
         # Use centralized notifier with automatic branding
         if self.use_centralized_telegram:
             try:
                 success = self.telegram_notifier.send_message(message, parse_mode="HTML")
                 if success:
+                    # Cache successful send
+                    self.message_cache[message_hash] = current_time
                     logger.info("✅ Telegram notification trimisă (with branding)!")
                 return success
             except Exception as e:
@@ -172,12 +197,12 @@ class NotificationManager:
             url = f"https://api.telegram.org/bot{self.telegram_bot_token}/sendMessage"
             
             # Add manual branding if centralized not available
-            branded_message = f"{message}\n\n━━━━━━━━━━━━━━━━━━━━\n✨ *Glitch in Matrix by ФорексГод* ✨\n🧠 AI-Powered • 💎 Smart Money"
+            branded_message = f"{message}\n\n━━━━━━━━━━━━━━━━━━━━\n✨ <b>Glitch in Matrix by ФорексГод</b> ✨\n🧠 AI-Powered • 💎 Smart Money"
             
             payload = {
                 'chat_id': self.telegram_chat_id,
                 'text': branded_message,
-                'parse_mode': 'Markdown'
+                'parse_mode': 'HTML'
             }
             
             response = requests.post(url, json=payload, timeout=10)
@@ -192,12 +217,6 @@ class NotificationManager:
         except Exception as e:
             logger.error(f"❌ Eroare Telegram: {e}")
             return False
-            if response.status_code == 200:
-                logger.info("✅ Telegram notification trimisă!")
-                return True
-            else:
-                logger.error(f"❌ Telegram error: {response.text}")
-                return False
                 
         except Exception as e:
             logger.error(f"❌ Eroare Telegram: {e}")
@@ -258,7 +277,7 @@ class NotificationManager:
             return False
     
     def send_execution_alert(self, setup_data):
-        """Trimite alertă ARMAGEDDON BEGINS pentru execuție automată"""
+        """Trimite alertă ARMAGEDDON BEGINS pentru execuție automată - ELITE STACK v32.0"""
         symbol = setup_data.get('symbol', 'N/A')
         direction = setup_data.get('direction', 'buy').upper()
         entry = setup_data.get('entry', 0)
@@ -271,26 +290,22 @@ class NotificationManager:
         tp_pips = abs(tp - entry) / (0.01 if 'JPY' in symbol else 0.0001)
         
         # Direction arrow
-        direction_arrow = "📈 ↗️" if direction == 'BUY' else "📉 ↘️"
+        direction_arrow = "📈" if direction == 'BUY' else "📉"
         
-        message = f"""
-⚡ *TRADE EXECUTION • LIVE* ⚡
+        message = f"""⚡ *TRADE LIVE* • {symbol}
+{direction_arrow} *{direction}*
 
-💎 *{symbol}* • {direction_arrow} *{direction}*
-━━━━━━━━━━━━━━━━━━━━
+╼╼╼╼╼
+📥 In: `{entry:.5f}` | 🛑 SL: `{sl:.5f}` ({sl_pips:.1f}p)
+🎯 TP: `{tp:.5f}` ({tp_pips:.1f}p)
+⚖️ RR: 1:{rr:.2f}
 
-💰 *Entry:* `{entry:.5f}`
-🛑 *Stop Loss:* `{sl:.5f}` (-{sl_pips:.1f} pips)
-🎯 *Take Profit:* `{tp:.5f}` (+{tp_pips:.1f} pips)
-📊 *R:R Ratio:* 1:{rr:.2f}
+╼╼╼╼╼
+✅ EXECUTED • {datetime.now().strftime('%H:%M:%S')}
 
-━━━━━━━━━━━━━━━━━━━━
-✅ *Status:* EXECUTED in cTrader
-🤖 *Execution:* AUTOMATED
-⏰ *Time:* {datetime.now().strftime('%H:%M:%S')}
-
-🔥 *THE GLITCH IS LIVE!* 🔥
-"""
+╼╼╼╼╼
+✨ *Glitch in Matrix by ФорексГод* ✨
+🧠 AI-Powered • 💎 Smart Money"""
         
         if self.telegram_enabled:
             return self._send_telegram(message)

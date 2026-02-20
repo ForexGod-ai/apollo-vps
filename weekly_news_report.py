@@ -40,88 +40,65 @@ class WeeklyNewsReport(NewsCalendarMonitor):
         return flags.get(currency, '🏴')
     
     def format_weekly_telegram_message(self, events: List[NewsEvent]) -> str:
-        """Format weekly news report for Telegram"""
-        
+        """Format weekly news report for Telegram - COMPACT v4.0"""
         if not events:
-            return """
-📅 *WEEKLY FOREX NEWS REPORT*
-🗓️ Week of {week_start}
-
-✅ No high-impact news scheduled for next week
-🟢 Clear trading conditions expected
-
-━━━━━━━━━━━━━━━━━━━━
-✨ *ForexGod Weekly News* ✨
-🧠 _Glitch in Matrix Trading System_
-""".format(week_start=datetime.now().strftime('%B %d, %Y'))
+            return """📅 *WEEKLY REPORT*
+🗓️ Week: {week_start}
+✅ No high-impact news
+🟢 Clear trading
+╼╼╼╼╼╼╼╼
+✨ *Glitch in Matrix*
+👑 ФорексГод
+╼╼╼╼╼╼╼╼""".format(week_start=datetime.now().strftime('%b %d'))
         
         # Sort events by time
         events.sort(key=lambda x: x.time)
-        
         # Calculate week range
         today = datetime.now()
-        week_start = today + timedelta(days=(7 - today.weekday()))  # Next Monday
-        week_end = week_start + timedelta(days=6)  # Next Sunday
-        
-        message = "📅 *WEEKLY FOREX NEWS REPORT* 📅\n\n"
-        message += f"🗓️ Week: {week_start.strftime('%b %d')} - {week_end.strftime('%b %d, %Y')}\n"
-        message += f"🔥 {len(events)} HIGH impact events scheduled\n"
-        message += f"⏰ Generated: {datetime.now().strftime('%A, %b %d at %H:%M')}\n"
-        message += "━━━━━━━━━━━━━━━━━━━━\n\n"
-        
-        # Group by day of week
+        week_start = today + timedelta(days=(7 - today.weekday()))
+        week_end = week_start + timedelta(days=6)
+        message = f"📅 *WEEKLY REPORT*\n"
+        message += f"🗓️ {week_start.strftime('%b %d')}-{week_end.strftime('%b %d')}\n"
+        message += f"🔥 {len(events)} HIGH impact\n"
+        message += f"⏰ {datetime.now().strftime('%a %H:%M')}\n"
+        message += "╼╼╼╼╼╼╼╼\n"
+        # Group by day
         events_by_day = {}
         for event in events:
-            day_key = event.time.strftime('%A, %B %d')  # "Monday, December 16"
+            day_key = event.time.strftime('%A, %B %d')
             if day_key not in events_by_day:
                 events_by_day[day_key] = []
             events_by_day[day_key].append(event)
-        
-        # Count critical events
+        # Count critical
         critical_count = sum(1 for e in events if self.is_critical_event(e))
-        
         if critical_count > 0:
-            message += f"⚠️ *{critical_count} CRITICAL EVENTS THIS WEEK*\n\n"
+            message += f"⚠️ *{critical_count} CRITICAL*\n"
         
         # Format each day
         for day_label, day_events in events_by_day.items():
-            # Day header
             message += f"📍 *{day_label}*\n"
-            message += "─────────────────────\n"
-            
-            # Sort events by time within day
+            message += "╼╼╼╼╼╼╼╼\n"
             day_events.sort(key=lambda x: x.time)
-            
             for event in day_events:
                 flag = self._get_currency_flag(event.currency)
-                critical_marker = "⚠️ " if self.is_critical_event(event) else ""
-                
-                message += f"\n{critical_marker}{flag} *{event.currency}* - {event.event}\n"
-                message += f"   🕐 {event.time.strftime('%H:%M')}\n"
-                message += f"   🔴 Impact: *{event.impact}*\n"
-                
+                critical_marker = "⚠️" if self.is_critical_event(event) else ""
+                message += f"{critical_marker}{flag} *{event.currency}* {event.event}\n"
+                message += f"🕐 {event.time.strftime('%H:%M')}\n"
                 if event.forecast:
-                    message += f"   📊 Forecast: `{event.forecast}`\n"
-                if event.previous:
-                    message += f"   📈 Previous: `{event.previous}`\n"
-                
-                # Add specific trading advice for critical events
+                    message += f"📊 F:`{event.forecast}` P:`{event.previous or 'N/A'}`\n"
+                # Warnings for critical
                 if self.is_critical_event(event):
-                    if 'NFP' in event.event.upper() or 'PAYROLL' in event.event.upper():
-                        message += f"   💥 *EXTREME VOLATILITY - Avoid USD pairs*\n"
-                    elif 'FOMC' in event.event.upper() or 'FED' in event.event.upper():
-                        message += f"   💥 *FED DECISION - Major USD impact*\n"
-                    elif 'CPI' in event.event.upper() or 'INFLATION' in event.event.upper():
-                        message += f"   📊 *Inflation data - High volatility*\n"
-                    elif 'INTEREST RATE' in event.event.upper():
-                        message += f"   💰 *Rate Decision - Avoid {event.currency} pairs*\n"
-            
-            message += "\n"
+                    if 'NFP' in event.event.upper():
+                        message += "💥 *EXTREME VOL*\n"
+                    elif 'FOMC' in event.event.upper():
+                        message += "💥 *FED*\n"
+                    elif 'CPI' in event.event.upper():
+                        message += "📊 *INFLATION*\n"
+                message += "\n"
         
-        # Weekly summary by currency
-        message += "━━━━━━━━━━━━━━━━━━━━\n"
-        message += "📊 *WEEKLY SUMMARY BY CURRENCY:*\n\n"
-        
+        # Weekly summary - COMPACT
+        message += "╼╼╼╼╼╼╼╼\n"
+        message += "📊 *SUMMARY:*\n"
         currency_counts = {}
         for event in events:
             if event.currency not in currency_counts:
@@ -129,46 +106,27 @@ class WeeklyNewsReport(NewsCalendarMonitor):
             currency_counts[event.currency]['total'] += 1
             if self.is_critical_event(event):
                 currency_counts[event.currency]['critical'] += 1
-        
-        # Sort by total events
         sorted_currencies = sorted(currency_counts.items(), key=lambda x: x[1]['total'], reverse=True)
-        
         for currency, counts in sorted_currencies:
             flag = self._get_currency_flag(currency)
-            critical_marker = f" (⚠️ {counts['critical']} critical)" if counts['critical'] > 0 else ""
-            message += f"{flag} *{currency}*: {counts['total']} events{critical_marker}\n"
-        
-        message += "\n━━━━━━━━━━━━━━━━━━━━\n"
-        message += "🎯 *TRADING STRATEGY FOR THE WEEK:*\n\n"
-        
-        # Give specific advice based on events
+            crit = f"⚠️{counts['critical']}" if counts['critical'] > 0 else ""
+            message += f"{flag}{currency}:{counts['total']} {crit}\n"
+        # Strategy - COMPACT
+        message += "╼╼╼╼╼╼╼╼\n"
+        message += "🎯 *STRATEGY:*\n"
         if critical_count > 3:
-            message += "⚠️ *HIGH VOLATILITY WEEK*\n"
-            message += "• Be extra cautious with position sizing\n"
-            message += "• Consider wider stop losses\n"
-            message += "• Avoid trading 30min before/after major events\n"
+            message += "⚠️ HIGH VOL WEEK\n• Reduce sizing\n• Wider SL\n"
         elif critical_count > 0:
-            message += "⚡ *MODERATE VOLATILITY WEEK*\n"
-            message += "• Standard risk management\n"
-            message += "• Monitor news times closely\n"
-            message += "• Close/reduce positions before critical events\n"
+            message += "⚡ MODERATE\n• Standard risk\n• Close before news\n"
         else:
-            message += "✅ *LOW NEWS WEEK*\n"
-            message += "• Normal trading conditions\n"
-            message += "• Focus on technical setups\n"
-            message += "• Still monitor for unexpected news\n"
-        
-        message += "\n━━━━━━━━━━━━━━━━━━━━\n"
-        message += "💡 *REMINDERS:*\n"
-        message += "• Close trades 30min before major news\n"
-        message += "• NFP, FOMC = avoid trading entirely\n"
-        message += "• Check daily updates at 8am, 2pm, 8pm, 2am\n"
-        message += "• Plan your week around these events\n\n"
-        
-        message += "━━━━━━━━━━━━━━━━━━━━\n"
-        message += "✨ *ForexGod Weekly News Report* ✨\n"
-        message += "🧠 _Glitch in Matrix Trading System_\n"
-        message += f"📅 _Next report: {(datetime.now() + timedelta(days=7)).strftime('%A, %b %d at 21:00')}_\n"
+            message += "✅ LOW NEWS\n• Focus technicals\n"
+        # Footer - COMPACT
+        message += "╼╼╼╼╼╼╼╼\n"
+        message += f"📅 Next: {(datetime.now() + timedelta(days=7)).strftime('%a %b %d')}\n"
+        message += "╼╼╼╼╼╼╼╼\n"
+        message += "✨ *Glitch in Matrix*\n"
+        message += "👑 ФорексГод\n"
+        message += "╼╼╼╼╼╼╼╼"
         
         return message.strip()
     

@@ -704,6 +704,86 @@ class StrategyOptimizer:
             'recommendation': recommendation,
             'factors': factors
         }
+    
+    def calculate_ai_probability(
+        self,
+        symbol: str,
+        hour: int,
+        fvg_quality: float,
+        choch_strength: int,
+        pattern_type: str
+    ) -> int:
+        """
+        Calculate AI confidence probability score (0-100)
+        Used by elite scanners for advanced setup scoring
+        
+        Args:
+            symbol: Trading pair (e.g., 'BTCUSD', 'EURUSD')
+            hour: Current hour (0-23)
+            fvg_quality: FVG quality score (0-100)
+            choch_strength: CHoCH strength (1-10)
+            pattern_type: Pattern type ('reversal', 'continuation', etc.)
+        
+        Returns:
+            int: AI confidence score 0-100
+        """
+        if not self.learned_rules or self.learned_rules['total_trades_analyzed'] == 0:
+            # No ML data - return neutral score based on inputs
+            return int((fvg_quality * 0.6) + (choch_strength * 4))
+        
+        score = 50  # Start neutral
+        
+        # 1. Pair Historical Performance (30% weight, max +/-30 points)
+        if symbol in self.learned_rules['profit_factor_by_pair']:
+            pair_data = self.learned_rules['profit_factor_by_pair'][symbol]
+            pf = pair_data['profit_factor']
+            win_rate = pair_data.get('win_rate', 50)
+            
+            if pf >= 2.0:
+                score += 30  # Excellent pair
+            elif pf >= 1.5:
+                score += 20  # Very good
+            elif pf >= 1.0:
+                score += 10  # Profitable
+            else:
+                score -= 30  # Poor performer
+                
+            # Bonus for high win rate
+            if win_rate >= 65:
+                score += 5
+        
+        # 2. Blackout Period Check (20% weight, -20 points penalty)
+        if hour in self.learned_rules['recommendations'].get('blackout_hours', []):
+            score -= 20  # High risk hour
+        else:
+            score += 10  # Good timing
+        
+        # 3. FVG Quality Score (25% weight, max +25 points)
+        # Normalize FVG quality to 0-25 range
+        fvg_contribution = int(fvg_quality * 0.25)
+        score += fvg_contribution
+        
+        # 4. CHoCH Strength (15% weight, max +15 points)
+        # CHoCH strength is 1-10, normalize to 0-15
+        choch_contribution = int((choch_strength / 10) * 15)
+        score += choch_contribution
+        
+        # 5. Pattern Type Success Rate (10% weight, max +/-10 points)
+        if pattern_type.upper() in self.learned_rules.get('pattern_success_rate', {}):
+            pattern_data = self.learned_rules['pattern_success_rate'][pattern_type.upper()]
+            pattern_win_rate = pattern_data.get('win_rate', 50)
+            
+            if pattern_win_rate >= 60:
+                score += 10  # Reliable pattern
+            elif pattern_win_rate >= 50:
+                score += 5   # Decent pattern
+            else:
+                score -= 10  # Risky pattern
+        
+        # Cap score between 0-100
+        score = max(0, min(100, score))
+        
+        return int(score)
 
 
 def main():

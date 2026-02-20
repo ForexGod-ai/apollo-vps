@@ -7,13 +7,64 @@ import time
 import os
 import subprocess
 import sys
+import atexit
 from pathlib import Path
 from loguru import logger
 from datetime import datetime
 import requests
+import psutil
 from dotenv import load_dotenv
 
 load_dotenv()
+
+
+def acquire_pid_lock(lock_file: Path) -> bool:
+    """
+    🔒 PID LOCK SINGLETON PATTERN - Prevents duplicate process instances
+    Returns True if lock acquired, False if another instance is already running
+    """
+    try:
+        if lock_file.exists():
+            # Read existing PID
+            with open(lock_file, 'r') as f:
+                old_pid = int(f.read().strip())
+            
+            # Check if process is still running
+            if psutil.pid_exists(old_pid):
+                try:
+                    proc = psutil.Process(old_pid)
+                    # Verify it's the same script (not PID reuse)
+                    if 'position_monitor' in ' '.join(proc.cmdline()):
+                        logger.error(f"❌ Position Monitor already running (PID {old_pid})")
+                        logger.error("⚠️  Cannot start duplicate instance - exiting")
+                        return False
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    pass
+            
+            # Stale lock file - remove it
+            logger.warning(f"🔧 Removing stale lock file (PID {old_pid} not running)")
+            lock_file.unlink()
+        
+        # Acquire lock
+        with open(lock_file, 'w') as f:
+            f.write(str(os.getpid()))
+        
+        logger.success(f"🔒 PID lock acquired: {lock_file} (PID {os.getpid()})")
+        return True
+        
+    except Exception as e:
+        logger.error(f"❌ Failed to acquire PID lock: {e}")
+        return False
+
+
+def release_pid_lock(lock_file: Path):
+    """Release PID lock on exit"""
+    try:
+        if lock_file.exists():
+            lock_file.unlink()
+            logger.info(f"🔓 PID lock released: {lock_file}")
+    except Exception as e:
+        logger.error(f"⚠️  Failed to release lock: {e}")
 
 
 class PositionMonitor:
@@ -86,12 +137,12 @@ class PositionMonitor:
         
         # Profit/Loss styling
         if profit > 0:
-            profit_emoji = "✅ 💰"
+            profit_emoji = "🟢 💰"
             profit_text = f"+${profit:.2f}"
             title = "🎯 <b>TRADE WINNER!</b> 🎯"
             conclusion = "<i>💎 'Another one bites the dust'</i>"
         else:
-            profit_emoji = "❌ 📉"
+            profit_emoji = "🔴 📉"
             profit_text = f"-${abs(profit):.2f}"
             title = "⚠️ <b>TRADE CLOSED</b> ⚠️"
             conclusion = "<i>📊 'We learn and adapt'</i>"
@@ -106,28 +157,26 @@ class PositionMonitor:
 
 {profit_emoji} <b>POSITION CLOSED</b>
 
-{direction_emoji} {direction} {lot} {symbol}
-💵 Profit/Loss: <b>{profit_text}</b>
-📊 Entry: {entry:.5f}
-🎯 Close: {close_price:.5f}
-🎫 Ticket: #{ticket}
+{direction_emoji} <b>{direction}</b> <code>{lot}</code> <b>{symbol}</b>
+💵 Profit/Loss: <code>{profit_text}</code>
+📊 Entry: <code>{entry:.5f}</code>
+🎯 Close: <code>{close_price:.5f}</code>
+🎫 Ticket: <code>#{ticket}</code>
 ⏰ Closed: {close_time}
 
 {conclusion}
 
-━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 💼 <b>ACCOUNT STATUS</b>
-━━━━━━━━━━━━━━━━━━━━━━━━
-💰 Balance: <b>${account_balance:.2f}</b>
-💎 Equity: <b>${account_equity:.2f}</b>
-{pl_emoji} Open P/L: <b>${total_open_pl:+.2f}</b>
-📊 Open Positions: <b>{open_positions_count}</b>
+──────────────────
+💰 Balance: <code>${account_balance:.2f}</code>
+💎 Equity: <code>${account_equity:.2f}</code>
+{pl_emoji} Open P/L: <code>${total_open_pl:+.2f}</code>
+📊 Open Positions: <code>{open_positions_count}</code>
 
-━━━━━━━━━━━━━━━━━━━━━━━━
-✨ <b>Strategy by ForexGod</b> ✨
-🧠 Glitch in Matrix Trading System
-💎 + AI Validation
-━━━━━━━━━━━━━━━━━━━━━━━━
+<code>──────────────────</code>
+✨ <b>Glitch in Matrix</b> by ФорексГод ✨
+🧠 AI-Powered • 💎 Smart Money
 """
         
         try:
@@ -206,26 +255,26 @@ class PositionMonitor:
 {epic_title}
 
 🔥 <b>GLITCH IN MATRIX • POSITION LIVE</b> 🔥
-━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 
 💎 <b>{symbol}</b> • {direction_arrow} <b>{direction}</b>
-📦 <b>Volume:</b> {lot} lots
-💰 <b>Entry:</b> {entry:.5f}
-🎫 <b>Ticket:</b> #{ticket}
+📦 <b>Volume:</b> <code>{lot}</code> lots
+💰 <b>Entry:</b> <code>{entry:.5f}</code>
+🎫 <b>Ticket:</b> <code>#{ticket}</code>
 """
         
         # Add SL/TP if available
         if stop_loss:
-            message += f"\n🛑 <b>Stop Loss:</b> {stop_loss:.5f}"
+            message += f"\n🛑 <b>Stop Loss:</b> <code>{stop_loss:.5f}</code>"
         if take_profit:
-            message += f"\n🎯 <b>Take Profit:</b> {take_profit:.5f}"
+            message += f"\n🎯 <b>Take Profit:</b> <code>{take_profit:.5f}</code>"
         
         # Add risk metrics
         message += risk_pips + reward_pips + rr_ratio
         
         message += """
 
-━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 🧠 <b>AI Validation:</b> ✅ CONFIRMED
 ⚡ <b>Risk Level:</b> CALCULATED
 🤖 <b>Execution:</b> AUTOMATED
@@ -233,10 +282,9 @@ class PositionMonitor:
 
 <i>💎 "The Matrix cannot hold us" 💎</i>
 
-━━━━━━━━━━━━━━━━━━━━━━━━
+<code>──────────────────</code>
 ✨ <b>Glitch in Matrix</b> by ФорексГод ✨
 🧠 AI-Powered • 💎 Smart Money
-━━━━━━━━━━━━━━━━━━━━━━━━
 """
         
         try:
@@ -351,6 +399,15 @@ class PositionMonitor:
 
 if __name__ == "__main__":
     import sys
+    
+    # 🔒 PID LOCK - Prevent duplicate instances
+    lock_file = Path("process_position_monitor.lock")
+    if not acquire_pid_lock(lock_file):
+        logger.error("🚫 DUPLICATE INSTANCE DETECTED - Exiting to prevent double notifications")
+        sys.exit(1)
+    
+    # Register cleanup on exit
+    atexit.register(release_pid_lock, lock_file)
     
     monitor = PositionMonitor()
     

@@ -206,6 +206,11 @@ def fetch_ctrader_data():
 def write_trade_history(data, db: TradeDatabase):
     """Write fetched data to trade_history.json AND SQLite"""
     try:
+        # Sort closed trades chronologically before writing (critical for dashboard charts)
+        closed_trades = data.get('closed_trades', [])
+        closed_trades.sort(key=lambda t: t.get('close_time', ''), reverse=False)
+        data['closed_trades'] = closed_trades
+        
         # Write to JSON (for dashboard compatibility)
         with open(TRADE_HISTORY_FILE, 'w') as f:
             json.dump(data, f, indent=2)
@@ -213,7 +218,6 @@ def write_trade_history(data, db: TradeDatabase):
         # Extract data
         account = data.get('account', {})
         open_positions = data.get('open_positions', [])
-        closed_trades = data.get('closed_trades', [])
         
         logger.info("📝 trade_history.json updated:")
         logger.info(f"   Balance: ${account.get('balance', 0):.2f}")

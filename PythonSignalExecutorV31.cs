@@ -23,14 +23,14 @@ namespace cAlgo.Robots
     /// 
     /// ✨ Glitch in Matrix by ФорексГод ✨
     /// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    /// </summary>
+    /// </summary> 
     [Robot(TimeZone = TimeZones.UTC, AccessRights = AccessRights.FullAccess)]
     public class PythonSignalExecutorV31 : Robot
     {
-        [Parameter("Signal File Path", DefaultValue = "/Users/forexgod/Desktop/Glitch in Matrix/trading-ai-agent apollo/signals.json")]
+        [Parameter("Signal File Path", DefaultValue = "/Users/forexgod/GlitchMatrix/signals.json")]
         public string SignalFilePath { get; set; }
 
-        [Parameter("Config File Path", DefaultValue = "/Users/forexgod/Desktop/Glitch in Matrix/trading-ai-agent apollo/SUPER_CONFIG.json")]
+        [Parameter("Config File Path", DefaultValue = "/Users/forexgod/GlitchMatrix/SUPER_CONFIG.json")]
         public string ConfigFilePath { get; set; }
 
         [Parameter("Check Interval (seconds)", DefaultValue = 10)]
@@ -51,6 +51,21 @@ namespace cAlgo.Robots
             Print($"⚙️  Config: {ConfigFilePath}");
             Print($"⏱️ Check interval: {CheckInterval}s");
             
+            // MATRIX LINK: Show absolute paths for debugging
+            Print($"🔗 MATRIX LINK: Citesc semnale din calea absolută -> {Path.GetFullPath(SignalFilePath)}");
+            Print($"🔗 MATRIX LINK: Config din calea absolută -> {Path.GetFullPath(ConfigFilePath)}");
+            
+            // Verify file exists
+            if (!File.Exists(SignalFilePath))
+            {
+                Print($"⚠️  WARNING: Signal file NOT FOUND at {SignalFilePath}");
+                Print($"   cBot will wait for file to be created...");
+            }
+            else
+            {
+                Print($"✅ Signal file exists: {new FileInfo(SignalFilePath).Length} bytes");
+            }
+            
             // Load SUPER_CONFIG.json
             LoadConfiguration();
             
@@ -68,7 +83,32 @@ namespace cAlgo.Robots
         {
             try
             {
-                // CRITICAL: Check kill switch FIRST
+                // CRITICAL: Null check config first
+                if (_config == null)
+                {
+                    Print("⚠️  Config not loaded, reloading...");
+                    LoadConfiguration();
+                    if (_config == null)
+                    {
+                        Print("❌ Cannot proceed without valid config");
+                        return;
+                    }
+                }
+                
+                // CRITICAL: Null check Account and Symbol
+                if (Account == null)
+                {
+                    Print("❌ Account reference is null");
+                    return;
+                }
+                
+                if (Symbol == null)
+                {
+                    Print("❌ Symbol reference is null");
+                    return;
+                }
+                
+                // Check kill switch FIRST
                 if (IsKillSwitchActive())
                 {
                     Print("🔴 KILL SWITCH ACTIVE - Trading disabled");
@@ -114,6 +154,13 @@ namespace cAlgo.Robots
                     return;
                 }
                 
+                // CRITICAL: Validate signal has required fields
+                if (string.IsNullOrEmpty(signal.SignalId) || string.IsNullOrEmpty(signal.Symbol))
+                {
+                    Print("❌ Signal missing required fields");
+                    return;
+                }
+                
                 // Check if already processed
                 string processedSignalsFile = Path.Combine(Path.GetDirectoryName(SignalFilePath), "processed_signals.txt");
                 if (File.Exists(processedSignalsFile))
@@ -121,25 +168,31 @@ namespace cAlgo.Robots
                     string[] processedSignals = File.ReadAllLines(processedSignalsFile);
                     if (processedSignals.Contains(signal.SignalId))
                     {
+                        Print($"⏭️  Signal {signal.SignalId} already processed - skipping");
                         return;  // Already processed
                     }
                 }
                 
                 if (signal.SignalId == _lastProcessedSignal)
                 {
+                    Print($"⏭️  Signal {signal.SignalId} in memory - skipping");
                     return;  // Already processed in this session
                 }
                 
                 _lastProcessedSignal = signal.SignalId;
-                Print($"\n📊 NEW SIGNAL RECEIVED: {signal.Symbol} {signal.Direction.ToUpper()}");
+                Print($"\n──────────────────────");
+                Print($"📊 NEW SIGNAL: {signal.Symbol} {signal.Direction.ToUpper()}");
+                Print($"   ID: {signal.SignalId}");
+                Print($"   Strategy: {signal.StrategyType ?? "PULLBACK"}");
+                Print($"   Entry: {signal.EntryPrice}");
+                Print($"   SL: {signal.StopLoss} ({signal.StopLossPips:F1} pips)");
+                Print($"   TP: {signal.TakeProfit} ({signal.TakeProfitPips:F1} pips)");
                 
-                // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
                 // V3.1 UNIFIED RISK VALIDATION
-                // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-                
                 if (!ValidateNewTrade(signal))
                 {
-                    Print("🛑 TRADE REJECTED by Unified Risk Manager");
+                    Print("🛑 REJECTED by Risk Manager");
+                    Print($"──────────────────────");
                     MarkSignalAsProcessed(signal.SignalId);
                     return;
                 }
@@ -152,6 +205,28 @@ namespace cAlgo.Robots
             catch (Exception ex)
             {
                 Print($"❌ Error in OnTimer: {ex.Message}");
+            }
+            finally
+            {
+                // CRITICAL: ALWAYS clear signal file (even on error)
+                ClearSignalFile();
+            }
+        }
+        
+        private void ClearSignalFile()
+        {
+            try
+            {
+                if (File.Exists(SignalFilePath))
+                {
+                    // Write empty JSON to prevent re-processing
+                    File.WriteAllText(SignalFilePath, "{}");
+                    Print($"🧹 Signal file cleared (finally block)");
+                }
+            }
+            catch (Exception ex)
+            {
+                Print($"⚠️  Error clearing signal file: {ex.Message}");
             }
         }
 
@@ -168,14 +243,23 @@ namespace cAlgo.Robots
                 }
                 
                 var json = File.ReadAllText(ConfigFilePath);
-                _config = JsonSerializer.Deserialize<SuperConfig>(json);
+                var tempConfig = JsonSerializer.Deserialize<SuperConfig>(json);
                 
-                if (_config == null)
+                if (tempConfig == null)
                 {
                     Print("❌ Failed to deserialize config");
                     _config = GetDefaultConfig();
                     return;
                 }
+                
+                // CRITICAL: Validate all properties with null checks
+                _config = new SuperConfig
+                {
+                    RiskManagement = tempConfig.RiskManagement ?? new RiskManagement { RiskPerTradePercent = 5.0 },
+                    PositionLimits = tempConfig.PositionLimits ?? new PositionLimits { MaxOpenPositions = 15 },
+                    DailyLimits = tempConfig.DailyLimits ?? new DailyLimits { MaxDailyLossPercent = 10.0 },
+                    KillSwitch = tempConfig.KillSwitch ?? new KillSwitch { Enabled = true, TriggerDailyLossPercent = 10.0, FlagFile = "trading_disabled.flag" }
+                };
                 
                 Print("✅ SUPER_CONFIG.json loaded:");
                 Print($"   Risk per trade: {_config.RiskManagement.RiskPerTradePercent}%");
@@ -186,6 +270,7 @@ namespace cAlgo.Robots
             catch (Exception ex)
             {
                 Print($"❌ Error loading config: {ex.Message}");
+                Print($"   Stack: {ex.StackTrace}");
                 _config = GetDefaultConfig();
             }
         }
@@ -240,8 +325,9 @@ namespace cAlgo.Robots
 
         private bool ValidateNewTrade(TradeSignal signal)
         {
-            // 1. Check position count
-            int openPositions = Positions.Count(p => p.Label.StartsWith("Glitch Matrix"));
+            // V4.3 FIX-017: Count ALL positions, not just "Glitch Matrix" labeled
+            // User's existing positions may have different labels
+            int openPositions = Positions.Count();  // Count ALL positions
             
             if (openPositions >= _config.PositionLimits.MaxOpenPositions)
             {
@@ -313,11 +399,19 @@ namespace cAlgo.Robots
             
             var volume = CalculateVolume(signal, symbol);
             
-            Print($"📈 Executing: {signal.Direction.ToUpper()} {volume} lots");
+            if (volume <= 0)
+            {
+                Print($"❌ Invalid volume: {volume}");
+                return;
+            }
+            
+            double riskPercent = _config?.RiskManagement?.RiskPerTradePercent ?? 5.0;
+            
+            Print($"🔄 Executing: {signal.Direction.ToUpper()} {symbol.VolumeInUnitsToQuantity(volume)} lots");
             Print($"   Entry: {signal.EntryPrice}");
             Print($"   SL: {signal.StopLoss} ({signal.StopLossPips:F1} pips)");
             Print($"   TP: {signal.TakeProfit} ({signal.TakeProfitPips:F1} pips)");
-            Print($"   Risk: {_config.RiskManagement.RiskPerTradePercent}%");
+            Print($"   Risk: {riskPercent}%");
             
             var tradeType = signal.Direction.ToLower() == "buy" ? TradeType.Buy : TradeType.Sell;
             
@@ -332,39 +426,75 @@ namespace cAlgo.Robots
             
             if (result.IsSuccessful)
             {
-                Print($"✅ TRADE EXECUTED SUCCESSFULLY");
+                Print($"✅ EXECUTED");
                 Print($"   Ticket: {result.Position.Id}");
-                Print($"   Volume: {symbol.VolumeInUnitsToQuantity(volume)} lots");
+                Print($"   Lots: {symbol.VolumeInUnitsToQuantity(volume)}");
                 Print($"   Entry: {result.Position.EntryPrice}");
-                Print($"   ✨ Glitch in Matrix by ФорексГод ✨");
+                Print($"──────────────────────");
             }
             else
             {
-                Print($"❌ TRADE FAILED: {result.Error}");
+                Print($"❌ FAILED: {result.Error}");
+                Print($"──────────────────────");
             }
         }
 
         private long CalculateVolume(TradeSignal signal, Symbol symbol)
         {
-            // Use risk percentage from SUPER_CONFIG.json
+            Print($"──────────────────────");
+            Print($"📊 Volume Calculation: {symbol.Name}");
+            
             var balance = Account.Balance;
             var riskAmount = balance * (_config.RiskManagement.RiskPerTradePercent / 100.0);
             
-            var slDistance = Math.Abs(signal.EntryPrice - signal.StopLoss);
-            var slPips = slDistance / symbol.PipSize;
+            Print($"   Balance: ${balance:F2}");
+            Print($"   Risk: {_config.RiskManagement.RiskPerTradePercent}% = ${riskAmount:F2}");
             
-            var volumeInUnits = riskAmount / (slPips * symbol.PipValue);
-            var volumeInLots = (long)symbol.NormalizeVolumeInUnits((long)volumeInUnits, RoundingMode.Down);
+            // Calculate dollar distance
+            double dollarDistance = Math.Abs(signal.EntryPrice - signal.StopLoss);
+            Print($"   Entry: ${signal.EntryPrice:F2} | SL: ${signal.StopLoss:F2}");
+            Print($"   Dollar Distance: ${dollarDistance:F2}");
             
-            if (volumeInLots < (long)symbol.VolumeInUnitsMin)
-                volumeInLots = (long)symbol.VolumeInUnitsMin;
-            if (volumeInLots > (long)symbol.VolumeInUnitsMax)
-                volumeInLots = (long)symbol.VolumeInUnitsMax;
+            // BRUTE FORCE: Calculate raw lots
+            double rawLots = riskAmount / dollarDistance;
+            Print($"   Raw Lots Calc: ${riskAmount:F2} / ${dollarDistance:F2} = {rawLots:F8}");
             
-            Print($"💰 Risk: {_config.RiskManagement.RiskPerTradePercent}% = ${riskAmount:F2}");
-            Print($"📊 Volume calculated: {symbol.VolumeInUnitsToQuantity(volumeInLots)} lots");
+            // Round to 0.01 precision
+            double roundedLots = Math.Round(rawLots, 2);
+            if (roundedLots < 0.01) roundedLots = 0.01;
+            Print($"   Rounded: {roundedLots:F2} lots");
             
-            return volumeInLots;
+            // Convert to units
+            double rawUnits = symbol.QuantityToVolumeInUnits(roundedLots);
+            Print($"   QuantityToVolumeInUnits({roundedLots:F2}) = {rawUnits:F2}");
+            
+            // Normalize
+            double normalizedUnits = symbol.NormalizeVolumeInUnits(rawUnits, RoundingMode.ToNearest);
+            Print($"   Normalized: {normalizedUnits:F0}");
+            
+            // CRITICAL: BRUTE FORCE with Math.Max (NEVER ZERO!)
+            long finalVolume = (long)Math.Max(normalizedUnits, symbol.VolumeInUnitsMin);
+            
+            Print($"   ⚡ BRUTE FORCE: Math.Max({normalizedUnits:F0}, {symbol.VolumeInUnitsMin})");
+            Print($"   Result: {finalVolume}");
+            
+            // Cap to maximum
+            if (finalVolume > (long)symbol.VolumeInUnitsMax)
+            {
+                finalVolume = (long)symbol.VolumeInUnitsMax;
+                Print($"   ⚠️  CAPPED to max: {finalVolume}");
+            }
+            
+            // Display final
+            double finalLots = symbol.VolumeInUnitsToQuantity(finalVolume);
+            double actualRisk = finalLots * dollarDistance;
+            
+            Print($"💰 FINAL: {finalVolume} units = {finalLots:F2} lots");
+            Print($"💵 ACTUAL RISK: ${actualRisk:F2} (target: ${riskAmount:F2})");
+            Print($"   Min: {symbol.VolumeInUnitsMin} | Max: {symbol.VolumeInUnitsMax}");
+            Print($"──────────────────────");
+            
+            return finalVolume;
         }
 
         private void ManageOpenPositions()
@@ -396,9 +526,8 @@ namespace cAlgo.Robots
                 var positionsList = new List<object>();
                 foreach (var position in Positions)
                 {
-                    if (!position.Label.StartsWith("Glitch Matrix"))
-                        continue;
-                    
+                    // V4.3 FIX-014: Export ALL positions (not just "Glitch Matrix" labeled)
+                    // This allows Money Manager to get accurate position count
                     positionsList.Add(new
                     {
                         ticket = position.Id,
@@ -409,7 +538,8 @@ namespace cAlgo.Robots
                         current_price = position.TradeType == TradeType.Buy ? Symbol.Bid : Symbol.Ask,
                         unrealized_profit = position.NetProfit,
                         pips = position.Pips,
-                        open_time = position.EntryTime.ToString("o")
+                        open_time = position.EntryTime.ToString("o"),
+                        label = position.Label ?? "Unknown"  // Include label for debugging
                     });
                 }
                 

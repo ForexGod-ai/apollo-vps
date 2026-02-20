@@ -487,26 +487,39 @@
         }
 
         function updatePLDistribution(closedTrades, period) {
-            const plByPeriod = {};
+            // Group P/L by period with date objects for proper sorting
+            const plByPeriod = [];
             
             closedTrades.forEach(trade => {
                 const date = new Date(trade.close_time);
-                let key;
+                let key, sortKey;
                 
                 if (period === 'daily') {
-                    key = date.toLocaleDateString();
+                    sortKey = date.toISOString().split('T')[0]; // YYYY-MM-DD for sorting
+                    key = date.toLocaleDateString('en-GB'); // DD/MM/YYYY for display
                 } else if (period === 'weekly') {
                     const weekNum = getWeekNumber(date);
-                    key = `W${weekNum}`;
+                    sortKey = `${date.getFullYear()}-W${weekNum.toString().padStart(2, '0')}`;
+                    key = `W${weekNum} '${date.getFullYear().toString().slice(2)}`;
                 } else { // monthly
+                    sortKey = `${date.getFullYear()}-${(date.getMonth() + 1).toString().padStart(2, '0')}`;
                     key = date.toLocaleDateString('en-US', { year: 'numeric', month: 'short' });
                 }
                 
-                plByPeriod[key] = (plByPeriod[key] || 0) + (trade.profit || 0);
+                const existing = plByPeriod.find(p => p.sortKey === sortKey);
+                if (existing) {
+                    existing.profit += (trade.profit || 0);
+                } else {
+                    plByPeriod.push({ sortKey, label: key, profit: trade.profit || 0 });
+                }
             });
 
-            const labels = Object.keys(plByPeriod).slice(-20); // Last 20 periods
-            const data = labels.map(label => plByPeriod[label]);
+            // Sort chronologically by sortKey (oldest first), then take last 20
+            plByPeriod.sort((a, b) => a.sortKey.localeCompare(b.sortKey));
+            const recentPeriods = plByPeriod.slice(-20);
+            
+            const labels = recentPeriods.map(p => p.label);
+            const data = recentPeriods.map(p => p.profit);
 
             const ctx = document.getElementById('plDistributionChart');
             if (plDistributionChart) plDistributionChart.destroy();

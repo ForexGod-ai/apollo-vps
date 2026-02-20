@@ -125,6 +125,160 @@ class SMCDetector:
             return []
         return self.fvg_magnets[symbol].get(timeframe, [])
     
+    def detect_liquidity_sweep(
+        self,
+        df: pd.DataFrame,
+        choch: CHoCH,
+        lookback: int = 20,
+        tolerance_pips: float = 5,
+        debug: bool = False
+    ) -> Optional[Dict]:
+        """
+        💧 V4.0 LIQUIDITY SWEEP DETECTION: Identifică sweep-uri de stop loss
+        
+        LOGIC:
+        1. Găsește Equal Highs/Lows (în raza de 5 pips)
+        2. Verifică dacă CHoCH a fost precedat de sweep (wick prin nivel + close înapoi)
+        3. Dacă YES → +20 Confidence Boost (setup validat de Smart Money)
+        
+        Args:
+            df: DataFrame with OHLC data
+            choch: CHoCH object (break point)
+            lookback: Candles to scan for equal levels (default 20)
+            tolerance_pips: Pip tolerance for "equal" levels (default 5)
+            debug: Print debug info
+        
+        Returns:
+            {
+                'sweep_detected': bool,
+                'sweep_type': 'BSL' | 'SSL' | None,  # Buy Side / Sell Side Liquidity
+                'sweep_price': float,
+                'sweep_index': int,
+                'equal_level_count': int  # How many times level was tested
+            }
+        """
+        if choch is None or len(df) < lookback:
+            return None
+        
+        choch_idx = choch.index
+        
+        # Calculate pip multiplier (JPY vs standard)
+        # Assume standard (4 decimals) for now, can be enhanced per symbol
+        pip_multiplier = 10000
+        tolerance = tolerance_pips / pip_multiplier
+        
+        # STEP 1: Find equal highs/lows BEFORE CHoCH
+        lookback_start = max(0, choch_idx - lookback)
+        lookback_df = df.iloc[lookback_start:choch_idx]
+        
+        equal_highs = []  # BSL (Buy Side Liquidity)
+        equal_lows = []   # SSL (Sell Side Liquidity)
+        
+        # Identify equal highs (BSL pools)
+        for i in range(len(lookback_df) - 1):
+            current_high = lookback_df.iloc[i]['high']
+            
+            # Check if this high is "equal" to any subsequent high
+            for j in range(i + 1, len(lookback_df)):
+                next_high = lookback_df.iloc[j]['high']
+                
+                if abs(current_high - next_high) <= tolerance:
+                    equal_highs.append({
+                        'price': current_high,
+                        'indices': [lookback_start + i, lookback_start + j],
+                        'count': 2
+                    })
+                    break
+        
+        # Identify equal lows (SSL pools)
+        for i in range(len(lookback_df) - 1):
+            current_low = lookback_df.iloc[i]['low']
+            
+            for j in range(i + 1, len(lookback_df)):
+                next_low = lookback_df.iloc[j]['low']
+                
+                if abs(current_low - next_low) <= tolerance:
+                    equal_lows.append({
+                        'price': current_low,
+                        'indices': [lookback_start + i, lookback_start + j],
+                        'count': 2
+                    })
+                    break
+        
+        # STEP 2: Check if CHoCH was preceded by liquidity sweep
+        sweep_detected = False
+        sweep_type = None
+        sweep_price = None
+        sweep_index = None
+        equal_level_count = 0
+        
+        if choch.direction == 'bullish':
+            # BULLISH CHoCH → Look for SSL sweep (fake breakdown)
+            # Price should have dipped BELOW equal lows, then closed back ABOVE
+            
+            if equal_lows:
+                # Get most recent equal low before CHoCH
+                most_recent_ssl = equal_lows[-1]
+                ssl_price = most_recent_ssl['price']
+                equal_level_count = most_recent_ssl['count']
+                
+                # Check 3 candles before CHoCH for sweep pattern
+                sweep_window = df.iloc[max(0, choch_idx - 3):choch_idx]
+                
+                for idx, candle in sweep_window.iterrows():
+                    # Sweep = wick BELOW ssl_price BUT close ABOVE
+                    if candle['low'] < ssl_price and candle['close'] > ssl_price:
+                        sweep_detected = True
+                        sweep_type = 'SSL'
+                        sweep_price = ssl_price
+                        sweep_index = idx
+                        break
+        
+        elif choch.direction == 'bearish':
+            # BEARISH CHoCH → Look for BSL sweep (fake breakout)
+            # Price should have spiked ABOVE equal highs, then closed back BELOW
+            
+            if equal_highs:
+                # Get most recent equal high before CHoCH
+                most_recent_bsl = equal_highs[-1]
+                bsl_price = most_recent_bsl['price']
+                equal_level_count = most_recent_bsl['count']
+                
+                # Check 3 candles before CHoCH for sweep pattern
+                sweep_window = df.iloc[max(0, choch_idx - 3):choch_idx]
+                
+                for idx, candle in sweep_window.iterrows():
+                    # Sweep = wick ABOVE bsl_price BUT close BELOW
+                    if candle['high'] > bsl_price and candle['close'] < bsl_price:
+                        sweep_detected = True
+                        sweep_type = 'BSL'
+                        sweep_price = bsl_price
+                        sweep_index = idx
+                        break
+        
+        if debug and sweep_detected:
+            print(f"\n💧 LIQUIDITY SWEEP DETECTED:")
+            print(f"   Type: {sweep_type} (Smart Money swept stops)")
+            print(f"   Price: {sweep_price:.5f}")
+            print(f"   Equal level tested: {equal_level_count} times")
+            print(f"   CHoCH direction: {choch.direction.upper()}")
+            print(f"   ✅ +20 Confidence Boost (validated by liquidity raid)")
+        elif debug:
+            print(f"\n💧 LIQUIDITY SWEEP: Not detected")
+            print(f"   Equal highs found: {len(equal_highs)}")
+            print(f"   Equal lows found: {len(equal_lows)}")
+        
+        if not sweep_detected:
+            return None
+        
+        return {
+            'sweep_detected': True,
+            'sweep_type': sweep_type,
+            'sweep_price': sweep_price,
+            'sweep_index': sweep_index,
+            'equal_level_count': equal_level_count
+        }
+    
     def detect_order_block(
         self, 
         df: pd.DataFrame, 
@@ -664,7 +818,7 @@ class SMCDetector:
                 bos_list.append(BOS(
                     index=swing_highs[i].index,
                     direction='bullish',
-                    break_price=swing_highs[i].price,
+                    break_price=swing_highs[i - 1].price,  # FIXED: Price that got broken (previous swing)
                     candle_time=swing_highs[i].candle_time,
                     swing_broken=swing_highs[i-1]
                 ))
@@ -673,7 +827,7 @@ class SMCDetector:
                 bos_list.append(BOS(
                     index=swing_lows[i].index,
                     direction='bearish',
-                    break_price=swing_lows[i].price,
+                    break_price=swing_lows[i - 1].price,  # FIXED: Price that got broken (previous swing)
                     candle_time=swing_lows[i].candle_time,
                     swing_broken=swing_lows[i-1]
                 ))
@@ -1501,6 +1655,80 @@ class SMCDetector:
             else:
                 return {'pattern': 'HH_HL', 'confidence': 50}
     
+    def calculate_premium_discount(
+        self,
+        df_daily: pd.DataFrame,
+        current_price: float,
+        debug: bool = False
+    ) -> Dict:
+        """
+        📊 V4.0 PREMIUM/DISCOUNT FILTER: Calculate price position in daily range
+        
+        LOGIC:
+        - Daily range = High to Low (last candle)
+        - Equilibrium = 50% level
+        - Premium = 70%-100% (risky for LONG)
+        - Discount = 0%-30% (risky for SHORT)
+        - Fair = 30%-70% (optimal zone)
+        
+        Args:
+            df_daily: Daily timeframe DataFrame
+            current_price: Current market price
+            debug: Print debug info
+        
+        Returns:
+            {
+                'zone': 'PREMIUM' | 'DISCOUNT' | 'FAIR',
+                'percentage': float (0-100),
+                'equilibrium': float,
+                'daily_high': float,
+                'daily_low': float
+            }
+        """
+        # Get last daily candle range
+        daily_high = df_daily['high'].iloc[-1]
+        daily_low = df_daily['low'].iloc[-1]
+        
+        range_size = daily_high - daily_low
+        equilibrium = daily_low + (range_size * 0.5)
+        
+        # Calculate percentage from bottom (0% = low, 100% = high)
+        if range_size > 0:
+            percentage = ((current_price - daily_low) / range_size) * 100
+        else:
+            percentage = 50  # Range too small, assume fair
+        
+        # Determine zone
+        if percentage >= 70:
+            zone = 'PREMIUM'
+        elif percentage <= 30:
+            zone = 'DISCOUNT'
+        else:
+            zone = 'FAIR'
+        
+        if debug:
+            print(f"\n📊 PREMIUM/DISCOUNT ANALYSIS:")
+            print(f"   Daily High: {daily_high:.5f}")
+            print(f"   Daily Low: {daily_low:.5f}")
+            print(f"   Equilibrium (50%): {equilibrium:.5f}")
+            print(f"   Current Price: {current_price:.5f}")
+            print(f"   Position: {percentage:.1f}% ({zone})")
+            
+            if zone == 'PREMIUM':
+                print(f"   ⚠️ PREMIUM ZONE - Risky for LONG (price at top 30%)")
+            elif zone == 'DISCOUNT':
+                print(f"   ⚠️ DISCOUNT ZONE - Risky for SHORT (price at bottom 30%)")
+            else:
+                print(f"   ✅ FAIR ZONE - Optimal for both directions")
+        
+        return {
+            'zone': zone,
+            'percentage': round(percentage, 1),
+            'equilibrium': equilibrium,
+            'daily_high': daily_high,
+            'daily_low': daily_low
+        }
+    
     def detect_strategy_type(
         self,
         df_daily: pd.DataFrame,
@@ -1607,6 +1835,9 @@ class SMCDetector:
         """
         # DEBUG MODE for specific symbols
         debug = symbol == "NZDCAD"
+        
+        # V4.0: Initialize variables early to avoid UnboundLocalError
+        order_block = None  # Will be populated later with detect_order_block()
         
         # Step 1: Detect Daily CHoCH AND BOS
         daily_chochs, daily_bos_list = self.detect_choch_and_bos(df_daily)
@@ -1871,32 +2102,15 @@ class SMCDetector:
                         print(f"   ⏭️  H4 CHoCH @ {h4_choch.break_price:.5f} too old ({choch_age} candles = {choch_age*4}h)")
                     continue
                 
-                # NEW CHECK: Verify momentum AFTER CHoCH confirms trend continuation
-                # Need at least 1 candle after CHoCH to confirm
-                if h4_choch.index + 1 < len(df_4h):
-                    candles_after = df_4h.iloc[h4_choch.index + 1:]
-                    if len(candles_after) >= 1:
-                        # Check if recent candle(s) support the trend
-                        last_candle = candles_after.iloc[-1]
-                        
-                        if current_trend == 'bullish':
-                            # For bullish: last candle should be bullish or price moving up
-                            momentum_ok = (last_candle['close'] > last_candle['open']) or \
-                                        (last_candle['close'] > df_4h.iloc[h4_choch.index]['close'])
-                        else:
-                            # For bearish: last candle should be bearish or price moving down
-                            momentum_ok = (last_candle['close'] < last_candle['open']) or \
-                                        (last_candle['close'] < df_4h.iloc[h4_choch.index]['close'])
-                        
-                        if not momentum_ok:
-                            if debug:
-                                print(f"   ⏭️  H4 CHoCH @ {h4_choch.break_price:.5f} lacks momentum confirmation")
-                            continue
+                # V4.0 FIX-004: REMOVED momentum confirmation check after CHoCH
+                # Reason: CHoCH with body closure is SUFFICIENT confirmation of structure break
+                # The old momentum check created false rejections (like USDJPY Feb 09)
+                # SMC principle: Body closure breaks level = structure changed, no additional filter needed
                 
-                # ✅ All checks passed - VALID, RECENT, CONFIRMED CHoCH
+                # ✅ All checks passed - VALID, RECENT CHoCH (body closure confirmed in detect_choch_and_bos)
                 valid_h4_choch = h4_choch
                 if debug:
-                    print(f"   ✅ Valid H4 CHoCH found @ {h4_choch.break_price:.5f} ({choch_age} candles ago, momentum confirmed)")
+                    print(f"   ✅ Valid H4 CHoCH found @ {h4_choch.break_price:.5f} ({choch_age} candles ago)")
                 break
             
             if debug and not valid_h4_choch:
@@ -2038,8 +2252,40 @@ class SMCDetector:
         # Use H4 CHoCH for both REVERSAL and CONTINUITY
         h4_signal = valid_h4_choch
         
-        if h4_signal:
+        # 📦 V4.0 ORDER BLOCK OVERRIDE: If OB score >= 7, use OB for precise entry/SL
+        if order_block and order_block.ob_score >= 7:
+            # Use Order Block zones for entry/SL instead of FVG
+            if debug:
+                print(f"\n📦 ORDER BLOCK ACTIVATED for Entry/SL calculation:")
+                print(f"   OB Zone: {order_block.bottom:.5f} - {order_block.top:.5f}")
+                print(f"   OB Score: {order_block.ob_score}/10")
+            
+            # Entry = OB middle (more precise than FVG 35%)
+            entry = order_block.middle
+            
+            # Tighter SL using OB boundaries (not 4H swing)
+            if current_trend == 'bullish':
+                # LONG: SL just below OB bottom
+                sl = order_block.bottom * 0.9995  # 5 pips below OB bottom
+            else:
+                # SHORT: SL just above OB top
+                sl = order_block.top * 1.0005  # 5 pips above OB top
+            
+            # TP calculation still uses Daily structure (unchanged)
+            # Calculate via calculate_entry_sl_tp but override entry/SL
+            _, _, tp = self.calculate_entry_sl_tp(fvg, h4_signal, df_4h, df_daily) if h4_signal else (entry, sl, entry * 1.02 if current_trend == 'bullish' else entry * 0.98)
+            
+            if debug:
+                print(f"   ✅ Entry: {entry:.5f} (OB middle)")
+                print(f"   ✅ SL: {sl:.5f} (OB boundary + 5 pips)")
+                print(f"   ✅ TP: {tp:.5f} (Daily structure)")
+        
+        elif h4_signal:
+            # Fallback: Use FVG-based entry/SL from calculate_entry_sl_tp
             entry, sl, tp = self.calculate_entry_sl_tp(fvg, h4_signal, df_4h, df_daily)
+            if debug:
+                print(f"\n💰 FVG-based Trade Levels (no high-quality OB):")
+        
         else:
             # No 4H CHoCH yet - use FVG edge as entry (discount/premium zone)
             # LONG: Entry at FVG bottom (buy the discount)
@@ -2246,6 +2492,47 @@ class SMCDetector:
                     print(f"\n✅ {symbol} ACCEPTED: New FVG zone {current_fvg_bottom:.5f}-{current_fvg_top:.5f}")
                     print(f"   Total tracked zones for {symbol}: {len(self.fvg_zones_tracker[symbol])}")
         
+        # 💧 V4.0 LIQUIDITY SWEEP DETECTION (Faza 1)
+        liquidity_sweep = self.detect_liquidity_sweep(
+            df=df_daily,
+            choch=latest_signal,
+            lookback=20,
+            tolerance_pips=5,
+            debug=debug
+        )
+        
+        # Confidence boost if liquidity swept
+        confidence_boost = 0
+        if liquidity_sweep and liquidity_sweep['sweep_detected']:
+            confidence_boost = 20  # +20 points for liquidity validation
+            if debug:
+                print(f"   ✅ LIQUIDITY SWEEP CONFIRMED: +{confidence_boost} confidence")
+        
+        # 📊 V4.0 PREMIUM/DISCOUNT FILTER (Faza 1)
+        # Don't buy in premium, don't sell in discount
+        if not skip_fvg_quality:
+            premium_discount = self.calculate_premium_discount(
+                df_daily=df_daily,
+                current_price=current_price,
+                debug=debug
+            )
+            
+            # FILTER: Reject trades in wrong zones
+            if current_trend == 'bullish' and premium_discount['zone'] == 'PREMIUM':
+                if debug:
+                    print(f"\n❌ REJECTED: Buying in PREMIUM zone ({premium_discount['percentage']:.1f}%)")
+                    print(f"   Too high risk - price at top 30% of daily range")
+                return None
+            
+            if current_trend == 'bearish' and premium_discount['zone'] == 'DISCOUNT':
+                if debug:
+                    print(f"\n❌ REJECTED: Selling in DISCOUNT zone ({premium_discount['percentage']:.1f}%)")
+                    print(f"   Too high risk - price at bottom 30% of daily range")
+                return None
+            
+            if debug:
+                print(f"\n✅ PREMIUM/DISCOUNT CHECK PASSED: {premium_discount['zone']} zone")
+        
         # 🎯 V3.5 ORDER BLOCKS: Detect OB pentru entry precision + corelație cu FVG
         order_block = self.detect_order_block(
             df=df_daily,
@@ -2253,6 +2540,33 @@ class SMCDetector:
             fvg=fvg,
             debug=debug
         )
+        
+        # 📦 V4.0 ACTIVATE ORDER BLOCKS: Use OB for entry/SL if valid (Faza 1)
+        # Previously OB was detected but NOT used - now we enforce it!
+        if order_block and order_block.ob_score >= 7:
+            # Use Order Block for precise entry instead of FVG middle
+            if debug:
+                print(f"\n📦 ORDER BLOCK ACTIVATED for Entry/SL:")
+                print(f"   OB Zone: {order_block.bottom:.5f} - {order_block.top:.5f}")
+                print(f"   OB Score: {order_block.ob_score}/10")
+                print(f"   Using OB middle for entry (more precise than FVG)")
+            
+            # Override entry calculation to use OB
+            entry = order_block.middle
+            
+            # Tighter SL using OB boundaries
+            if current_trend == 'bullish':
+                sl = order_block.bottom * 0.9995  # 5 pips below OB bottom
+            else:
+                sl = order_block.top * 1.0005  # 5 pips above OB top
+        else:
+            # Fallback to FVG-based entry if no high-quality OB
+            entry = None  # Will be calculated later in calculate_entry_sl_tp
+            sl = None
+            
+            if debug and order_block:
+                print(f"\n⚠️ ORDER BLOCK NOT ACTIVATED: Score {order_block.ob_score}/10 < 7")
+                print(f"   Falling back to FVG-based entry")
         
         # Calculate ESTIMATED RR pentru swing trading (minimum 1:5)
         estimated_rr = risk_reward  # Default to standard RR
@@ -2290,23 +2604,31 @@ class SMCDetector:
             print(f"⚠️ Warning: Could not convert setup_time properly: {e}")
             setup_timestamp = datetime.now()
         
-        return TradeSetup(
+        # Store liquidity sweep and premium/discount in setup for reporting
+        setup = TradeSetup(
             symbol=symbol,
             daily_choch=latest_signal,  # Daily CHoCH (REVERSAL) or BOS (CONTINUITY)
             fvg=fvg,
             h4_choch=h4_signal,  # H4 CHoCH (same for both REVERSAL and CONTINUITY)
             h1_choch=valid_1h_choch,  # V3.0: 1H CHoCH for GBP pairs (None if not detected)
             order_block=order_block,  # 📦 V3.5: Order Block pentru entry precision
-            entry_price=entry,
-            stop_loss=sl,
+            entry_price=entry,  # V4.0: Uses OB if available, else FVG
+            stop_loss=sl,  # V4.0: Tighter SL from OB if available
             take_profit=tp,
             risk_reward=risk_reward,
-            estimated_rr=estimated_rr,  # 🎯 V3.5: RR estimat pentru swing (minimum 1:5)
+            estimated_rr=estimated_rr + (confidence_boost / 20) if confidence_boost > 0 else estimated_rr,  # Boost RR if liquidity swept
             setup_time=setup_timestamp,  # Properly converted Python datetime
             priority=priority,
             strategy_type=strategy_type,
             status=status
         )
+        
+        # 💧 V4.0: Store liquidity sweep info (for Telegram reporting)
+        if liquidity_sweep:
+            setup.liquidity_sweep = liquidity_sweep
+            setup.confidence_boost = confidence_boost
+        
+        return setup
 
 
 def format_setup_message(setup: TradeSetup) -> str:
@@ -2735,14 +3057,32 @@ def validate_choch_confirmation_scale_in(setup, current_time, df_daily, df_4h, d
 # V3.2 PULLBACK STRATEGY FUNCTIONS
 # ============================================================
 
-def calculate_choch_fibonacci(df_h1: pd.DataFrame, choch_idx: int, direction: str) -> dict:
+def calculate_choch_fibonacci(
+    df_h1: pd.DataFrame, 
+    choch_idx: int, 
+    direction: str,
+    df_4h: Optional[pd.DataFrame] = None,
+    df_daily: Optional[pd.DataFrame] = None,
+    strategy_type: str = 'continuation',
+    fibo_timeframe: Optional[str] = None,
+    symbol: str = ''
+) -> dict:
     """
-    Calculate Fibonacci 50% retracement level from CHoCH swing
+    V4.0 MULTI-TIMEFRAME FIBONACCI: Calculate Fibonacci 50% from appropriate swing
+    
+    SMC PURE LOGIC:
+    - REVERSAL: Uses Daily/4H CHoCH swing (macro-structure for major reversals)
+    - CONTINUATION: Uses 1H 5-candle swing (micro-structure for pullback entries)
     
     Args:
         df_h1: 1H timeframe dataframe
-        choch_idx: Index where CHoCH occurred
+        choch_idx: Index where CHoCH occurred (on 1H)
         direction: 'bullish' or 'bearish'
+        df_4h: 4H timeframe dataframe (for REVERSAL strategies)
+        df_daily: Daily timeframe dataframe (for major REVERSAL strategies)
+        strategy_type: 'reversal' or 'continuation'
+        fibo_timeframe: Override TF ('Daily', '4H', '1H') - if None, auto-select
+        symbol: Symbol name (for JPY detection)
     
     Returns:
         {
@@ -2751,27 +3091,95 @@ def calculate_choch_fibonacci(df_h1: pd.DataFrame, choch_idx: int, direction: st
             'swing_low': float,
             'swing_range': float (in pips),
             'swing_start_idx': int,
-            'swing_end_idx': int
+            'swing_end_idx': int,
+            'direction': str,
+            'fibo_timeframe': str  # Which TF was used
         }
     """
-    # Get last 5 candles before CHoCH for swing calculation
-    lookback = 5
-    start_idx = max(0, choch_idx - lookback)
-    end_idx = choch_idx
+    # Determine which timeframe to use for Fibonacci calculation
+    if fibo_timeframe:
+        use_tf = fibo_timeframe
+    elif strategy_type == 'reversal':
+        # REVERSAL: Use 4H (or Daily for major moves)
+        use_tf = '4H' if df_4h is not None else '1H'
+    else:
+        # CONTINUATION: Use 1H micro-swing
+        use_tf = '1H'
     
-    swing_data = df_h1.iloc[start_idx:end_idx]
+    # Calculate swing based on selected timeframe
+    if use_tf == 'Daily' and df_daily is not None:
+        # Find Daily CHoCH and calculate from that swing
+        try:
+            from smc_detector import SMCDetector
+            detector = SMCDetector(swing_lookback=5)
+            chochs_daily, _ = detector.detect_choch_and_bos(df_daily)
+            
+            if chochs_daily:
+                latest_choch_daily = chochs_daily[-1]
+                lookback = 10  # 10 days before CHoCH
+                start_idx = max(0, latest_choch_daily.index - lookback)
+                end_idx = latest_choch_daily.index
+                swing_data = df_daily.iloc[start_idx:end_idx]
+            else:
+                # Fallback to 4H
+                use_tf = '4H'
+        except:
+            # Fallback to 4H if Daily detection fails
+            use_tf = '4H'
     
-    # Find swing high and low
+    if use_tf == '4H' and df_4h is not None:
+        # Find 4H CHoCH and calculate from that swing
+        try:
+            from smc_detector import SMCDetector
+            detector = SMCDetector(swing_lookback=5)
+            chochs_4h, _ = detector.detect_choch_and_bos(df_4h)
+            
+            if chochs_4h:
+                # Find most recent 4H CHoCH matching direction
+                matching_choch = None
+                for ch in reversed(chochs_4h):
+                    if ch.direction == direction:
+                        matching_choch = ch
+                        break
+                
+                if matching_choch:
+                    lookback = 15  # 15 × 4H = 60H = 2.5 days
+                    start_idx = max(0, matching_choch.index - lookback)
+                    end_idx = matching_choch.index
+                    swing_data = df_4h.iloc[start_idx:end_idx]
+                else:
+                    # Fallback to 1H
+                    use_tf = '1H'
+            else:
+                # Fallback to 1H
+                use_tf = '1H'
+        except:
+            # Fallback to 1H if 4H detection fails
+            use_tf = '1H'
+    
+    if use_tf == '1H':
+        # CONTINUATION or FALLBACK: 5-candle 1H micro-swing
+        lookback = 5
+        start_idx = max(0, choch_idx - lookback)
+        end_idx = choch_idx
+        swing_data = df_h1.iloc[start_idx:end_idx]
+    
+    # Calculate swing high/low from determined timeframe
     swing_high = swing_data['high'].max()
     swing_low = swing_data['low'].min()
     swing_range = swing_high - swing_low
     
-    # Calculate Fibonacci 50% level
-    fibo_50 = swing_low + (swing_range * 0.5)
+    # Calculate Fibonacci 50%
+    if direction == 'bullish':
+        fibo_50 = swing_low + (swing_range * 0.5)
+    else:
+        fibo_50 = swing_high - (swing_range * 0.5)
     
-    # Convert swing range to pips (assuming 5-digit quotes for forex, 2-digit for JPY pairs)
-    # For now, use 10000 multiplier (standard forex), adjust for JPY in production
-    swing_range_pips = swing_range * 10000
+    # V4.0 FIX: Detect JPY pairs for correct pip calculation
+    if 'JPY' in symbol.upper():
+        swing_range_pips = swing_range * 100  # JPY = 2 decimals
+    else:
+        swing_range_pips = swing_range * 10000  # Standard = 4 decimals
     
     return {
         'fibo_50': round(fibo_50, 5),
@@ -2780,7 +3188,8 @@ def calculate_choch_fibonacci(df_h1: pd.DataFrame, choch_idx: int, direction: st
         'swing_range': round(swing_range_pips, 1),
         'swing_start_idx': start_idx,
         'swing_end_idx': end_idx,
-        'direction': direction
+        'direction': direction,
+        'fibo_timeframe': use_tf  # V4.0: Store which TF was used
     }
 
 

@@ -1,0 +1,1116 @@
+<!DOCTYPE html>
+<html lang="ro">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🔍 USDJPY Execution Audit | Glitch in Matrix</title>
+    <style>
+        :root {
+            --matrix-green: #00ff41;
+            --matrix-dark: #0d0d0d;
+            --matrix-glow: rgba(0, 255, 65, 0.2);
+            --gold: #ffd700;
+            --red: #ff4444;
+            --orange: #ff9900;
+        }
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Courier New', monospace;
+            background: linear-gradient(135deg, #0a0a0a 0%, #1a1a1a 100%);
+            color: #e0e0e0;
+            line-height: 1.6;
+            padding: 40px 20px;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: rgba(13, 13, 13, 0.95);
+            border: 2px solid var(--matrix-green);
+            border-radius: 12px;
+            padding: 40px;
+            box-shadow: 0 0 50px var(--matrix-glow);
+        }
+        
+        header {
+            text-align: center;
+            margin-bottom: 40px;
+            padding-bottom: 30px;
+            border-bottom: 3px solid var(--matrix-green);
+        }
+        
+        h1 {
+            font-size: 2.5em;
+            color: var(--matrix-green);
+            text-shadow: 0 0 20px var(--matrix-glow);
+            margin-bottom: 10px;
+            letter-spacing: 2px;
+        }
+        
+        .subtitle {
+            font-size: 1.2em;
+            color: #888;
+            font-style: italic;
+        }
+        
+        .meta {
+            display: flex;
+            justify-content: space-around;
+            margin: 30px 0;
+            padding: 20px;
+            background: rgba(0, 255, 65, 0.05);
+            border-left: 4px solid var(--matrix-green);
+            border-radius: 8px;
+        }
+        
+        .meta-item {
+            text-align: center;
+        }
+        
+        .meta-label {
+            font-size: 0.9em;
+            color: #888;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        
+        .meta-value {
+            font-size: 1.3em;
+            color: var(--matrix-green);
+            font-weight: bold;
+            margin-top: 5px;
+        }
+        
+        section {
+            margin: 40px 0;
+            padding: 30px;
+            background: rgba(255, 255, 255, 0.02);
+            border-radius: 8px;
+            border-left: 5px solid var(--matrix-green);
+        }
+        
+        h2 {
+            font-size: 1.8em;
+            color: var(--gold);
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+        
+        h3 {
+            font-size: 1.3em;
+            color: var(--matrix-green);
+            margin: 25px 0 15px 0;
+            padding-left: 15px;
+            border-left: 3px solid var(--gold);
+        }
+        
+        .decision-tree {
+            background: rgba(0, 0, 0, 0.5);
+            padding: 25px;
+            border-radius: 8px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.95em;
+            line-height: 2;
+        }
+        
+        .tree-node {
+            padding: 8px 0;
+            padding-left: 30px;
+            position: relative;
+        }
+        
+        .tree-node::before {
+            content: '';
+            position: absolute;
+            left: 10px;
+            top: 0;
+            bottom: 50%;
+            width: 2px;
+            background: #444;
+        }
+        
+        .tree-node::after {
+            content: '';
+            position: absolute;
+            left: 10px;
+            top: 50%;
+            width: 15px;
+            height: 2px;
+            background: #444;
+        }
+        
+        .status-pass {
+            color: var(--matrix-green);
+            font-weight: bold;
+        }
+        
+        .status-fail {
+            color: var(--red);
+            font-weight: bold;
+        }
+        
+        .status-wait {
+            color: var(--orange);
+            font-weight: bold;
+        }
+        
+        .status-unknown {
+            color: #888;
+            font-weight: bold;
+        }
+        
+        .bug-box {
+            background: rgba(255, 68, 68, 0.1);
+            border: 2px solid var(--red);
+            border-radius: 8px;
+            padding: 20px;
+            margin: 20px 0;
+        }
+        
+        .bug-title {
+            font-size: 1.2em;
+            color: var(--red);
+            font-weight: bold;
+            margin-bottom: 10px;
+        }
+        
+        .bug-impact {
+            background: rgba(0, 0, 0, 0.4);
+            padding: 15px;
+            border-left: 4px solid var(--orange);
+            margin-top: 10px;
+            font-style: italic;
+        }
+        
+        .fix-box {
+            background: rgba(0, 255, 65, 0.05);
+            border: 2px solid var(--matrix-green);
+            border-radius: 8px;
+            padding: 20px;
+            margin: 20px 0;
+        }
+        
+        .fix-title {
+            font-size: 1.1em;
+            color: var(--gold);
+            font-weight: bold;
+            margin-bottom: 8px;
+        }
+        
+        .priority-critical {
+            background: rgba(255, 68, 68, 0.2);
+            color: var(--red);
+            padding: 5px 15px;
+            border-radius: 5px;
+            font-weight: bold;
+            display: inline-block;
+            margin-bottom: 10px;
+        }
+        
+        .priority-high {
+            background: rgba(255, 153, 0, 0.2);
+            color: var(--orange);
+            padding: 5px 15px;
+            border-radius: 5px;
+            font-weight: bold;
+            display: inline-block;
+            margin-bottom: 10px;
+        }
+        
+        .priority-medium {
+            background: rgba(255, 215, 0, 0.2);
+            color: var(--gold);
+            padding: 5px 15px;
+            border-radius: 5px;
+            font-weight: bold;
+            display: inline-block;
+            margin-bottom: 10px;
+        }
+        
+        .code-block {
+            background: rgba(0, 0, 0, 0.6);
+            padding: 20px;
+            border-radius: 8px;
+            border-left: 4px solid var(--matrix-green);
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+            overflow-x: auto;
+            margin: 15px 0;
+        }
+        
+        .highlight {
+            color: var(--gold);
+            font-weight: bold;
+        }
+        
+        .table-container {
+            overflow-x: auto;
+            margin: 20px 0;
+        }
+        
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            background: rgba(0, 0, 0, 0.3);
+        }
+        
+        th {
+            background: rgba(0, 255, 65, 0.1);
+            color: var(--matrix-green);
+            padding: 15px;
+            text-align: left;
+            border-bottom: 2px solid var(--matrix-green);
+        }
+        
+        td {
+            padding: 12px 15px;
+            border-bottom: 1px solid #333;
+        }
+        
+        tr:hover {
+            background: rgba(0, 255, 65, 0.05);
+        }
+        
+        .verdict {
+            background: linear-gradient(135deg, rgba(255, 68, 68, 0.2) 0%, rgba(255, 153, 0, 0.2) 100%);
+            border: 3px solid var(--red);
+            border-radius: 12px;
+            padding: 30px;
+            margin: 40px 0;
+            text-align: center;
+        }
+        
+        .verdict-title {
+            font-size: 2em;
+            color: var(--red);
+            margin-bottom: 20px;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+        }
+        
+        .verdict-text {
+            font-size: 1.2em;
+            line-height: 1.8;
+        }
+        
+        footer {
+            text-align: center;
+            margin-top: 60px;
+            padding-top: 30px;
+            border-top: 2px solid var(--matrix-green);
+            font-size: 1.1em;
+        }
+        
+        .signature {
+            color: var(--matrix-green);
+            font-size: 1.3em;
+            font-weight: bold;
+            text-shadow: 0 0 10px var(--matrix-glow);
+            margin-bottom: 10px;
+        }
+        
+        .tagline {
+            color: #888;
+            font-size: 0.9em;
+            font-style: italic;
+        }
+        
+        ul {
+            list-style: none;
+            padding-left: 20px;
+        }
+        
+        li::before {
+            content: "▸ ";
+            color: var(--matrix-green);
+            font-weight: bold;
+            margin-right: 10px;
+        }
+        
+        li {
+            margin: 10px 0;
+            padding-left: 15px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🔍 USDJPY EXECUTION AUDIT</h1>
+            <p class="subtitle">The Missing Trade: Deep Dive Analysis</p>
+        </header>
+        
+        <div class="meta">
+            <div class="meta-item">
+                <div class="meta-label">Pair</div>
+                <div class="meta-value">USDJPY</div>
+            </div>
+            <div class="meta-item">
+                <div class="meta-label">Direction</div>
+                <div class="meta-value">SHORT</div>
+            </div>
+            <div class="meta-item">
+                <div class="meta-label">Setup Time</div>
+                <div class="meta-value">2026-02-09 08:00</div>
+            </div>
+            <div class="meta-item">
+                <div class="meta-label">Audit Date</div>
+                <div class="meta-value">2026-02-10</div>
+            </div>
+            <div class="meta-item">
+                <div class="meta-label">Status</div>
+                <div class="meta-value" style="color: var(--orange);">BLOCKED</div>
+            </div>
+        </div>
+        
+        <!-- ==================== SECTION 1: STRATEGY TYPES ==================== -->
+        <section>
+            <h2>📚 SECTION 1: REVERSAL vs CONTINUATION</h2>
+            
+            <h3>🔄 Reversal Strategy (Trend Change at Extremes)</h3>
+            <div class="code-block">
+                <strong>Definition:</strong><br>
+                Trade-ul se deschide după o schimbare majoră de trend pe timeframe superior.<br><br>
+                
+                <strong>Flow Clasic:</strong><br>
+                1️⃣ <span class="highlight">Daily CHoCH</span> (Change of Character) → Trend pe Daily se inversează<br>
+                2️⃣ <span class="highlight">4H CHoCH</span> confirmation → 4H confirmă reversalul<br>
+                3️⃣ <span class="highlight">1H CHoCH/BOS</span> → Entry trigger pe 1H în direcția noului trend<br>
+                4️⃣ <span class="highlight">Fibonacci 50%</span> → Calculat pe <strong>Daily/4H CHoCH range</strong> (macro-structure)<br><br>
+                
+                <strong>Caracteristici:</strong><br>
+                ✅ Fibonacci calculat pe swing-ul MAJOR (Daily sau 4H)<br>
+                ✅ Stop Loss mai larg (peste/sub Daily swing)<br>
+                ✅ Risk:Reward mai mare (10-30:1)<br>
+                ✅ Necesită dual timeframe confirmation (Daily + 4H + 1H alignment)<br>
+                ✅ Mai multe șanse de pullback la Fibo 50% (trend se stabilizează)<br>
+            </div>
+            
+            <h3>➡️ Continuation Strategy (Pullback in Existing Trend)</h3>
+            <div class="code-block">
+                <strong>Definition:</strong><br>
+                Trade-ul se deschide pe un pullback într-un trend deja existent.<br><br>
+                
+                <strong>Flow Clasic:</strong><br>
+                1️⃣ <span class="highlight">Daily Trend</span> → Trend clar pe Daily (bullish sau bearish)<br>
+                2️⃣ <span class="highlight">4H Pullback</span> → Prețul face pullback în FVG zone<br>
+                3️⃣ <span class="highlight">1H BOS</span> (Break of Structure) → 1H confirmă reluarea trend-ului<br>
+                4️⃣ <span class="highlight">Fibonacci 50%</span> → Calculat pe <strong>1H micro-swing</strong> (5-10 candles)<br><br>
+                
+                <strong>Caracteristici:</strong><br>
+                ✅ Fibonacci calculat pe swing-ul MINOR (1H 5-candle lookback)<br>
+                ✅ Stop Loss mai strâns (sub/peste 1H swing)<br>
+                ✅ Risk:Reward mai mic (3-10:1)<br>
+                ✅ Nu necesită dual CHoCH (doar BOS pe 1H suficient)<br>
+                ✅ Momentum entry posibilă după 6H (fără pullback exact la Fibo)<br>
+            </div>
+            
+            <h3>🎯 Diferențiere în Bot</h3>
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Aspect</th>
+                            <th>REVERSAL</th>
+                            <th>CONTINUATION</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>strategy_type</strong></td>
+                            <td><code>"reversal"</code></td>
+                            <td><code>"continuation"</code></td>
+                        </tr>
+                        <tr>
+                            <td><strong>1H Structure Break</strong></td>
+                            <td>CHoCH preferred (dar BOS acceptat)</td>
+                            <td>BOS only</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Fibonacci Range</strong></td>
+                            <td>Daily/4H CHoCH swing</td>
+                            <td>1H 5-candle micro-swing</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Dual Timeframe Check</strong></td>
+                            <td>✅ Required (4H CHoCH active)</td>
+                            <td>❌ Not required</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Momentum Entry</strong></td>
+                            <td>❌ No (strict pullback)</td>
+                            <td>✅ Yes (after 6H)</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Stop Loss</strong></td>
+                            <td>Above/below Daily swing</td>
+                            <td>Above/below 1H swing</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+        
+        <!-- ==================== SECTION 2: DUAL TIMEFRAME ==================== -->
+        <section>
+            <h2>🔗 SECTION 2: DUAL TIMEFRAME (4H + 1H) CORRELATION</h2>
+            
+            <h3>❓ Ce Este "Double CHoCH" Logic?</h3>
+            <div class="code-block">
+                <strong>Concept:</strong><br>
+                Pentru REVERSAL setups, botul ar trebui să verifice că <span class="highlight">4H CHoCH este ACTIV și RECENT</span><br>
+                în momentul în care 1H semnalează entry.<br><br>
+                
+                <strong>Flow Ideal:</strong><br>
+                1️⃣ Daily CHoCH detectat → Setup creat în monitoring_setups.json<br>
+                2️⃣ Bot verifică 4H pentru CHoCH confirmation<br>
+                3️⃣ Dacă 4H CHoCH detectat → Store timestamp și break_price<br>
+                4️⃣ Când 1H semnalează (CHoCH/BOS) → Verifică dacă 4H CHoCH încă valid:<br>
+                   └─ 4H CHoCH < 48H vechi? ✅ VALID<br>
+                   └─ 4H trend inversat între timp? ❌ INVALID<br>
+                5️⃣ Dacă AMBELE timeframes align → EXECUTE ENTRY<br>
+            </div>
+            
+            <h3>🔴 Status Actual în Bot</h3>
+            <div class="bug-box">
+                <div class="bug-title">⚠️ DUAL TIMEFRAME LOGIC: MISSING</div>
+                <p>Codul actual în <code>setup_executor_monitor.py</code> procesează DOAR 1H timeframe în izolare.</p>
+                
+                <strong>Ce Lipsește:</strong>
+                <ul>
+                    <li>Nu există funcție <code>check_4h_choch_active()</code></li>
+                    <li>Nu se stochează timestamp pentru 4H CHoCH detection</li>
+                    <li>Nu se validează că 4H trend e încă valid când 1H semnalează</li>
+                    <li>Nu există expiry logic pentru 4H CHoCH (48H threshold)</li>
+                </ul>
+                
+                <div class="bug-impact">
+                    <strong>💥 IMPACT:</strong><br>
+                    Botul poate executa trade-uri pe 1H chiar dacă 4H trend s-a inversat între timp.<br>
+                    Fără dual confirmation, trade-urile REVERSAL sunt fragile și pot eșua la prima rezistență.
+                </div>
+            </div>
+            
+            <h3>✅ Recommended Implementation</h3>
+            <div class="code-block">
+                <strong>New Function:</strong> <code>check_dual_timeframe_confirmation()</code><br><br>
+                
+                <strong>Pseudocode:</strong><br>
+                <pre style="color: var(--matrix-green);">
+def check_dual_timeframe_confirmation(setup, df_4h, df_1h):
+    """
+    Verify 4H CHoCH is active when 1H signals entry.
+    """
+    strategy_type = setup.get('strategy_type', 'reversal')
+    
+    if strategy_type != 'reversal':
+        return True  # Skip check for continuation
+    
+    # Check if 4H CHoCH timestamp stored
+    choch_4h_timestamp = setup.get('choch_4h_timestamp')
+    
+    if not choch_4h_timestamp:
+        # No 4H CHoCH detected yet → search now
+        chochs_4h = detect_choch_and_bos(df_4h)[0]
+        
+        if chochs_4h:
+            # Store 4H CHoCH for future reference
+            setup['choch_4h_timestamp'] = chochs_4h[-1].timestamp
+            setup['choch_4h_price'] = chochs_4h[-1].break_price
+            return True
+        else:
+            logger.warning("4H CHoCH not found - INVALID setup")
+            return False
+    
+    # Check if 4H CHoCH expired (older than 48H)
+    hours_elapsed = (now() - parse(choch_4h_timestamp)).total_seconds() / 3600
+    
+    if hours_elapsed > 48:
+        logger.warning("4H CHoCH expired (>48H old)")
+        return False
+    
+    # Check if 4H trend reversed (new opposite CHoCH)
+    latest_choch_4h = detect_choch_and_bos(df_4h)[0][-1]
+    
+    if latest_choch_4h.direction != setup['direction']:
+        logger.warning("4H trend REVERSED - setup invalidated")
+        return False
+    
+    return True  # ✅ DUAL CONFIRMATION VALID
+                </pre>
+            </div>
+        </section>
+        
+        <!-- ==================== SECTION 3: DECISION TREE ==================== -->
+        <section>
+            <h2>🧠 SECTION 3: USDJPY DIAGNOSTIC DECISION TREE</h2>
+            
+            <div class="decision-tree">
+                <div style="color: var(--gold); font-size: 1.2em; margin-bottom: 20px;">
+                    ┌─ USDJPY SHORT Execution Path ─┐
+                </div>
+                
+                <div class="tree-node">
+                    ├─ <strong>STEP 1: STRATEGY TYPE</strong><br>
+                    │  ├─ Configured: <span class="highlight">CONTINUATION</span><br>
+                    │  ├─ User Description: <span style="color: var(--red);">REVERSAL</span> (Daily CHoCH → 4H CHoCH)<br>
+                    │  └─ Status: <span class="status-fail">❌ MISMATCH</span>
+                </div>
+                
+                <div class="tree-node">
+                    ├─ <strong>STEP 2: 4H TREND CHECK</strong><br>
+                    │  ├─ 4H CHoCH detected: <span class="status-unknown">❓ NOT CHECKED</span><br>
+                    │  ├─ 4H CHoCH timestamp: <span style="color: #666;">NOT STORED</span><br>
+                    │  ├─ 4H trend alignment: <span class="status-unknown">❓ UNKNOWN</span><br>
+                    │  └─ Status: <span class="status-fail">❌ LOGIC MISSING</span>
+                </div>
+                
+                <div class="tree-node">
+                    ├─ <strong>STEP 3: 1H STRUCTURE BREAK</strong><br>
+                    │  ├─ Expected: <span class="highlight">BOS</span> (because strategy_type=continuation)<br>
+                    │  ├─ Detected: <span class="highlight">BOS @ 155.708</span><br>
+                    │  ├─ Break Direction: <span class="highlight">BEARISH</span> (matches setup SHORT)<br>
+                    │  └─ Status: <span class="status-pass">✅ PASS</span>
+                </div>
+                
+                <div class="tree-node">
+                    ├─ <strong>STEP 4: BODY CLOSURE VALIDATION</strong><br>
+                    │  ├─ Break Price: <span class="highlight">155.708</span><br>
+                    │  ├─ Close Price: <span class="highlight">155.306</span><br>
+                    │  ├─ Closure Confirmed: <span class="highlight">155.306 < 155.708</span> ✅<br>
+                    │  ├─ Confirmation Distance: <span class="highlight">40.2 pips</span><br>
+                    │  └─ Status: <span class="status-pass">✅ PASS</span>
+                </div>
+                
+                <div class="tree-node">
+                    ├─ <strong>STEP 5: FVG ZONE VALIDATION</strong><br>
+                    │  ├─ FVG Zone: <span class="highlight">152.096 - 158.418</span> (632.2 pips)<br>
+                    │  ├─ Break Price: <span class="highlight">155.708</span><br>
+                    │  ├─ In Zone: <span class="highlight">152.096 ≤ 155.708 ≤ 158.418</span> ✅<br>
+                    │  └─ Status: <span class="status-pass">✅ PASS</span>
+                </div>
+                
+                <div class="tree-node">
+                    ├─ <strong>STEP 6: FIBONACCI CALCULATION</strong><br>
+                    │  ├─ Method: <span class="highlight">1H 5-candle micro-swing</span><br>
+                    │  ├─ Swing Range: <span class="highlight">114.8 pips</span> (158.708 - 157.560)<br>
+                    │  ├─ Fibo 50%: <span class="highlight">155.720</span><br>
+                    │  ├─ Expected for REVERSAL: <span style="color: var(--red);">Daily/4H range (800-1500 pips)</span><br>
+                    │  └─ Status: <span class="status-fail">❌ WRONG RANGE</span>
+                </div>
+                
+                <div class="tree-node">
+                    ├─ <strong>STEP 7: PULLBACK VALIDATION</strong><br>
+                    │  ├─ Fibo Target: <span class="highlight">155.720</span><br>
+                    │  ├─ Current Price: <span class="highlight">154.311</span><br>
+                    │  ├─ Distance: <span style="color: var(--red);">140.9 pips</span> (NOT within ±10 pips tolerance)<br>
+                    │  ├─ Pullback Reached: <span style="color: var(--red);">NO</span><br>
+                    │  └─ Status: <span class="status-wait">⏳ WAITING</span>
+                </div>
+                
+                <div class="tree-node">
+                    └─ <strong>STEP 8: CONTINUATION MOMENTUM (Backup Entry)</strong><br>
+                       ├─ Hours Elapsed: <span class="highlight">33H</span> (from Feb 9 08:00 to Feb 10 17:00)<br>
+                       ├─ Threshold: <span class="highlight">6H</span> (should trigger momentum entry)<br>
+                       ├─ Strong Momentum: <span class="status-unknown">❓ NOT CHECKED</span><br>
+                       ├─ Momentum Entry Triggered: <span style="color: var(--red);">NO</span><br>
+                       └─ Status: <span class="status-fail">❌ LOGIC NOT IMPLEMENTED</span>
+                </div>
+            </div>
+            
+            <div style="margin-top: 30px; padding: 20px; background: rgba(255, 153, 0, 0.1); border-left: 5px solid var(--orange); border-radius: 8px;">
+                <strong style="color: var(--orange); font-size: 1.2em;">📊 EXECUTION BLOCKED AT STEP 7</strong><br><br>
+                Trade-ul nu se execută pentru că prețul e la <strong>140.9 pips</strong> de Fibo 50% target.<br>
+                <strong>STEP 8</strong> (momentum backup) nu se activează pentru că logica nu e implementată.
+            </div>
+        </section>
+        
+        <!-- ==================== SECTION 4: ROOT CAUSE ==================== -->
+        <section>
+            <h2>💥 SECTION 4: ROOT CAUSE ANALYSIS</h2>
+            
+            <div class="bug-box">
+                <div class="bug-title">🔴 BUG #1: STRATEGY TYPE MISMATCH</div>
+                <p><strong>Description:</strong> USDJPY marcat ca <code>"continuation"</code> în <code>monitoring_setups.json</code> dar user descrie setup REVERSAL (Daily CHoCH → 4H CHoCH → 1H entry).</p>
+                
+                <strong>Evidence:</strong>
+                <ul>
+                    <li>User: "Daily CHoCH detectat, apoi 4H CHoCH confirmation"</li>
+                    <li>Setup JSON: <code>"strategy_type": "continuation"</code></li>
+                    <li>Bot behavior: Caută BOS (continuation breaks) nu CHoCH (reversal)</li>
+                </ul>
+                
+                <div class="bug-impact">
+                    <strong>💥 IMPACT:</strong><br>
+                    Bot execută logica greșită:<br>
+                    ✅ BOS detection corectă (pentru continuation)<br>
+                    ❌ Fibonacci calculat pe 1H micro-swing (pentru continuation)<br>
+                    ❌ Ar trebui Fibonacci pe Daily/4H range (pentru reversal)<br>
+                    <br>
+                    <strong>Result:</strong> Fibo 50% target (155.720) bazat pe wrong timeframe → pullback imposibil de atins!
+                </div>
+            </div>
+            
+            <div class="bug-box">
+                <div class="bug-title">🔴 BUG #2: FIBONACCI SCOPE PREA MIC</div>
+                <p><strong>Description:</strong> Funcția <code>calculate_choch_fibonacci()</code> folosește DOAR 5 candles 1H pentru swing range calculation.</p>
+                
+                <strong>Code Location:</strong> <code>smc_detector.py</code> lines 2738-2780
+                <div class="code-block">
+lookback = 5  # ⚠️ HARDCODED 5-CANDLE LOOKBACK
+start_idx = max(0, choch_idx - lookback)
+swing_data = df_h1.iloc[start_idx:end_idx]  # Only 1H data!
+
+swing_high = swing_data['high'].max()
+swing_low = swing_data['low'].min()
+swing_range = swing_high - swing_low  # Micro-swing only!
+                </div>
+                
+                <strong>Current Output:</strong>
+                <ul>
+                    <li>Swing Range: <strong>114.8 pips</strong> (1H micro-structure)</li>
+                    <li>Fibo 50%: <strong>155.720</strong></li>
+                    <li>Current Price: <strong>154.311</strong> (140.9 pips away)</li>
+                </ul>
+                
+                <strong>Expected for REVERSAL:</strong>
+                <ul>
+                    <li>Swing Range: <strong>800-1500 pips</strong> (Daily/4H macro-structure)</li>
+                    <li>Fibo 50%: <strong>~154.500</strong> (rough estimate from Daily range)</li>
+                    <li>Current Price: Would be WITHIN pullback zone!</li>
+                </ul>
+                
+                <div class="bug-impact">
+                    <strong>💥 IMPACT:</strong><br>
+                    Prețul trebuie să se întoarcă <strong>140.9 pips</strong> pentru a atinge Fibo 50%.<br>
+                    Dar setup-ul e pe Daily/4H → prețul deja E în zona de pullback macro!<br>
+                    <br>
+                    <strong>Myopia:</strong> Bot-ul vede doar 5 ore de history, miss the big picture!<br>
+                    Pentru REVERSAL, Fibonacci ar trebui calculat pe Daily CHoCH range (nu 1H 5-bar swing).
+                </div>
+            </div>
+            
+            <div class="bug-box">
+                <div class="bug-title">🔴 BUG #3: CONTINUATION MOMENTUM NOT IMPLEMENTED</div>
+                <p><strong>Description:</strong> Header comment în <code>_check_pullback_entry()</code> menționează "continuation momentum after 6h" dar logica lipsește.</p>
+                
+                <strong>Comment Says (lines 226-237):</strong>
+                <div class="code-block">
+V3.3 HYBRID ENTRY: Pullback OR Continuation
+
+6. If NO (after 6h) → Check continuation momentum
+   - If strong momentum → EXECUTE_ENTRY1_CONTINUATION
+   - If weak momentum → KEEP_MONITORING
+7. If timeout (12h) → Force entry or skip based on distance
+                </div>
+                
+                <strong>Actual Code (lines 335-370):</strong>
+                <div class="code-block">
+# Only checks pullback validation
+if in_pullback_zone:
+    return {'action': 'EXECUTE_ENTRY1', ...}
+else:
+    return {'action': 'KEEP_MONITORING', ...}
+
+# ⚠️ NO MOMENTUM CHECK AFTER 6H!
+# ⚠️ NO TIMEOUT LOGIC AT 12H!
+                </div>
+                
+                <strong>Evidence from Logs:</strong>
+                <ul>
+                    <li>Setup created: Feb 9 08:00</li>
+                    <li>Current time: Feb 10 17:00 (33 hours elapsed)</li>
+                    <li>Threshold: 6 hours</li>
+                    <li>Logs show: Only "Waiting for pullback" messages</li>
+                    <li>No momentum check attempted</li>
+                </ul>
+                
+                <div class="bug-impact">
+                    <strong>💥 IMPACT:</strong><br>
+                    "Hybrid Entry" concept nu funcționează - botul așteaptă DOAR pullback exact la Fibo 50%.<br>
+                    Dacă prețul nu revine exact la target → trade never executes!<br>
+                    <br>
+                    <strong>Backup Plan Missing:</strong><br>
+                    După 6H, bot-ul ar trebui să verifice:<br>
+                    ✅ Strong momentum în direcția trade-ului?<br>
+                    ✅ Prețul e <100 pips de target?<br>
+                    ✅ Volume spike?<br>
+                    → Dacă DA → EXECUTE ENTRY1_CONTINUATION (fără pullback exact)
+                </div>
+            </div>
+            
+            <div class="bug-box">
+                <div class="bug-title">🔴 BUG #4: DUAL TIMEFRAME LOGIC MISSING</div>
+                <p><strong>Description:</strong> Nu există verificare că 4H CHoCH este ACTIV când 1H semnalează entry.</p>
+                
+                <strong>Current Flow:</strong>
+                <ul>
+                    <li>Daily scanner detectează CHoCH → Setup creat</li>
+                    <li><code>setup_executor_monitor.py</code> procesează DOAR 1H data</li>
+                    <li>Când 1H BOS/CHoCH detectat → Entry triggered (dacă pullback OK)</li>
+                    <li>⚠️ NICIO verificare că 4H trend e încă valid!</li>
+                </ul>
+                
+                <strong>Missing Functions:</strong>
+                <div class="code-block">
+check_4h_choch_active()          # ❌ NOT FOUND
+validate_dual_timeframe()        # ❌ NOT FOUND
+store_4h_choch_timestamp()       # ❌ NOT IMPLEMENTED
+check_4h_trend_reversal()        # ❌ NOT FOUND
+                </div>
+                
+                <div class="bug-impact">
+                    <strong>💥 IMPACT:</strong><br>
+                    Bot poate executa trade-uri pe 1H chiar dacă:<br>
+                    ❌ 4H CHoCH expirat (>48H old)<br>
+                    ❌ 4H trend inversat între timp<br>
+                    ❌ 4H momentum divergent de 1H<br>
+                    <br>
+                    <strong>Risk:</strong> Trade-uri REVERSAL fără dual confirmation → stop loss hit rapid!
+                </div>
+            </div>
+            
+            <div class="bug-box">
+                <div class="bug-title">🟠 BUG #5: JPY PAIR PIP CALCULATION</div>
+                <p><strong>Description:</strong> JPY pairs use 2 decimals (154.31) dar bot calculează pips ca pentru 4-decimal pairs.</p>
+                
+                <strong>Code Issue:</strong>
+                <div class="code-block">
+# Current calculation (wrong for JPY):
+price_diff_pips = price_diff * 10000  # ❌ Assumes 4 decimals
+
+# Correct calculation:
+if 'JPY' in symbol:
+    price_diff_pips = price_diff * 100  # ✅ JPY = 2 decimals
+else:
+    price_diff_pips = price_diff * 10000  # EUR, GBP = 4 decimals
+                </div>
+                
+                <strong>Evidence:</strong>
+                <ul>
+                    <li>Log shows: "diff: 14090.0 pips"</li>
+                    <li>Actual diff: 155.720 - 154.311 = 1.409 JPY</li>
+                    <li>Correct pips: 1.409 * 100 = <strong>140.9 pips</strong></li>
+                    <li>Bot calculates: 1.409 * 10000 = <strong>14090 pips</strong> (100x inflated!)</li>
+                </ul>
+                
+                <div class="bug-impact">
+                    <strong>💥 IMPACT:</strong><br>
+                    Logs afișează "14090 pips away" când realitatea e "140.9 pips away".<br>
+                    Nu afectează logica de execuție (uses price diff direct) dar confusing pentru debugging!<br>
+                    <br>
+                    <strong>Fix:</strong> Detect JPY pairs și folosește multiplier corect în logging.
+                </div>
+            </div>
+        </section>
+        
+        <!-- ==================== SECTION 5: RECOMMENDED FIXES ==================== -->
+        <section>
+            <h2>🔧 SECTION 5: RECOMMENDED FIXES</h2>
+            
+            <div class="fix-box">
+                <div class="priority-critical">🔥 CRITICAL</div>
+                <div class="fix-title">FIX-001: Corectare Strategy Type pentru USDJPY</div>
+                <p><strong>Action:</strong> Schimbă <code>"strategy_type": "continuation"</code> → <code>"reversal"</code> în <code>monitoring_setups.json</code></p>
+                
+                <strong>Impact:</strong>
+                <ul>
+                    <li>Bot va căuta CHoCH (nu doar BOS) pentru proper reversal confirmation</li>
+                    <li>Fibonacci va fi calculat pe Daily/4H range (după implementare FIX-002)</li>
+                    <li>Stop Loss va fi calculat pe Daily swing (nu 1H micro-swing)</li>
+                </ul>
+                
+                <strong>Code Change:</strong>
+                <div class="code-block">
+# monitoring_setups.json line 25
+"strategy_type": "reversal",  # Changed from "continuation"
+                </div>
+            </div>
+            
+            <div class="fix-box">
+                <div class="priority-critical">🔥 CRITICAL</div>
+                <div class="fix-title">FIX-002: Multi-Timeframe Fibonacci Calculation</div>
+                <p><strong>Action:</strong> Modifică <code>calculate_choch_fibonacci()</code> să accepte parametru <code>fibo_timeframe</code> și să calculeze pe range-ul corect.</p>
+                
+                <strong>New Function Signature:</strong>
+                <div class="code-block">
+def calculate_choch_fibonacci(
+    df_h1: pd.DataFrame,
+    df_4h: pd.DataFrame,  # NEW: Add 4H data
+    df_daily: pd.DataFrame,  # NEW: Add Daily data
+    choch_idx: int,
+    direction: str,
+    fibo_timeframe: str = '1H'  # NEW: '1H', '4H', or 'Daily'
+) -> dict:
+    """
+    Calculate Fibonacci 50% from appropriate timeframe swing.
+    
+    Args:
+        fibo_timeframe: 
+            - '1H': Use 5-candle 1H micro-swing (for CONTINUATION)
+            - '4H': Use 4H CHoCH swing (for REVERSAL)
+            - 'Daily': Use Daily CHoCH swing (for MAJOR REVERSAL)
+    """
+    if fibo_timeframe == 'Daily':
+        # Find Daily CHoCH and calculate from that swing
+        chochs_daily = detect_choch_and_bos(df_daily)[0]
+        if chochs_daily:
+            choch_daily = chochs_daily[-1]
+            lookback = 10  # Larger lookback for Daily
+            # Calculate swing_high/low from Daily bars
+            ...
+    
+    elif fibo_timeframe == '4H':
+        # Find 4H CHoCH and calculate from that swing
+        chochs_4h = detect_choch_and_bos(df_4h)[0]
+        if chochs_4h:
+            choch_4h = chochs_4h[-1]
+            lookback = 15  # Moderate lookback for 4H
+            # Calculate swing_high/low from 4H bars
+            ...
+    
+    else:  # '1H' (default for continuation)
+        # Current logic - 5-candle 1H micro-swing
+        lookback = 5
+        # Keep existing calculation
+        ...
+    
+    return {
+        'fibo_50': fibo_50,
+        'swing_high': swing_high,
+        'swing_low': swing_low,
+        'swing_range_pips': swing_range_pips,
+        'fibo_timeframe': fibo_timeframe  # Store which TF used
+    }
+                </div>
+                
+                <strong>Usage in setup_executor_monitor.py:</strong>
+                <div class="code-block">
+strategy_type = setup.get('strategy_type', 'reversal')
+
+# Determine which timeframe to use for Fibonacci
+if strategy_type == 'reversal':
+    fibo_tf = '4H'  # Or 'Daily' for major reversals
+else:
+    fibo_tf = '1H'  # Continuation uses micro-swing
+
+fibo_data = self.smc_detector.calculate_choch_fibonacci(
+    df_h1, df_4h, df_daily, 
+    choch_idx, 
+    direction, 
+    fibo_timeframe=fibo_tf
+)
+                </div>
+                
+                <strong>Impact:</strong>
+                <ul>
+                    <li>REVERSAL setups: Fibo calculat pe Daily/4H range (800-1500 pips)</li>
+                    <li>CONTINUATION setups: Fibo calculat pe 1H micro-swing (50-200 pips)</li>
+                    <li>Pullback targets realistic și achievable!</li>
+                </ul>
+            </div>
+            
+            <div class="fix-box">
+                <div class="priority-high">⚠️ HIGH</div>
+                <div class="fix-title">FIX-003: Implement Continuation Momentum Entry</div>
+                <p><strong>Action:</strong> Adaugă logica de momentum entry după 6H în <code>_check_pullback_entry()</code></p>
+                
+                <strong>New Code (insert after pullback validation):</strong>
+                <div class="code-block">
+# ========== STEP 3: CONTINUATION MOMENTUM ENTRY ==========
+# If pullback not reached after 6H, check for strong momentum entry
+if choch_detected and not in_pullback_zone:
+    choch_time = datetime.fromisoformat(choch_timestamp)
+    hours_elapsed = (datetime.now() - choch_time).total_seconds() / 3600
+    
+    if hours_elapsed >= 6:
+        logger.debug(f"⏱️  {symbol}: {hours_elapsed:.1f}H elapsed, checking momentum entry...")
+        
+        # Check if price still moving in trade direction
+        current_price = df_h1.iloc[-1]['close']
+        last_5_candles = df_h1.tail(5)
+        
+        # Calculate momentum score
+        if direction == 'buy':
+            momentum_strong = (
+                current_price > last_5_candles['close'].mean() and
+                last_5_candles['close'].iloc[-1] > last_5_candles['close'].iloc[0]
+            )
+            price_beyond_target = current_price > fibo_50
+        else:
+            momentum_strong = (
+                current_price < last_5_candles['close'].mean() and
+                last_5_candles['close'].iloc[-1] < last_5_candles['close'].iloc[0]
+            )
+            price_beyond_target = current_price < fibo_50
+        
+        # Check if price within 100 pips of target
+        distance_pips = abs(current_price - fibo_50) * 10000
+        within_reasonable_distance = distance_pips <= 100
+        
+        if momentum_strong and price_beyond_target and within_reasonable_distance:
+            logger.success(f"🚀 {symbol}: Continuation momentum entry triggered!")
+            
+            # Use swing-based SL
+            if direction == 'buy':
+                sl_price = fibo_data['swing_low'] - (0.0001 * 10)
+            else:
+                sl_price = fibo_data['swing_high'] + (0.0001 * 10)
+            
+            return {
+                'action': 'EXECUTE_ENTRY1_CONTINUATION',
+                'entry_price': current_price,
+                'stop_loss': sl_price,
+                'reason': f'Continuation momentum after {hours_elapsed:.1f}H (no pullback)'
+            }
+        else:
+            logger.debug(f"⏳ {symbol}: Momentum not strong enough, keep waiting...")
+    
+    # Timeout after 12H - force entry or skip
+    if hours_elapsed >= 12:
+        logger.warning(f"⏰ {symbol}: 12H timeout - evaluating force entry...")
+        
+        distance_pips = abs(current_price - fibo_50) * 10000
+        
+        if distance_pips <= 200:
+            logger.success(f"✅ {symbol}: Force entry at {current_price} ({distance_pips:.1f} pips from target)")
+            return {
+                'action': 'EXECUTE_ENTRY1_TIMEOUT',
+                'entry_price': current_price,
+                'stop_loss': setup['stop_loss'],
+                'reason': f'Timeout entry after 12H (distance: {distance_pips:.1f} pips)'
+            }
+        else:
+            logger.error(f"❌ {symbol}: Too far from target ({distance_pips:.1f} pips), skipping setup")
+            return {
+                'action': 'SKIP_SETUP',
+                'reason': f'Timeout + too far from Fibo 50% ({distance_pips:.1f} pips)'
+            }
+                </div>
+                
+                <strong>Impact:</strong>
+                <ul>
+                    <li>Trade-urile nu rămân blocate forever waiting for perfect pullback</li>
+                    <li>Momentum entries capture strong moves chiar fără pullback exact</li>
+                    <li>Timeout la 12H forțează decizie (entry sau skip)</li>
+                </ul>
+            </div>
+            
+            <div class="fix-box">
+                <div class="priority-high">⚠️ HIGH</div>
+                <div class="fix-title">FIX-004: Implement Dual Timeframe Confirmation</div>
+                <p><strong>Action:</strong> Adaugă funcție <code>check_dual_timeframe_confirmation()</code> în <code>setup_executor_monitor.py</code></p>
+                
+                <p>Vezi SECTION 2 pentru pseudocode complet.</p>
+                
+                <strong>Integration Point:</strong>
+                <div class="code-block">
+# In _check_pullback_entry(), before executing entry:
+
+if not choch_detected:
+    # Detect 1H structure break
+    ...
+    
+    # NEW: Verify dual timeframe confirmation for REVERSAL
+    if strategy_type == 'reversal':
+        dual_tf_valid = self.check_dual_timeframe_confirmation(
+            setup, df_4h, df_1h
+        )
+        
+        if not dual_tf_valid:
+            logger.warning(f"❌ {symbol}: 4H trend not aligned, skipping entry")
+            return {
+                'action': 'KEEP_MONITORING',
+                'reason': '4H CHoCH missing or expired'
+            }
+    
+    # Continue with Fibonacci calculation...
+                </div>
+                
+                <strong>Impact:</strong>
+                <ul>
+                    <li>REVERSAL setups execută doar când Daily + 4H + 1H align</li>
+                    <li>Evită false signals când 4H trend inversat</li>
+                    <li>Trade quality mult mai bună pentru reversal strategies</li>
+                </ul>
+            </div>
+            
+            <div class="fix-box">
+                <div class="priority-medium">⚡ MEDIUM</div>
+                <div class="fix-title">FIX-005: JPY Pair Pip Calculation</div>
+                <p><strong>Action:</strong> Detect JPY pairs și folosește multiplier corect în logging și distance calculations.</p>
+                
+                <strong>Add Helper Function:</strong>
+                <div class="code-block">
+def get_pip_multiplier(symbol: str) -> int:
+    """
+    Get pip multiplier based on pair type.
+    
+    JPY pairs (USDJPY, EURJPY, etc) use 2 decimals → x100
+    Other pairs (EURUSD, GBPUSD, etc) use 4 decimals → x10000
+    """
+    if 'JPY' in symbol.upper():
+        return 100
+    else:
+        return 10000
+
+def price_diff_to_pips(price_diff: float, symbol: str) -> float:
+    """Convert price difference to pips based on pair type."""
+    return price_diff * get_pip_multiplier(symbol)
+                </div>
+                
+                <strong>Usage:</strong>
+                <div class="code-block">
+# Replace all instances of:
+price_diff * 10000
+
+# With:
+price_diff_to_pips(price_diff, symbol)
+                </div>
+                
+                <strong>Impact:</strong>
+                <ul>
+                    <li>Logs afișează pips corecți pentru JPY pairs</li>
+                    <li>Debugging mai ușor (no more 14090 pips confusion)</li>
+                    <li>Consistency across all pair types</li>
+                </ul>
+            </div>
+        </section>
+        
+        <!-- ==================== VERDICT ==================== -->
+        <div class="verdict">
+            <div class="verdict-title">🎯 FINAL VERDICT</div>
+            <div class="verdict-text">
+                <strong>SETUP VALID</strong> dar <strong>EXECUTION BLOCKED</strong> de:<br><br>
+                
+                1️⃣ <strong>Strategy Type Mismatch</strong> → USDJPY e REVERSAL nu CONTINUATION<br>
+                2️⃣ <strong>Fibonacci Myopia</strong> → Calculat pe 1H 5-bar swing (114.8 pips) nu Daily range (800+ pips)<br>
+                3️⃣ <strong>Continuation Momentum Dormant</strong> → Logica de backup entry după 6H lipsește complet<br>
+                4️⃣ <strong>Dual Timeframe Missing</strong> → Nu verifică dacă 4H CHoCH activ când 1H semnalează<br><br>
+                
+                <strong style="color: var(--matrix-green);">✅ TRADE E VALID</strong> → Prețul deja E în pullback zone macro!<br>
+                <strong style="color: var(--red);">❌ BOT NU EXECUTĂ</strong> → Așteaptă pullback la micro-target imposibil!<br><br>
+                
+                <strong>FIX CRITICAL:</strong> Schimbă strategy_type="reversal" + implement FIX-002 (multi-TF Fibonacci)<br>
+                → USDJPY va executa imediat (prețul deja în zona corectă de entry!)
+            </div>
+        </div>
+        
+        <footer>
+            <div class="signature">✨ Glitch in Matrix by ФорексГод ✨</div>
+            <div class="tagline">🧠 AI-Powered • 💎 Smart Money • 🎯 Precision Execution</div>
+            <div style="margin-top: 20px; color: #666; font-size: 0.85em;">
+                Audit Date: 2026-02-10 | Engine Version: V3.7 | Analysis: COMPREHENSIVE
+            </div>
+        </footer>
+    </div>
+</body>
+</html>

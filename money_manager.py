@@ -63,6 +63,34 @@ class MoneyManager:
             logger.error(f"❌ Error reading balance: {e}")
             return float(os.getenv('ACCOUNT_BALANCE', 1336))
     
+    def _get_live_positions_count(self) -> int:
+        """
+        V4.3 FIX-014: Get LIVE positions count from active_positions.json
+        Updated by position_monitor.py which syncs with cTrader every 30s
+        
+        Returns:
+            Number of open positions in broker account
+        """
+        try:
+            # Read from active_positions.json (synced by position_monitor)
+            with open('active_positions.json', 'r') as f:
+                positions = json.load(f)
+            
+            # Handle both list and dict formats
+            if isinstance(positions, dict):
+                positions = positions.get('positions', [])
+            
+            count = len(positions)
+            logger.debug(f"🔍 Live positions from active_positions.json: {count}")
+            return count
+            
+        except FileNotFoundError:
+            logger.warning("⚠️  active_positions.json not found - assuming 0 positions")
+            return 0
+        except Exception as e:
+            logger.error(f"❌ Error reading active positions: {e}")
+            return 0  # Safe default: assume no positions (allow trade)
+    
     def refresh_balance(self):
         """
         Refresh account balance from live broker data
@@ -101,10 +129,14 @@ class MoneyManager:
         }
         
         try:
-            # 1. Verifică numărul de poziții deschise
-            if len(self.open_positions) >= self.max_positions:
-                result['reason'] = f"Max positions reached ({self.max_positions})"
-                logger.warning(f"⚠️ Limita de poziții atinsă: {len(self.open_positions)}/{self.max_positions}")
+            # V4.3 FIX-013: Fetch LIVE positions from cTrader before checking limit
+            # Don't rely on internal cache - get real-time data!
+            live_positions_count = self._get_live_positions_count()
+            
+            # 1. Verifică numărul de poziții deschise (LIVE from broker)
+            if live_positions_count >= self.max_positions:
+                result['reason'] = f"Max positions reached ({live_positions_count}/{self.max_positions})"
+                logger.warning(f"⚠️ Limita de poziții atinsă: {live_positions_count}/{self.max_positions}")
                 return result
             
             # 2. Verifică drawdown

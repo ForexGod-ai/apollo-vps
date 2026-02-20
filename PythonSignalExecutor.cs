@@ -32,12 +32,42 @@ namespace cAlgo.Robots
 
         protected override void OnStart()
         {
-            Print("🤖 Python Signal Executor Started (Swing Trading Mode)");
-            Print($"📁 Monitoring: {SignalFilePath}");
-            Print($"⏱️ Check interval: {CheckInterval}s");
-            Print($"💰 Max risk: {MaxRiskPercent}%");
-            Print($"🎯 Auto-close at: +{AutoCloseProfitPips} pips");
-            Print($"🔒 Breakeven trigger: +{BreakevenTriggerPips} pips");
+            // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            Print("╔═══════════════════════════════════════════════════╗");
+            Print("║                                                   ║");
+            Print("║     ✨ GLITCH IN MATRIX by ФорексГод ✨         ║");
+            Print("║     🧠 AI-Powered • 💎 Smart Money               ║");
+            Print("║                                                   ║");
+            Print("║     Python Signal Executor V4.0                  ║");
+            Print("║     Swing Trading - Multi-Timeframe SMC          ║");
+            Print("║                                                   ║");
+            Print("╚═══════════════════════════════════════════════════╝");
+            // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            
+            Print("");
+            Print("📋 CONFIGURATION:");
+            Print($"   📁 Signal File: {SignalFilePath}");
+            Print($"   ⏱️  Check Interval: {CheckInterval}s");
+            Print($"   💰 Max Risk: {MaxRiskPercent}%");
+            Print($"   🎯 Auto-Close: +{AutoCloseProfitPips} pips");
+            Print($"   🔒 Breakeven: +{BreakevenTriggerPips} pips");
+            Print("");
+            
+            // 🚨 AUDIT: Validate signal file path
+            var signalDir = Path.GetDirectoryName(SignalFilePath);
+            if (!Directory.Exists(signalDir))
+            {
+                Print($"❌ ERROR: Signal directory does not exist: {signalDir}");
+                Print($"⚠️  Bot will NOT receive signals! Check path configuration.");
+            }
+            else
+            {
+                Print($"✅ Signal directory validated: {signalDir}");
+            }
+            
+            Print("🔗 MATRIX SYNC: Connected to Scanner V4.0 (SMC Level Up)");
+            Print("✅ System initialized - Ready for signals");
+            Print("");
             
             Timer.Start(CheckInterval);
         }
@@ -101,6 +131,19 @@ namespace cAlgo.Robots
                 Print($"   SL: {signal.StopLoss}");
                 Print($"   TP: {signal.TakeProfit}");
                 Print($"   R:R: 1:{signal.RiskReward}");
+                
+                // ━━━ V4.0 SMC INTELLIGENCE DISPLAY ━━━
+                if (signal.LiquiditySweep)
+                {
+                    Print($"   💧 LIQUIDITY SWEEP: {signal.SweepType} detected (+{signal.ConfidenceBoost} conf)");
+                }
+                
+                if (signal.OrderBlockUsed)
+                {
+                    Print($"   📦 ORDER BLOCK: Entry refined (score {signal.OrderBlockScore}/10)");
+                }
+                
+                Print("");
                 
                 ExecuteSignal(signal);
                 
@@ -214,6 +257,115 @@ namespace cAlgo.Robots
 
         private void ExecuteSignal(TradeSignal signal)
         {
+            // 🚨🚨🚨 V9.3 BULLETPROOF NUCLEAR OPTION: BTC EXECUTES FIRST - NO CALCULATIONS! 🚨🚨🚨
+            // BULLETPROOF: Case-insensitive, ignores spaces/slashes (synced with Python V5.6)
+            // V9.2 FIX: Use broker-native volume conversion (1 lot BTC = 1 unit, not 100k!)
+            // V9.3 FIX: Use DOUBLE for volume (prevent truncation: 0.50 → 0 on long cast!)
+            string cleanSymbol = signal.Symbol.ToUpper().Replace(" ", "").Replace("/", "");
+            if (cleanSymbol.Contains("BTC"))
+            {
+                Print("");
+                Print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+                Print("🚨 V9.3 DOUBLE TYPE FIX: BTC FORCE EXECUTION");
+                Print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+                Print($"   Signal ID: {signal.SignalId}");
+                Print($"   Original Symbol: {signal.Symbol}");
+                Print($"   Detected as: BTC (cleanSymbol={cleanSymbol})");
+                Print($"   SL: {signal.StopLoss} | TP: {signal.TakeProfit}");
+                Print($"   ⚠️  BYPASSED: ALL calculations, validations, risk checks");
+                Print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+                
+                var btcSymbol = Symbols.GetSymbol("BTCUSD");
+                if (btcSymbol == null)
+                {
+                    Print($"❌ CRITICAL: BTCUSD symbol not found in cTrader!");
+                    WriteExecutionConfirmation(signal, null, "REJECTED", "Symbol not found");
+                    return;
+                }
+                
+                // 🚨 V9.3 CRITICAL FIX: Use DOUBLE (not long!) to preserve decimals
+                // WRONG V9.2: long forcedVolume = (long)QuantityToVolumeInUnits(0.50)
+                //             Result: 0.50 → 0 (truncated by long cast!)
+                // RIGHT V9.3: double forcedVolume = QuantityToVolumeInUnits(0.50)
+                //             Result: 0.50 → 0.50 (preserved!)
+                double lotSize = signal.LotSize > 0 ? signal.LotSize : 0.50;
+                double forcedVolume = btcSymbol.QuantityToVolumeInUnits(lotSize);
+                
+                // Normalize to broker step (respects min/max/step)
+                forcedVolume = btcSymbol.NormalizeVolumeInUnits(forcedVolume, RoundingMode.Down);
+                
+                Print($"   Volume Calculation (V9.3 DOUBLE FIX):");
+                Print($"      Requested: {lotSize} lots");
+                Print($"      Raw conversion: {btcSymbol.QuantityToVolumeInUnits(lotSize):F8} units");
+                Print($"      After normalization: {forcedVolume:F8} units");
+                Print($"      Min/Max allowed: {btcSymbol.VolumeInUnitsMin} - {btcSymbol.VolumeInUnitsMax} units");
+                Print($"      Volume step: {btcSymbol.VolumeInUnitsStep}");
+                
+                var tradeType = signal.Direction.ToLower() == "sell" ? TradeType.Sell : TradeType.Buy;
+                
+                Print($"🚀 Executing: {tradeType} BTCUSD {lotSize} lots ({forcedVolume:F8} broker units)");
+                
+                // Execute WITHOUT SL/TP first
+                // NOTE: ExecuteMarketOrder accepts double for volume parameter
+                var result = ExecuteMarketOrder(
+                    tradeType,
+                    "BTCUSD",
+                    forcedVolume,  // ✅ DOUBLE (preserves 0.50, not truncated to 0)
+                    $"BTC_NUCLEAR_{signal.SignalId}"
+                );
+                
+                if (result.IsSuccessful)
+                {
+                    Print($"✅ ORDER EXECUTED: Position #{result.Position.Id}");
+                    Print($"   Entry Price: {result.Position.EntryPrice}");
+                    Print($"   Volume: {btcSymbol.VolumeInUnitsToQuantity(forcedVolume):F8} lots ({forcedVolume:F8} units)");
+                    Print($"   V9.3 SUCCESS: Double type preserved decimals!");
+                    
+                    // V9.4 FIX: Convert to double? (nullable) + NEW API with ProtectionType
+                    Print($"   Setting SL/TP...");
+                    double? absoluteSl = signal.StopLoss > 0 ? signal.StopLoss : (double?)null;
+                    double? absoluteTp = signal.TakeProfit > 0 ? signal.TakeProfit : (double?)null;
+                    
+                    Print($"   SL: {absoluteSl} | TP: {absoluteTp}");
+                    
+                    // Use NEW API (with ProtectionType.Absolute for price-based SL/TP)
+                    var modifyResult = ModifyPosition(result.Position, absoluteSl, absoluteTp, ProtectionType.Absolute);
+                    
+                    if (modifyResult.IsSuccessful)
+                        Print($"   ✅ SL/TP SET SUCCESS: SL: {absoluteSl} | TP: {absoluteTp}");
+                    else
+                        Print($"   ❌ SL/TP FAILED: {modifyResult.Error}");
+                    
+                    Print($"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+                    
+                    WriteExecutionConfirmation(signal, result.Position, "EXECUTED", "");
+                }
+                else
+                {
+                    Print($"❌ EXECUTION FAILED!");
+                    Print($"   Error Code: {result.Error}");
+                    Print($"   Error Details: {result.Error.ToString()}");
+                    
+                    // DETAILED ERROR LOGGING
+                    if (result.Error == ErrorCode.BadVolume)
+                    {
+                        Print($"   🔍 BADVOLUME DIAGNOSIS:");
+                        Print($"      Min Volume: {btcSymbol.VolumeInUnitsMin}");
+                        Print($"      Max Volume: {btcSymbol.VolumeInUnitsMax}");
+                        Print($"      Volume Step: {btcSymbol.VolumeInUnitsStep}");
+                        Print($"      Attempted Volume: {forcedVolume}");
+                        Print($"      Account Balance: ${Account.Balance:F2}");
+                        Print($"      Free Margin: ${Account.FreeMargin:F2}");
+                    }
+                    
+                    Print($"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+                    
+                    WriteExecutionConfirmation(signal, null, "REJECTED", result.Error.ToString());
+                }
+                
+                return; // EXIT FUNCTION - Don't process any more code!
+            }
+            
             // Map Python symbol names to IC Markets cTrader names
             var pythonSymbol = signal.Symbol.Replace("/", "");
             var symbolName = MapSymbolName(pythonSymbol);
@@ -221,6 +373,7 @@ namespace cAlgo.Robots
             if (string.IsNullOrEmpty(symbolName))
             {
                 Print($"❌ Symbol disabled or not available: {pythonSymbol}");
+                WriteExecutionConfirmation(signal, null, "REJECTED", $"Symbol not available: {pythonSymbol}");
                 return;
             }
             
@@ -229,20 +382,22 @@ namespace cAlgo.Robots
             if (symbol == null)
             {
                 Print($"❌ Symbol not found in cTrader: {symbolName} (from {pythonSymbol})");
-                Print($"   💡 Check Market Watch and verify symbol name");
+                WriteExecutionConfirmation(signal, null, "REJECTED", $"Symbol not found: {symbolName}");
                 return;
             }
 
-            var volume = CalculateVolume(signal, symbol);
+            // Calculate volume for NON-BTCUSD symbols
+            long volume = CalculateVolume(signal, symbol);
             
-            Print($"📈 Executing: {signal.Direction.ToUpper()} {volume} lots");
-
-            var tradeType = signal.Direction.ToLower() == "bullish" || signal.Direction.ToLower() == "buy" 
+            TradeType tradeType2 = signal.Direction.ToLower() == "bullish" || signal.Direction.ToLower() == "buy" 
                 ? TradeType.Buy 
                 : TradeType.Sell;
 
-            var result = ExecuteMarketOrder(
-                tradeType,
+            // Normal execution for non-BTCUSD symbols
+            Print($"📈 Executing: {signal.Direction.ToUpper()} {symbol.VolumeInUnitsToQuantity(volume)} lots");
+            
+            TradeResult result2 = ExecuteMarketOrder(
+                tradeType2,
                 symbolName,
                 volume,
                 $"Glitch Matrix - {signal.StrategyType}",
@@ -250,46 +405,140 @@ namespace cAlgo.Robots
                 signal.TakeProfitPips
             );
 
-            if (result.IsSuccessful)
+            if (result2.IsSuccessful)
             {
-                Print($"✅ ORDER EXECUTED: {result.Position.Id}");
-                Print($"   Volume: {volume} lots");
-                Print($"   Entry: {result.Position.EntryPrice}");
+                Print($"✅ ORDER EXECUTED: {result2.Position.Id}");
+                Print($"   Volume: {symbol.VolumeInUnitsToQuantity(volume)} lots");
+                Print($"   Entry: {result2.Position.EntryPrice}");
                 
+                WriteExecutionConfirmation(signal, result2.Position, "EXECUTED", "");
+            }
+            else
+            {
+                Print($"❌ ORDER FAILED: {result2.Error}");
+                Print($"   Symbol: {symbolName}");
+                Print($"   Volume: {symbol.VolumeInUnitsToQuantity(volume)} lots ({volume} units)");
+                Print($"   Error Details: {result2.Error.ToString()}");
+                
+                WriteExecutionConfirmation(signal, null, "REJECTED", result2.Error.ToString());
+            }
+        }
+        
+        private void WriteExecutionConfirmation(TradeSignal signal, Position position, string status, string reason)
+        {
+            try
+            {
                 var confirmationPath = SignalFilePath.Replace("signals.json", "trade_confirmations.json");
+                
                 var confirmation = new
                 {
-                    signal_id = signal.SignalId,
-                    position_id = result.Position.Id.ToString(),
-                    symbol = signal.Symbol,
-                    direction = signal.Direction,
-                    volume = volume,
-                    entry_price = result.Position.EntryPrice,
-                    sl = result.Position.StopLoss,
-                    tp = result.Position.TakeProfit,
-                    executed_at = DateTime.Now,
-                    status = "executed"
+                    SignalId = signal.SignalId,
+                    Status = status,  // "EXECUTED" or "REJECTED"
+                    OrderId = position?.Id.ToString() ?? "N/A",
+                    Volume = position?.VolumeInUnits ?? 0,
+                    EntryPrice = position?.EntryPrice ?? 0,
+                    StopLoss = position?.StopLoss ?? 0,
+                    TakeProfit = position?.TakeProfit ?? 0,
+                    Reason = reason,
+                    Timestamp = DateTime.UtcNow,
+                    
+                    // Additional metadata
+                    Symbol = signal.Symbol,
+                    Direction = signal.Direction,
+                    Account = Account.Number,
+                    Balance = Account.Balance
                 };
                 
                 var options = new JsonSerializerOptions { WriteIndented = true };
                 File.WriteAllText(confirmationPath, JsonSerializer.Serialize(confirmation, options));
+                
+                Print($"✅ Confirmation written: {status}");
             }
-            else
+            catch (Exception ex)
             {
-                Print($"❌ ORDER FAILED: {result.Error}");
+                Print($"⚠️  Could not write confirmation: {ex.Message}");
             }
         }
 
         private long CalculateVolume(TradeSignal signal, Symbol symbol)
         {
+            Print($"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+            Print($"🔍 VOLUME CALCULATION START");
+            Print($"   Symbol: {signal.Symbol}");
+            Print($"   LotSize from JSON: {signal.LotSize}");
+            Print($"   RawUnits from JSON: {signal.RawUnits}");
+            Print($"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+            
+            // 🚨 V5.5 BULLETPROOF NUCLEAR: BTC gets ABSOLUTE PRIORITY - ZERO calculations!
+            // BULLETPROOF: Case-insensitive, ignores spaces/slashes (synced with Python V5.6)
+            string cleanSymbol = signal.Symbol.ToUpper().Replace(" ", "").Replace("/", "");
+            if (cleanSymbol.Contains("BTC"))
+            {
+                // Use RawUnits if available (most direct)
+                if (signal.RawUnits.HasValue && signal.RawUnits.Value > 0)
+                {
+                    Print($"🚀 BTC NUCLEAR ({signal.Symbol}): Using RawUnits={signal.RawUnits.Value} DIRECTLY");
+                    Print($"   Detected as: BTC (cleanSymbol={cleanSymbol})");
+                    Print($"⚠️  NO NORMALIZATION, NO CHECKS - DIRECT EXECUTION!");
+                    return signal.RawUnits.Value;
+                }
+                
+                // Fallback: Use LotSize and convert
+                if (signal.LotSize > 0)
+                {
+                    long volumeInUnits = (long)symbol.QuantityToVolumeInUnits(signal.LotSize);
+                    Print($"🚀 BTC NUCLEAR ({signal.Symbol}): Converted {signal.LotSize} lots → {volumeInUnits} units");
+                    Print($"   Detected as: BTC (cleanSymbol={cleanSymbol})");
+                    Print($"⚠️  DIRECT EXECUTION WITHOUT NORMALIZATION!");
+                    return volumeInUnits;
+                }
+                
+                // Emergency: Force 50000 units (0.50 lots)
+                Print($"⚠️  BTC EMERGENCY ({signal.Symbol}): No valid volume in JSON!");
+                Print($"   Detected as: BTC (cleanSymbol={cleanSymbol})");
+                Print($"🚨 FORCING 50000 units (0.50 lots) as LAST RESORT");
+                return 50000;
+            }
+            
+            // For all other symbols: Use RawUnits with normalization
+            if (signal.RawUnits.HasValue && signal.RawUnits.Value > 0)
+            {
+                long volumeInUnits = signal.RawUnits.Value;
+                volumeInUnits = (long)symbol.NormalizeVolumeInUnits(volumeInUnits, RoundingMode.Down);
+                
+                if (volumeInUnits < (long)symbol.VolumeInUnitsMin)
+                    volumeInUnits = (long)symbol.VolumeInUnitsMin;
+                if (volumeInUnits > (long)symbol.VolumeInUnitsMax)
+                    volumeInUnits = (long)symbol.VolumeInUnitsMax;
+                
+                Print($"✅ Using RawUnits: {volumeInUnits} units");
+                return volumeInUnits;
+            }
+            
+            // Use LotSize with normalization
+            if (signal.LotSize > 0)
+            {
+                long volumeInUnits = (long)symbol.QuantityToVolumeInUnits(signal.LotSize);
+                volumeInUnits = (long)symbol.NormalizeVolumeInUnits(volumeInUnits, RoundingMode.Down);
+                
+                if (volumeInUnits < (long)symbol.VolumeInUnitsMin)
+                    volumeInUnits = (long)symbol.VolumeInUnitsMin;
+                if (volumeInUnits > (long)symbol.VolumeInUnitsMax)
+                    volumeInUnits = (long)symbol.VolumeInUnitsMax;
+                
+                Print($"✅ Using LotSize: {signal.LotSize} lots ({volumeInUnits} units)");
+                return volumeInUnits;
+            }
+            
+            // Fallback: Calculate volume from risk (old method)
             var balance = Account.Balance;
             var riskAmount = balance * (MaxRiskPercent / 100.0);
             
             var slDistance = Math.Abs(signal.EntryPrice - signal.StopLoss);
             var slPips = slDistance / symbol.PipSize;
             
-            var volumeInUnits = riskAmount / (slPips * symbol.PipValue);
-            var volumeInLots = (long)symbol.NormalizeVolumeInUnits((long)volumeInUnits, RoundingMode.Down);
+            var volumeCalc = riskAmount / (slPips * symbol.PipValue);
+            var volumeInLots = (long)symbol.NormalizeVolumeInUnits((long)volumeCalc, RoundingMode.Down);
             
             if (volumeInLots < (long)symbol.VolumeInUnitsMin)
                 volumeInLots = (long)symbol.VolumeInUnitsMin;
@@ -340,12 +589,17 @@ namespace cAlgo.Robots
 
         protected override void OnStop()
         {
-            Print("🛑 Python Signal Executor Stopped");
+            Print("");
+            Print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+            Print("🛑 GLITCH IN MATRIX - Executor Stopped");
+            Print("✨ by ФорексГод • AI-Powered Trading • V4.0");
+            Print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
         }
     }
 
     public class TradeSignal
     {
+        // ━━━ V1.0 ORIGINAL FIELDS ━━━
         public string SignalId { get; set; }
         public string Symbol { get; set; }
         public string Direction { get; set; }
@@ -357,5 +611,19 @@ namespace cAlgo.Robots
         public double TakeProfitPips { get; set; }
         public double RiskReward { get; set; }
         public DateTime Timestamp { get; set; }
+        public double LotSize { get; set; }  // 🚨 V5.1 FIX: Lot size from Python (prevents BadVolume)
+        public int? RawUnits { get; set; }  // 🪙 V5.1 CRYPTO: Raw volume units for BTC/ETH
+        
+        // ━━━ V4.0 SMC LEVEL UP - NEW FIELDS ━━━
+        // 💧 Liquidity Sweep Detection
+        public bool LiquiditySweep { get; set; }  // True if sweep detected
+        public string SweepType { get; set; }  // "SSL" (Sell Side) or "BSL" (Buy Side)
+        public int ConfidenceBoost { get; set; }  // +20 if sweep confirmed, 0 otherwise
+        
+        // 📦 Order Block Activation
+        public bool OrderBlockUsed { get; set; }  // True if OB score ≥7 (refined entry)
+        public int OrderBlockScore { get; set; }  // 1-10 (0 if not used)
+        
+        // V9.0: Daily Range fields REMOVED (caused UNKNOWN errors and 0 volume cascade)
     }
 }

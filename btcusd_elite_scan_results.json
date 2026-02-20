@@ -1,0 +1,11 @@
+{
+  "symbol": "BTCUSD",
+  "current_price": 70813.71,
+  "trend": "BEARISH",
+  "setup_type": "REVERSAL",
+  "setup_direction": "LONG",
+  "ai_score": 47,
+  "total_score": 77,
+  "recommendation": "TRADE",
+  "scan_time": "2026-02-09T07:22:30.127061"
+}

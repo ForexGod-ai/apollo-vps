@@ -38,12 +38,12 @@ class TelegramNotifier:
         """
         if parse_mode == "HTML":
             signature = """
-━━━━━━━━━━━━━━━━━━━━
+──────────────────
 ✨ <b>Glitch in Matrix by ФорексГод</b> ✨
 🧠 AI-Powered • 💎 Smart Money"""
         else:  # Markdown
             signature = """
-━━━━━━━━━━━━━━━━━━━━
+──────────────────
 ✨ *Glitch in Matrix by ФорексГод* ✨
 🧠 AI-Powered • 💎 Smart Money"""
         
@@ -177,156 +177,127 @@ class TelegramNotifier:
         return True
     
     def format_setup_alert(self, setup) -> str:
-        """Format trade setup for Telegram message"""
-        # Direction from Daily CHoCH (h4_choch may be None for MONITORING)
+        """Format trade setup for Telegram message - ELITE STACK v32.0 (Elegant & Scannable)"""
+        # Direction from Daily CHoCH
         direction = "🟢 LONG" if setup.daily_choch.direction == 'bullish' else "🔴 SHORT"
         emoji = "📈" if setup.daily_choch.direction == 'bullish' else "📉"
         
-        # Get current price for Live Price Distance calculation
-        current_price = getattr(setup, 'current_price', setup.entry_price)
-        
-        # Load Pair Statistics from trade_history.json
+        # Load pair stats
         pair_stats = self._load_pair_statistics(setup.symbol)
         
-        # V3.3: Get entry type and momentum data
+        # Entry type and momentum
         entry_type = getattr(setup, 'entry_type', None)
         momentum_score = getattr(setup, 'momentum_score', 0)
         hours_elapsed = getattr(setup, 'hours_waited', 0)
         
-        # Status indicator
-        if setup.status == 'READY':
-            status_text = "✅ <b>READY TO EXECUTE</b>"
-        else:
-            status_text = "👀 <b>MONITORING</b> (waiting for entry)"
+        # Status
+        status_emoji = "✅" if setup.status == 'READY' else "👀"
+        status = "READY" if setup.status == 'READY' else "MONITORING"
         
-        # Strategy type indicator
-        strategy_emoji = "🔥🚨" if setup.strategy_type == 'reversal' else "🎯"
-        strategy_text = "<b>REVERSAL - MAJOR TREND CHANGE!</b>" if setup.strategy_type == 'reversal' else "<b>CONTINUATION - Pullback Entry</b>"
+        # Strategy type
+        strategy_emoji = "🔥" if setup.strategy_type == 'reversal' else "🎯"
+        strategy = "REVERSAL" if setup.strategy_type == 'reversal' else "CONTINUATION"
         
-        # V3.3 ENTRY TYPE BADGE
-        entry_method_text = ""
+        # --- HEADER SECTION ---
+        header = f"{strategy_emoji} <b>SETUP: {setup.symbol}</b> {direction} {emoji}\n"
+        header += f"{status_emoji} <b>{status}</b> • {strategy}"
+        
+        # --- PAIR STATS: Inline ---
+        stats_line = ""
+        if pair_stats:
+            wr = pair_stats.get('win_rate', 0)
+            trades = pair_stats.get('total_trades', 0)
+            rr = pair_stats.get('avg_rr', 0)
+            conf_emoji = "🟢" if wr >= 60 else "🟡" if wr >= 45 else "🔴"
+            stats_line = f"\n{conf_emoji} <b>Stats:</b> {wr:.0f}% WR • 1:{rr:.1f} R:R • {trades} trades"
+        
+        # --- AI RADIOGRAPHY SECTION ---
+        ai_section = ""
+        if hasattr(setup, 'ml_score') and setup.ml_score is not None:
+            score = setup.ml_score
+            confidence = getattr(setup, 'ml_confidence', 'UNKNOWN')
+            rec = getattr(setup, 'ml_recommendation', 'REVIEW')
+            
+            # Visual bar on separate line
+            bar = "🟩" * int(score / 10) + "⬜" * (10 - int(score / 10))
+            rec_badge = "✅ TAKE" if rec == 'TAKE' else "⚠️ REVIEW" if rec == 'REVIEW' else "🚫 SKIP"
+            
+            ai_section = f"\n\n╼╼╼╼╼\n🧠 <b>AI Score:</b> {score}/100 ({confidence})\n[{bar}] {rec_badge}"
+        
+        # --- ENTRY METHOD ---
+        entry_line = ""
         if entry_type == 'pullback':
-            entry_method_text = "\n🎯 <b>ENTRY METHOD:</b> Pullback @ Fibo 50% (Classic)"
+            entry_line = "\n🎯 <b>Entry:</b> Pullback @ Fibo 50%"
         elif entry_type == 'continuation':
-            entry_method_text = f"\n🚀 <b>ENTRY METHOD:</b> Momentum Entry (Score: {momentum_score:.0f}/100) 🔥"
+            entry_line = f"\n🚀 <b>Entry:</b> Momentum (Score: {momentum_score:.0f}/100)"
         else:
-            entry_method_text = "\n⏳ <b>ENTRY METHOD:</b> Waiting for signal..."
+            entry_line = "\n⏳ <b>Entry:</b> Waiting..."
         
-        # CHoCH AGE TRACKING with progress bar
-        age_tracking_text = ""
+        # --- MOMENTUM BAR (only if continuation) ---
+        momentum_line = ""
+        if entry_type == 'continuation' and momentum_score > 0:
+            mom_bar = "🔥" * int(momentum_score / 10) + "⬜" * (10 - int(momentum_score / 10))
+            momentum_line = f"\n[{mom_bar}] {momentum_score:.0f}/100"
+            if momentum_score >= 80:
+                momentum_line += " 🚀"
+            elif momentum_score >= 60:
+                momentum_line += " ✅"
+        
+        # --- AGE TRACKING ---
+        age_line = ""
         if hours_elapsed > 0:
             progress = min(hours_elapsed / 12.0, 1.0)
-            bar_filled = int(progress * 10)
-            progress_bar = "🟩" * bar_filled + "⬜" * (10 - bar_filled)
-            
-            age_tracking_text = f"\n⏰ <b>Time Elapsed:</b> {hours_elapsed:.1f}h / 12h timeout"
-            age_tracking_text += f"\n{progress_bar} {progress*100:.0f}%"
-            
+            bar = "🟩" * int(progress * 10) + "⬜" * (10 - int(progress * 10))
+            age_line = f"\n⏰ <b>Elapsed:</b> {hours_elapsed:.1f}h/12h\n[{bar}] {progress*100:.0f}%"
             if hours_elapsed >= 10:
-                age_tracking_text += "\n⚠️ Setup aging - Entry may timeout soon!"
+                age_line += " ⚠️"
         
-        # #5: MOMENTUM SCORE VISUAL (Only for continuation entries)
-        momentum_visual = ""
-        if entry_type == 'continuation' and momentum_score > 0:
-            bar_filled = int(momentum_score / 10)  # 0-100 score to 0-10 bars
-            bar_empty = 10 - bar_filled
-            momentum_bar = "🔥" * bar_filled + "⬜" * bar_empty
-            momentum_visual = f"\n\n🔥 <b>MOMENTUM STRENGTH:</b>\n{momentum_bar} {momentum_score:.0f}/100"
-            
-            if momentum_score >= 80:
-                momentum_visual += "\n🚀 EXPLOSIVE - High probability!"
-            elif momentum_score >= 60:
-                momentum_visual += "\n✅ STRONG - Good entry!"
-            else:
-                momentum_visual += "\n⚠️ MODERATE - Wait for confirmation"
-        
-        # 1H CHoCH info (for SCALE_IN Entry 1)
-        # Check if CHoCH detected (from monitoring_setups.json flag or TradeSetup object)
-        h1_choch_obj = getattr(setup, 'h1_choch', None)
+        # --- DAILY ANALYSIS SECTION ---
+        h1_choch = getattr(setup, 'h1_choch', None)
         choch_detected = getattr(setup, 'choch_1h_detected', False)
-        choch_price = getattr(setup, 'choch_1h_price', 0)
         
-        if h1_choch_obj or choch_detected:
-            # CHoCH detected - show price from object or stored value
-            price = h1_choch_obj.break_price if h1_choch_obj else choch_price
-            direction_text = h1_choch_obj.direction.upper() if h1_choch_obj else (setup.direction.upper() if hasattr(setup, 'direction') else 'BEARISH')
-            h1_info = f"⚡ 1H CHoCH: {direction_text} @ {price:.5f} ✅"
-            h1_status = "⏰ <b>Waiting for pullback to Fibo 50%</b>"
+        if h1_choch or choch_detected:
+            price = h1_choch.break_price if h1_choch else getattr(setup, 'choch_1h_price', 0)
+            h1_line = f"⚡ 1H CHoCH @ {price:.5f} ✅"
         else:
-            h1_info = "⏳ <b>Waiting for 1H CHoCH</b>"
-            h1_status = "⏰ Monitoring for Entry 1..."
+            h1_line = "⏳ Waiting 1H CHoCH"
         
-        # 4H CHoCH info (for SCALE_IN Entry 2)
         if setup.h4_choch:
-            h4_info = f"🔄 4H CHoCH: {setup.h4_choch.direction.upper()} @ {setup.h4_choch.break_price:.5f} ✅"
-            h4_status = "✅ <b>Entry 2 Ready</b> (50% position)"
+            h4_line = f"🔄 4H CHoCH @ {setup.h4_choch.break_price:.5f} ✅"
         else:
-            h4_info = "⏳ <b>Waiting for 4H confirmation</b>"
-            h4_status = "⏰ Monitoring for Entry 2..."
+            h4_line = "⏳ Waiting 4H confirm"
         
-        # Calculate lot size (example: $10k account, 2% risk)
+        # 💧 V4.0: Liquidity Sweep Info
+        liquidity_line = ""
+        if hasattr(setup, 'liquidity_sweep') and setup.liquidity_sweep:
+            sweep = setup.liquidity_sweep
+            sweep_type = sweep['sweep_type']
+            conf_boost = getattr(setup, 'confidence_boost', 0)
+            liquidity_line = f"\n💧 <b>Liquidity Sweep:</b> YES ({sweep_type}) <b>+{conf_boost} Conf</b>"
+        
+        daily_section = f"""\n\n╼╼╼╼╼
+📊 <b>DAILY:</b> CHoCH {setup.daily_choch.direction.upper()}
+🎯 FVG: <code>{setup.fvg.bottom:.5f} - {setup.fvg.top:.5f}</code>{liquidity_line}
+{h1_line}
+{h4_line}"""
+        
+        # --- TRADE SETUP SECTION (Claritate) ---
         account_balance = float(os.getenv('ACCOUNT_BALANCE', '10000'))
         risk_percent = float(os.getenv('RISK_PER_TRADE', '0.02'))
         risk_amount = account_balance * risk_percent
         
-        pip_value = 10  # Standard for 1 lot forex
+        pip_value = 10
         stop_distance = abs(setup.entry_price - setup.stop_loss)
-        lot_size = risk_amount / (stop_distance * pip_value * 100000)  # Rough calculation
+        lot_size = risk_amount / (stop_distance * pip_value * 100000)
         
-        # #4: PAIR STATISTICS
-        pair_stats_text = ""
-        if pair_stats:
-            win_rate = pair_stats.get('win_rate', 0)
-            total_trades = pair_stats.get('total_trades', 0)
-            avg_rr = pair_stats.get('avg_rr', 0)
-            best_trade = pair_stats.get('best_trade', 0)
-            
-            confidence_emoji = "🟢" if win_rate >= 60 else "🟡" if win_rate >= 45 else "🔴"
-            
-            pair_stats_text = f"""\n\n━━━━━━━━━━━━━━━━━━━━
-📈 <b>{setup.symbol} STATISTICS:</b>
-━━━━━━━━━━━━━━━━━━━━
-{confidence_emoji} Win Rate: {win_rate:.1f}% ({pair_stats.get('wins', 0)}W/{pair_stats.get('losses', 0)}L)
-💰 Avg R:R: 1:{avg_rr:.1f}
-🏆 Best Trade: ${best_trade:.2f}
-📊 Total Trades: {total_trades}"""
+        trade_section = f"""\n\n╼╼╼╼╼
+💰 <b>TRADE:</b>
+📥 In: <code>{setup.entry_price:.5f}</code> | 🛑 SL: <code>{setup.stop_loss:.5f}</code>
+🎯 TP: <code>{setup.take_profit:.5f}</code> | 💵 Risk: <code>${risk_amount:.2f}</code>
+📦 Size: <code>{lot_size:.2f}</code> lots | ⚖️ RR: <code>1:{setup.risk_reward:.2f}</code>"""
         
-        # NEW: ML SCORE SECTION
-        ml_score_text = ""
-        if hasattr(setup, 'ml_score') and setup.ml_score is not None:
-            score = setup.ml_score
-            confidence = getattr(setup, 'ml_confidence', 'UNKNOWN')
-            recommendation = getattr(setup, 'ml_recommendation', 'REVIEW')
-            factors = getattr(setup, 'ml_factors', {})
-            
-            # Score visualization
-            score_emoji = "🟢" if score >= 75 else "🟡" if score >= 60 else "🔴"
-            bar_filled = int(score / 10)
-            score_bar = "🟩" * bar_filled + "⬜" * (10 - bar_filled)
-            
-            # Recommendation badge
-            rec_badge = "✅ TAKE" if recommendation == 'TAKE' else "⚠️ REVIEW" if recommendation == 'REVIEW' else "🚫 SKIP"
-            
-            ml_score_text = f"""\n\n━━━━━━━━━━━━━━━━━━━━
-🧠 <b>AI CONFIDENCE SCORE:</b>
-━━━━━━━━━━━━━━━━━━━━
-{score_emoji} Score: {score}/100 ({confidence})
-{score_bar}
-🤖 AI Says: {rec_badge}
-
-📊 Analysis:"""
-            
-            for factor, desc in factors.items():
-                # Clean up factor name
-                factor_clean = factor.replace('_', ' ').title()
-                ml_score_text += f"\n  • {factor_clean}: {desc}"
-            
-            ml_score_text += "\n\n<i>Based on {trades} historical trades</i>".format(
-                trades=getattr(setup, 'ml_trades_analyzed', 116)
-            )
-        
-        # NEW: AI PROBABILITY ANALYSIS (1-10 scale)
-        ai_prob_text = ""
+        # --- AI PROBABILITY (if exists) ---
+        ai_prob_section = ""
         if hasattr(setup, 'ai_probability_score') and setup.ai_probability_score is not None:
             from ai_probability_analyzer import get_analyzer
             analyzer = get_analyzer()
@@ -338,45 +309,13 @@ class TelegramNotifier:
                 'warning': setup.ai_probability_warning
             }
             
-            ai_prob_text = "\n" + analyzer.format_telegram_analysis(analysis, setup.symbol)
+            ai_prob_section = "\n\n╼╼╼╼╼\n" + analyzer.format_telegram_analysis(analysis, setup.symbol)
         
-        message = f"""
-{strategy_emoji} <b>SETUP - {setup.symbol}</b> {strategy_emoji}
-{direction} {emoji}
-
-{status_text}
-{strategy_text}{entry_method_text}{momentum_visual}{age_tracking_text}{pair_stats_text}{ml_score_text}{ai_prob_text}
-
-━━━━━━━━━━━━━━━━━━━━
-📊 <b>DAILY ANALYSIS:</b>
-📍 CHoCH: <code>{setup.daily_choch.direction.upper()}</code>
-🎯 FVG Zone: <code>{setup.fvg.bottom:.5f} - {setup.fvg.top:.5f}</code>
-
-⚡ <b>1H STATUS (Entry 1):</b>
-{h1_info}
-{h1_status}
-
-🔍 <b>4H STATUS (Entry 2):</b>
-{h4_info}
-{h4_status}
-
-━━━━━━━━━━━━━━━━━━━━
-💰 <b>TRADE SETUP:</b>
-💎 Entry: <code>{setup.entry_price:.5f}</code>
-🛑 Stop Loss: <code>{setup.stop_loss:.5f}</code>
-🎯 Take Profit: <code>{setup.take_profit:.5f}</code>
-
-📊 R:R Ratio: <code>1:{setup.risk_reward:.2f}</code>
-📦 Lot Size: <code>{lot_size:.2f}</code>
-💵 Risk: <code>${risk_amount:.2f}</code>
-
-⭐ Priority: <code>{setup.priority}</code>
-⏰ Setup: <code>{setup.setup_time if isinstance(setup.setup_time, str) else (datetime.fromtimestamp(setup.setup_time).strftime('%Y-%m-%d %H:%M UTC') if isinstance(setup.setup_time, int) else setup.setup_time.strftime('%Y-%m-%d %H:%M UTC'))}</code>
-
-━━━━━━━━━━━━━━━━━━━━
-📈 <b>VIEW CHARTS:</b>
-<a href='https://www.tradingview.com/chart/?symbol={self._get_tv_symbol(setup.symbol)}&interval=D'>📊 Daily</a> • <a href='https://www.tradingview.com/chart/?symbol={self._get_tv_symbol(setup.symbol)}&interval=60'>⚡ 1H</a> • <a href='https://www.tradingview.com/chart/?symbol={self._get_tv_symbol(setup.symbol)}&interval=240'>🔍 4H</a>
-"""
+        # ⚠️ NO MANUAL FOOTER - send_message() adds signature automatically!
+        # Removed duplicate signature to avoid double branding
+        
+        # --- ASSEMBLE MESSAGE ---
+        message = f"{header}{stats_line}{ai_section}{entry_line}{momentum_line}{age_line}{daily_section}{trade_section}{ai_prob_section}"
         
         return message.strip()
     
@@ -566,7 +505,7 @@ class TelegramNotifier:
         
         # Add monitoring setups with clean formatting
         if monitoring_setups:
-            message += "\n━━━━━━━━━━━━━━━━━━━━\n"
+            message += "\n──────────────────\n"
             message += "<b>📊 MONITORING SETUPS:</b>\n\n"
             for setup in monitoring_setups:
                 symbol = setup.get('symbol', 'Unknown')
@@ -581,7 +520,7 @@ class TelegramNotifier:
         
         # Add active positions with clean formatting
         if executed_positions:
-            message += "\n━━━━━━━━━━━━━━━━━━━━\n"
+            message += "\n──────────────────\n"
             message += "<b>🔥 ACTIVE TRADES:</b>\n\n"
             for pos in executed_positions:
                 symbol = pos.get('symbol', 'Unknown')
@@ -610,7 +549,7 @@ class TelegramNotifier:
 🎯 <b>TRADE EXECUTED - PULLBACK ENTRY</b>
 
 {setup.symbol} {direction} {direction_emoji}
-━━━━━━━━━━━━━━━━━━━━
+──────────────────
 
 ✅ Pullback reached Fibo 50%
 📍 Entry: <code>{setup.entry_price:.5f}</code>
@@ -620,16 +559,13 @@ class TelegramNotifier:
 
 ⏰ Time to entry: <code>{hours_elapsed:.1f}h</code>
 🎯 Classic pullback strategy ✅
-
-━━━━━━━━━━━━━━━━━━━━
-✨ <b>Glitch in Matrix</b> - by ForexGod
 """
         else:  # continuation momentum
             message = f"""
 🚀 <b>TRADE EXECUTED - MOMENTUM ENTRY</b>
 
 {setup.symbol} {direction} {direction_emoji}
-━━━━━━━━━━━━━━━━━━━━
+──────────────────
 
 ✅ Strong continuation detected!
 📊 Momentum Score: <code>{momentum_score:.0f}/100</code> 🔥
@@ -640,9 +576,6 @@ class TelegramNotifier:
 
 ⏰ Time to entry: <code>{hours_elapsed:.1f}h</code> (after 6h wait)
 💨 Riding the momentum! 🚀
-
-━━━━━━━━━━━━━━━━━━━━
-✨ <b>Glitch in Matrix</b> - by ForexGod
 """
         
         return self.send_message(message.strip(), parse_mode="HTML")
@@ -764,7 +697,7 @@ class TelegramNotifier:
 💰 *DAILY PERFORMANCE REPORT*
 {datetime.now().strftime('%Y-%m-%d')} • {datetime.now().strftime('%A')}
 
-━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 📊 *ACCOUNT SUMMARY:*
 
 💵 Balance: `${balance:,.2f}`
@@ -774,7 +707,7 @@ class TelegramNotifier:
 📊 Margin: `${margin_used:,.2f}` used ({margin_used/balance*100:.1f}%)
 🔓 Free: `${free_margin:,.2f}`
 
-━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 🎯 *TODAY'S PERFORMANCE:*
 """
             
@@ -802,7 +735,7 @@ Worst: `${today_worst:.2f}`
                 message += "\n_No trades closed today_\n🕒 Market is waiting for perfect setups!"
             
             # ============ OPEN POSITIONS (cTrader Style) ============
-            message += f"\n\n━━━━━━━━━━━━━━━━━━━━━━━━"
+            message += f"\n\n──────────────────"
             message += f"\n🔥 *OPEN POSITIONS:* {len(positions)}\n"
             
             if positions:
@@ -841,7 +774,7 @@ Worst: `${today_worst:.2f}`
             
             # ============ WEEKLY PROGRESS ============
             if weekly_breakdown:
-                message += f"\n\n━━━━━━━━━━━━━━━━━━━━━━━━"
+                message += f"\n\n──────────────────"
                 message += f"\n📈 *WEEKLY PROGRESS:*\n"
                 
                 for date, profit in weekly_breakdown:
@@ -866,7 +799,7 @@ Worst: `${today_worst:.2f}`
                     ready_setups = [s for s in setups if s.get('status') == 'READY']
                     monitoring_setups = [s for s in setups if s.get('status') == 'MONITORING']
                     
-                    message += f"\n\n━━━━━━━━━━━━━━━━━━━━━━━━"
+                    message += f"\n\n──────────────────"
                     message += f"\n📋 *MONITORING SETUPS:* {len(setups)}\n"
                     
                     if ready_setups:
@@ -886,7 +819,7 @@ Worst: `${today_worst:.2f}`
                 try:
                     news_alert = self._get_news_alert()
                     if news_alert:
-                        message += f"\n\n━━━━━━━━━━━━━━━━━━━━━━━━"
+                        message += f"\n\n──────────────────"
                         message += f"\n{news_alert}"
                 except Exception as e:
                     print(f"⚠️ Could not load news: {e}")
