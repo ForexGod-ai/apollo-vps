@@ -70,7 +70,7 @@ def test_daily_summary_html():
 """
     
     # Monitoring setups
-    message += "\n━━━━━━━━━━━━━━━━━━━━\n"
+    message += "\n──────────────────\n"
     message += "<b>📊 MONITORING SETUPS:</b>\n\n"
     for setup in monitoring_setups:
         symbol = setup['symbol']
@@ -81,7 +81,7 @@ def test_daily_summary_html():
         message += f"  Entry: <code>{entry:.5f}</code> | RR: <code>1:{rr:.1f}</code>\n"
     
     # Active positions
-    message += "\n━━━━━━━━━━━━━━━━━━━━\n"
+    message += "\n──────────────────\n"
     message += "<b>🔥 ACTIVE TRADES:</b>\n\n"
     for pos in executed_positions:
         symbol = pos['symbol']

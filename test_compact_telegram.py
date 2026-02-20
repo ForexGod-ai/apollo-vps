@@ -94,7 +94,7 @@ def send_telegram_test():
             print("📱 Check your Telegram to see the compact format!")
             print()
             print("Width comparison:")
-            print("  OLD: ────────────── (14 chars)")
+            print("  OLD: ────────────────── (14 chars)")
             print("  NEW: ╼╼╼╼╼╼╼╼ (8 chars)")
             print()
             print("  Reduction: 43% narrower! 🎯")

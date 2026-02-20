@@ -47,7 +47,7 @@ message = f"""
 {epic_title}
 
 🔥 <b>GLITCH IN MATRIX • POSITION LIVE</b> 🔥
-━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 
 {direction_arrow} <b>{direction}</b> • {lot} lots
 💎 <b>{symbol}</b>
@@ -61,7 +61,7 @@ message = f"""
 🎯 <b>Reward:</b> {reward_pips:.1f} pips
 📊 <b>R:R Ratio:</b> 1:{rr:.2f}
 
-━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 🧠 <b>AI Validation:</b> ✅ CONFIRMED
 ⚡ <b>Risk Level:</b> CALCULATED
 🤖 <b>Execution:</b> AUTOMATED
@@ -69,10 +69,10 @@ message = f"""
 
 <i>💎 "The Matrix cannot hold us" 💎</i>
 
-━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 ✨ <b>Glitch in Matrix</b> by ForexGod ✨
 🧠 AI-Powered • 💎 Smart Money
-━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 """
 
 print("📱 Trimit UPGRADED EXECUTION message pe Telegram...\n")

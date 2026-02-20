@@ -11,7 +11,7 @@ from datetime import datetime
 def test_pullback_entry():
     """Test pullback entry notification"""
     print("🧪 TEST 1: PULLBACK ENTRY NOTIFICATION")
-    print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    print("──────────────────")
     
     # Create mock TradeSetup
     setup = TradeSetup(
@@ -55,7 +55,7 @@ def test_pullback_entry():
 🎯 <b>TRADE EXECUTED - PULLBACK ENTRY</b>
 
 {setup.symbol} {direction} {direction_emoji}
-━━━━━━━━━━━━━━━━━━━━
+──────────────────
 
 ✅ Pullback reached Fibo 50%
 📍 Entry: <code>{setup.entry_price:.5f}</code>
@@ -66,7 +66,7 @@ def test_pullback_entry():
 ⏰ Time to entry: <code>0.5h</code>
 🎯 Classic pullback strategy ✅
 
-━━━━━━━━━━━━━━━━━━━━
+──────────────────
 ✨ <b>Glitch in Matrix</b> - by ForexGod
 """
     
@@ -89,7 +89,7 @@ def test_pullback_entry():
 def test_momentum_entry():
     """Test momentum entry notification"""
     print("🧪 TEST 2: MOMENTUM ENTRY NOTIFICATION")
-    print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    print("──────────────────")
     
     # Create mock TradeSetup
     setup = TradeSetup(
@@ -133,7 +133,7 @@ def test_momentum_entry():
 🚀 <b>TRADE EXECUTED - MOMENTUM ENTRY</b>
 
 {setup.symbol} {direction} {direction_emoji}
-━━━━━━━━━━━━━━━━━━━━
+──────────────────
 
 ✅ Strong continuation detected!
 📊 Momentum Score: <code>{momentum_score:.0f}/100</code> 🔥
@@ -145,7 +145,7 @@ def test_momentum_entry():
 ⏰ Time to entry: <code>{hours_elapsed:.1f}h</code> (after 6h wait)
 💨 Riding the momentum! 🚀
 
-━━━━━━━━━━━━━━━━━━━━
+──────────────────
 ✨ <b>Glitch in Matrix</b> - by ForexGod
 """
     
@@ -168,7 +168,7 @@ def test_momentum_entry():
 def test_error_alert():
     """Test error alert notification"""
     print("🧪 TEST 3: ERROR ALERT NOTIFICATION")
-    print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    print("──────────────────")
     
     error_msg = "Failed to fetch EURUSD data from cTrader API"
     

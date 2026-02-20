@@ -94,7 +94,7 @@ def send_compact_setup_test():
         return False
     
     print()
-    print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    print("──────────────────")
     print()
     
     # Send BTCUSD
