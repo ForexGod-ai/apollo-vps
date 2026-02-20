@@ -121,7 +121,7 @@ def show_compact_preview():
     print("="*50)
     print()
     print("BEFORE (Old Format):")
-    print("  • Separator: ────────────── (14 chars)")
+    print("  • Separator: ────────────────── (14 chars)")
     print("  • Empty lines: Multiple")
     print("  • Width: ~40-50 chars")
     print("  • Footer: 3 lines")

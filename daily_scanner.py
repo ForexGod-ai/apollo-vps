@@ -206,13 +206,19 @@ class DailyScanner:
                 
                 # Download Daily data
                 df_daily = self.data_provider.get_historical_data(
-                    symbol, 
+                    symbol,
                     "D1", 
                     self.scanner_settings['lookback_candles']['daily']
                 )
                 
-                if df_daily is None:
-                    print(f"⚠️ Skipping {symbol} - no Daily data")
+                if df_daily is None or df_daily.empty:
+                    print(f"⚠️  Skipping {symbol} - no Daily data")
+                    # 🚨 AUDIT: Log data errors for forensics
+                    try:
+                        with open('data_errors.log', 'a') as f:
+                            f.write(f"{datetime.now().isoformat()} - {symbol} - D1 data unavailable\n")
+                    except Exception as log_err:
+                        print(f"⚠️  Could not write to data_errors.log: {log_err}")
                     continue
                 
                 # Download 4H data

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 🎮 GLITCH IN MATRIX - MASTER EXECUTION LAUNCHER V2.0
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 
 ABSOLUTE PATH BINDING + BTC VOLUME FIX + 15 PAIRS MONITORING
 
@@ -13,7 +13,7 @@ Features:
 • Visual confirmation for all 15 official pairs
 
 ✨ Glitch in Matrix by ФорексГод ✨
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 """
 
 import os

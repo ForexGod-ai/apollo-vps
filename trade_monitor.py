@@ -199,11 +199,11 @@ class TradeMonitor:
 
 <i>💎 "Another one for the books"</i>
 
-━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 ✨ <b>Strategy by ForexGod</b> ✨
 🧠 Glitch in Matrix Trading System
 💎 + AI Validation
-━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 """
         
         # Adaugă account summary

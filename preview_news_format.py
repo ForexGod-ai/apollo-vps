@@ -16,10 +16,10 @@ daily_news_preview = """
 🔥 *2 CRITICAL EVENTS* 🔥
 📊 4 HIGH impact events next 48h
 ⚠️ Avoid trading 30min before/during
-──────────────
+──────────────────
 
 📍 *Thursday, February 13*
-──────────────
+──────────────────
 
 ⚠️ 🇺🇸 *USD* - FOMC Minutes
    🕐 19:00
@@ -32,7 +32,7 @@ daily_news_preview = """
    📊 Inflation data - High volatility
 
 📍 *Friday, February 14*
-──────────────
+──────────────────
 
 ⚠️ 🇺🇸 *USD* - Core CPI m/m
    🕐 13:30
@@ -47,14 +47,14 @@ daily_news_preview = """
    📊 Forecast: `0.1%`
    📈 Previous: `0.0%`
 
-──────────────
+──────────────────
 📊 *SUMMARY BY CURRENCY:*
 
 🇺🇸 *USD*: 2 events (⚠️ 2 critical)
 🇪🇺 *EUR*: 1 event
 🇬🇧 *GBP*: 1 event
 
-──────────────
+──────────────────
 🎯 *TRADING PROTOCOL:*
 
 🟠 *MODERATE VOLATILITY*
@@ -62,16 +62,16 @@ daily_news_preview = """
 • Monitor news times closely
 • Move SL to breakeven before news
 
-──────────────
+──────────────────
 💡 *REMINDERS:*
 • Close trades 30min before major news
 • NFP, FOMC = extreme volatility
 • Check updates: 8am, 2pm, 8pm, 2am
 
-──────────────
+──────────────────
 ✨ *Glitch in Matrix* by ФорексГод ✨
 🧠 AI-Powered • 💎 Smart Money
-──────────────
+──────────────────
 """
 
 # ══════════════════════════════════════════════════════════════════════
@@ -84,12 +84,12 @@ weekly_news_preview = """
 🗓️ Week: Feb 17 - Feb 23, 2026
 🔥 8 HIGH impact events scheduled
 ⏰ Generated: Sunday, Feb 16 at 21:00
-──────────────
+──────────────────
 
 ⚠️ *3 CRITICAL EVENTS THIS WEEK*
 
 📍 *Monday, February 17*
-──────────────
+──────────────────
 
 ⚠️ 🇺🇸 *USD* - PPI m/m
    🕐 13:30
@@ -99,7 +99,7 @@ weekly_news_preview = """
    📊 *Inflation data - High volatility*
 
 📍 *Wednesday, February 19*
-──────────────
+──────────────────
 
 ⚠️ 🇺🇸 *USD* - FOMC Meeting Minutes
    🕐 19:00
@@ -111,7 +111,7 @@ weekly_news_preview = """
    🔴 Impact: *High*
 
 📍 *Friday, February 21*
-──────────────
+──────────────────
 
 ⚠️ 🇺🇸 *USD* - Core Retail Sales m/m
    🕐 13:30
@@ -126,7 +126,7 @@ weekly_news_preview = """
    🕐 23:30
    🔴 Impact: *High*
 
-──────────────
+──────────────────
 📊 *WEEKLY SUMMARY BY CURRENCY:*
 
 🇺🇸 *USD*: 3 events (⚠️ 3 critical)
@@ -134,7 +134,7 @@ weekly_news_preview = """
 🇬🇧 *GBP*: 1 event
 🇯🇵 *JPY*: 1 event
 
-──────────────
+──────────────────
 🎯 *TRADING STRATEGY FOR THE WEEK:*
 
 🟠 *MODERATE VOLATILITY WEEK*
@@ -142,21 +142,21 @@ weekly_news_preview = """
 • Monitor news times closely
 • Close/reduce positions before critical events
 
-──────────────
+──────────────────
 💡 *REMINDERS:*
 • Close trades 30min before major news
 • NFP, FOMC = avoid trading entirely
 • Check daily updates at 8am, 2pm, 8pm, 2am
 • Plan your week around these events
 
-──────────────
+──────────────────
 📅 *NEXT REPORT:*
    Sunday, Feb 23 at 21:00
 
-──────────────
+──────────────────
 ✨ *Glitch in Matrix* by ФорексГод ✨
 🧠 AI-Powered • 💎 Smart Money
-──────────────
+──────────────────
 """
 
 # ══════════════════════════════════════════════════════════════════════
@@ -170,10 +170,10 @@ all_clear_preview = """
 📊 *Next 48h:* No major economic events
 💎 *Risk Level:* LOW
 
-──────────────
+──────────────────
 ✨ *Glitch in Matrix* by ФорексГод ✨
 🧠 AI-Powered • 💎 Smart Money
-──────────────
+──────────────────
 """
 
 

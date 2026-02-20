@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 🧠 AI SYSTEM SIMULATION - ФорексГод Trading Intelligence
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 
 Official audit of machine learning system performance
 Analyzes 116+ historical trades from trades.db
@@ -175,9 +175,9 @@ class AISystemSimulator:
         
         # Header
         report = """<b>🧠 AI SYSTEM SIMULATION REPORT</b>
-━━━━━━━━━━━━━━━━━━━━
+──────────────────
 <b>📊 HISTORICAL PERFORMANCE AUDIT</b>
-━━━━━━━━━━━━━━━━━━━━
+──────────────────
 
 """
         
@@ -201,9 +201,9 @@ class AISystemSimulator:
             champ_winrate = (stats['wins'] / champ_total * 100) if champ_total > 0 else 0
             champ_profit = stats['profit']
             
-            report += f"""━━━━━━━━━━━━━━━━━━━━
+            report += f"""──────────────────
 <b>🏆 CHAMPION PAIR (Highest Win Rate)</b>
-━━━━━━━━━━━━━━━━━━━━
+──────────────────
 
 <b>Symbol:</b> <code>{symbol}</code>
 <b>Win Rate:</b> <code>{champ_winrate:.1f}%</code> ({stats['wins']}W/{stats['losses']}L)
@@ -221,9 +221,9 @@ class AISystemSimulator:
             danger_winrate = (stats['wins'] / danger_total * 100) if danger_total > 0 else 0
             danger_loss = stats['profit']
             
-            report += f"""━━━━━━━━━━━━━━━━━━━━
+            report += f"""──────────────────
 <b>⚠️ MOST DANGEROUS HOUR (Highest Risk)</b>
-━━━━━━━━━━━━━━━━━━━━
+──────────────────
 
 <b>Hour:</b> <code>{hour:02d}:00 UTC</code>
 <b>Win Rate:</b> <code>{danger_winrate:.1f}%</code> ({stats['wins']}W/{stats['losses']}L)
@@ -241,9 +241,9 @@ class AISystemSimulator:
             sess_winrate = (stats['wins'] / sess_total * 100) if sess_total > 0 else 0
             sess_profit = stats['profit']
             
-            report += f"""━━━━━━━━━━━━━━━━━━━━
+            report += f"""──────────────────
 <b>⏰ BEST TRADING SESSION</b>
-━━━━━━━━━━━━━━━━━━━━
+──────────────────
 
 <b>Session:</b> <code>{session}</code>
 <b>Win Rate:</b> <code>{sess_winrate:.1f}%</code> ({stats['wins']}W/{stats['losses']}L)
@@ -273,9 +273,9 @@ class AISystemSimulator:
         empty = 10 - score
         progress_bar = "🟩" * filled + "⬜" * empty
         
-        report += f"""━━━━━━━━━━━━━━━━━━━━
+        report += f"""──────────────────
 <b>🧠 AI PROBABILITY ANALYSIS (LIVE SIMULATION)</b>
-━━━━━━━━━━━━━━━━━━━━
+──────────────────
 
 <b>Test Setup:</b> <code>EURUSD @ 15:00 (NEW YORK Session)</code>
 <b>Timeframe:</b> <code>4H</code>
@@ -303,18 +303,18 @@ class AISystemSimulator:
             eurusd_winrate = (eurusd_stats['wins'] / eurusd_total * 100) if eurusd_total > 0 else 0
             
             report += f"""
-━━━━━━━━━━━━━━━━━━━━
+──────────────────
 <b>📈 STATISTICAL INSIGHT</b>
-━━━━━━━━━━━━━━━━━━━━
+──────────────────
 
 <i>EURUSD has a {eurusd_winrate:.0f}% success rate in your trading history with {eurusd_total} trades analyzed. The AI probability score of {score}/10 aligns with historical performance during NEW YORK session.</i>
 
 """
         
         # Footer
-        report += f"""━━━━━━━━━━━━━━━━━━━━
+        report += f"""──────────────────
 <b>🎯 SYSTEM STATUS</b>
-━━━━━━━━━━━━━━━━━━━━
+──────────────────
 
 ✅ <b>AI Brain:</b> ACTIVE
 ✅ <b>Self-Learning:</b> ENABLED
@@ -331,9 +331,9 @@ class AISystemSimulator:
     
     def run_simulation(self):
         """Execute full AI system simulation"""
-        print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        print("──────────────────")
         print("🧠 AI SYSTEM SIMULATION STARTING...")
-        print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        print("──────────────────")
         print()
         
         # Step 1: Analyze historical performance
@@ -388,9 +388,9 @@ class AISystemSimulator:
         if success:
             print("✅ SIMULATION COMPLETE!")
             print()
-            print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            print("──────────────────")
             print("📱 Check your Telegram for the AI SYSTEM SIMULATION REPORT")
-            print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            print("──────────────────")
             print()
             print("🔍 Verification Checklist:")
             print("   ✅ Bold text renders properly (<b>text</b>)")

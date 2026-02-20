@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 🔍 Monitoring Setup Audit Script V23.0
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 Audits monitoring_setups.json to reveal WHAT the monitor is waiting for.
 
 Purpose:
@@ -12,7 +12,7 @@ Purpose:
 
 For: ФорексГод - Glitch in Matrix V3.7
 Date: February 12, 2026
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 """
 
 import json

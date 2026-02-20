@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 🚀 TELEGRAM MONDAY MORNING REPORT V3.6
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 ✨ Glitch in Matrix by ФорексГод ✨
 🧠 AI-Powered • 💎 Smart Money
 
@@ -9,7 +9,7 @@ New Features:
 - AI Progress Bars [████████░░]
 - Risk/Reward in $ (for $1000 account)
 - Monday Branding: 🚀 O SĂPTĂMÂNĂ NOUĂ ÎN MATRICE
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 """
 
 from notification_manager import NotificationManager
@@ -81,7 +81,7 @@ def send_monday_morning_report():
     
     # Build Monday Morning Report
     message = f"""<b>🚀 O SĂPTĂMÂNĂ NOUĂ ÎN MATRICE</b>
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 
 📅 <b>Luni, {datetime.now().strftime('%d %B %Y')}</b>
 ⏰ <b>London Open Session</b>
@@ -93,9 +93,9 @@ def send_monday_morning_report():
 🧠 AI Scorer: OPERATIONAL (EURUSD 100/100)
 📊 Setup-uri Active: <b>{len(active_setups)}</b>
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 <b>💎 SETUP-URI MONITORIZATE</b>
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 
 """
     
@@ -149,9 +149,9 @@ def send_monday_morning_report():
     # Add special BTCUSD section if exists
     btc_setup = next((s for s in active_setups if s.get('symbol') == 'BTCUSD'), None)
     if btc_setup:
-        message += f"""━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        message += f"""──────────────────
 <b>🔥 BTCUSD WEEKEND UPDATE</b>
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 
 ✅ <b>CHoCH 1H BULLISH Confirmed!</b>
 📅 Triggered: Duminică 13:00 @ $71,462
@@ -171,9 +171,9 @@ def send_monday_morning_report():
 """
     
     # Footer
-    message += f"""━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    message += f"""──────────────────
 <b>📊 MARKET OVERVIEW</b>
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 
 🌍 Session: London Open (08:00 GMT)
 📈 Volatility: MEDIUM-HIGH (Monday gap close)
@@ -185,7 +185,7 @@ def send_monday_morning_report():
    • Avoid high-impact news (check calendar!)
    • Scale in on 1H/4H confluences
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 
 💡 <i>"Patience is the weapon of the wise"</i> 💎
 

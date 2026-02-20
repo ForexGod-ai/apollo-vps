@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 🔍 Glitch in Matrix - System Health Check
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 
 Diagnostic rapid pentru verificarea integrității sistemului.
 Autor: ФорексГод
 Data: 2026-02-04
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 """
 
 import os
@@ -239,7 +239,7 @@ class HealthCheck:
                 bot = Bot(token=TELEGRAM_TOKEN)
                 message = (
                     "🔍 System Health Check - Test Message\n\n"
-                    "━━━━━━━━━━━━━━━━━━━━\n"
+                    "──────────────────\n"
                     "✨ Glitch in Matrix by ФорексГод ✨\n"
                     "🧠 AI-Powered • 💎 Smart Money"
                 )
@@ -318,10 +318,10 @@ class HealthCheck:
             print("💰 Spor la profit!")
         
         print("\n" + "═" * 70)
-        print("━━━━━━━━━━━━━━━━━━━━")
+        print("──────────────────")
         print("✨ Glitch in Matrix by ФорексГод ✨")
         print("🧠 AI-Powered • 💎 Smart Money")
-        print("━━━━━━━━━━━━━━━━━━━━")
+        print("──────────────────")
         print()
         
     def run(self):

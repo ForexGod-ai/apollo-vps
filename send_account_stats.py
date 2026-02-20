@@ -45,18 +45,18 @@ message = f"""
 🔥 <b>FOREXGOD TRADING SYSTEM</b> 🔥
 📊 <b>Account Statistics Report</b>
 
-━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 💰 <b>ACCOUNT OVERVIEW</b>
-━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 
 💵 Current Balance: <b>${balance:.2f}</b>
 📈 Total Profit: <b>${total_profit:+.2f}</b>
 📊 ROI: <b>{((balance - 1000) / 1000 * 100):+.1f}%</b>
 🎯 Initial Capital: $1,000.00
 
-━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 📋 <b>TRADE STATISTICS</b>
-━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 
 📌 Total Trades: <b>{len(closed_trades)}</b>
 ✅ Winning Trades: <b>{len(winning_trades)}</b> (${total_wins:.2f})
@@ -68,9 +68,9 @@ message = f"""
 
 # Add open positions details
 if open_trades:
-    message += "\n━━━━━━━━━━━━━━━━━━━━━━━━\n"
+    message += "\n──────────────────\n"
     message += "🔓 <b>OPEN POSITIONS</b>\n"
-    message += "━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+    message += "──────────────────\n\n"
     for trade in open_trades:
         symbol = trade.get('symbol', 'N/A')
         direction = trade.get('direction', 'N/A')
@@ -91,9 +91,9 @@ if open_trades:
         message += f"   🎫 #{ticket}\n\n"
 
 # Add best/worst trades
-message += "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+message += "──────────────────\n"
 message += "🏆 <b>PERFORMANCE HIGHLIGHTS</b>\n"
-message += "━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+message += "──────────────────\n\n"
 
 if best_trade:
     message += f"🥇 <b>Best Trade:</b> {best_trade.get('symbol')} "
@@ -104,9 +104,9 @@ if worst_trade:
     message += f"{worst_trade.get('direction')} - ${worst_trade.get('profit', 0):+.2f}\n"
 
 # Recent trades (last 5)
-message += "\n━━━━━━━━━━━━━━━━━━━━━━━━\n"
+message += "\n──────────────────\n"
 message += "📅 <b>RECENT TRADES (Last 5)</b>\n"
-message += "━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+message += "──────────────────\n\n"
 
 recent = closed_trades[-5:] if len(closed_trades) >= 5 else closed_trades
 for trade in reversed(recent):
@@ -121,11 +121,11 @@ for trade in reversed(recent):
     message += f"{emoji} {symbol} {direction} - ${profit:+.2f} ({pips:+.1f} pips)\n"
     message += f"   🕐 {close_time}\n\n"
 
-message += """━━━━━━━━━━━━━━━━━━━━━━━━
+message += """──────────────────
 ✨ <b>Strategy by ForexGod</b> ✨
 🧠 Glitch in Matrix Trading System
 💎 + AI Validation
-━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 
 ⏰ Report Generated: """ + datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 

@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 🎯 GLITCH IN MATRIX - SYSTEM AUDIT REPORT
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 
 Rigorous audit of all 15 official trading pairs.
 Validates monitoring status, setup health, and risk parameters.
 
 ✨ Glitch in Matrix by ФорексГод ✨
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 """
 
 import json
@@ -16,9 +16,9 @@ import os
 from datetime import datetime
 from typing import Dict, List, Set
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# ──────────────────
 # OFFICIAL 15 PARITIES - GLITCH IN MATRIX V3.7
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# ──────────────────
 
 OFFICIAL_15 = [
     "EURUSD",
@@ -207,9 +207,9 @@ def audit_monitoring_setups():
         else:
             unauthorized_pairs.append(symbol)
     
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # ──────────────────
     # SECTION 1: COVERAGE CHECK
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # ──────────────────
     
     print_separator("═")
     print("📊 SECTION 1: COVERAGE CHECK")
@@ -250,9 +250,9 @@ def audit_monitoring_setups():
             print(f"   ❌ {pair} - REMOVE FROM MONITORING!")
         print()
     
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # ──────────────────
     # SECTION 2: DETAILED SETUP HEALTH
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # ──────────────────
     
     if setup_details:
         print_separator("═")
@@ -293,9 +293,9 @@ def audit_monitoring_setups():
                 
                 print()
     
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # ──────────────────
     # SECTION 3: RISK PARAMETER VALIDATION
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # ──────────────────
     
     print_separator("═")
     print("⚠️  SECTION 3: RISK PARAMETER VALIDATION")
@@ -320,9 +320,9 @@ def audit_monitoring_setups():
     
     print()
     
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # ──────────────────
     # SECTION 4: FINAL SYSTEM STATUS
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # ──────────────────
     
     print_separator("═")
     print("📋 SECTION 4: FINAL SYSTEM STATUS")
@@ -370,9 +370,9 @@ def audit_monitoring_setups():
     
     print()
     
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # ──────────────────
     # SECTION 5: NEXT ACTIONS
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # ──────────────────
     
     print_separator("═")
     print("📋 SECTION 5: RECOMMENDED ACTIONS")

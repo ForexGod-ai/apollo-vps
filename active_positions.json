@@ -1,62 +1,112 @@
 [
   {
-    "ticket": 576221067,
-    "symbol": "EURUSD",
-    "direction": "buy",
-    "volume": 69000,
-    "entry_price": 1.18134,
-    "current_price": 66620.35,
-    "unrealized_profit": 473.28,
-    "pips": 76.9,
-    "open_time": "2026-02-02T14:28:29.0920000Z",
-    "label": "Glitch Matrix - test_after_rebuild"
-  },
-  {
-    "ticket": 568587635,
     "symbol": "EURGBP",
     "direction": "sell",
-    "volume": 100000,
-    "entry_price": 0.87271,
-    "current_price": 66632.35,
-    "unrealized_profit": 353.86,
-    "pips": 23.5,
-    "open_time": "2026-01-22T13:49:44.0410000Z",
-    "label": ""
-  },
-  {
-    "ticket": 566587145,
-    "symbol": "EURGBP",
-    "direction": "sell",
-    "volume": 50000,
     "entry_price": 0.86657,
-    "current_price": 66632.35,
-    "unrealized_profit": -236.15,
-    "pips": -37.9,
-    "open_time": "2026-01-16T16:22:55.6620000Z",
-    "label": ""
+    "volume": 50000,
+    "opened_at": "2026-01-16T16:22:55.662Z",
+    "stop_loss": null,
+    "take_profit": 0.84657,
+    "net_profit": -413.1,
+    "pips": -66.4
   },
   {
-    "ticket": 580488758,
-    "symbol": "GBPUSD",
-    "direction": "buy",
-    "volume": 2000,
-    "entry_price": 1.36701,
-    "current_price": 66620.35,
-    "unrealized_profit": -1.91,
-    "pips": -8.4,
-    "open_time": "2026-02-10T16:03:05.2530000Z",
-    "label": "Glitch Matrix - PULLBACK"
-  },
-  {
-    "ticket": 581162752,
     "symbol": "BTCUSD",
     "direction": "sell",
-    "volume": 0.5,
     "entry_price": 66077.31,
-    "current_price": 66632.35,
-    "unrealized_profit": -277.52,
-    "pips": -55504,
-    "open_time": "2026-02-11T16:54:04.2400000Z",
-    "label": ""
+    "volume": 0.5,
+    "opened_at": "2026-02-11T16:54:04.24Z",
+    "stop_loss": null,
+    "take_profit": 59872.54,
+    "net_profit": -594.34,
+    "pips": -118867
+  },
+  {
+    "symbol": "AUDUSD",
+    "direction": "sell",
+    "entry_price": 0.70766,
+    "volume": 100000,
+    "opened_at": "2026-02-18T09:16:34.984Z",
+    "stop_loss": null,
+    "take_profit": 0.69128,
+    "net_profit": -21.44,
+    "pips": -0.4
+  },
+  {
+    "symbol": "USDCAD",
+    "direction": "sell",
+    "entry_price": 1.36893,
+    "volume": 51000,
+    "opened_at": "2026-02-19T12:17:49.646Z",
+    "stop_loss": 1.37239,
+    "take_profit": 1.33699,
+    "net_profit": -4.52,
+    "pips": 0.5
+  },
+  {
+    "symbol": "BTCUSD",
+    "direction": "sell",
+    "entry_price": 66248.34,
+    "volume": 0.5,
+    "opened_at": "2026-02-19T13:38:11.946Z",
+    "stop_loss": null,
+    "take_profit": 58827.8,
+    "net_profit": -508.82,
+    "pips": -101764
+  },
+  {
+    "symbol": "XAUUSD",
+    "direction": "sell",
+    "entry_price": 4979.1,
+    "volume": 30,
+    "opened_at": "2026-02-19T19:40:16.405Z",
+    "stop_loss": null,
+    "take_profit": 4522.74,
+    "net_profit": -2054.43,
+    "pips": -6873
+  },
+  {
+    "symbol": "GBPNZD",
+    "direction": "sell",
+    "entry_price": 2.26279,
+    "volume": 82000,
+    "opened_at": "2026-02-20T12:14:01.549Z",
+    "stop_loss": 2.26772,
+    "take_profit": 2.21178,
+    "net_profit": 90.28,
+    "pips": 19.8
+  },
+  {
+    "symbol": "USDCAD",
+    "direction": "buy",
+    "entry_price": 1.36922,
+    "volume": 64000,
+    "opened_at": "2026-02-20T13:18:41.581Z",
+    "stop_loss": 1.36411,
+    "take_profit": 1.39481,
+    "net_profit": -20.67,
+    "pips": -3.6
+  },
+  {
+    "symbol": "GBPNZD",
+    "direction": "sell",
+    "entry_price": 2.26422,
+    "volume": 82000,
+    "opened_at": "2026-02-20T13:19:21.608Z",
+    "stop_loss": 2.26915,
+    "take_profit": 2.21321,
+    "net_profit": 160.28,
+    "pips": 34.1
+  },
+  {
+    "symbol": "BTCUSD",
+    "direction": "sell",
+    "entry_price": 67005.95,
+    "volume": 0.5,
+    "opened_at": "2026-02-20T14:41:28.118Z",
+    "stop_loss": null,
+    "take_profit": null,
+    "net_profit": -130.02,
+    "pips": -26003
   }
 ]

@@ -17,17 +17,17 @@ def show_old_format():
 ⏰ <b>Time Elapsed:</b> 8.5h / 12h timeout
 🟩🟩🟩🟩🟩🟩🟩⬜⬜⬜ 70%
 
-━━━━━━━━━━━━━━━━━━━━
+──────────────────
 📈 <b>XTIUSD STATISTICS:</b>
-━━━━━━━━━━━━━━━━━━━━
+──────────────────
 🟢 Win Rate: 65.0% (13W/7L)
 💰 Avg R:R: 1:2.3
 🏆 Best Trade: $450.00
 📊 Total Trades: 20
 
-━━━━━━━━━━━━━━━━━━━━
+──────────────────
 🧠 <b>AI CONFIDENCE SCORE:</b>
-━━━━━━━━━━━━━━━━━━━━
+──────────────────
 🟢 Score: 78/100 (HIGH)
 🟩🟩🟩🟩🟩🟩🟩🟩⬜⬜
 🤖 AI Says: ✅ TAKE
@@ -40,7 +40,7 @@ def show_old_format():
 
 <i>Based on 116 historical trades</i>
 
-━━━━━━━━━━━━━━━━━━━━
+──────────────────
 📊 <b>DAILY ANALYSIS:</b>
 📍 CHoCH: <code>BEARISH</code>
 🎯 FVG Zone: <code>73.450 - 73.850</code>
@@ -53,7 +53,7 @@ def show_old_format():
 ⏳ <b>Waiting for 4H confirmation</b>
 ⏰ Monitoring for Entry 2...
 
-━━━━━━━━━━━━━━━━━━━━
+──────────────────
 💰 <b>TRADE SETUP:</b>
 💎 Entry: <code>73.650</code>
 🛑 Stop Loss: <code>74.150</code>
@@ -66,7 +66,7 @@ def show_old_format():
 ⭐ Priority: <code>HIGH</code>
 ⏰ Setup: <code>2026-02-17 08:30 UTC</code>
 
-━━━━━━━━━━━━━━━━━━━━
+──────────────────
 📈 <b>VIEW CHARTS:</b>
 📊 Daily • ⚡ 1H • 🔍 4H
 """

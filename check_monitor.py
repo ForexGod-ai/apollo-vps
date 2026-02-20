@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
 🔍 Monitoring Setups Radiography Tool
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 Quick snapshot of what the monitor is waiting for in monitoring_setups.json
 
 For: ФорексГод - Glitch in Matrix V3.7
 Date: February 13, 2026
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 """
 
 import json
@@ -213,9 +213,9 @@ def print_setup_table(setups: List[Dict]):
         # Direction emoji
         dir_emoji = "🔴" if direction == "SELL" else "🟢"
         
-        print(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        print(f"──────────────────")
         print(f"Setup #{idx}: {dir_emoji} {symbol} {direction} ({strategy})")
-        print(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        print(f"──────────────────")
         
         # Entry levels
         print(f"\n📍 ENTRY LEVELS:")
@@ -303,7 +303,7 @@ def print_quick_summary(setups: List[Dict]):
         return
     
     print("📋 QUICK SUMMARY:")
-    print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    print("──────────────────")
     
     for setup in setups:
         symbol = setup.get('symbol', 'UNKNOWN')
@@ -315,7 +315,7 @@ def print_quick_summary(setups: List[Dict]):
         
         print(f"{dir_emoji} {symbol:8s} {direction:4s} | {status}")
     
-    print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
+    print("──────────────────\n")
 
 def main():
     """Main execution"""

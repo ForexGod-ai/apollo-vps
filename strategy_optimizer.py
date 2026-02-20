@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 🧠 STRATEGY OPTIMIZER - Machine Learning Module
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 ✨ Glitch in Matrix by ФорексГод ✨
 🧠 AI-Powered • 💎 Smart Money
 
@@ -11,7 +11,7 @@ SELF-LEARNING SYSTEM:
 - Detects false breakout patterns (Blackout Periods)
 - Optimizes SL/TP based on historical data
 - Generates learned_rules.json for scanner integration
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 """
 
 import sqlite3

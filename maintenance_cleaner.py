@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 🧹 Glitch in Matrix - Maintenance Cleaner
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 
 Log rotation și cleanup EXTERN (zero impact pe daemons)
 
@@ -13,7 +13,7 @@ SAFE operations:
 - Curăță charts > 7 zile
 
 Rulează săptămânal (Duminică 03:00)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 """
 
 import os
@@ -268,10 +268,10 @@ def maintenance_cleaner(
     print("\n💡 SCHEDULE: Run weekly (Sunday 03:00)")
     print("   Launchd: com.forexgod.maintenance.plist")
     print("\n" + "═" * 70)
-    print("━━━━━━━━━━━━━━━━━━━━")
+    print("──────────────────")
     print("✨ Glitch in Matrix by ФорексГод ✨")
     print("🧹 Smart Cleanup • Zero Service Impact")
-    print("━━━━━━━━━━━━━━━━━━━━")
+    print("──────────────────")
     print()
 
 

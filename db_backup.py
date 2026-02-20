@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 💾 Glitch in Matrix - Database Backup
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 
 NON-BLOCKING SQLite backup (zero impact pe daemons)
 
@@ -13,7 +13,7 @@ Strategy:
 4. Compress old backups
 
 Rulează Duminică 03:00 (înainte de maintenance_cleaner)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 """
 
 import sqlite3
@@ -170,7 +170,7 @@ async def send_backup_to_telegram(backup_path: Path, stats: dict):
             f"💾 <b>Snapshots:</b> {stats['account_snapshots']} recorded\n"
             f"📅 <b>Data backup:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
             f"📦 <b>Dimensiune:</b> {stats['file_size_mb']:.2f} MB\n\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
+            "──────────────────\n"
             "✨ <b>Glitch in Matrix by ФорексГод</b> ✨\n"
             "🧠 AI-Powered • 💎 Smart Money"
         )
@@ -520,10 +520,10 @@ def db_backup_manager(
         print("   Auto-send to Telegram: ✅ ENABLED")
     
     print("\n" + "═" * 70)
-    print("━━━━━━━━━━━━━━━━━━━━")
+    print("──────────────────")
     print("✨ Glitch in Matrix by ФорексГод ✨")
     print("💾 Safe Backup • Zero Downtime • Telegram Secured")
-    print("━━━━━━━━━━━━━━━━━━━━")
+    print("──────────────────")
     print()
 
 

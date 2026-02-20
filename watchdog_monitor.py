@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 🛡️ WATCHDOG MONITOR V3.7
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 ✨ Glitch in Matrix by ФорексГод ✨
 🧠 AI-Powered • 💎 Smart Money
 
@@ -11,7 +11,7 @@ System Guardian - Monitors and auto-restarts critical processes:
 - telegram_command_center.py (Command Center V3.7)
 
 If any process dies → Instant restart (no manual intervention)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 """
 
 import os
@@ -135,7 +135,7 @@ class WatchdogMonitor:
         try:
             url = f"https://api.telegram.org/bot{self.telegram_token}/sendMessage"
             
-            branded_message = f"{message}\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n✨ <b>Glitch in Matrix by ФорексГод</b> ✨\n🧠 AI-Powered • 💎 Smart Money"
+            branded_message = f"{message}\n\n──────────────────\n✨ <b>Glitch in Matrix by ФорексГод</b> ✨\n🧠 AI-Powered • 💎 Smart Money"
             
             payload = {
                 'chat_id': self.telegram_chat_id,

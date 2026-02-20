@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
 🧠 AUTO-LEARNING TRIGGER
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 ✨ Glitch in Matrix by ФорексГод ✨
 🧠 AI-Powered • 💎 Smart Money
 
 Triggers ML optimizer after every closed trade
 System learns NON-STOP from experience
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 """
 
 import subprocess

@@ -197,7 +197,7 @@ class NotificationManager:
             url = f"https://api.telegram.org/bot{self.telegram_bot_token}/sendMessage"
             
             # Add manual branding if centralized not available
-            branded_message = f"{message}\n\n━━━━━━━━━━━━━━━━━━━━\n✨ <b>Glitch in Matrix by ФорексГод</b> ✨\n🧠 AI-Powered • 💎 Smart Money"
+            branded_message = f"{message}\n\n──────────────────\n✨ <b>Glitch in Matrix by ФорексГод</b> ✨\n🧠 AI-Powered • 💎 Smart Money"
             
             payload = {
                 'chat_id': self.telegram_chat_id,

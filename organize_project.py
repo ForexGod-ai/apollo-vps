@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 🗂️ Glitch in Matrix - Project Organizer
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 
 SAFE cleanup - doar mută fișiere (NU șterge!)
 Arhivează scripturi legacy și test files în archive_legacy/
 
 ⚠️ ZERO IMPACT pe trading logic - doar organization
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 """
 
 import os
@@ -220,10 +220,10 @@ def organize_project(dry_run: bool = False):
         print("\n💡 NOTE: Fișierele pot fi restaurate oricând din archive_legacy/")
     
     print("\n" + "═" * 70)
-    print("━━━━━━━━━━━━━━━━━━━━")
+    print("──────────────────")
     print("✨ Glitch in Matrix by ФорексГод ✨")
     print("🗂️  Safe Organization • Zero Trading Impact")
-    print("━━━━━━━━━━━━━━━━━━━━")
+    print("──────────────────")
     print()
     
     return True

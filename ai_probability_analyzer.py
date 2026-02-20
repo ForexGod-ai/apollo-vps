@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
 🧠 AI PROBABILITY ANALYZER
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 ✨ Glitch in Matrix by ФорексГод ✨
 🧠 AI-Powered • 💎 Smart Money
 
 Calculates probability score (1-10) based on historical data
 Analyzes: Symbol, Timeframe, Hour, Session (London/NY)
 NON-BLOCKING: Always allows trade execution
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 """
 
 import json
@@ -231,9 +231,9 @@ class AIProbabilityAnalyzer:
             score_emoji = "🔴"
         
         message = f"""
-━━━━━━━━━━━━━━━━━━━━
+──────────────────
 🧠 <b>AI PROBABILITY ANALYSIS</b>
-━━━━━━━━━━━━━━━━━━━━
+──────────────────
 {score_emoji} <b>AI Score: {score}/10</b> ({confidence})
 {score_bar}
 

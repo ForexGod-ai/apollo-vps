@@ -245,9 +245,9 @@ class DatabaseMigration:
         
         conn.close()
         
-        logger.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        logger.info("──────────────────")
         logger.info("📊 DATABASE VERIFICATION RESULTS")
-        logger.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        logger.info("──────────────────")
         logger.info(f"   🔒 Closed Trades:     {closed_count:,} records")
         logger.info(f"   📈 Open Positions:    {open_count:,} records")
         logger.info(f"   📸 Account Snapshots: {snapshots_count:,} records")
@@ -259,7 +259,7 @@ class DatabaseMigration:
                 profit_emoji = "💰" if profit > 0 else "💸"
                 logger.info(f"      {profit_emoji} #{ticket} {symbol} | Profit: ${profit:.2f}")
         
-        logger.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        logger.info("──────────────────")
         
         return closed_count, open_count, snapshots_count
     

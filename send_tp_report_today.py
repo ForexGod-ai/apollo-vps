@@ -54,7 +54,7 @@ msg = f"""
 {epic_title}
 
 🔥 <b>DAILY PROFIT REPORT</b> 🔥
-━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 
 """
 
@@ -99,7 +99,7 @@ for t in closed_today:
 {profit_emoji} <b>Profit:</b> ${profit:.2f}
 ⏱️ <b>Duration:</b> {duration_str}
 📊 <b>R:R:</b> {rr_actual}
-━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 """
 
 # Daily summary
@@ -107,22 +107,22 @@ acc = data['account']
 msg += f"""
 
 📊 <b>TODAY'S SUMMARY:</b>
-━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 🎯 <b>Trades Closed:</b> {total_trades}
 💰 <b>Total Profit:</b> ${total_profit:.2f}
 📈 <b>Win Rate:</b> {win_rate:.1f}%
 🏆 <b>Best Trade:</b> ${float(best_trade.get('profit', 0)):.2f}
 
 💼 <b>ACCOUNT STATUS:</b>
-━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 💰 <b>Balance:</b> ${acc["balance"]:.2f}
 💎 <b>Equity:</b> ${acc["equity"]:.2f}
 📊 <b>Open P/L:</b> ${acc["open_pl"]:.2f}
 
-━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 ✨ <b>Glitch in Matrix</b> by ФорексГод ✨
 🧠 AI-Powered • 💎 Smart Money
-━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 """
 
 url = f'https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage'

@@ -168,20 +168,20 @@ class RiskManager:
 {status_emoji} <b>DAILY RISK REPORT</b> {status_emoji}
 
 📊 <b>P&L STATUS:</b>
-━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 💰 <b>Closed P/L:</b> ${pnl['closed_pnl']:.2f}
 📊 <b>Open P/L:</b> ${pnl['open_pnl']:.2f}
 💎 <b>Total Daily P/L:</b> ${pnl['total_pnl']:.2f}
 📈 <b>Status:</b> {status_text}
 
 ⚠️ <b>RISK LIMITS:</b>
-━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 🛑 <b>Daily Loss Limit:</b> ${self.daily_loss_limit:.2f}
 ⚠️ <b>Warning Level:</b> ${self.daily_loss_warning:.2f}
 📊 <b>Distance to Limit:</b> ${abs(pnl['total_pnl'] - self.daily_loss_limit):.2f}
 
 📈 <b>EXPOSURE:</b>
-━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 """
         
         if exposure:
@@ -192,16 +192,16 @@ class RiskManager:
             message += "No open positions\n"
         
         message += f"""
-━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 📊 <b>ACCOUNT:</b>
 💰 Balance: ${account.get('balance', 0):.2f}
 💎 Equity: ${account.get('equity', 0):.2f}
 📈 Open Trades: {open_trades_count}/{self.max_open_trades}
 
-━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 ✨ <b>Risk Manager</b> by ФорексГод ✨
 🛡️ Protecting Your Capital
-━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 """
         
         self._send_telegram(message)
@@ -225,14 +225,14 @@ class RiskManager:
         
         message += f"""
 
-━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 📊 <b>CURRENT STATUS:</b>
 💰 Closed P/L: ${pnl['closed_pnl']:.2f}
 📊 Open P/L: ${pnl['open_pnl']:.2f}
 💎 Total: ${pnl['total_pnl']:.2f}
 📈 Open Trades: {open_trades}
 
-━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 ✨ <b>Risk Manager</b> by ФорексГод ✨
 """
         

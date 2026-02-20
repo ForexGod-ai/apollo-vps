@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 🎮 TELEGRAM COMMAND CENTER V3.7
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 ✨ Glitch in Matrix by ФорексГод ✨
 🧠 AI-Powered • 💎 Smart Money
 
@@ -10,7 +10,7 @@ Interactive Command Interface:
 - /monitoring - Active setup list
 - /status - System monitors health check
 - /btcusd - Quick BTCUSD analysis
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 """
 
 import os
@@ -28,6 +28,9 @@ import psutil
 from loguru import logger
 
 load_dotenv()
+
+# Universal separator - EXACTLY 18 characters for alignment
+UNIVERSAL_SEPARATOR = "──────────────────"
 
 
 def acquire_pid_lock(lock_file: Path) -> bool:
@@ -148,8 +151,9 @@ class TelegramCommandCenter:
         try:
             url = f"https://api.telegram.org/bot{self.bot_token}/sendMessage"
             
+            # ✅ CRITICAL FIX by ФорексГод: Use UNIVERSAL_SEPARATOR (18 chars) for alignment
             # Add ФорексГод signature to every message
-            branded_text = f"{text}\n\n──────────────\n✨ <b>Glitch in Matrix by ФорексГод</b> ✨\n🧠 AI-Powered • 💎 Smart Money"
+            branded_text = f"{text}\n{UNIVERSAL_SEPARATOR}\n✨ <b>Glitch in Matrix by ФорексГод</b> ✨\n🧠 AI-Powered • 💎 Smart Money"
             
             payload = {
                 'chat_id': self.chat_id,
@@ -201,7 +205,7 @@ class TelegramCommandCenter:
             
             # 📦 COMPACT VERTICAL LAYOUT (Dashboard Sniper)
             message = f"""<b>📊 DAILY STATS</b>
-──────────────
+──────────────────
 <b>📅 {datetime.now().strftime('%d %b %Y')}</b>
 
 {profit_emoji} <b>Net Profit</b>
@@ -218,7 +222,7 @@ class TelegramCommandCenter:
 
 💵 <b>Avg P/L</b>
 <code>${avg_profit:+.2f}</code>
-──────────────"""
+──────────────────"""
             
             # Week stats (compact)
             week_ago = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
@@ -261,7 +265,7 @@ class TelegramCommandCenter:
                 return "⚪ <b>No active monitoring setups</b>\\n\\nAll clear! Waiting for new opportunities."
             
             message = f"""<b>🎯 ACTIVE MONITORING SETUPS</b>
-──────────────
+{UNIVERSAL_SEPARATOR}
 
 📊 Total Active: <b>{len(active_setups)}</b>
 
@@ -273,9 +277,17 @@ class TelegramCommandCenter:
             for idx, setup in enumerate(active_setups_sorted[:10], 1):  # Max 10 setups
                 symbol = setup.get('symbol', 'UNKNOWN')
                 direction = setup.get('direction', '?')
-                entry = setup.get('entry_price', 0)
+                entry = setup.get('entry_price')
+                risk_reward = setup.get('risk_reward')
                 ml_score = setup.get('ml_score', 0)
                 ai_prob = setup.get('ai_probability', 0)
+                
+                # ✅ CRITICAL FIX by ФорексГод: TypeError Protection
+                # Skip setups with None values to prevent format string crash
+                if entry is None:
+                    entry = 0.0
+                if risk_reward is None:
+                    risk_reward = 0.0
                 
                 dir_emoji = "🔴" if direction == "SHORT" else "🟢"
                 
@@ -307,7 +319,7 @@ class TelegramCommandCenter:
         """Handle /status command - Check system monitors"""
         try:
             message = f"""<b>🔧 SYSTEM STATUS CHECK</b>
-──────────────
+{UNIVERSAL_SEPARATOR}
 
 ⏰ Time: <b>{datetime.now().strftime('%d %B %Y, %H:%M:%S')}</b>
 
@@ -315,6 +327,7 @@ class TelegramCommandCenter:
 
 """
             
+            # ✅ CRITICAL FIX by ФорексГод: Vertical Layout (each service on separate line)
             # Check running processes
             processes = {
                 'realtime_monitor.py': '🔄 Realtime Monitor',
@@ -331,33 +344,33 @@ class TelegramCommandCenter:
                     )
                     
                     if process_name in result.stdout:
-                        status = "✅ <b>ONLINE</b>"
+                        status = "<code>✅ ONLINE</code>"
                     else:
-                        status = "❌ <b>OFFLINE</b>"
+                        status = "<code>❌ OFFLINE</code>"
                     
-                    message += f"{display_name}: {status}\\n"
+                    message += f"{display_name}\\n   Status: {status}\\n\\n"
                 except:
-                    message += f"{display_name}: ⚠️ <b>UNKNOWN</b>\\n"
+                    message += f"{display_name}\\n   Status: <code>⚠️ UNKNOWN</code>\\n\\n"
             
-            message += "\\n<b>📡 CONNECTIONS:</b>\\n"
+            message += "<b>📡 CONNECTIONS:</b>\\n\\n"
             
             # Check cTrader cBot
             try:
                 response = requests.get('http://localhost:8767/health', timeout=2)
                 if response.status_code == 200:
-                    message += "🤖 cTrader cBot: ✅ <b>CONNECTED</b>\\n"
+                    message += "🤖 cTrader cBot\\n   Status: <code>✅ CONNECTED</code>\\n\\n"
                 else:
-                    message += "🤖 cTrader cBot: ⚠️ <b>RESPONDING</b>\\n"
+                    message += "🤖 cTrader cBot\\n   Status: <code>⚠️ RESPONDING</code>\\n\\n"
             except:
-                message += "🤖 cTrader cBot: ❌ <b>OFFLINE</b>\\n"
+                message += "🤖 cTrader cBot\\n   Status: <code>❌ OFFLINE</code>\\n\\n"
             
             # Check database
             if self.db_path.exists():
-                message += "💾 Database: ✅ <b>ACCESSIBLE</b>\\n"
+                message += "💾 Database\\n   Status: <code>✅ ACCESSIBLE</code>\\n\\n"
             else:
-                message += "💾 Database: ❌ <b>NOT FOUND</b>\\n"
+                message += "💾 Database\\n   Status: <code>❌ NOT FOUND</code>\\n\\n"
             
-            message += f"\\n<b>🎯 VERDICT:</b> System operational!"
+            message += f"{UNIVERSAL_SEPARATOR}\\n<b>🎯 VERDICT:</b> System operational!"
             
             return message
             
@@ -386,7 +399,7 @@ class TelegramCommandCenter:
                     dir_emoji = "🔴" if direction == "SHORT" else "🟢"
                     
                     message = f"""<b>₿ BTCUSD QUICK ANALYSIS</b>
-──────────────
+──────────────────
 
 <b>🎯 Active Setup:</b> {dir_emoji} <b>{direction}</b>
 
@@ -428,20 +441,17 @@ class TelegramCommandCenter:
             
             if not positions:
                 return f"""<b>⚪ NO ACTIVE POSITIONS</b>
-──────────────
+{UNIVERSAL_SEPARATOR}
 💰 <b>Balance:</b> <code>${balance:,.2f}</code>
 📊 <b>Equity:</b> <code>${equity:,.2f}</code>
-──────────────
-🔍 All positions closed - Waiting for new setups
-──────────────
-✨ Glitch in Matrix by ФорексГод ✨
-🧠 AI-Powered • 💎 Smart Money"""
+{UNIVERSAL_SEPARATOR}
+🔍 All positions closed - Waiting for new setups"""
             
             # Build vertical message
             message = f"""<b>🔵 LIVE POSITIONS</b>
-──────────────
+{UNIVERSAL_SEPARATOR}
 <b>📊 Active:</b> <code>{len(positions)}</code>
-──────────────
+{UNIVERSAL_SEPARATOR}
 """
             
             total_floating_pl = 0
@@ -468,10 +478,11 @@ class TelegramCommandCenter:
                 
                 total_floating_pl += profit
                 
-                # Vertical layout - each detail on own line
+                # Vertical layout - each detail on own line with spacing
                 message += f"""{idx}. {dir_emoji} <b>{symbol}</b>
    💰 In: <code>{entry:.5f}</code>
    {pl_emoji} P/L: <code>{pl_text}</code>
+
 """
             
             # Portfolio summary - vertical for clarity
@@ -479,14 +490,13 @@ class TelegramCommandCenter:
             pl_summary_text = f"+${total_floating_pl:.2f}" if total_floating_pl > 0 else f"-${abs(total_floating_pl):.2f}"
             roi = ((equity - balance) / balance * 100) if balance > 0 else 0
             
-            message += f"""──────────────
+            # ✅ CRITICAL FIX by ФорексГод: Remove double signature
+            # Signature is added automatically by send_message function
+            message += f"""{UNIVERSAL_SEPARATOR}
 💰 <b>Balance:</b> <code>${balance:,.2f}</code>
 📈 <b>Equity:</b> <code>${equity:,.2f}</code>
 🔥 <b>Total Profit:</b> <code>{pl_summary_text}</code>
-📊 <b>ROI:</b> <code>{roi:+.1f}%</code>
-──────────────
-✨ Glitch in Matrix by ФорексГод ✨
-🧠 AI-Powered • 💎 Smart Money"""
+📊 <b>ROI:</b> <code>{roi:+.1f}%</code>"""
             
             return message
             
@@ -527,7 +537,7 @@ class TelegramCommandCenter:
                 response = self.handle_active_command()
             elif command == '/help':
                 response = """<b>🎮 COMMAND CENTER V3.7</b>
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 
 <b>Available Commands:</b>
 

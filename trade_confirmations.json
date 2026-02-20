@@ -1,12 +1,15 @@
 {
-  "signal_id": "GBPUSD_BUY_1770739371",
-  "position_id": "580488758",
-  "symbol": "GBPUSD",
-  "direction": "buy",
-  "volume": 2000,
-  "entry_price": 1.36701,
-  "sl": 1.33143,
-  "tp": 1.40554,
-  "executed_at": "2026-02-10T18:03:05.395377+02:00",
-  "status": "executed"
+  "SignalId": "TEST_V9_3_1771598469",
+  "Status": "EXECUTED",
+  "OrderId": "583523518",
+  "Volume": 0.5,
+  "EntryPrice": 67005.95,
+  "StopLoss": 0,
+  "TakeProfit": 0,
+  "Reason": "",
+  "Timestamp": "2026-02-20T14:41:28.363594Z",
+  "Symbol": "BTC/USD",
+  "Direction": "sell",
+  "Account": 9709773,
+  "Balance": 11930.91
 }

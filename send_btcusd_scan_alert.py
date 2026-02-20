@@ -81,18 +81,18 @@ def send_btcusd_scan_alert():
     # Build HTML message
     message = f"""<b>🎯 BTCUSD ELITE SCAN - V3.5 ORDER BLOCKS</b>
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 <b>📊 PRICE ACTION</b>
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 
 💰 Current: <b>${results['current_price']:,.2f}</b>
 📉 Recent High: <b>$95,496</b> → Low: <b>$59,843</b>
 📊 Trend: <b>{results['trend']}</b>
 🔄 Setup: <b>{results['setup_type']} {results['setup_direction']}</b>
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 <b>📦 ORDER BLOCKS DETECTED</b>
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 """
     
     if daily_ob:
@@ -119,9 +119,9 @@ def send_btcusd_scan_alert():
 
 """
     
-    message += f"""━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    message += f"""──────────────────
 <b>📊 VALID FVG GAPS</b>
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 """
     
     if daily_fvg:
@@ -139,9 +139,9 @@ def send_btcusd_scan_alert():
 """
     
     message += f"""
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 <b>🏆 FINAL VERDICT</b>
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 
 📊 Score: <b>{score}/100</b> {stars}
 🎯 Rating: <b>{rating}</b>
@@ -160,9 +160,9 @@ def send_btcusd_scan_alert():
         reward = entry - tp
         rr = reward / risk if risk > 0 else 0
         
-        message += f"""━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        message += f"""──────────────────
 <b>📍 TRADING PLAN</b>
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 
 <b>SHORT BTCUSD</b>
 
@@ -178,10 +178,10 @@ def send_btcusd_scan_alert():
 
 """
     
-    message += f"""━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    message += f"""──────────────────
 ✨ <b>Glitch in Matrix by ФорексГод</b>
 🧠 AI-Powered • 💎 Smart Money
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"""
+──────────────────"""
 
     # Send message
     try:

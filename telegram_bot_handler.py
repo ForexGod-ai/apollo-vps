@@ -103,7 +103,7 @@ I'm your AI-powered trading assistant. Here's what I can do:
 ❓ *Help:*
 /help - Show all commands
 
-━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 💎 *Glitch in Matrix v3.2*
 🧠 AI-Powered Smart Money Strategy
 """
@@ -114,7 +114,7 @@ I'm your AI-powered trading assistant. Here's what I can do:
         message = """
 📖 *AVAILABLE COMMANDS*
 
-━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 📊 *ACCOUNT MONITORING:*
 
 /status
@@ -136,7 +136,7 @@ I'm your AI-powered trading assistant. Here's what I can do:
    └─ Win rate & profit factor
    └─ Best/worst trades
 
-━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 🎯 *TRADING STATUS:*
 
 /setups
@@ -149,14 +149,14 @@ I'm your AI-powered trading assistant. Here's what I can do:
    └─ Currency exposure alerts
    └─ Trading recommendations
 
-━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 💡 *TIPS:*
 
 • Commands work anytime, anywhere
 • Data updates every 30 seconds
 • Use /status for quick overview
 
-━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 ✨ Strategy by ФорексГод ✨
 """
         await update.message.reply_text(message, parse_mode=ParseMode.MARKDOWN)
@@ -270,7 +270,7 @@ I'm your AI-powered trading assistant. Here's what I can do:
             message = f"""
 📊 *ACCOUNT STATUS*
 
-━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 💰 *Account Overview:*
 Balance: `${balance:,.2f}`
 Equity: `${equity:,.2f}`
@@ -280,7 +280,7 @@ P&L: `${total_pnl:+,.2f}` ({pnl_percent:+.2f}%) {pnl_emoji}
 Used: `${margin_used:,.2f}` ({margin_used/balance*100:.1f}%)
 Free: `${free_margin:,.2f}`
 
-━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 🔥 *Open Positions: {len(positions)}*
 """
             
@@ -307,13 +307,13 @@ Free: `${free_margin:,.2f}`
                 message += "\n_No open positions_"
             
             # Today's performance
-            message += f"\n\n━━━━━━━━━━━━━━━━━━━━━━━━"
+            message += f"\n\n──────────────────"
             message += f"\n📈 *Today's Performance:*"
             message += f"\n{today_stats}"
             
             # Monitoring setups
             setups = self._get_monitoring_setups()
-            message += f"\n\n━━━━━━━━━━━━━━━━━━━━━━━━"
+            message += f"\n\n──────────────────"
             message += f"\n📋 *Monitoring Setups: {len(setups)}*"
             
             ready_setups = [s for s in setups if s.get('status') == 'READY']
@@ -327,11 +327,11 @@ Free: `${free_margin:,.2f}`
             # High-impact news alert
             news_alert = self._get_news_alert_summary()
             if news_alert:
-                message += f"\n\n━━━━━━━━━━━━━━━━━━━━━━━━"
+                message += f"\n\n──────────────────"
                 message += f"\n{news_alert}"
             
             # Footer
-            message += f"\n\n━━━━━━━━━━━━━━━━━━━━━━━━"
+            message += f"\n\n──────────────────"
             message += f"\n⏰ Updated: {datetime.now().strftime('%H:%M:%S')}"
             message += f"\n✨ *Strategy by ФорексГод* ✨"
             
@@ -406,7 +406,7 @@ Free: `${free_margin:,.2f}`
             message = f"""
 💰 *WEEKLY PERFORMANCE REPORT*
 
-━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 📊 *Overall Stats (Last 7 Days):*
 
 Total Profit: `${total_profit:+,.2f}` {profit_emoji}
@@ -418,7 +418,7 @@ Average: `${avg_profit:.2f}`
 Best Trade: `${best_trade:.2f}` 💎
 Worst Trade: `${worst_trade:.2f}` 
 
-━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 📅 *Daily Breakdown:*
 """
             
@@ -427,14 +427,14 @@ Worst Trade: `${worst_trade:.2f}`
                 message += f"\n`{date}`: {trades} trades | `${profit:+.2f}` {day_emoji}"
             
             if top_symbols:
-                message += f"\n\n━━━━━━━━━━━━━━━━━━━━━━━━"
+                message += f"\n\n──────────────────"
                 message += f"\n🏆 *Top Performing Pairs:*\n"
                 
                 for symbol, trades, profit in top_symbols:
                     emoji = "🟢" if profit > 0 else ("🔴" if profit < 0 else "⚪")
                     message += f"\n`{symbol}`: {trades} trades | `${profit:+.2f}` {emoji}"
             
-            message += f"\n\n━━━━━━━━━━━━━━━━━━━━━━━━"
+            message += f"\n\n──────────────────"
             message += f"\n⏰ Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
             message += f"\n✨ *Strategy by ФорексГод* ✨"
             
@@ -456,7 +456,7 @@ Worst Trade: `${worst_trade:.2f}`
                 return """
 📊 *OPEN POSITIONS*
 
-━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 _No open positions_
 
 ✨ Market is waiting for your next move! 🎯
@@ -465,7 +465,7 @@ _No open positions_
             message = f"""
 📊 *OPEN POSITIONS* ({len(positions)})
 
-━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 """
             
             # Sort by profit (highest first)
@@ -499,7 +499,7 @@ _No open positions_
 └─ Status: {is_breakeven if is_breakeven else "Active 🕒"}
 """
             
-            message += f"\n━━━━━━━━━━━━━━━━━━━━━━━━"
+            message += f"\n──────────────────"
             message += f"\n⏰ Updated: {datetime.now().strftime('%H:%M:%S')}"
             message += f"\n✨ *Strategy by ФорексГод* ✨"
             
@@ -538,7 +538,7 @@ _No open positions_
             message = f"""
 💰 *ACCOUNT BALANCE*
 
-━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 📊 *Current Status:*
 
 Balance: `${balance:,.2f}`
@@ -546,7 +546,7 @@ Equity: `${equity:,.2f}`
 Floating P&L: `${total_pnl:+,.2f}` {pnl_emoji}
 P&L %: `{pnl_percent:+.2f}%`
 
-━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 📈 *Margin Info:*
 
 Used: `${margin_used:,.2f}`
@@ -554,7 +554,7 @@ Free: `${free_margin:,.2f}`
 Level: `{margin_level:.0f}%` {margin_status}
 Usage: `{margin_used/balance*100:.1f}%` of balance
 
-━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 ⏰ Updated: {datetime.now().strftime('%H:%M:%S')}
 ✨ *Strategy by ФорексГод* ✨
 """
@@ -573,7 +573,7 @@ Usage: `{margin_used/balance*100:.1f}%` of balance
                 return """
 📋 *MONITORING SETUPS*
 
-━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 _No active setups_
 
 🔍 Scanner will find opportunities soon! 
@@ -586,7 +586,7 @@ _No active setups_
             message = f"""
 📋 *MONITORING SETUPS* ({len(setups)})
 
-━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 """
             
             if ready_setups:
@@ -616,7 +616,7 @@ _No active setups_
                     message += f"\n• `{symbol}` {direction_emoji} {direction}"
                     message += f"\n  Waiting for confirmation..."
             
-            message += f"\n\n━━━━━━━━━━━━━━━━━━━━━━━━"
+            message += f"\n\n──────────────────"
             message += f"\n⏰ Updated: {datetime.now().strftime('%H:%M:%S')}"
             message += f"\n✨ *Strategy by ФорексГод* ✨"
             
@@ -633,7 +633,7 @@ _No active setups_
                 return """
 📰 *HIGH-IMPACT NEWS*
 
-━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 ⚠️ _News monitor not available_
 
 Please check economic_calendar.json manually.
@@ -646,7 +646,7 @@ Please check economic_calendar.json manually.
                 return """
 📰 *HIGH-IMPACT NEWS*
 
-━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 ✅ _No high-impact news in next 48 hours_
 
 🎯 Safe to trade all pairs!
@@ -656,7 +656,7 @@ Please check economic_calendar.json manually.
             message = f"""
 📰 *HIGH-IMPACT NEWS* (Next 48h)
 
-━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 ⚠️ *Upcoming Events:*
 """
             
@@ -675,14 +675,14 @@ Please check economic_calendar.json manually.
             affected_currencies = set(e['currency'] for e in news_events)
             
             if affected_currencies:
-                message += f"\n\n━━━━━━━━━━━━━━━━━━━━━━━━"
+                message += f"\n\n──────────────────"
                 message += f"\n⚠️ *Affected Currencies:*"
                 message += f"\n{', '.join(affected_currencies)}"
                 message += f"\n\n💡 *Recommendation:*"
                 message += f"\nAvoid trading these pairs before news release."
                 message += f"\nConsider closing positions 30min before."
             
-            message += f"\n\n━━━━━━━━━━━━━━━━━━━━━━━━"
+            message += f"\n\n──────────────────"
             message += f"\n⏰ Updated: {datetime.now().strftime('%H:%M:%S')}"
             message += f"\n✨ *Strategy by ФорексГод* ✨"
             

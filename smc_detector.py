@@ -871,6 +871,148 @@ class SMCDetector:
                 elif swing_lows[i].price < swing_lows[i - 1].price:
                     prev_trend = 'bearish'
         return chochs, bos_list
+    
+    def determine_daily_trend(self, df: pd.DataFrame) -> str:
+        """
+        V5.0 ANTI-COUNTER-TREND: Determine OVERALL Daily trend from swing structure
+        
+        This is NOT about latest signal (CHoCH/BOS), but about DOMINANT market structure.
+        Analyzes last 3 swing highs and lows to identify the PREVAILING trend.
+        
+        Returns:
+            'bullish': HH + HL pattern (strong uptrend)
+            'bearish': LL + LH pattern (strong downtrend)
+            'neutral': No clear pattern or mixed signals
+        
+        Purpose: Prevent counter-trend trades by validating setup against OVERALL bias
+        """
+        if df is None or len(df) < 20:
+            return 'neutral'
+        
+        swing_highs = self.detect_swing_highs(df)
+        swing_lows = self.detect_swing_lows(df)
+        
+        # Need at least 3 swings of each type for pattern analysis
+        if len(swing_highs) < 3 or len(swing_lows) < 3:
+            return 'neutral'
+        
+        # Get last 3 swings of each type
+        recent_highs = swing_highs[-3:]
+        recent_lows = swing_lows[-3:]
+        
+        # BULLISH STRUCTURE: Higher Highs (HH) + Higher Lows (HL)
+        hh_count = 0
+        for i in range(1, len(recent_highs)):
+            if recent_highs[i].price > recent_highs[i-1].price:
+                hh_count += 1
+        
+        hl_count = 0
+        for i in range(1, len(recent_lows)):
+            if recent_lows[i].price > recent_lows[i-1].price:
+                hl_count += 1
+        
+        # BEARISH STRUCTURE: Lower Lows (LL) + Lower Highs (LH)
+        ll_count = 0
+        for i in range(1, len(recent_lows)):
+            if recent_lows[i].price < recent_lows[i-1].price:
+                ll_count += 1
+        
+        lh_count = 0
+        for i in range(1, len(recent_highs)):
+            if recent_highs[i].price < recent_highs[i-1].price:
+                lh_count += 1
+        
+        # V5.1 FIX: More flexible pattern detection
+        # Calculate DOMINANT direction based on overall count
+        bullish_score = hh_count + hl_count
+        bearish_score = ll_count + lh_count
+        
+        # BULLISH: Requires BOTH HH and HL patterns (at least 2/3 swings each) - STRICT
+        if hh_count >= 2 and hl_count >= 1:
+            return 'bullish'
+        
+        # BEARISH: Requires BOTH LL and LH patterns (at least 2/3 swings each) - STRICT  
+        if ll_count >= 2 and lh_count >= 1:
+            return 'bearish'
+        
+        # V5.1: If no perfect pattern, use DOMINANT direction (RELAXED)
+        # This catches imperfect but clearly directional markets
+        # Example: LL=1, LH=1 (score=2) vs HH=0, HL=0 (score=0) → Bearish dominant
+        if bearish_score >= 2 and bearish_score > bullish_score:
+            return 'bearish'  # Bearish dominant
+        
+        if bullish_score >= 2 and bullish_score > bearish_score:
+            return 'bullish'  # Bullish dominant
+        
+        # No dominant pattern → neutral
+        return 'neutral'
+    
+    def has_confirmation_swing(self, df: pd.DataFrame, choch: CHoCH) -> bool:
+        """
+        V5.0 REVERSAL VALIDATION: Check if CHoCH has post-break confirmation
+        
+        A CHoCH (Change of Character) signals POTENTIAL reversal, but needs confirmation.
+        We check if market structure AFTER the CHoCH validates the new trend direction.
+        
+        Bullish CHoCH: Needs Higher Low (HL) after break
+        Bearish CHoCH: Needs Lower High (LH) after break
+        
+        Args:
+            df: DataFrame with OHLC data
+            choch: CHoCH signal to validate
+        
+        Returns:
+            True: Confirmation swing exists (reversal validated)
+            False: No confirmation (premature reversal signal)
+        """
+        if df is None or len(df) < choch.index + 5:
+            return False  # Not enough data after CHoCH
+        
+        # Get swings AFTER CHoCH (need at least 5 candles for swing detection)
+        df_after_choch = df.iloc[choch.index:]
+        
+        swing_highs_after = self.detect_swing_highs(df_after_choch)
+        swing_lows_after = self.detect_swing_lows(df_after_choch)
+        
+        if choch.direction == 'bullish':
+            # BULLISH CHoCH: Look for Higher Low (HL) confirmation
+            # Need: A swing low AFTER CHoCH that is HIGHER than swing low BEFORE CHoCH
+            
+            # Get swing lows BEFORE CHoCH
+            swing_lows_before = self.detect_swing_lows(df.iloc[:choch.index])
+            
+            if not swing_lows_before or not swing_lows_after:
+                return False
+            
+            last_low_before = swing_lows_before[-1].price
+            
+            # Check if ANY low after CHoCH is Higher Low
+            for low_after in swing_lows_after:
+                if low_after.price > last_low_before:
+                    return True  # ✅ Higher Low confirmed!
+            
+            return False  # No HL found
+        
+        elif choch.direction == 'bearish':
+            # BEARISH CHoCH: Look for Lower High (LH) confirmation
+            # Need: A swing high AFTER CHoCH that is LOWER than swing high BEFORE CHoCH
+            
+            # Get swing highs BEFORE CHoCH
+            swing_highs_before = self.detect_swing_highs(df.iloc[:choch.index])
+            
+            if not swing_highs_before or not swing_highs_after:
+                return False
+            
+            last_high_before = swing_highs_before[-1].price
+            
+            # Check if ANY high after CHoCH is Lower High
+            for high_after in swing_highs_after:
+                if high_after.price < last_high_before:
+                    return True  # ✅ Lower High confirmed!
+            
+            return False  # No LH found
+        
+        return False
         
         # METHOD 2: If no strict gaps found, create LARGE imbalance zone (REVERSAL setup)
         if not all_fvgs:
@@ -1255,6 +1397,69 @@ class SMCDetector:
         
         return False
     
+    def _get_asset_class(self, symbol: str) -> str:
+        """Detect asset class for symbol-specific SL rules"""
+        symbol_upper = symbol.upper()
+        if any(x in symbol_upper for x in ['BTC', 'ETH', 'XRP', 'LTC', 'ADA', 'DOGE']):
+            return 'crypto'
+        elif any(x in symbol_upper for x in ['XAU', 'XAG', 'GOLD', 'SILVER']):
+            return 'metals'
+        elif any(x in symbol_upper for x in ['XTI', 'WTI', 'OIL', 'BRENT']):
+            return 'energy'
+        elif 'JPY' in symbol_upper:
+            return 'jpy_pairs'
+        else:
+            return 'forex'
+    
+    def _calculate_minimum_sl_distance(self, symbol: str, entry_price: float, asset_class: str) -> float:
+        """
+        Calculate MINIMUM SL distance based on asset class
+        
+        THE 30-PIP HARD FLOOR (Forex):
+        - All FX pairs: minimum 30 pips
+        
+        CRYPTO SCALE FIX:
+        - BTC/ETH: minimum 1.5-2% of current price
+        
+        Returns: minimum distance in price terms
+        """
+        if asset_class == 'crypto':
+            # Crypto: 1.5% minimum for safety (prevents Invalid Volume errors)
+            min_pct = 0.015  # 1.5%
+            min_distance = entry_price * min_pct
+            print(f"[SL MIN] {symbol} (Crypto): 1.5% = {min_distance:.2f}")
+            return min_distance
+        
+        elif asset_class == 'metals':
+            # Gold/Silver: 0.8% minimum
+            min_pct = 0.008
+            min_distance = entry_price * min_pct
+            print(f"[SL MIN] {symbol} (Metals): 0.8% = {min_distance:.5f}")
+            return min_distance
+        
+        elif asset_class == 'energy':
+            # Oil: 1.0% minimum
+            min_pct = 0.010
+            min_distance = entry_price * min_pct
+            print(f"[SL MIN] {symbol} (Energy): 1.0% = {min_distance:.5f}")
+            return min_distance
+        
+        elif asset_class == 'jpy_pairs':
+            # JPY pairs: 30 pips (at 2 decimals: 0.30)
+            min_pips = 30
+            pip_size = 0.01
+            min_distance = min_pips * pip_size
+            print(f"[SL MIN] {symbol} (JPY): 30 pips = {min_distance:.2f}")
+            return min_distance
+        
+        else:  # Standard forex
+            # THE 30-PIP HARD FLOOR: All forex pairs get 30 pips minimum
+            min_pips = 30
+            pip_size = 0.0001
+            min_distance = min_pips * pip_size  # 0.0030
+            print(f"[SL MIN] {symbol} (Forex): 30 pips = {min_distance:.4f}")
+            return min_distance
+    
     def calculate_entry_sl_tp(
         self, 
         fvg: FVG, 
@@ -1284,7 +1489,9 @@ class SMCDetector:
         """
         
         # Trade direction = DAILY CHoCH direction = FVG direction
-        min_pips = 0.0030  # 30 pips pentru AUDUSD (sau 0.0030 la 5 zecimale)
+        # ✅ CRITICAL FIX by ФорексГод: Asset-specific minimum SL distances
+        asset_class = self._get_asset_class(fvg.symbol)
+        
         if fvg.direction == 'bullish':
             # LONG TRADE (Daily bullish trend)
             
@@ -1304,20 +1511,34 @@ class SMCDetector:
             swing_low = recent_lows.min()
             
             # ATR buffer for SL (1.5x 4H ATR)
-            atr_4h = (df_4h['high'] - df_4h['low']).rolling(14).mean().iloc[-1]
+            try:
+                atr_4h = (df_4h['high'] - df_4h['low']).rolling(14).mean().iloc[-1]
+                if pd.isna(atr_4h) or atr_4h <= 0:
+                    # Fallback: 2% of current price
+                    atr_4h = entry * 0.02
+                    print(f"⚠️  ATR fallback: {atr_4h:.5f} (2% of entry)")
+            except Exception as e:
+                atr_4h = entry * 0.02
+                print(f"❌ ATR error: {e} | Using 2% fallback: {atr_4h:.5f}")
+            
             stop_loss = swing_low - (1.5 * atr_4h)
-            # Protecție: SL minim 30 pips distanță de entry (valabil și la buy și la sell)
-            if abs(entry - stop_loss) < min_pips:
-                if entry > stop_loss:
-                    stop_loss = entry - min_pips
-                else:
-                    stop_loss = entry + min_pips
-                # Fallback pe 1H dacă există și distanța e ok
+            
+            # ✅ THE 30-PIP HARD FLOOR (Forex) / 1.5% CRYPTO SCALE FIX
+            min_distance = self._calculate_minimum_sl_distance(fvg.symbol, entry, asset_class)
+            current_distance = abs(entry - stop_loss)
+            
+            if current_distance < min_distance:
+                stop_loss = entry - min_distance
+                print(f"✅ [SL ENFORCED] {fvg.symbol} LONG: {current_distance:.5f} → {min_distance:.5f}")
+                
+                # Fallback pe 1H dacă există și distanța e mai bună
                 if df_1h is not None:
                     recent_lows_1h = df_1h['low'].iloc[-40:]
                     swing_low_1h = recent_lows_1h.min()
-                    if abs(entry - swing_low_1h) >= min_pips:
+                    distance_1h = abs(entry - swing_low_1h)
+                    if distance_1h >= min_distance and distance_1h > current_distance:
                         stop_loss = swing_low_1h
+                        print(f"✅ [SL IMPROVED] Using 1H swing: {distance_1h:.5f}")
             
             # Daily ATR for TP distance cap
             daily_atr = (df_daily['high'] - df_daily['low']).rolling(14).mean().iloc[-1]
@@ -1366,19 +1587,34 @@ class SMCDetector:
             swing_high = recent_highs.max()
             
             # ATR buffer for SL (1.5x 4H ATR)
-            atr_4h = (df_4h['high'] - df_4h['low']).rolling(14).mean().iloc[-1]
+            try:
+                atr_4h = (df_4h['high'] - df_4h['low']).rolling(14).mean().iloc[-1]
+                if pd.isna(atr_4h) or atr_4h <= 0:
+                    # Fallback: 2% of current price
+                    atr_4h = entry * 0.02
+                    print(f"⚠️  ATR fallback: {atr_4h:.5f} (2% of entry)")
+            except Exception as e:
+                atr_4h = entry * 0.02
+                print(f"❌ ATR error: {e} | Using 2% fallback: {atr_4h:.5f}")
+            
             stop_loss = swing_high + (1.5 * atr_4h)
-            # Protecție: SL minim 30 pips distanță de entry (valabil și la buy și la sell)
-            if abs(entry - stop_loss) < min_pips:
-                if entry > stop_loss:
-                    stop_loss = entry - min_pips
-                else:
-                    stop_loss = entry + min_pips
+            
+            # ✅ THE 30-PIP HARD FLOOR (Forex) / 1.5% CRYPTO SCALE FIX
+            min_distance = self._calculate_minimum_sl_distance(fvg.symbol, entry, asset_class)
+            current_distance = abs(entry - stop_loss)
+            
+            if current_distance < min_distance:
+                stop_loss = entry + min_distance
+                print(f"✅ [SL ENFORCED] {fvg.symbol} SHORT: {current_distance:.5f} → {min_distance:.5f}")
+                
+                # Fallback pe 1H dacă există și distanța e mai bună
                 if df_1h is not None:
                     recent_highs_1h = df_1h['high'].iloc[-40:]
                     swing_high_1h = recent_highs_1h.max()
-                    if abs(entry - swing_high_1h) >= min_pips:
+                    distance_1h = abs(entry - swing_high_1h)
+                    if distance_1h >= min_distance and distance_1h > current_distance:
                         stop_loss = swing_high_1h
+                        print(f"✅ [SL IMPROVED] Using 1H swing: {distance_1h:.5f}")
             
             # Daily ATR for TP distance cap
             daily_atr = (df_daily['high'] - df_daily['low']).rolling(14).mean().iloc[-1]
@@ -1890,6 +2126,56 @@ class SMCDetector:
         
         if debug:
             print(f"\n✅ Latest Signal: {strategy_type.upper()} - {current_trend.upper()} @ {latest_signal.break_price:.5f}")
+        
+        # V5.0 ANTI-COUNTER-TREND FILTER: Check Daily alignment BEFORE continuing
+        overall_daily_trend = self.determine_daily_trend(df_daily)
+        
+        if debug:
+            print(f"\n🔍 Daily Trend Analysis:")
+            print(f"   Overall Daily Structure: {overall_daily_trend.upper()}")
+            print(f"   Latest Signal Direction: {current_trend.upper()}")
+            print(f"   Strategy Type: {strategy_type.upper()}")
+        
+        # STRICT RULE: No counter-trend trades!
+        if overall_daily_trend == 'bearish' and current_trend == 'bullish':
+            print(f"❌ Signal Blocked: {symbol} Buy Setup rejected due to Bearish Daily Bias")
+            print(f"   📊 Overall Daily Trend: BEARISH (LL + LH structure)")
+            print(f"   📈 Setup Signal: BULLISH ({strategy_type})")
+            print(f"   ⚠️  Counter-trend trade FORBIDDEN - wait for Daily alignment")
+            
+            # If REVERSAL, check if it has confirmation
+            if strategy_type == 'reversal' and isinstance(latest_signal, CHoCH):
+                has_confirm = self.has_confirmation_swing(df_daily, latest_signal)
+                if has_confirm:
+                    print(f"   ℹ️  Note: CHoCH has confirmation swing, but still blocked (wait for multiple BOS)")
+                else:
+                    print(f"   ℹ️  Note: CHoCH lacks confirmation swing - reversal not yet validated")
+            
+            return None
+        
+        if overall_daily_trend == 'bullish' and current_trend == 'bearish':
+            print(f"❌ Signal Blocked: {symbol} Sell Setup rejected due to Bullish Daily Bias")
+            print(f"   📊 Overall Daily Trend: BULLISH (HH + HL structure)")
+            print(f"   📉 Setup Signal: BEARISH ({strategy_type})")
+            print(f"   ⚠️  Counter-trend trade FORBIDDEN - wait for Daily alignment")
+            
+            # If REVERSAL, check if it has confirmation
+            if strategy_type == 'reversal' and isinstance(latest_signal, CHoCH):
+                has_confirm = self.has_confirmation_swing(df_daily, latest_signal)
+                if has_confirm:
+                    print(f"   ℹ️  Note: CHoCH has confirmation swing, but still blocked (wait for multiple BOS)")
+                else:
+                    print(f"   ℹ️  Note: CHoCH lacks confirmation swing - reversal not yet validated")
+            
+            return None
+        
+        # If neutral, allow trade but log warning
+        if overall_daily_trend == 'neutral':
+            if debug:
+                print(f"   ⚠️  Warning: Daily trend NEUTRAL - proceed with caution")
+        else:
+            if debug:
+                print(f"   ✅ Daily alignment CONFIRMED - {overall_daily_trend.upper()} trend validated")
         
         # Step 2: Find FVG after signal (CHoCH or BOS) - closest to current price
         current_price = df_daily['close'].iloc[-1]

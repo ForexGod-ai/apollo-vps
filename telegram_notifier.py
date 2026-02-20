@@ -15,6 +15,16 @@ from chart_generator import ChartGenerator
 
 load_dotenv()
 
+# ──────────────────━━━━━━━
+# THE UNIVERSAL 18-CHAR RULE by ФорексГод
+# ──────────────────━━━━━━━
+# ALL separators in ALL Telegram messages MUST be EXACTLY 18 characters
+# This ensures perfect alignment with the signature footer across all devices
+# ──────────────────━━━━━━━
+UNIVERSAL_SEPARATOR = "──────────────────"  # EXACTLY 18 chars - DO NOT MODIFY!
+SEPARATOR_LENGTH = 18  # Enforced rule: All separators must be this length
+# ──────────────────━━━━━━━
+
 
 class TelegramNotifier:
     """Sends trading alerts to Telegram group"""
@@ -35,20 +45,26 @@ class TelegramNotifier:
         Add professional branding signature to any message
         This ensures consistent branding across all Telegram notifications
         Adapts formatting based on parse_mode (Markdown vs HTML)
+        
+        THE UNIVERSAL 18-CHAR RULE:
+        All separators are EXACTLY 18 characters to ensure perfect alignment
+        across all devices and message types.
         """
         if parse_mode == "HTML":
-            signature = """
-──────────────────
+            signature = f"""
+
+{UNIVERSAL_SEPARATOR}
 ✨ <b>Glitch in Matrix by ФорексГод</b> ✨
 🧠 AI-Powered • 💎 Smart Money"""
         else:  # Markdown
-            signature = """
-──────────────────
-✨ *Glitch in Matrix by ФорексГод* ✨
+            signature = f"""
+
+{UNIVERSAL_SEPARATOR}
+✨ *Glitch in Matrix by ФорексГód* ✨
 🧠 AI-Powered • 💎 Smart Money"""
         
         # Add signature at the end of message
-        return f"{message.rstrip()}\n{signature}"
+        return f"{message.rstrip()}{signature}"
     
     def send_message(self, text: str, parse_mode: str = "HTML", add_signature: bool = True) -> bool:
         """Send text message to Telegram with automatic branding signature"""
@@ -177,18 +193,13 @@ class TelegramNotifier:
         return True
     
     def format_setup_alert(self, setup) -> str:
-        """Format trade setup for Telegram message - ELITE STACK v32.0 (Elegant & Scannable)"""
+        """Format trade setup for Telegram message - BLOOMBERG COLUMN v35.0 (Vertical Stack)"""
         # Direction from Daily CHoCH
         direction = "🟢 LONG" if setup.daily_choch.direction == 'bullish' else "🔴 SHORT"
         emoji = "📈" if setup.daily_choch.direction == 'bullish' else "📉"
         
         # Load pair stats
         pair_stats = self._load_pair_statistics(setup.symbol)
-        
-        # Entry type and momentum
-        entry_type = getattr(setup, 'entry_type', None)
-        momentum_score = getattr(setup, 'momentum_score', 0)
-        hours_elapsed = getattr(setup, 'hours_waited', 0)
         
         # Status
         status_emoji = "✅" if setup.status == 'READY' else "👀"
@@ -199,89 +210,88 @@ class TelegramNotifier:
         strategy = "REVERSAL" if setup.strategy_type == 'reversal' else "CONTINUATION"
         
         # --- HEADER SECTION ---
-        header = f"{strategy_emoji} <b>SETUP: {setup.symbol}</b> {direction} {emoji}\n"
-        header += f"{status_emoji} <b>{status}</b> • {strategy}"
+        header = f"{strategy_emoji} <b>{setup.symbol}</b> {direction} {emoji}\n"
+        header += f"{status_emoji} <b>{status}</b>"
         
-        # --- PAIR STATS: Inline ---
-        stats_line = ""
-        if pair_stats:
-            wr = pair_stats.get('win_rate', 0)
-            trades = pair_stats.get('total_trades', 0)
-            rr = pair_stats.get('avg_rr', 0)
-            conf_emoji = "🟢" if wr >= 60 else "🟡" if wr >= 45 else "🔴"
-            stats_line = f"\n{conf_emoji} <b>Stats:</b> {wr:.0f}% WR • 1:{rr:.1f} R:R • {trades} trades"
-        
-        # --- AI RADIOGRAPHY SECTION ---
-        ai_section = ""
-        if hasattr(setup, 'ml_score') and setup.ml_score is not None:
-            score = setup.ml_score
-            confidence = getattr(setup, 'ml_confidence', 'UNKNOWN')
+        # --- AI FUSION: Compact vertical layout ---
+        ai_fusion = ""
+        if hasattr(setup, 'ml_score') and setup.ml_score is not None and \
+           hasattr(setup, 'ai_probability_score') and setup.ai_probability_score is not None:
+            
+            # Fuse scores: ML 60%, AI Prob 40%
+            ml_score = setup.ml_score
+            ai_prob = setup.ai_probability_score * 10
+            fused_score = int((ml_score * 0.6) + (ai_prob * 0.4))
+            
+            # Confidence level
+            confidence = "HIGH" if fused_score >= 75 else "MED" if fused_score >= 60 else "LOW"
+            
+            # Visual bar
+            bar = "🟩" * int(fused_score / 10) + "⬜" * (10 - int(fused_score / 10))
+            
+            # Recommendation
             rec = getattr(setup, 'ml_recommendation', 'REVIEW')
+            rec_badge = "EXECUTE" if rec == 'TAKE' else "REVIEW" if rec == 'REVIEW' else "SKIP"
             
-            # Visual bar on separate line
-            bar = "🟩" * int(score / 10) + "⬜" * (10 - int(score / 10))
-            rec_badge = "✅ TAKE" if rec == 'TAKE' else "⚠️ REVIEW" if rec == 'REVIEW' else "🚫 SKIP"
+            ai_fusion = f"\n\n──────────────────\n🧠 <b>AI: {fused_score}% ({confidence})</b>\n[{bar}]\n🤖 {rec_badge}"
+        
+        # --- VERTICAL BADGES: The Stack Look ---
+        factors_badge = ""
+        if pair_stats or hasattr(setup, 'ai_probability_factors'):
+            # Quality badge
+            if pair_stats:
+                wr = pair_stats.get('win_rate', 0)
+                trades = pair_stats.get('total_trades', 0)
+                quality = "Exc" if wr >= 60 else "Good" if wr >= 45 else "Avg"
+                factors_badge += f"\n✨ Quality: {quality}"
             
-            ai_section = f"\n\n╼╼╼╼╼\n🧠 <b>AI Score:</b> {score}/100 ({confidence})\n[{bar}] {rec_badge}"
+            # Timing badge
+            if hasattr(setup, 'ai_probability_factors'):
+                factors = setup.ai_probability_factors
+                timing = factors.get('timing', '')
+                if 'London' in timing or 'NY' in timing:
+                    factors_badge += f"\n🕒 {timing.split()[0]} ✅"
+                else:
+                    factors_badge += f"\n🕒 {timing}"
+            
+            # Context badge
+            if pair_stats:
+                trades = pair_stats.get('total_trades', 0)
+                factors_badge += f"\n📊 {trades} Trades"
         
-        # --- ENTRY METHOD ---
-        entry_line = ""
-        if entry_type == 'pullback':
-            entry_line = "\n🎯 <b>Entry:</b> Pullback @ Fibo 50%"
-        elif entry_type == 'continuation':
-            entry_line = f"\n🚀 <b>Entry:</b> Momentum (Score: {momentum_score:.0f}/100)"
-        else:
-            entry_line = "\n⏳ <b>Entry:</b> Waiting..."
-        
-        # --- MOMENTUM BAR (only if continuation) ---
-        momentum_line = ""
-        if entry_type == 'continuation' and momentum_score > 0:
-            mom_bar = "🔥" * int(momentum_score / 10) + "⬜" * (10 - int(momentum_score / 10))
-            momentum_line = f"\n[{mom_bar}] {momentum_score:.0f}/100"
-            if momentum_score >= 80:
-                momentum_line += " 🚀"
-            elif momentum_score >= 60:
-                momentum_line += " ✅"
-        
-        # --- AGE TRACKING ---
-        age_line = ""
-        if hours_elapsed > 0:
-            progress = min(hours_elapsed / 12.0, 1.0)
-            bar = "🟩" * int(progress * 10) + "⬜" * (10 - int(progress * 10))
-            age_line = f"\n⏰ <b>Elapsed:</b> {hours_elapsed:.1f}h/12h\n[{bar}] {progress*100:.0f}%"
-            if hours_elapsed >= 10:
-                age_line += " ⚠️"
-        
-        # --- DAILY ANALYSIS SECTION ---
+        # --- DAILY SECTION (Compact) ---
         h1_choch = getattr(setup, 'h1_choch', None)
         choch_detected = getattr(setup, 'choch_1h_detected', False)
         
         if h1_choch or choch_detected:
             price = h1_choch.break_price if h1_choch else getattr(setup, 'choch_1h_price', 0)
-            h1_line = f"⚡ 1H CHoCH @ {price:.5f} ✅"
+            h1_line = f"⚡ 1H: <code>{price:.5f}</code>"
         else:
-            h1_line = "⏳ Waiting 1H CHoCH"
+            h1_line = "⏳ 1H: Waiting"
         
         if setup.h4_choch:
-            h4_line = f"🔄 4H CHoCH @ {setup.h4_choch.break_price:.5f} ✅"
+            h4_line = f"🔄 4H: <code>{setup.h4_choch.break_price:.5f}</code>"
         else:
-            h4_line = "⏳ Waiting 4H confirm"
+            h4_line = "⏳ 4H: Waiting"
         
-        # 💧 V4.0: Liquidity Sweep Info
+        # Liquidity (compact)
         liquidity_line = ""
         if hasattr(setup, 'liquidity_sweep') and setup.liquidity_sweep:
             sweep = setup.liquidity_sweep
             sweep_type = sweep['sweep_type']
             conf_boost = getattr(setup, 'confidence_boost', 0)
-            liquidity_line = f"\n💧 <b>Liquidity Sweep:</b> YES ({sweep_type}) <b>+{conf_boost} Conf</b>"
+            liquidity_line = f"\n💧 {sweep_type} +{conf_boost}"
         
-        daily_section = f"""\n\n╼╼╼╼╼
-📊 <b>DAILY:</b> CHoCH {setup.daily_choch.direction.upper()}
-🎯 FVG: <code>{setup.fvg.bottom:.5f} - {setup.fvg.top:.5f}</code>{liquidity_line}
+        daily_section = f"""\n\n──────────────────
+📊 <b>DAILY</b>
+{setup.daily_choch.direction.upper()} CHoCH
+🎯 <code>{setup.fvg.bottom:.5f}</code>
+   <code>{setup.fvg.top:.5f}</code>{liquidity_line}
+
 {h1_line}
 {h4_line}"""
         
-        # --- TRADE SETUP SECTION (Claritate) ---
+        # --- PRICE BLOCK: Vertical Stack ---
         account_balance = float(os.getenv('ACCOUNT_BALANCE', '10000'))
         risk_percent = float(os.getenv('RISK_PER_TRADE', '0.02'))
         risk_amount = account_balance * risk_percent
@@ -290,32 +300,27 @@ class TelegramNotifier:
         stop_distance = abs(setup.entry_price - setup.stop_loss)
         lot_size = risk_amount / (stop_distance * pip_value * 100000)
         
-        trade_section = f"""\n\n╼╼╼╼╼
-💰 <b>TRADE:</b>
-📥 In: <code>{setup.entry_price:.5f}</code> | 🛑 SL: <code>{setup.stop_loss:.5f}</code>
-🎯 TP: <code>{setup.take_profit:.5f}</code> | 💵 Risk: <code>${risk_amount:.2f}</code>
-📦 Size: <code>{lot_size:.2f}</code> lots | ⚖️ RR: <code>1:{setup.risk_reward:.2f}</code>"""
+        # CRITICAL FIX by ФорексГод: Enforce minimum lot size of 0.01
+        # Broker minimum = 0.01 lots (micro lot)
+        if lot_size < 0.01:
+            lot_size = 0.01
         
-        # --- AI PROBABILITY (if exists) ---
-        ai_prob_section = ""
-        if hasattr(setup, 'ai_probability_score') and setup.ai_probability_score is not None:
-            from ai_probability_analyzer import get_analyzer
-            analyzer = get_analyzer()
-            
-            analysis = {
-                'score': setup.ai_probability_score,
-                'confidence': setup.ai_probability_confidence,
-                'factors': setup.ai_probability_factors,
-                'warning': setup.ai_probability_warning
-            }
-            
-            ai_prob_section = "\n\n╼╼╼╼╼\n" + analyzer.format_telegram_analysis(analysis, setup.symbol)
+        trade_section = f"""\n\n──────────────────
+💰 <b>TRADE</b>
+
+🔹 Entry
+   <code>{setup.entry_price:.5f}</code>
+🔸 SL
+   <code>{setup.stop_loss:.5f}</code>
+🎯 TP
+   <code>{setup.take_profit:.5f}</code>
+
+💵 ${risk_amount:.2f}
+📦 {lot_size:.2f} lots
+⚖️ 1:{setup.risk_reward:.2f}"""
         
-        # ⚠️ NO MANUAL FOOTER - send_message() adds signature automatically!
-        # Removed duplicate signature to avoid double branding
-        
-        # --- ASSEMBLE MESSAGE ---
-        message = f"{header}{stats_line}{ai_section}{entry_line}{momentum_line}{age_line}{daily_section}{trade_section}{ai_prob_section}"
+        # --- ASSEMBLE: Bloomberg Column ---
+        message = f"{header}{ai_fusion}{factors_badge}{daily_section}{trade_section}"
         
         return message.strip()
     
@@ -505,14 +510,19 @@ class TelegramNotifier:
         
         # Add monitoring setups with clean formatting
         if monitoring_setups:
-            message += "\n──────────────────\n"
+            message += f"\n{UNIVERSAL_SEPARATOR}\n"
             message += "<b>📊 MONITORING SETUPS:</b>\n\n"
             for setup in monitoring_setups:
                 symbol = setup.get('symbol', 'Unknown')
                 dir_raw = str(setup.get('direction', '')).strip().lower()
                 direction = "🟢 LONG" if dir_raw == 'buy' else ("🔴 SHORT" if dir_raw == 'sell' else dir_raw.upper())
-                entry = setup.get('entry_price', 0)
-                rr = setup.get('risk_reward', 0)
+                entry = setup.get('entry_price')
+                rr = setup.get('risk_reward')
+                
+                # CRITICAL FIX by ФорексГод: Verifică None înainte de formatare
+                if entry is None or rr is None:
+                    # Skip acest setup dacă datele sunt incomplete
+                    continue
                 
                 # Clean HTML formatting - no markdown
                 message += f"• <b>{symbol}</b> - {direction}\n"
@@ -520,15 +530,21 @@ class TelegramNotifier:
         
         # Add active positions with clean formatting
         if executed_positions:
-            message += "\n──────────────────\n"
+            message += f"\n{UNIVERSAL_SEPARATOR}\n"
             message += "<b>🔥 ACTIVE TRADES:</b>\n\n"
             for pos in executed_positions:
                 symbol = pos.get('symbol', 'Unknown')
                 dir_raw = str(pos.get('direction', '')).strip().lower()
                 direction = "🟢 LONG" if dir_raw == 'buy' else ("🔴 SHORT" if dir_raw == 'sell' else dir_raw.upper())
-                entry = pos.get('entry_price', 0)
-                rr = pos.get('risk_reward', 0)
-                profit = pos.get('profit', 0)
+                entry = pos.get('entry_price')
+                rr = pos.get('risk_reward')
+                profit = pos.get('profit')
+                
+                # CRITICAL FIX by ФорексГод: Verifică None înainte de formatare
+                if entry is None or rr is None or profit is None:
+                    # Skip această poziție dacă datele sunt incomplete
+                    continue
+                
                 profit_emoji = "💚" if profit > 0 else ("❤️" if profit < 0 else "💛")
                 
                 # Clean HTML formatting - no markdown
@@ -544,6 +560,22 @@ class TelegramNotifier:
         direction = "🟢 LONG" if setup.direction == 'buy' else "🔴 SHORT"
         direction_emoji = "📈" if setup.direction == 'buy' else "📉"
         
+        # ✅ TELEGRAM UPDATES by ФорексГод: SL description with protection type
+        # Detect asset class for SL description
+        symbol_upper = setup.symbol.upper()
+        if any(x in symbol_upper for x in ['BTC', 'ETH', 'XRP', 'LTC', 'ADA']):
+            # Crypto: Show percentage
+            sl_pct = abs(setup.stop_loss - setup.entry_price) / setup.entry_price * 100
+            sl_description = f"🛡️ SL: <code>{setup.stop_loss:.2f}</code> ({sl_pct:.1f}% Crypto Safety) ✅"
+        else:
+            # Forex: Show pips with Min Protected indicator
+            pip_size = 0.01 if 'JPY' in symbol_upper else 0.0001
+            sl_pips = abs(setup.stop_loss - setup.entry_price) / pip_size
+            if sl_pips <= 35:  # Close to 30 pip minimum
+                sl_description = f"🛡️ SL: <code>{setup.stop_loss:.5f}</code> ({sl_pips:.0f} pips - Min Protected) ✅"
+            else:
+                sl_description = f"🛡️ SL: <code>{setup.stop_loss:.5f}</code> ({sl_pips:.0f} pips)"
+        
         if entry_type == 'pullback':
             message = f"""
 🎯 <b>TRADE EXECUTED - PULLBACK ENTRY</b>
@@ -553,7 +585,7 @@ class TelegramNotifier:
 
 ✅ Pullback reached Fibo 50%
 📍 Entry: <code>{setup.entry_price:.5f}</code>
-🛡️ Stop Loss: <code>{setup.stop_loss:.5f}</code>
+{sl_description}
 🎯 Take Profit: <code>{setup.take_profit:.5f}</code>
 📊 RR: <code>1:{setup.risk_reward:.1f}</code>
 
@@ -570,7 +602,7 @@ class TelegramNotifier:
 ✅ Strong continuation detected!
 📊 Momentum Score: <code>{momentum_score:.0f}/100</code> 🔥
 📍 Entry: <code>{setup.entry_price:.5f}</code> (market)
-🛡️ Stop Loss: <code>{setup.stop_loss:.5f}</code>
+{sl_description}
 🎯 Take Profit: <code>{setup.take_profit:.5f}</code>
 📊 RR: <code>1:{setup.risk_reward:.1f}</code>
 
@@ -735,7 +767,7 @@ Worst: `${today_worst:.2f}`
                 message += "\n_No trades closed today_\n🕒 Market is waiting for perfect setups!"
             
             # ============ OPEN POSITIONS (cTrader Style) ============
-            message += f"\n\n──────────────────"
+            message += f"\n\n{UNIVERSAL_SEPARATOR}"
             message += f"\n🔥 *OPEN POSITIONS:* {len(positions)}\n"
             
             if positions:
@@ -774,7 +806,7 @@ Worst: `${today_worst:.2f}`
             
             # ============ WEEKLY PROGRESS ============
             if weekly_breakdown:
-                message += f"\n\n──────────────────"
+                message += f"\n\n{UNIVERSAL_SEPARATOR}"
                 message += f"\n📈 *WEEKLY PROGRESS:*\n"
                 
                 for date, profit in weekly_breakdown:
@@ -799,7 +831,7 @@ Worst: `${today_worst:.2f}`
                     ready_setups = [s for s in setups if s.get('status') == 'READY']
                     monitoring_setups = [s for s in setups if s.get('status') == 'MONITORING']
                     
-                    message += f"\n\n──────────────────"
+                    message += f"\n\n{UNIVERSAL_SEPARATOR}"
                     message += f"\n📋 *MONITORING SETUPS:* {len(setups)}\n"
                     
                     if ready_setups:
@@ -819,7 +851,7 @@ Worst: `${today_worst:.2f}`
                 try:
                     news_alert = self._get_news_alert()
                     if news_alert:
-                        message += f"\n\n──────────────────"
+                        message += f"\n\n{UNIVERSAL_SEPARATOR}"
                         message += f"\n{news_alert}"
                 except Exception as e:
                     print(f"⚠️ Could not load news: {e}")
