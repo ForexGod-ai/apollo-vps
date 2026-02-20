@@ -1,0 +1,20 @@
+{
+  "SignalId": "BTC_TEST_MED_25000",
+  "Symbol": "BTCUSD",
+  "Direction": "sell",
+  "StrategyType": "TEST_MED",
+  "EntryPrice": 66500,
+  "StopLoss": 67830,
+  "TakeProfit": 59850,
+  "RiskReward": 5.0,
+  "Timestamp": "2026-02-19T15:36:34.352994",
+  "LotSize": 0.25,
+  "RawUnits": 25000,
+  "LiquiditySweep": false,
+  "SweepType": "",
+  "ConfidenceBoost": 0,
+  "OrderBlockUsed": false,
+  "OrderBlockScore": 0,
+  "PremiumDiscountZone": "UNKNOWN",
+  "DailyRangePercentage": 0.0
+}

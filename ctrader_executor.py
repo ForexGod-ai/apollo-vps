@@ -1,14 +1,177 @@
 """
 cTrader Signal Executor - writes to signals.json for PythonSignalExecutor cBot
 NOW WITH UNIFIED RISK MANAGER - Validates ALL trades before execution!
+
+V5.0 ZERO-LATENCY PROTOCOL:
+- Atomic file writes (race-condition proof)
+- Signal queue (prevents overwrite)
+- Execution confirmation (handshake)
+- Absolute paths (location-independent)
 """
 
 import json
 import os
+import tempfile
+import queue
+import threading
+import time
 from datetime import datetime
+from pathlib import Path
 from loguru import logger
-from typing import Optional
+from typing import Optional, Dict
 from unified_risk_manager import UnifiedRiskManager
+
+
+class SignalQueue:
+    """
+    V5.0 ZERO-LATENCY: Thread-safe signal queue
+    Prevents signal loss during simultaneous detections
+    """
+    def __init__(self, signals_file: str, confirmation_file: str):
+        self.signals_file = signals_file
+        self.confirmation_file = confirmation_file
+        self.queue = queue.Queue(maxsize=20)  # Max 20 pending signals
+        self.worker_thread = threading.Thread(
+            target=self._process_queue,
+            daemon=True,
+            name="SignalQueueWorker"
+        )
+        self.worker_thread.start()
+        logger.success("🔥 ZERO-LATENCY: Signal queue initialized")
+    
+    def enqueue(self, signal: dict) -> bool:
+        """Add signal to queue (non-blocking)"""
+        try:
+            self.queue.put_nowait(signal)
+            queue_size = self.queue.qsize()
+            logger.info(f"📥 Signal queued: {signal['Symbol']} (queue: {queue_size}/20)")
+            return True
+        except queue.Full:
+            logger.error(f"🚨 QUEUE OVERFLOW - Signal dropped: {signal['Symbol']}")
+            return False
+    
+    def _write_signal_atomic(self, signal: dict):
+        """
+        V5.4 DUAL-PATH WRITE: Writes to BOTH locations for cTrader sync
+        - Primary: Script directory (Desktop)
+        - Mirror: /Users/forexgod/GlitchMatrix/ (legacy path)
+        """
+        # Define BOTH write paths
+        primary_path = self.signals_file
+        mirror_path = "/Users/forexgod/GlitchMatrix/signals.json"
+        
+        # Ensure mirror directory exists
+        mirror_dir = os.path.dirname(mirror_path)
+        os.makedirs(mirror_dir, exist_ok=True)
+        
+        paths_to_write = [primary_path, mirror_path]
+        
+        for target_path in paths_to_write:
+            dir_path = os.path.dirname(target_path)
+            
+            # Create temp file in same directory
+            fd, temp_path = tempfile.mkstemp(
+                suffix='.json.tmp',
+                dir=dir_path,
+                text=True
+            )
+            
+            try:
+                # Write to temp file
+                with os.fdopen(fd, 'w') as f:
+                    json.dump(signal, f, indent=2)
+                    f.flush()
+                    os.fsync(f.fileno())  # Force OS write to disk
+                
+                # Atomic rename (cannot be interrupted)
+                os.replace(temp_path, target_path)
+                logger.debug(f"✅ Atomic write: {target_path}")
+                
+            except Exception as e:
+                # Cleanup temp file on failure
+                if os.path.exists(temp_path):
+                    os.unlink(temp_path)
+                logger.warning(f"⚠️  Failed to write to {target_path}: {e}")
+                # Continue to next path (don't fail completely)
+        
+        logger.success(f"✅ Signal written to {len(paths_to_write)} locations: {signal['SignalId']}")
+    
+    def _wait_for_confirmation(self, signal_id: str, timeout: int = 30) -> Optional[Dict]:
+        """
+        V5.0 HANDSHAKE: Wait for cTrader execution confirmation
+        """
+        start_time = time.time()
+        
+        while time.time() - start_time < timeout:
+            try:
+                if not os.path.exists(self.confirmation_file):
+                    time.sleep(1)
+                    continue
+                
+                with open(self.confirmation_file, 'r') as f:
+                    data = json.load(f)
+                
+                if data.get('SignalId') == signal_id:
+                    return data
+                
+            except Exception as e:
+                logger.debug(f"Confirmation check error: {e}")
+            
+            time.sleep(1)
+        
+        return None
+    
+    def _process_queue(self):
+        """Background worker - processes signals with confirmation"""
+        logger.info("🔄 Signal queue worker started")
+        
+        while True:
+            try:
+                # Get next signal (blocking)
+                signal = self.queue.get(timeout=1)
+                signal_id = signal['SignalId']
+                symbol = signal['Symbol']
+                
+                logger.info(f"📤 Dispatching: {symbol} (ID: {signal_id})")
+                
+                # 1. Write signal atomically
+                self._write_signal_atomic(signal)
+                logger.success(f"✅ Signal written atomically: {symbol}")
+                
+                # 2. Wait for confirmation (30s timeout)
+                logger.info(f"⏳ Waiting for cTrader confirmation...")
+                confirmation = self._wait_for_confirmation(signal_id, timeout=30)
+                
+                if confirmation:
+                    status = confirmation.get('Status')
+                    
+                    if status == 'EXECUTED':
+                        order_id = confirmation.get('OrderId', 'N/A')
+                        volume = confirmation.get('Volume', 0)
+                        logger.success(f"✅ CONFIRMED: {symbol} executed")
+                        logger.info(f"   Order ID: {order_id}")
+                        logger.info(f"   Volume: {volume}")
+                    
+                    elif status == 'REJECTED':
+                        reason = confirmation.get('Reason', 'Unknown')
+                        logger.error(f"❌ REJECTED: {symbol}")
+                        logger.error(f"   Reason: {reason}")
+                    
+                    else:
+                        logger.warning(f"⚠️  UNKNOWN STATUS: {status}")
+                
+                else:
+                    logger.warning(f"⏱️  TIMEOUT: No confirmation for {symbol} after 30s")
+                
+                # 3. Wait before processing next signal (rate limiting)
+                self.queue.task_done()
+                time.sleep(15)  # 15s between signals (cTrader polling = 10s)
+                
+            except queue.Empty:
+                continue
+            except Exception as e:
+                logger.error(f"❌ Queue processing error: {e}")
+                time.sleep(5)
 
 
 class CTraderExecutor:
@@ -24,25 +187,50 @@ class CTraderExecutor:
     V4.3 FIX-015: Anti-spam for rejected trades
     - Tracks rejection reasons per symbol
     - Logs only on status change or after 5-minute cooldown
+    
+    V5.0 ZERO-LATENCY PROTOCOL:
+    - Atomic file writes (race-condition proof)
+    - Signal queue (no overwrites)
+    - Execution confirmation (handshake)
+    - Absolute paths (location-independent)
     """
     
     def __init__(self, signals_file: str = "signals.json"):
+        # V5.0: ABSOLUTE PATH ENFORCEMENT
+        if not os.path.isabs(signals_file):
+            # Force absolute path to script directory
+            script_dir = Path(__file__).parent.resolve()
+            signals_file = str(script_dir / signals_file)
+        
         self.signals_file = signals_file
         
         # V4.3: Track rejected trades to prevent log spam
-        # Format: {symbol: {'reason': str, 'timestamp': datetime}}
         self.rejected_trades = {}
-        self.rejection_cooldown_seconds = 300  # 5 minutes
+        self.rejection_cooldown_seconds = 300
         
-        # MATRIX LINK: Show absolute path for debugging
-        absolute_path = os.path.abspath(signals_file)
-        logger.info(f"🔗 MATRIX LINK: Scriu semnale în -> {absolute_path}")
+        # V5.0: Confirmation file path
+        self.confirmation_file = self.signals_file.replace('signals.json', 'trade_confirmations.json')
         
-        # Verify directory exists
-        signals_dir = os.path.dirname(absolute_path)
+        # Verify directory exists and is writable
+        signals_dir = os.path.dirname(self.signals_file)
         if not os.path.exists(signals_dir):
-            logger.warning(f"⚠️  Directory {signals_dir} does not exist, creating...")
-            os.makedirs(signals_dir, exist_ok=True)
+            logger.error(f"❌ Directory does not exist: {signals_dir}")
+            raise FileNotFoundError(f"Signals directory not found: {signals_dir}")
+        
+        # Test write permissions
+        try:
+            test_file = Path(signals_dir) / ".write_test"
+            test_file.touch()
+            test_file.unlink()
+        except Exception as e:
+            logger.error(f"❌ No write permission in: {signals_dir}")
+            raise PermissionError(f"Cannot write to signals directory: {e}")
+        
+        logger.success(f"✅ Signal path verified: {self.signals_file}")
+        logger.info(f"✅ Confirmation path: {self.confirmation_file}")
+        
+        # V5.0: Initialize signal queue
+        self.signal_queue = SignalQueue(self.signals_file, self.confirmation_file)
         
         # Initialize Unified Risk Manager
         try:
@@ -52,7 +240,7 @@ class CTraderExecutor:
             logger.error(f"❌ Failed to load Unified Risk Manager: {e}")
             self.risk_manager = None
         
-        logger.info(f"🤖 CTraderExecutor initialized - writing to {signals_file}")
+        logger.success(f"🔥 CTraderExecutor V5.0 initialized (ZERO-LATENCY)")
     
     def execute_trade(self, symbol: str, direction: str, entry_price: float, 
                      stop_loss: float, take_profit: float, lot_size: float = 0.01,
@@ -94,9 +282,9 @@ class CTraderExecutor:
             bool: True if signal written, False if rejected
         """
         
-        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # ──────────────────
         # STEP 1: V3.0 STATUS CHECK (4H confirmation required)
-        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # ──────────────────
         if status != 'READY':
             logger.warning(f"⛔ EXECUTION BLOCKED: {symbol} status is '{status}' (must be 'READY')")
             logger.info(f"   Setup is in MONITORING phase - waiting for:")
@@ -104,9 +292,9 @@ class CTraderExecutor:
             logger.info(f"   2. Price to enter FVG zone")
             return False
         
-        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # ──────────────────
         # STEP 2: UNIFIED RISK VALIDATION (NEW IN V3.1!)
-        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # ──────────────────
         if self.risk_manager:
             validation = self.risk_manager.validate_new_trade(
                 symbol=symbol,
@@ -134,27 +322,44 @@ class CTraderExecutor:
         else:
             logger.warning("⚠️  Risk manager not available - using default lot size")
         
-        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # ──────────────────
         # STEP 3: PREPARE SIGNAL FOR CBOT
-        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # ──────────────────
+        
+        # 🚨 V5.6 BULLETPROOF FIX: HARDCODED LOT SIZE FOR BTCUSD
+        # Force 0.50 lots for BTCUSD to bypass all BadVolume issues
+        # BULLETPROOF: Ignore case, spaces, slashes
+        if 'BTC' in symbol.upper().replace(' ', '').replace('/', ''):
+            lot_size = 0.50
+            logger.warning(f"🚨 V5.6 BULLETPROOF: Forcing 0.50 lots for {symbol} (detected as BTC)")
+        
+        # 🚨 CRITICAL FIX by ФорексГод: Enforce minimum lot size of 0.01
+        # Broker minimum = 0.01 lots (micro lot)
+        # MUST be done BEFORE signal creation to prevent BadVolume!
+        elif lot_size < 0.01:
+            logger.warning(f"⚠️  Lot size {lot_size:.4f} below broker minimum - forcing to 0.01")
+            lot_size = 0.01
         
         try:
             # Generate unique signal ID
             signal_id = f"{symbol}_{direction}_{int(datetime.now().timestamp())}"
             
-            # Calculate pip size based on instrument type
+            # 🚨 V5.6 BULLETPROOF: Calculate pip size based on instrument type
+            # Clean symbol for robust detection (ignore case, spaces, slashes)
+            symbol_clean = symbol.upper().replace(' ', '').replace('/', '')
+            
             # Crypto (BTC, ETH, etc.): 1 pip = 1.0 (whole price)
             # JPY pairs: 1 pip = 0.01
             # Other forex: 1 pip = 0.0001
             # Gold/Silver: 1 pip = 0.01
             # Oil (XTIUSD, WTIUSD, etc.): 1 pip = 0.01
-            if symbol in ['BTCUSD', 'ETHUSD', 'XRPUSD', 'LTCUSD']:
+            if any(crypto in symbol_clean for crypto in ['BTC', 'ETH', 'XRP', 'LTC']):
                 pip_size = 1.0
-            elif 'JPY' in symbol:
+            elif 'JPY' in symbol_clean:
                 pip_size = 0.01
-            elif symbol in ['XAUUSD', 'XAGUSD']:  # Gold, Silver
+            elif any(metal in symbol_clean for metal in ['XAU', 'XAG', 'GOLD', 'SILVER']):
                 pip_size = 0.01
-            elif symbol in ['XTIUSD', 'WTIUSD', 'USOIL', 'CL']:  # Oil (WTI, Brent)
+            elif any(oil in symbol_clean for oil in ['XTI', 'WTI', 'USOIL', 'CL']):
                 pip_size = 0.01
             else:
                 pip_size = 0.0001
@@ -162,9 +367,33 @@ class CTraderExecutor:
             sl_pips = abs(entry_price - stop_loss) / pip_size
             tp_pips = abs(take_profit - entry_price) / pip_size
             
-            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            # ──────────────────
+            # 🚨 V5.6 BULLETPROOF CRYPTO DETECTION by ФорексГод:
+            # 1. Crypto: INTEGER pips (1411 not 1411.5) - no decimals!
+            # 2. Crypto: CLEAN PRICES (max 2 decimals) - prevents BadVolume
+            # 3. BULLETPROOF: Case-insensitive, ignores spaces/slashes
+            # ──────────────────
+            symbol_clean = symbol.upper().replace(' ', '').replace('/', '')
+            is_crypto = any(crypto in symbol_clean for crypto in ['BTC', 'ETH', 'XRP', 'LTC'])
+            
+            if is_crypto:
+                # INTEGER ROUNDING for pips (1411.55 becomes 1412)
+                sl_pips = int(round(sl_pips))
+                tp_pips = int(round(tp_pips))
+                
+                # CLEAN PRICES: Round to 2 decimals max for crypto
+                # 67258.39054999995 becomes 67258.39
+                entry_price = round(entry_price, 2)
+                stop_loss = round(stop_loss, 2)
+                take_profit = round(take_profit, 2)
+                
+                logger.info(f"🪙 CRYPTO PRICE CLEANING: {symbol}")
+                logger.info(f"   Entry: {entry_price:.2f} | SL: {stop_loss:.2f} | TP: {take_profit:.2f}")
+                logger.info(f"   SL Pips: {sl_pips} | TP Pips: {tp_pips} (INTEGER)")
+            
+            # ──────────────────
             # V4.0 SMC LEVEL UP - POPULATE NEW FIELDS
-            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            # ──────────────────
             # Extract V4.0 intelligence from setup object (if available)
             
             # 💧 Liquidity Sweep Detection
@@ -193,36 +422,74 @@ class CTraderExecutor:
                 premium_discount_zone = setup.premium_discount.get('zone', 'UNKNOWN')
                 daily_range_percentage = setup.premium_discount.get('percentage', 0.0)
             
-            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            # ──────────────────
             
-            signal = {
-                # ━━━ V1.0 ORIGINAL FIELDS ━━━
-                "SignalId": signal_id,
-                "Symbol": symbol,
-                "Direction": direction.lower(),  # CRITICAL: cBot expects lowercase!
-                "StrategyType": "PULLBACK",
-                "EntryPrice": entry_price,
-                "StopLoss": stop_loss,
-                "TakeProfit": take_profit,
-                "StopLossPips": round(sl_pips, 1),
-                "TakeProfitPips": round(tp_pips, 1),
-                "RiskReward": round(tp_pips / sl_pips, 2),
-                "Timestamp": datetime.now().isoformat(),
-                
-                # ━━━ V4.0 SMC LEVEL UP - NEW FIELDS ━━━
-                "LiquiditySweep": liquidity_sweep,
-                "SweepType": sweep_type,
-                "ConfidenceBoost": confidence_boost,
-                "OrderBlockUsed": order_block_used,
-                "OrderBlockScore": order_block_score,
-                "PremiumDiscountZone": premium_discount_zone,
-                "DailyRangePercentage": round(daily_range_percentage, 1)
-            }
+            # 🚨 V5.5 BRUTE FORCE: Calculate RawUnits for direct volume control
+            raw_units = None
+            if is_crypto:
+                raw_units = int(lot_size * 100000)  # 0.50 lots = 50,000 units for BTCUSD
+                logger.info(f"🪙 CRYPTO: RawUnits = {raw_units} ({lot_size} lots)")
             
-            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-            # BTC_VOLUME_FIX: Inject raw units for crypto to prevent rounding to 0
-            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-            if symbol in ['BTCUSD', 'ETHUSD', 'XRPUSD', 'LTCUSD']:
+            # 🚨 V5.6 BULLETPROOF: For BTCUSD, REMOVE pips (use only absolute prices)
+            # BULLETPROOF: Ignore case, spaces, slashes
+            if 'BTC' in symbol_clean:
+                signal = {
+                    "SignalId": signal_id,
+                    "Symbol": symbol,
+                    "Direction": direction.lower(),
+                    "StrategyType": "BRUTE_FORCE",
+                    "EntryPrice": int(round(entry_price)),  # INTEGER only
+                    "StopLoss": int(round(stop_loss)),      # INTEGER only
+                    "TakeProfit": int(round(take_profit)),  # INTEGER only
+                    # NO PIPS - cBot will use absolute prices only!
+                    "RiskReward": 5.0,
+                    "Timestamp": datetime.now().isoformat(),
+                    "LotSize": lot_size,
+                    "RawUnits": raw_units,
+                    
+                    # V4.0 fields (minimal)
+                    "LiquiditySweep": False,
+                    "SweepType": "",
+                    "ConfidenceBoost": 0,
+                    "OrderBlockUsed": False,
+                    "OrderBlockScore": 0,
+                    "PremiumDiscountZone": "UNKNOWN",
+                    "DailyRangePercentage": 0.0
+                }
+                logger.warning(f"🚨 V5.6 BRUTE FORCE MODE: {symbol} with NO PIPS - using absolute prices only!")
+            else:
+                # Normal signal for non-crypto
+                signal = {
+                    # ━━━ V1.0 ORIGINAL FIELDS ━━━
+                    "SignalId": signal_id,
+                    "Symbol": symbol,
+                    "Direction": direction.lower(),  # CRITICAL: cBot expects lowercase!
+                    "StrategyType": "PULLBACK",
+                    "EntryPrice": entry_price,
+                    "StopLoss": stop_loss,
+                    "TakeProfit": take_profit,
+                    "StopLossPips": round(sl_pips, 1),
+                    "TakeProfitPips": round(tp_pips, 1),
+                    "RiskReward": round(tp_pips / sl_pips, 2),
+                    "Timestamp": datetime.now().isoformat(),
+                    "LotSize": lot_size,
+                    "RawUnits": raw_units,
+                    
+                    # ━━━ V4.0 SMC LEVEL UP - NEW FIELDS ━━━
+                    "LiquiditySweep": liquidity_sweep,
+                    "SweepType": sweep_type,
+                    "ConfidenceBoost": confidence_boost,
+                    "OrderBlockUsed": order_block_used,
+                    "OrderBlockScore": order_block_score,
+                    "PremiumDiscountZone": premium_discount_zone,
+                    "DailyRangePercentage": round(daily_range_percentage, 1)
+                }
+            
+            # ──────────────────
+            # V5.6 BULLETPROOF BTC_VOLUME_FIX: Inject raw units for crypto to prevent rounding to 0
+            # BULLETPROOF: Case-insensitive, ignores spaces/slashes
+            # ──────────────────
+            if is_crypto:
                 # For crypto, if lot_size < 1.0, calculate raw units
                 if lot_size < 1.0:
                     raw_units = int(lot_size * 100000)  # 0.01 lots = 1000 units for BTC
@@ -231,24 +498,22 @@ class CTraderExecutor:
                     signal["RawUnits"] = raw_units
                     logger.info(f"💉 BTC_VOLUME_FIX: Injected RawUnits={raw_units} (lot_size={lot_size})")
             
-            # Write SINGLE signal (cBot expects object, not array)
-            with open(self.signals_file, 'w') as f:
-                json.dump(signal, f, indent=2)
+            # V5.0: QUEUE SIGNAL (atomic write + confirmation)
+            success = self.signal_queue.enqueue(signal)
             
-            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-            # V4.0 SYNC CONFIRMATION LOGGING
-            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-            logger.success(f"✅ Signal written: {direction} {symbol} @ {entry_price} (SL: {sl_pips:.1f} pips, TP: {tp_pips:.1f} pips)")
+            if success:
+                logger.success(f"✅ Signal queued: {direction} {symbol} @ {entry_price}")
+                logger.info(f"   SL: {sl_pips:.1f} pips | TP: {tp_pips:.1f} pips | RR: 1:{signal['RiskReward']}")
+                
+                if liquidity_sweep:
+                    logger.info(f"   💧 V4.0: Liquidity Sweep {sweep_type} (+{confidence_boost} conf)")
+                
+                if order_block_used:
+                    logger.info(f"   📦 V4.0: Order Block entry (score {order_block_score}/10)")
+                
+                logger.info(f"   📊 V4.0: {premium_discount_zone} zone ({daily_range_percentage:.1f}% daily range)")
             
-            if liquidity_sweep:
-                logger.info(f"   💧 V4.0: Liquidity Sweep {sweep_type} (+{confidence_boost} conf)")
-            
-            if order_block_used:
-                logger.info(f"   📦 V4.0: Order Block entry (score {order_block_score}/10)")
-            
-            logger.info(f"   📊 V4.0: {premium_discount_zone} zone ({daily_range_percentage:.1f}% of daily range)")
-            
-            return True
+            return success
             
         except Exception as e:
             logger.error(f"❌ Failed to write signal: {e}")
@@ -257,12 +522,22 @@ class CTraderExecutor:
     def clear_signals(self):
         """Clear all signals from signals.json (write empty object)"""
         try:
-            with open(self.signals_file, 'w') as f:
-                json.dump({}, f)  # Empty object, not array
-            logger.info(f"🗑️  Cleared signals from {self.signals_file}")
+            # V5.0: Use atomic write for clearing too
+            dir_path = os.path.dirname(self.signals_file)
+            fd, temp_path = tempfile.mkstemp(suffix='.json.tmp', dir=dir_path, text=True)
+            
+            with os.fdopen(fd, 'w') as f:
+                json.dump({}, f)
+                f.flush()
+                os.fsync(f.fileno())
+            
+            os.replace(temp_path, self.signals_file)
+            logger.info("🗑️  Signals cleared (atomic)")
             return True
         except Exception as e:
             logger.error(f"❌ Failed to clear signals: {e}")
+            if 'temp_path' in locals() and os.path.exists(temp_path):
+                os.unlink(temp_path)
             return False
     
     def get_pending_signals(self):

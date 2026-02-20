@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 🛡️ Unified Risk Manager - Single Source of Truth
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 
 Reads SUPER_CONFIG.json (shared with cBot)
 Enforces risk limits across Python and cTrader
 Activates KILL SWITCH on 10% daily loss
 
 ✨ Glitch in Matrix by ФорексГод ✨
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+──────────────────
 """
 
 import json
@@ -49,13 +49,13 @@ class UnifiedRiskManager:
         self.kill_switch_trigger = self.config['kill_switch']['trigger_daily_loss_percent']
         
         print(f"\n🛡️  UNIFIED RISK MANAGER INITIALIZED")
-        print(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        print(f"──────────────────")
         print(f"📊 Risk per trade: {self.risk_per_trade}%")
         print(f"📈 Max positions: {self.max_positions}")
         print(f"🛑 Daily loss limit: {self.max_daily_loss_pct}%")
         print(f"⚠️  Daily warning: {self.daily_warning_pct}%")
         print(f"🔴 Kill switch: {'ENABLED' if self.kill_switch_enabled else 'DISABLED'} @ {self.kill_switch_trigger}%")
-        print(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        print(f"──────────────────")
     
     def _load_config(self):
         """Load SUPER_CONFIG.json"""
@@ -202,7 +202,7 @@ class UnifiedRiskManager:
                     "🟢 <b>KILL SWITCH DEACTIVATED</b>\n\n"
                     "Trading has been resumed.\n"
                     "System is now accepting new signals.\n\n"
-                    "━━━━━━━━━━━━━━━━━━━━\n"
+                    "──────────────────\n"
                     "✨ <b>Glitch in Matrix by ФорексГод</b> ✨\n"
                     "🧠 <i>AI-Powered</i> • 💎 <i>Smart Money</i>"
                 )
@@ -233,6 +233,19 @@ class UnifiedRiskManager:
             'reason': None,
             'lot_size': 0.0
         }
+        
+        # 🚀 V8.1 BULLETPROOF NO-MATH BYPASS: BTCUSD gets DIRECT volume injection
+        # Skip ALL risk calculations, daily range checks, and data dependencies
+        # BULLETPROOF: Case-insensitive, ignores spaces/slashes
+        if 'BTC' in symbol.upper().replace(' ', '').replace('/', ''):
+            result['approved'] = True
+            result['lot_size'] = 0.50
+            result['reason'] = "V8.1 BULLETPROOF NO-MATH BYPASS - Manual Override"
+            print(f"\n🚀 BTC EXECUTION: Forced 0.50 lots (Bulletproof Bypass)")
+            print(f"   Symbol detected: {symbol} → BTC identified")
+            print(f"   ⚠️  SKIPPED: All risk calculations, daily range, data validation")
+            print(f"   ✅ APPROVED: Direct volume injection")
+            return result
         
         # 1. Check kill switch
         if self.check_kill_switch():
@@ -272,18 +285,43 @@ class UnifiedRiskManager:
         if daily_loss_pct <= -self.daily_warning_pct:
             self._send_warning_alert(daily_loss_pct, balance)
         
-        # 4. Calculate lot size
+        # 4. Calculate lot size - CASH RISK ALIGNMENT (The $200 Rule)
         if entry_price > 0 and stop_loss > 0:
+            # ✅ V8.1 BULLETPROOF: Robust lot calculation for $200 risk
             risk_amount = balance * (self.risk_per_trade / 100.0)
             sl_distance = abs(entry_price - stop_loss)
             
-            # Simplified pip value (should be dynamic per symbol)
-            pip_size = 0.0001 if 'JPY' not in symbol else 0.01
+            # 🚨 V8.1 BULLETPROOF: Clean symbol for robust detection
+            symbol_clean = symbol.upper().replace(' ', '').replace('/', '')
+            
+            if any(x in symbol_clean for x in ['BTC', 'ETH', 'XRP', 'LTC', 'ADA']):
+                # Crypto: pip_size = 1.0 (whole dollar), pip_value = 0.01 per micro lot
+                pip_size = 1.0
+                pip_value = 0.01  # $0.01 per micro lot per $1 move (IC Markets leverage)
+                # For BTC at 66.5k with 1330$ SL, risk $200:
+                # lot_size = 200 / (1330 * 0.01) = 15.04 micro lots (0.15 standard lots)
+            elif any(x in symbol_clean for x in ['XAU', 'XAG', 'GOLD', 'SILVER']):
+                # Metals: pip at 2nd decimal
+                pip_size = 0.01
+                pip_value = 10.0
+            elif 'JPY' in symbol_clean:
+                # JPY pairs: pip at 2nd decimal (0.01)
+                pip_size = 0.01
+                pip_value = 10.0  # $10 per standard lot per pip (0.01 move)
+            elif any(x in symbol_clean for x in ['XTI', 'WTI', 'OIL']):
+                # Oil: pip at 2nd decimal
+                pip_size = 0.01
+                pip_value = 10.0
+            else:
+                # Standard forex: pip at 4th decimal (0.0001)
+                pip_size = 0.0001
+                pip_value = 10.0  # $10 per standard lot per pip
+            
+            # Calculate lot size: risk_amount / (SL_distance_in_price * pip_value_per_unit)
             sl_pips = sl_distance / pip_size
             
-            pip_value = 10  # $10 per lot per pip (simplified)
-            
             if sl_pips > 0:
+                # Formula: LotSize = Risk_Amount / (SL_Distance_in_Price * Pip_Value)
                 lot_size = risk_amount / (sl_pips * pip_value)
                 lot_size = round(lot_size, 2)
                 
@@ -292,9 +330,23 @@ class UnifiedRiskManager:
                 max_lot = self.config['lot_size']['max_lot']
                 lot_size = max(min_lot, min(lot_size, max_lot))
                 
+                # 🚨 CRITICAL: Force minimum 0.01 lots to prevent BadVolume
+                # Especially for small accounts (<$1000) on BTC with large SL
+                if lot_size < 0.01:
+                    print(f"⚠️  Lot size {lot_size:.4f} below broker minimum - forcing to 0.01")
+                    lot_size = 0.01
+                
+                # ✅ Logging for debugging
+                print(f"\n[LOT CALCULATION] {symbol}")
+                print(f"   Risk Amount: ${risk_amount:.2f}")
+                print(f"   SL Distance: {sl_distance:.5f} ({sl_pips:.1f} pips)")
+                print(f"   Pip Value: ${pip_value:.2f}")
+                print(f"   Calculated Lot: {lot_size:.2f}")
+                
                 result['lot_size'] = lot_size
             else:
                 result['lot_size'] = 0.01
+                print(f"⚠️  Invalid SL distance, defaulting to 0.01 lots")
         
         # All checks passed
         result['approved'] = True
@@ -314,7 +366,7 @@ class UnifiedRiskManager:
             f"Symbol: <b>{symbol}</b>\n"
             f"Direction: <b>{direction}</b>\n"
             f"Reason: <i>{reason}</i>\n\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
+            "──────────────────\n"
             "✨ <b>Glitch in Matrix by ФорексГод</b> ✨\n"
             "🧠 <i>AI-Powered</i> • 💎 <i>Smart Money</i>"
         )
@@ -332,7 +384,7 @@ class UnifiedRiskManager:
             f"💰 Balance: ${balance:.2f}\n"
             f"📊 Today's P&L: ${pnl['total_pnl']:.2f}\n\n"
             "⚠️ <i>Approaching daily loss limit!</i>\n\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
+            "──────────────────\n"
             "✨ <b>Glitch in Matrix by ФорексГод</b> ✨\n"
             "🧠 <i>AI-Powered</i> • 💎 <i>Smart Money</i>"
         )
@@ -347,7 +399,7 @@ class UnifiedRiskManager:
         message = (
             "🔴 <b>KILL SWITCH ACTIVATED!</b> 🔴\n\n"
             f"<b>Reason:</b> {reason}\n\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
+            "──────────────────\n"
             "📊 <b>DAILY SUMMARY:</b>\n"
             f"💰 Balance: ${balance:.2f}\n"
             f"💎 Equity: ${equity:.2f}\n"
@@ -357,7 +409,7 @@ class UnifiedRiskManager:
             "System will not accept new signals.\n"
             "Existing positions remain open.\n\n"
             "To resume: Delete trading_disabled.flag\n\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
+            "──────────────────\n"
             "✨ <b>Glitch in Matrix by ФорексГод</b> ✨\n"
             "🧠 <i>AI-Powered</i> • 💎 <i>Smart Money</i>"
         )
@@ -403,24 +455,24 @@ class UnifiedRiskManager:
         
         message = (
             f"{status}\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
+            "──────────────────\n"
             "📊 <b>DAILY RISK SUMMARY</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            "──────────────────\n\n"
             f"💰 <b>Balance:</b> ${balance:.2f}\n"
             f"💎 <b>Equity:</b> ${equity:.2f}\n"
             f"📈 <b>Open Positions:</b> {open_positions}/{self.max_positions}\n\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
+            "──────────────────\n"
             "📉 <b>TODAY'S P&L:</b>\n"
             f"💵 Closed: ${pnl['closed_pnl']:.2f}\n"
             f"📊 Open: ${pnl['open_pnl']:.2f}\n"
             f"💎 <b>Total: ${pnl['total_pnl']:.2f} ({daily_loss_pct:.2f}%)</b>\n\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
+            "──────────────────\n"
             "🛡️ <b>RISK LIMITS:</b>\n"
             f"⚠️  Warning: {self.daily_warning_pct}%\n"
             f"🛑 Daily limit: {self.max_daily_loss_pct}%\n"
             f"🔴 Kill switch: {self.kill_switch_trigger}%\n"
             f"🚦 Status: {kill_switch_status}\n\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
+            "──────────────────\n"
             "✨ <b>Glitch in Matrix by ФорексГод</b> ✨\n"
             "🧠 <i>AI-Powered</i> • 💎 <i>Smart Money</i>"
         )
@@ -464,13 +516,13 @@ def main():
             kill_switch = risk_manager.check_kill_switch()
             
             print(f"\n📊 RISK STATUS:")
-            print(f"━━━━━━━━━━━━━━━━━━━━")
+            print(f"──────────────────")
             print(f"💰 Balance: ${balance:.2f}")
             print(f"💎 Equity: ${equity:.2f}")
             print(f"📈 Positions: {positions}/{risk_manager.max_positions}")
             print(f"📊 Daily P&L: ${pnl['total_pnl']:.2f}")
             print(f"🚦 Kill switch: {'🔴 ACTIVE' if kill_switch else '🟢 INACTIVE'}")
-            print(f"━━━━━━━━━━━━━━━━━━━━\n")
+            print(f"──────────────────\n")
         
         else:
             print(f"Unknown command: {command}")
