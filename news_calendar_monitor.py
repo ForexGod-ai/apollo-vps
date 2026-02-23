@@ -377,7 +377,8 @@ class NewsCalendarMonitor:
                                 # Fallback to title attribute
                                 if not impact and 'title' in impact_span.attrs:
                                     impact = impact_span['title']
-                                    if 'High' in impact:
+                                    # 🚨 FIX: Use exact match for ForexFactory format
+                                    if impact in ["High Impact Expected", "High"]:
                                         is_high_impact = True
                         
                         # Get event name
@@ -439,7 +440,8 @@ class NewsCalendarMonitor:
     def filter_high_impact_events(self, events: List[NewsEvent]) -> List[NewsEvent]:
         """
         Filter only HIGH impact events for major currencies
-        Uses both ForexFactory classification AND keyword detection for critical events
+        🔥 FIX by ФорексГод: STRICT ForexFactory classification - NO keyword override!
+        Critical keywords only ADD warning flags, NOT promote to HIGH
         """
         high_impact = []
         
@@ -448,15 +450,15 @@ class NewsCalendarMonitor:
             if event.currency not in self.major_currencies:
                 continue
             
-            # Method 1: ForexFactory marked as HIGH impact
-            is_ff_high = "High" in event.impact
+            # 🚨 STRICT FIX: ONLY accept events ForexFactory marked as HIGH (red icon)
+            # Use EXACT match - must be official ForexFactory format
+            is_ff_high = event.impact in ["High Impact Expected", "High"]
             
-            # Method 2: Contains critical keywords (override ForexFactory classification)
-            is_critical = any(keyword.lower() in event.event.lower() for keyword in self.critical_keywords)
-            
-            # Accept if either condition is true
-            if is_ff_high or is_critical:
-                event.is_critical = is_critical  # Mark if it matches critical keywords
+            # Only accept ForexFactory HIGH events
+            if is_ff_high:
+                # Check if contains critical keywords (for warning flags only)
+                is_critical = any(keyword.lower() in event.event.lower() for keyword in self.critical_keywords)
+                event.is_critical = is_critical  # Mark for extra warnings in message
                 high_impact.append(event)
         
         return high_impact
