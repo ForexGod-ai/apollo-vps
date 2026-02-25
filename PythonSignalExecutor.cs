@@ -301,8 +301,19 @@ namespace cAlgo.Robots
                 Print($"      Min/Max allowed: {btcSymbol.VolumeInUnitsMin} - {btcSymbol.VolumeInUnitsMax} units");
                 Print($"      Volume step: {btcSymbol.VolumeInUnitsStep}");
                 
-                var tradeType = signal.Direction.ToLower() == "sell" ? TradeType.Sell : TradeType.Buy;
+                // ✅ V9.4 DIRECTION FIX: Accept synonyms (SHORT, SELL, PUT → Sell)
+                var dir = signal.Direction.ToLower().Trim();
+                TradeType tradeType;
+                if (dir == "sell" || dir == "short" || dir == "put")
+                {
+                    tradeType = TradeType.Sell;
+                }
+                else
+                {
+                    tradeType = TradeType.Buy;
+                }
                 
+                Print($"⚖️ DIRECTION CHECK: Input='{signal.Direction}' -> Interpreted as {tradeType}");
                 Print($"🚀 Executing: {tradeType} BTCUSD {lotSize} lots ({forcedVolume:F8} broker units)");
                 
                 // Execute WITHOUT SL/TP first
@@ -389,9 +400,19 @@ namespace cAlgo.Robots
             // Calculate volume for NON-BTCUSD symbols
             long volume = CalculateVolume(signal, symbol);
             
-            TradeType tradeType2 = signal.Direction.ToLower() == "bullish" || signal.Direction.ToLower() == "buy" 
-                ? TradeType.Buy 
-                : TradeType.Sell;
+            // ✅ V9.4 DIRECTION FIX: Accept synonyms (SHORT, SELL, PUT → Sell)
+            var dir2 = signal.Direction.ToLower().Trim();
+            TradeType tradeType2;
+            if (dir2 == "sell" || dir2 == "short" || dir2 == "put" || dir2 == "bearish")
+            {
+                tradeType2 = TradeType.Sell;
+            }
+            else
+            {
+                tradeType2 = TradeType.Buy;
+            }
+            
+            Print($"⚖️ DIRECTION CHECK: Input='{signal.Direction}' -> Interpreted as {tradeType2}");
 
             // Normal execution for non-BTCUSD symbols
             Print($"📈 Executing: {signal.Direction.ToUpper()} {symbol.VolumeInUnitsToQuantity(volume)} lots");
