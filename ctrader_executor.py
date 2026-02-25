@@ -334,7 +334,7 @@ class CTraderExecutor:
                     f"Direction: <b>{direction}</b>\n"
                     f"Order ID: <code>{order_id}</code>\n"
                     f"Entry: <b>{entry_price:.5f}</b>\n"
-                    f"Volume: <b>{volume:.2f}</b> units\n"
+                    f"Volume: <b>{volume:.2f}</b> lots\n"
                     f"SL: <b>{stop_loss:.5f}</b>\n"
                     f"TP: <b>{take_profit:.5f}</b>\n\n"
                     f"🎯 <i>Trade confirmed by cTrader</i>\n\n"
