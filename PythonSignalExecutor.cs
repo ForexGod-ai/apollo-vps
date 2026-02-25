@@ -426,19 +426,35 @@ namespace cAlgo.Robots
         
         private void WriteExecutionConfirmation(TradeSignal signal, Position position, string status, string reason)
         {
+            // ✅ TWO-WAY HANDSHAKE: Write execution report for Python to verify
+            // Python will wait up to 15-30 seconds for this file before assuming failure
             try
             {
+                // Write to BOTH locations for compatibility
                 var confirmationPath = SignalFilePath.Replace("signals.json", "trade_confirmations.json");
+                var executionReportPath = SignalFilePath.Replace("signals.json", "execution_report.json");
+                
+                // ✅ V9.3 FIX: Convert VolumeInUnits to LOTS for display
+                double volumeInLots = 0.0;
+                if (position != null)
+                {
+                    var symbol = Symbols.GetSymbol(position.SymbolName);
+                    if (symbol != null)
+                    {
+                        volumeInLots = symbol.VolumeInUnitsToQuantity(position.VolumeInUnits);
+                    }
+                }
                 
                 var confirmation = new
                 {
                     SignalId = signal.SignalId,
                     Status = status,  // "EXECUTED" or "REJECTED"
                     OrderId = position?.Id.ToString() ?? "N/A",
-                    Volume = position?.VolumeInUnits ?? 0,
-                    EntryPrice = position?.EntryPrice ?? 0,
-                    StopLoss = position?.StopLoss ?? 0,
-                    TakeProfit = position?.TakeProfit ?? 0,
+                    Volume = volumeInLots,  // ✅ V9.3 FIX: Volume in LOTS (not units!)
+                    VolumeInUnits = position?.VolumeInUnits ?? 0.0,  // Keep units for reference
+                    EntryPrice = position?.EntryPrice ?? 0.0,
+                    StopLoss = position?.StopLoss ?? 0.0,
+                    TakeProfit = position?.TakeProfit ?? 0.0,
                     Reason = reason,
                     Timestamp = DateTime.UtcNow,
                     
@@ -446,17 +462,42 @@ namespace cAlgo.Robots
                     Symbol = signal.Symbol,
                     Direction = signal.Direction,
                     Account = Account.Number,
-                    Balance = Account.Balance
+                    Balance = Account.Balance,
+                    
+                    // ✅ Message for easy Python parsing (include volume in LOTS)
+                    Message = status == "EXECUTED" 
+                        ? $"Filled at {position?.EntryPrice:F5} | Volume: {volumeInLots:F2} lots" 
+                        : reason
                 };
                 
                 var options = new JsonSerializerOptions { WriteIndented = true };
-                File.WriteAllText(confirmationPath, JsonSerializer.Serialize(confirmation, options));
+                var json = JsonSerializer.Serialize(confirmation, options);
                 
-                Print($"✅ Confirmation written: {status}");
+                // Write to BOTH files (legacy + new protocol)
+                File.WriteAllText(confirmationPath, json);
+                File.WriteAllText(executionReportPath, json);
+                
+                Print($"✅ Execution report written: {status}");
+                Print($"   Volume: {volumeInLots:F2} lots ({position?.VolumeInUnits ?? 0:F2} units)");
+                Print($"   Primary: {confirmationPath}");
+                Print($"   Mirror: {executionReportPath}");
             }
             catch (Exception ex)
             {
                 Print($"⚠️  Could not write confirmation: {ex.Message}");
+                
+                // ✅ CRITICAL: Try to write minimal error report even if JSON fails
+                try
+                {
+                    var errorPath = SignalFilePath.Replace("signals.json", "execution_report.json");
+                    var errorData = $"{{\"SignalId\":\"{signal.SignalId}\",\"Status\":\"ERROR\",\"Message\":\"{ex.Message.Replace("\"", "'")}\",\"Timestamp\":\"{DateTime.UtcNow:O}\"}}";
+                    File.WriteAllText(errorPath, errorData);
+                    Print($"✅ Error report written (fallback)");
+                }
+                catch
+                {
+                    Print($"❌ CRITICAL: Cannot write ANY confirmation file!");
+                }
             }
         }
 

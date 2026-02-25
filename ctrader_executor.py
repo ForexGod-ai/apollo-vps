@@ -20,6 +20,10 @@ from pathlib import Path
 from loguru import logger
 from typing import Optional, Dict
 from unified_risk_manager import UnifiedRiskManager
+import requests
+from dotenv import load_dotenv
+
+load_dotenv()
 
 
 class SignalQueue:
@@ -27,9 +31,10 @@ class SignalQueue:
     V5.0 ZERO-LATENCY: Thread-safe signal queue
     Prevents signal loss during simultaneous detections
     """
-    def __init__(self, signals_file: str, confirmation_file: str):
+    def __init__(self, signals_file: str, confirmation_file: str, executor=None):
         self.signals_file = signals_file
         self.confirmation_file = confirmation_file
+        self.executor = executor  # Reference to CTraderExecutor for Telegram notifications
         self.queue = queue.Queue(maxsize=20)  # Max 20 pending signals
         self.worker_thread = threading.Thread(
             target=self._process_queue,
@@ -99,20 +104,37 @@ class SignalQueue:
     def _wait_for_confirmation(self, signal_id: str, timeout: int = 30) -> Optional[Dict]:
         """
         V5.0 HANDSHAKE: Wait for cTrader execution confirmation
+        
+        ✅ TWO-WAY HANDSHAKE PROTOCOL:
+        - Checks BOTH execution_report.json (new) and trade_confirmations.json (legacy)
+        - Polls every 1 second for up to 30 seconds
+        - Returns confirmation dict if found, None on timeout
         """
         start_time = time.time()
         
+        # Check BOTH file paths (new protocol + legacy)
+        execution_report_path = self.confirmation_file.replace('trade_confirmations.json', 'execution_report.json')
+        legacy_path = self.confirmation_file
+        
         while time.time() - start_time < timeout:
             try:
-                if not os.path.exists(self.confirmation_file):
-                    time.sleep(1)
-                    continue
+                # Try NEW protocol first (execution_report.json)
+                if os.path.exists(execution_report_path):
+                    with open(execution_report_path, 'r') as f:
+                        data = json.load(f)
+                    
+                    if data.get('SignalId') == signal_id:
+                        logger.debug(f"✅ Found confirmation in execution_report.json")
+                        return data
                 
-                with open(self.confirmation_file, 'r') as f:
-                    data = json.load(f)
-                
-                if data.get('SignalId') == signal_id:
-                    return data
+                # Fallback to LEGACY (trade_confirmations.json)
+                if os.path.exists(legacy_path):
+                    with open(legacy_path, 'r') as f:
+                        data = json.load(f)
+                    
+                    if data.get('SignalId') == signal_id:
+                        logger.debug(f"✅ Found confirmation in trade_confirmations.json (legacy)")
+                        return data
                 
             except Exception as e:
                 logger.debug(f"Confirmation check error: {e}")
@@ -148,20 +170,61 @@ class SignalQueue:
                     if status == 'EXECUTED':
                         order_id = confirmation.get('OrderId', 'N/A')
                         volume = confirmation.get('Volume', 0)
+                        entry_price = confirmation.get('EntryPrice', 0)
                         logger.success(f"✅ CONFIRMED: {symbol} executed")
                         logger.info(f"   Order ID: {order_id}")
                         logger.info(f"   Volume: {volume}")
+                        
+                        # ✅ SEND SUCCESS NOTIFICATION
+                        if self.executor:
+                            self.executor._send_telegram_notification(
+                                symbol=symbol,
+                                direction=signal.get('Direction', 'UNKNOWN'),
+                                status='SUCCESS',
+                                order_id=order_id,
+                                volume=volume,
+                                entry_price=entry_price,
+                                stop_loss=signal.get('StopLoss', 0),
+                                take_profit=signal.get('TakeProfit', 0)
+                            )
                     
                     elif status == 'REJECTED':
                         reason = confirmation.get('Reason', 'Unknown')
                         logger.error(f"❌ REJECTED: {symbol}")
                         logger.error(f"   Reason: {reason}")
+                        
+                        # ❌ SEND REJECTION NOTIFICATION
+                        if self.executor:
+                            self.executor._send_telegram_notification(
+                                symbol=symbol,
+                                direction=signal.get('Direction', 'UNKNOWN'),
+                                status='REJECTED',
+                                reason=reason
+                            )
                     
                     else:
                         logger.warning(f"⚠️  UNKNOWN STATUS: {status}")
+                        
+                        # ⚠️ SEND UNKNOWN STATUS NOTIFICATION
+                        if self.executor:
+                            self.executor._send_telegram_notification(
+                                symbol=symbol,
+                                direction=signal.get('Direction', 'UNKNOWN'),
+                                status='UNKNOWN',
+                                reason=f"Unexpected status: {status}"
+                            )
                 
                 else:
                     logger.warning(f"⏱️  TIMEOUT: No confirmation for {symbol} after 30s")
+                    
+                    # ⏱️ SEND TIMEOUT NOTIFICATION
+                    if self.executor:
+                        self.executor._send_telegram_notification(
+                            symbol=symbol,
+                            direction=signal.get('Direction', 'UNKNOWN'),
+                            status='TIMEOUT',
+                            reason='cTrader did not respond within 30 seconds'
+                        )
                 
                 # 3. Wait before processing next signal (rate limiting)
                 self.queue.task_done()
@@ -229,8 +292,8 @@ class CTraderExecutor:
         logger.success(f"✅ Signal path verified: {self.signals_file}")
         logger.info(f"✅ Confirmation path: {self.confirmation_file}")
         
-        # V5.0: Initialize signal queue
-        self.signal_queue = SignalQueue(self.signals_file, self.confirmation_file)
+        # V5.0: Initialize signal queue (pass self reference for Telegram notifications)
+        self.signal_queue = SignalQueue(self.signals_file, self.confirmation_file, executor=self)
         
         # Initialize Unified Risk Manager
         try:
@@ -241,6 +304,107 @@ class CTraderExecutor:
             self.risk_manager = None
         
         logger.success(f"🔥 CTraderExecutor V5.0 initialized (ZERO-LATENCY)")
+    
+    def _send_telegram_notification(self, symbol: str, direction: str, status: str, 
+                                    order_id: str = None, volume: float = None, 
+                                    entry_price: float = None, stop_loss: float = None,
+                                    take_profit: float = None, reason: str = None):
+        """
+        Send execution status to Telegram with proper formatting
+        
+        ✅ TWO-WAY HANDSHAKE PROTOCOL:
+        - SUCCESS: cTrader confirmed execution
+        - REJECTED: cTrader rejected signal (BadVolume, etc.)
+        - TIMEOUT: cTrader did not respond within 30s
+        - UNKNOWN: cTrader returned unexpected status
+        """
+        try:
+            telegram_token = os.getenv('TELEGRAM_BOT_TOKEN')
+            telegram_chat_id = os.getenv('TELEGRAM_CHAT_ID')
+            
+            if not telegram_token or not telegram_chat_id:
+                logger.warning("⚠️  Telegram credentials missing - notification skipped")
+                return
+            
+            # Build message based on status
+            if status == 'SUCCESS':
+                message = (
+                    f"✅ <b>EXECUTION SUCCESS</b>\n\n"
+                    f"Symbol: <b>{symbol}</b>\n"
+                    f"Direction: <b>{direction}</b>\n"
+                    f"Order ID: <code>{order_id}</code>\n"
+                    f"Entry: <b>{entry_price:.5f}</b>\n"
+                    f"Volume: <b>{volume:.2f}</b> units\n"
+                    f"SL: <b>{stop_loss:.5f}</b>\n"
+                    f"TP: <b>{take_profit:.5f}</b>\n\n"
+                    f"🎯 <i>Trade confirmed by cTrader</i>\n\n"
+                    f"━━━━━━━━━━━━━━━━━━\n"
+                    f"✨ <b>Glitch in Matrix by ФорексГод</b> ✨\n"
+                    f"🧠 <i>AI-Powered</i> • 💎 <i>Smart Money</i>"
+                )
+            
+            elif status == 'REJECTED':
+                message = (
+                    f"❌ <b>EXECUTION REJECTED</b>\n\n"
+                    f"Symbol: <b>{symbol}</b>\n"
+                    f"Direction: <b>{direction}</b>\n"
+                    f"Reason: <i>{reason}</i>\n\n"
+                    f"⚠️ <i>Signal rejected by cTrader</i>\n\n"
+                    f"━━━━━━━━━━━━━━━━━━\n"
+                    f"✨ <b>Glitch in Matrix by ФорексГод</b> ✨\n"
+                    f"🧠 <i>AI-Powered</i> • 💎 <i>Smart Money</i>"
+                )
+            
+            elif status == 'TIMEOUT':
+                message = (
+                    f"⏱️ <b>EXECUTION TIMEOUT</b>\n\n"
+                    f"Symbol: <b>{symbol}</b>\n"
+                    f"Direction: <b>{direction}</b>\n\n"
+                    f"🚨 <b>CRITICAL:</b> Signal sent but NO RESPONSE from cTrader\n"
+                    f"Possible causes:\n"
+                    f"• cBot not running\n"
+                    f"• File lock conflict\n"
+                    f"• Silent error in OnTimer\n\n"
+                    f"⚠️ <i>Check cTrader logs immediately</i>\n\n"
+                    f"━━━━━━━━━━━━━━━━━━\n"
+                    f"✨ <b>Glitch in Matrix by ФорексГод</b> ✨\n"
+                    f"🧠 <i>AI-Powered</i> • 💎 <i>Smart Money</i>"
+                )
+            
+            elif status == 'UNKNOWN':
+                message = (
+                    f"⚠️ <b>UNKNOWN STATUS</b>\n\n"
+                    f"Symbol: <b>{symbol}</b>\n"
+                    f"Direction: <b>{direction}</b>\n"
+                    f"Details: <i>{reason}</i>\n\n"
+                    f"🔍 <i>Unexpected response from cTrader</i>\n\n"
+                    f"━━━━━━━━━━━━━━━━━━\n"
+                    f"✨ <b>Glitch in Matrix by ФорексГод</b> ✨\n"
+                    f"🧠 <i>AI-Powered</i> • 💎 <i>Smart Money</i>"
+                )
+            
+            else:
+                logger.warning(f"⚠️  Unknown notification status: {status}")
+                return
+            
+            # Send to Telegram
+            url = f"https://api.telegram.org/bot{telegram_token}/sendMessage"
+            payload = {
+                'chat_id': telegram_chat_id,
+                'text': message,
+                'parse_mode': 'HTML',
+                'disable_web_page_preview': True
+            }
+            
+            response = requests.post(url, json=payload, timeout=10)
+            
+            if response.status_code == 200:
+                logger.success(f"📱 Telegram notification sent: {status}")
+            else:
+                logger.error(f"❌ Telegram failed: {response.status_code}")
+        
+        except Exception as e:
+            logger.error(f"❌ Telegram notification error: {e}")
     
     def execute_trade(self, symbol: str, direction: str, entry_price: float, 
                      stop_loss: float, take_profit: float, lot_size: float = 0.01,
