@@ -86,13 +86,21 @@ namespace cAlgo.Robots
                 for (int i = 0; i < openPositions.Count; i++)
                 {
                     var position = openPositions[i];
+                    
+                    // ✅ V10.1 FIX: Use broker-specific volume conversion (fixes BTCUSD 0.0 bug)
+                    var symbol = Symbols.GetSymbol(position.SymbolName);
+                    double lotSize = symbol != null 
+                        ? symbol.VolumeInUnitsToQuantity(position.VolumeInUnits) 
+                        : position.VolumeInUnits / 100000.0; // Fallback for missing symbols
+                    
                     json.AppendLine("        {");
                     json.AppendLine($"            \"ticket\": {position.Id},");
                     json.AppendLine($"            \"symbol\": \"{position.SymbolName}\",");
                     json.AppendLine($"            \"direction\": \"{(position.TradeType == TradeType.Buy ? "BUY" : "SELL")}\",");
                     json.AppendLine($"            \"entry_price\": {position.EntryPrice.ToString(CultureInfo.InvariantCulture)},");
                     json.AppendLine($"            \"current_price\": {(position.TradeType == TradeType.Buy ? position.Symbol.Bid : position.Symbol.Ask).ToString(CultureInfo.InvariantCulture)},");
-                    json.AppendLine($"            \"lot_size\": {(position.VolumeInUnits / 100000.0).ToString("F2", CultureInfo.InvariantCulture)},");
+                    json.AppendLine($"            \"lot_size\": {lotSize.ToString("F2", CultureInfo.InvariantCulture)},");
+                    json.AppendLine($"            \"volume\": {position.VolumeInUnits.ToString(CultureInfo.InvariantCulture)},");
                     json.AppendLine($"            \"open_time\": \"{position.EntryTime:yyyy-MM-ddTHH:mm:ss}\",");
                     json.AppendLine($"            \"profit\": {position.NetProfit.ToString("F2", CultureInfo.InvariantCulture)},");
                     json.AppendLine($"            \"pips\": {position.Pips.ToString("F1", CultureInfo.InvariantCulture)},");
@@ -115,13 +123,20 @@ namespace cAlgo.Robots
                 {
                     var position = closedPositions[i];
                     
+                    // ✅ V10.1 FIX: Use broker-specific volume conversion (fixes BTCUSD 0.0 bug)
+                    var symbol = Symbols.GetSymbol(position.SymbolName);
+                    double lotSize = symbol != null 
+                        ? symbol.VolumeInUnitsToQuantity(position.VolumeInUnits) 
+                        : position.VolumeInUnits / 100000.0; // Fallback for missing symbols
+                    
                     json.AppendLine("        {");
                     json.AppendLine($"            \"ticket\": {position.PositionId},");
                     json.AppendLine($"            \"symbol\": \"{position.SymbolName}\",");
                     json.AppendLine($"            \"direction\": \"{(position.TradeType == TradeType.Buy ? "BUY" : "SELL")}\",");
                     json.AppendLine($"            \"entry_price\": {position.EntryPrice.ToString(CultureInfo.InvariantCulture)},");
                     json.AppendLine($"            \"closing_price\": {position.ClosingPrice.ToString(CultureInfo.InvariantCulture)},");
-                    json.AppendLine($"            \"lot_size\": {(position.VolumeInUnits / 100000.0).ToString("F2", CultureInfo.InvariantCulture)},");
+                    json.AppendLine($"            \"lot_size\": {lotSize.ToString("F2", CultureInfo.InvariantCulture)},");
+                    json.AppendLine($"            \"volume\": {position.VolumeInUnits.ToString(CultureInfo.InvariantCulture)},");
                     json.AppendLine($"            \"open_time\": \"{position.EntryTime:yyyy-MM-ddTHH:mm:ss}\",");
                     json.AppendLine($"            \"close_time\": \"{position.ClosingTime:yyyy-MM-ddTHH:mm:ss}\",");
                     json.AppendLine($"            \"profit\": {position.NetProfit.ToString("F2", CultureInfo.InvariantCulture)},");
