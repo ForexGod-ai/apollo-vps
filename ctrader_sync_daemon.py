@@ -41,6 +41,34 @@ SYNC_INTERVAL = 30  # seconds
 SQLITE_DB_PATH = "data/trades.db"
 
 
+def convert_volume_to_lots(symbol: str, volume_units: float) -> float:
+    """
+    Convert cTrader VolumeInUnits to standard Lots
+    
+    ✅ FOREX (EURUSD, GBPUSD, etc.): 100,000 units = 1.0 lot
+    ✅ GOLD (XAUUSD): 100 units = 1.0 lot  
+    ✅ CRYPTO (BTCUSD): 1 unit = 1.0 lot (broker-specific)
+    
+    Returns: Lots (float with 2 decimals)
+    """
+    if not symbol or volume_units == 0:
+        return 0.0
+    
+    symbol_upper = symbol.upper()
+    
+    # CRYPTO: 1 unit = 1 lot (special case for BTC, ETH, etc.)
+    if any(crypto in symbol_upper for crypto in ['BTC', 'ETH', 'LTC', 'XRP']):
+        return round(volume_units, 2)
+    
+    # GOLD: 100 units = 1 lot
+    elif 'XAU' in symbol_upper or 'GOLD' in symbol_upper:
+        return round(volume_units / 100, 2)
+    
+    # FOREX: 100,000 units = 1 lot (standard)
+    else:
+        return round(volume_units / 100000, 2)
+
+
 class TradeDatabase:
     """SQLite database handler for permanent trade storage"""
     
@@ -206,8 +234,22 @@ def fetch_ctrader_data():
 def write_trade_history(data, db: TradeDatabase):
     """Write fetched data to trade_history.json AND SQLite"""
     try:
-        # Sort closed trades chronologically before writing (critical for dashboard charts)
+        # ✅ V10.0 FIX: Convert volume from UNITS to LOTS for all positions
+        open_positions = data.get('open_positions', [])
+        for pos in open_positions:
+            volume_units = pos.get('volume', 0)
+            symbol = pos.get('symbol', '')
+            pos['lot_size'] = convert_volume_to_lots(symbol, volume_units)
+            logger.debug(f"📊 {symbol}: {volume_units} units → {pos['lot_size']:.2f} lots")
+        
+        # ✅ V10.0 FIX: Convert volume for closed trades too
         closed_trades = data.get('closed_trades', [])
+        for trade in closed_trades:
+            volume_units = trade.get('volume', 0)
+            symbol = trade.get('symbol', '')
+            trade['lot_size'] = convert_volume_to_lots(symbol, volume_units)
+        
+        # Sort closed trades chronologically before writing (critical for dashboard charts)
         closed_trades.sort(key=lambda t: t.get('close_time', ''), reverse=False)
         data['closed_trades'] = closed_trades
         
