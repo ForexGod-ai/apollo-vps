@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-🛡️ WATCHDOG MONITOR V3.7
+🛡️ WATCHDOG MONITOR V3.8 - STATE TRACKING + ANTI-SPAM
 ──────────────────
 ✨ Glitch in Matrix by ФорексГод ✨
 🧠 AI-Powered • 💎 Smart Money
@@ -9,6 +9,11 @@ System Guardian - Monitors and auto-restarts critical processes:
 - setup_executor_monitor.py (Setup Scanner & Executor)
 - position_monitor.py (Position & Profit Tracker)
 - telegram_command_center.py (Command Center V3.7)
+
+🆕 V3.8 Features:
+✅ State Tracking - Notifications only on state changes (stopped → running)
+✅ Rate Limiter - Max 1 alert per process every 15 minutes (Anti-Spam)
+✅ Aggregated Startup - Single boot message instead of 3 separate alerts
 
 If any process dies → Instant restart (no manual intervention)
 ──────────────────
@@ -42,27 +47,37 @@ class WatchdogMonitor:
                 'name': 'Setup Monitor',
                 'command': [self.python_path, 'setup_executor_monitor.py', '--interval', '30', '--loop'],
                 'restart_count': 0,
-                'last_restart': None
+                'last_restart': None,
+                'state': 'unknown',  # 🔥 NEW: Track state (unknown/running/stopped)
+                'last_notification': 0  # 🔥 NEW: Last notification timestamp (rate limiter)
             },
             'position_monitor.py': {
                 'name': 'Position Monitor',
                 'command': [self.python_path, 'position_monitor.py'],
                 'restart_count': 0,
-                'last_restart': None
+                'last_restart': None,
+                'state': 'unknown',  # 🔥 NEW: Track state
+                'last_notification': 0  # 🔥 NEW: Rate limiter
             },
             'telegram_command_center.py': {
                 'name': 'Command Center',
                 'command': [self.python_path, 'telegram_command_center.py'],
                 'restart_count': 0,
-                'last_restart': None
+                'last_restart': None,
+                'state': 'unknown',  # 🔥 NEW: Track state
+                'last_notification': 0  # 🔥 NEW: Rate limiter
             }
         }
+        
+        # 🔥 NEW: Rate Limiter Configuration (Anti-Spam)
+        self.notification_cooldown = 900  # 15 minutes (900 seconds)
         
         self.telegram_token = os.getenv('TELEGRAM_BOT_TOKEN')
         self.telegram_chat_id = os.getenv('TELEGRAM_CHAT_ID')
         
-        logger.info("🛡️ Watchdog Monitor V3.7 initialized")
+        logger.info("🛡️ Watchdog Monitor V3.8 - STATE TRACKING + ANTI-SPAM")
         logger.info(f"⏱️  Check interval: {check_interval}s")
+        logger.info(f"🔇 Notification cooldown: {self.notification_cooldown}s (15 min)")
         logger.info(f"🐍 Python: {self.python_path}")
     
     def is_process_running(self, process_name: str) -> bool:
@@ -147,17 +162,60 @@ class WatchdogMonitor:
         except Exception as e:
             logger.error(f"❌ Telegram alert failed: {e}")
     
+    def can_send_notification(self, process_name: str) -> bool:
+        """
+        🔇 RATE LIMITER (Anti-Spam)
+        Check if enough time has passed since last notification for this process
+        Returns True only if cooldown period (15 min) has elapsed
+        """
+        process_info = self.processes[process_name]
+        current_time = time.time()
+        time_since_last = current_time - process_info['last_notification']
+        
+        if time_since_last < self.notification_cooldown:
+            minutes_remaining = (self.notification_cooldown - time_since_last) / 60
+            logger.debug(f"🔇 Rate limiter: Skipping notification for {process_info['name']} "
+                        f"(cooldown active, {minutes_remaining:.1f} min remaining)")
+            return False
+        
+        return True
+    
+    def update_notification_time(self, process_name: str):
+        """Update last notification timestamp"""
+        self.processes[process_name]['last_notification'] = time.time()
+    
     def check_and_restart(self):
-        """Check all processes and restart if needed"""
+        """
+        🔍 STATE TRACKING (Smart Notifications)
+        Check all processes and restart if needed.
+        Send notification ONLY when state changes (stopped → running)
+        """
         for process_name, process_info in self.processes.items():
-            if not self.is_process_running(process_name):
-                logger.warning(f"⚠️ {process_info['name']} is DOWN!")
+            is_running = self.is_process_running(process_name)
+            old_state = process_info['state']
+            new_state = 'running' if is_running else 'stopped'
+            
+            # 🔥 STATE CHANGE DETECTION
+            state_changed = (old_state != new_state)
+            
+            # Update state
+            process_info['state'] = new_state
+            
+            # If process is down → Attempt restart
+            if not is_running:
+                if state_changed:
+                    logger.warning(f"⚠️ {process_info['name']} is DOWN! (state: {old_state} → {new_state})")
                 
                 # Attempt restart
                 if self.start_process(process_name):
-                    # Send Telegram alert
-                    restart_count = process_info['restart_count']
-                    alert = f"""🛡️ <b>WATCHDOG AUTO-RESTART</b>
+                    process_info['state'] = 'running'  # Update state after successful restart
+                    
+                    # 🔥 SEND NOTIFICATION ONLY IF:
+                    # 1. State changed (stopped → running)
+                    # 2. Cooldown period elapsed (15 min since last notification)
+                    if state_changed and self.can_send_notification(process_name):
+                        restart_count = process_info['restart_count']
+                        alert = f"""🛡️ <b>WATCHDOG AUTO-RESTART</b>
 
 ⚠️ Process: <code>{process_info['name']}</code>
 🔄 Status: <b>RESTARTED</b>
@@ -165,10 +223,14 @@ class WatchdogMonitor:
 ⏰ Time: <code>{datetime.now().strftime('%H:%M:%S')}</code>
 
 ✅ System protection active"""
-                    
-                    self.send_telegram_alert(alert)
+                        
+                        self.send_telegram_alert(alert)
+                        self.update_notification_time(process_name)
+                        logger.info(f"📱 Sent restart notification for {process_info['name']}")
+                    else:
+                        logger.debug(f"🔇 Restart notification skipped for {process_info['name']} (rate limiter)")
                 else:
-                    # Failed to restart - send critical alert
+                    # Failed to restart - send critical alert (always send, ignore cooldown)
                     alert = f"""🚨 <b>WATCHDOG CRITICAL ALERT</b>
 
 ❌ Process: <code>{process_info['name']}</code>
@@ -178,6 +240,8 @@ class WatchdogMonitor:
 ⚠️ Manual intervention required!"""
                     
                     self.send_telegram_alert(alert)
+                    self.update_notification_time(process_name)
+                    logger.error(f"📱 Sent critical alert for {process_info['name']}")
     
     def get_status_report(self) -> dict:
         """Get status of all monitored processes"""
@@ -195,24 +259,43 @@ class WatchdogMonitor:
     def run(self):
         """Main monitoring loop"""
         logger.info("\n" + "="*60)
-        logger.info("🛡️ WATCHDOG MONITOR - ARMED & PROTECTING")
+        logger.info("🛡️ WATCHDOG MONITOR V3.8 - ARMED & PROTECTING")
         logger.info(f"⏱️  Check Interval: {self.check_interval}s")
+        logger.info(f"🔇 Anti-Spam: 15 min cooldown per alert")
         logger.info("="*60 + "\n")
         
-        # Send startup notification
-        startup_msg = f"""🛡️ <b>WATCHDOG ONLINE</b>
+        # 🔥 INITIAL STATE CHECK (before sending startup message)
+        # Detect which monitors are already running
+        initial_status = []
+        for process_name, process_info in self.processes.items():
+            is_running = self.is_process_running(process_name)
+            process_info['state'] = 'running' if is_running else 'stopped'
+            
+            if is_running:
+                initial_status.append(f"✅ {process_info['name']}")
+                logger.info(f"   ✅ {process_info['name']}: Already running")
+            else:
+                initial_status.append(f"⏳ {process_info['name']}")
+                logger.info(f"   ⏳ {process_info['name']}: Will start on first check")
+        
+        # 🔥 AGGREGATED STARTUP MESSAGE (Single notification)
+        running_count = sum(1 for p in self.processes.values() if p['state'] == 'running')
+        total_count = len(self.processes)
+        
+        startup_msg = f"""🛡️ <b>WATCHDOG V3.8 ONLINE</b>
 
 ✅ System guardian activated
 ⏱️ Check interval: <code>{self.check_interval}s</code>
+🔇 Anti-Spam: 15 min cooldown
 
-<b>Protected Processes:</b>
-• Setup Monitor (30s interval)
-• Position Monitor
-• Command Center V3.7
+<b>Initial Status ({running_count}/{total_count} running):</b>
+{chr(10).join(initial_status)}
 
-🔒 Auto-restart enabled"""
+🔒 Auto-restart enabled
+📊 State tracking active"""
         
         self.send_telegram_alert(startup_msg)
+        logger.info("📱 Sent aggregated startup notification")
         
         iteration = 0
         
@@ -247,7 +330,7 @@ def main():
     """Entry point"""
     import argparse
     
-    parser = argparse.ArgumentParser(description='Watchdog Monitor V3.7')
+    parser = argparse.ArgumentParser(description='Watchdog Monitor V3.8 - State Tracking + Anti-Spam')
     parser.add_argument('--interval', type=int, default=60,
                         help='Check interval in seconds (default: 60)')
     
