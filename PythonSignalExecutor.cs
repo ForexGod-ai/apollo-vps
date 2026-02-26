@@ -76,6 +76,9 @@ namespace cAlgo.Robots
         {
             try
             {
+                // ✅ V10.2 LIVE SYNC: Write account status FIRST (before anything else)
+                WriteAccountStatus();
+                
                 // FIRST: Manage existing positions
                 ManageOpenPositions();
                 
@@ -252,6 +255,45 @@ namespace cAlgo.Robots
             catch (Exception ex)
             {
                 Print($"⚠️  Could not log closure: {ex.Message}");
+            }
+        }
+        
+        private void WriteAccountStatus()
+        {
+            // ✅ V10.2 LIVE SYNC: Write real-time account status for Python Risk Manager
+            // Eliminates desync (Python thinks 18 positions, cTrader has 2)
+            try
+            {
+                var accountInfoPath = SignalFilePath.Replace("signals.json", "account_info.json");
+                
+                // Count only positions from this bot (not manual trades)
+                int glitchPositionsCount = 0;
+                foreach (var pos in Positions)
+                {
+                    if (pos.Label != null && pos.Label.StartsWith("Glitch Matrix"))
+                        glitchPositionsCount++;
+                }
+                
+                var accountStatus = new
+                {
+                    Status = "Running",
+                    OpenPositionsCount = glitchPositionsCount,  // CRITICAL: Real count from cTrader
+                    TotalPositions = Positions.Count,  // All positions (including manual)
+                    Balance = Account.Balance,
+                    Equity = Account.Equity,
+                    FreeMargin = Account.FreeMargin,
+                    MarginLevel = Account.MarginLevel,
+                    UnrealizedPnL = Account.UnrealizedNetProfit,
+                    Timestamp = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ"),
+                    LastUpdate = DateTime.Now.ToString("HH:mm:ss")
+                };
+                
+                var options = new JsonSerializerOptions { WriteIndented = true };
+                File.WriteAllText(accountInfoPath, JsonSerializer.Serialize(accountStatus, options));
+            }
+            catch (Exception ex)
+            {
+                Print($"⚠️  Could not write account status: {ex.Message}");
             }
         }
 

@@ -85,6 +85,15 @@ from smc_detector import (
     FVG
 )
 
+# 🛡️ V3.8 ANTI-SPAM SYSTEM by ФорексГод
+from signal_cache import (
+    SignalCache,
+    TelegramDebouncer,
+    cleanup_old_signals_file,
+    get_signal_cache,
+    get_telegram_debouncer
+)
+
 
 class SetupExecutorMonitor:
     """🔥 AGGRESSIVE EXECUTIONER - Instant MONITORING→EXECUTE transition"""
@@ -103,6 +112,14 @@ class SetupExecutorMonitor:
         
         self.telegram = TelegramNotifier()
         self.data_provider = CTraderDataProvider()
+        
+        # 🛡️ V3.8 ANTI-SPAM SYSTEM by ФорексГод
+        self.signal_cache = get_signal_cache()
+        self.telegram_debouncer = get_telegram_debouncer()
+        
+        # 🧹 STARTUP CLEANUP: Remove old signals from signals.json
+        cleanup_old_signals_file(Path(signals_path), max_age_hours=1)
+        logger.success("🧹 Startup cleanup complete - old signals removed")
         
         # V4.3 FIX-015: Track rejected trades to prevent spam
         # Format: {symbol: {'reason': str, 'timestamp': datetime, 'count': int}}
@@ -828,9 +845,30 @@ class SetupExecutorMonitor:
                                     status='MONITORING'
                                 )
                                 
+                                # 🛡️ V3.8 ANTI-SPAM: Check debouncer before sending
+                                signal_id = f"{symbol}_{setup['direction']}_{setup.get('entry_price', 0)}"
+                                
+                                # Skip if duplicate signal already processed
+                                if self.signal_cache.is_processed(signal_id):
+                                    logger.warning(f"🚫 SKIP: {symbol} signal already processed (cache hit)")
+                                    continue
+                                
+                                # Check Telegram debouncer (5 min cooldown)
+                                if not self.telegram_debouncer.should_send(
+                                    symbol, 
+                                    "setup_alert_1h_choch", 
+                                    str(setup.get('entry_price', 0))
+                                ):
+                                    logger.warning(f"🔕 DEBOUNCED: {symbol} setup alert (sent recently)")
+                                    continue
+                                
                                 # Send updated setup notification (need df_daily and df_4h for charts)
                                 self.telegram.send_setup_alert(notification_setup, df_daily, df_4h)
                                 logger.success(f"📱 Resent setup notification for {symbol} with 1H CHoCH status ✅")
+                                
+                                # 🛡️ Mark signal as processed in persistent cache
+                                self.signal_cache.mark_processed(signal_id)
+                                logger.debug(f"💾 Signal cached: {signal_id}")
                             except Exception as tel_error:
                                 logger.warning(f"⚠️ Failed to resend setup notification: {tel_error}")
                             
@@ -838,6 +876,13 @@ class SetupExecutorMonitor:
                         
                         # V4.0: Handle all execution action types
                         if result['action'] in ['EXECUTE_ENTRY1', 'EXECUTE_ENTRY1_CONTINUATION', 'EXECUTE_ENTRY1_TIMEOUT']:
+                            # 🛡️ V3.8 ANTI-SPAM: Check if this execution was already triggered
+                            execution_id = f"{symbol}_execute_{result['entry_price']:.5f}"
+                            
+                            if self.signal_cache.is_processed(execution_id):
+                                logger.warning(f"🚫 SKIP EXECUTION: {symbol} already executed (cache hit)")
+                                continue
+                            
                             # 🔥🔥🔥 AGGRESSIVE EXECUTION - INSTANT SIGNALS.JSON WRITE!
                             logger.critical(f"🔥 TRIGGER: {symbol} confirmed CHoCH + Pullback. Pushing to Executor NOW!")
                             logger.success(f"🚀 EXECUTING {symbol} Entry 1: {setup['direction'].upper()} @ {result['entry_price']:.5f}")
@@ -857,6 +902,11 @@ class SetupExecutorMonitor:
                             
                             if success:
                                 logger.critical(f"✅ {symbol} SIGNAL WRITTEN TO signals.json - cTrader will execute in <10s!")
+                                
+                                # 🛡️ Mark execution as processed in persistent cache
+                                self.signal_cache.mark_processed(execution_id)
+                                logger.debug(f"💾 Execution cached: {execution_id}")
+                                
                                 # Update setup with Entry 1 details and pullback data
                                 setups[i]['entry1_filled'] = True
                                 setups[i]['entry1_price'] = result['entry_price']
@@ -1061,6 +1111,15 @@ class SetupExecutorMonitor:
                 
                 # 🔥 Send execution notification (simplified - no TradeSetup object needed)
                 try:
+                    # 🛡️ V3.8 ANTI-SPAM: Check debouncer before sending execution notification
+                    if not self.telegram_debouncer.should_send(
+                        symbol, 
+                        f"execution_entry{entry_number}", 
+                        str(entry_price)
+                    ):
+                        logger.warning(f"🔕 DEBOUNCED: {symbol} execution notification (sent recently)")
+                        return True  # Still return success, just skip notification
+                    
                     direction_emoji = "🟢 LONG 📈" if direction == 'buy' else "🔴 SHORT 📉"
                     rr = abs((take_profit - entry_price) / (entry_price - stop_loss)) if abs(entry_price - stop_loss) > 0 else 0
                     

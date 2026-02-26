@@ -32,6 +32,7 @@ class UnifiedRiskManager:
         self.config_file = Path(config_file)
         self.db_path = Path("data/trades.db")
         self.kill_switch_file = Path("trading_disabled.flag")
+        self.daily_state_file = Path("data/daily_state.json")  # ✅ NEW: Daily state persistence
         
         # Telegram
         self.telegram_token = os.getenv('TELEGRAM_BOT_TOKEN')
@@ -48,6 +49,11 @@ class UnifiedRiskManager:
         self.kill_switch_enabled = self.config['kill_switch']['enabled']
         self.kill_switch_trigger = self.config['kill_switch']['trigger_daily_loss_percent']
         
+        # ✅ NEW: Load or initialize daily state (with auto-reset for new day)
+        self._load_daily_state()
+        # ✅ NEW: Load or initialize daily state (with auto-reset for new day)
+        self._load_daily_state()
+        
         print(f"\n🛡️  UNIFIED RISK MANAGER INITIALIZED")
         print(f"──────────────────")
         print(f"📊 Risk per trade: {self.risk_per_trade}%")
@@ -55,7 +61,80 @@ class UnifiedRiskManager:
         print(f"🛑 Daily loss limit: {self.max_daily_loss_pct}%")
         print(f"⚠️  Daily warning: {self.daily_warning_pct}%")
         print(f"🔴 Kill switch: {'ENABLED' if self.kill_switch_enabled else 'DISABLED'} @ {self.kill_switch_trigger}%")
+        print(f"📅 Today's starting balance: ${self.starting_balance_today:.2f}")
         print(f"──────────────────")
+    
+    def _load_daily_state(self):
+        """
+        Load daily state from JSON. Auto-reset if new day detected.
+        
+        ✅ NEW DAY RESET LOGIC:
+        - Checks if last_update_date != current_date
+        - Resets starting_balance to current balance
+        - Clears daily counters
+        """
+        today = datetime.now().date().isoformat()
+        
+        try:
+            if self.daily_state_file.exists():
+                with open(self.daily_state_file, 'r') as f:
+                    state = json.load(f)
+                
+                last_date = state.get('date')
+                
+                if last_date == today:
+                    # Same day - load existing state
+                    self.starting_balance_today = state.get('starting_balance', 0.0)
+                    self.daily_trades_count = state.get('trades_count', 0)
+                    print(f"✅ Daily state loaded: {today} (Starting: ${self.starting_balance_today:.2f})")
+                else:
+                    # NEW DAY - reset everything
+                    print(f"🔄 NEW DAY DETECTED: {last_date} → {today}")
+                    self._reset_daily_state(today)
+            else:
+                # First run - initialize
+                print(f"🆕 First run - initializing daily state for {today}")
+                self._reset_daily_state(today)
+        
+        except Exception as e:
+            print(f"⚠️  Error loading daily state: {e}")
+            self._reset_daily_state(today)
+    
+    def _reset_daily_state(self, date):
+        """Reset daily state for new day"""
+        # Get current balance as starting point
+        equity, balance = self.get_account_balance()
+        self.starting_balance_today = balance
+        self.daily_trades_count = 0
+        
+        # Save to file
+        state = {
+            'date': date,
+            'starting_balance': balance,
+            'trades_count': 0,
+            'reset_timestamp': datetime.now().isoformat()
+        }
+        
+        self.daily_state_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(self.daily_state_file, 'w') as f:
+            json.dump(state, f, indent=2)
+        
+        print(f"✅ Daily state RESET: Starting balance = ${balance:.2f}")
+    
+    def _save_daily_state(self):
+        """Save current daily state to JSON"""
+        today = datetime.now().date().isoformat()
+        
+        state = {
+            'date': today,
+            'starting_balance': self.starting_balance_today,
+            'trades_count': self.daily_trades_count,
+            'last_update': datetime.now().isoformat()
+        }
+        
+        self.daily_state_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(self.daily_state_file, 'w') as f:
+            json.dump(state, f, indent=2)
     
     def _load_config(self):
         """Load SUPER_CONFIG.json"""
@@ -104,7 +183,13 @@ class UnifiedRiskManager:
             return balance, balance
     
     def get_daily_pnl(self):
-        """Calculate P&L for today"""
+        """
+        Calculate P&L for today using starting_balance_today as baseline
+        
+        ✅ FIX: Uses starting balance from today (not historical balance)
+        - Closed trades: SUM(profit) WHERE DATE(close_time) = today
+        - Open P&L: current_equity - starting_balance_today
+        """
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
@@ -120,8 +205,8 @@ class UnifiedRiskManager:
             
             closed_pnl = cursor.fetchone()[0] or 0.0
             
-            # Open P&L - calculate from current equity vs balance
-            # (More reliable than trying to sum individual position profits)
+            # ✅ FIX: Open P&L = current equity - TODAY'S starting balance
+            # (NOT balance from snapshot which includes yesterday's P&L!)
             cursor.execute("""
                 SELECT equity, balance 
                 FROM account_snapshots 
@@ -131,8 +216,9 @@ class UnifiedRiskManager:
             
             snapshot = cursor.fetchone()
             if snapshot:
-                equity, balance = snapshot
-                open_pnl = float(equity) - float(balance)
+                equity, _ = snapshot  # Ignore balance from snapshot
+                # Use starting_balance_today set at midnight
+                open_pnl = float(equity) - float(self.starting_balance_today)
             else:
                 open_pnl = 0.0
             
@@ -151,8 +237,45 @@ class UnifiedRiskManager:
             return {'closed_pnl': 0, 'open_pnl': 0, 'total_pnl': 0}
     
     def get_open_positions_count(self):
-        """Get number of open positions"""
+        """
+        Get number of open positions from cTrader LIVE SYNC
+        
+        ✅ V10.2 LIVE SYNC: Reads from account_info.json written by cTrader cBot
+        - Eliminates desync (Python counter vs cTrader reality)
+        - Real-time position count from live broker
+        - Counts ALL positions (bot + manual) for accurate risk limit
+        - Fallback to SQLite if file not available
+        """
         try:
+            # ✅ PRIMARY: Read from cTrader live status file
+            account_info_path = Path('account_info.json')
+            if account_info_path.exists():
+                with open(account_info_path, 'r') as f:
+                    data = json.load(f)
+                
+                # ✅ CRITICAL: Use TotalPositions (bot + manual trades) for risk limit
+                # This prevents opening more trades than account can handle
+                total_count = data.get('TotalPositions', 0)
+                glitch_count = data.get('OpenPositionsCount', 0)
+                
+                # Verify file freshness (warn if older than 10 seconds)
+                timestamp_str = data.get('Timestamp', '')
+                if timestamp_str:
+                    try:
+                        from datetime import datetime, timezone
+                        file_time = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+                        age_seconds = (datetime.now(timezone.utc) - file_time).total_seconds()
+                        
+                        if age_seconds > 10:
+                            print(f"⚠️  account_info.json is {age_seconds:.0f}s old (cBot may be offline!)")
+                    except:
+                        pass  # Ignore timestamp parsing errors
+                
+                print(f"✅ LIVE SYNC: {total_count} total positions ({glitch_count} from bot) - Real cTrader count")
+                return total_count  # Use total for position limit check
+            
+            # ❌ FALLBACK: Use SQLite if live file missing (cBot offline?)
+            print(f"⚠️  account_info.json not found - using SQLite fallback")
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
             
@@ -160,6 +283,7 @@ class UnifiedRiskManager:
             count = cursor.fetchone()[0]
             
             conn.close()
+            print(f"📊 SQLite count: {count} positions")
             return count
             
         except Exception as e:
@@ -351,6 +475,10 @@ class UnifiedRiskManager:
         # All checks passed
         result['approved'] = True
         result['reason'] = "All risk checks passed"
+        
+        # ✅ NEW: Increment trade counter and save state
+        self.daily_trades_count += 1
+        self._save_daily_state()
         
         print(f"\n✅ TRADE APPROVED: {symbol} {direction}")
         print(f"   Open positions: {open_positions}/{self.max_positions}")

@@ -1461,7 +1461,8 @@ class SMCDetector:
             return min_distance
     
     def calculate_entry_sl_tp(
-        self, 
+        self,
+        symbol: str,  # ✅ FIX: Add symbol as explicit parameter
         fvg: FVG, 
         h4_choch: CHoCH, 
         df_4h: pd.DataFrame,
@@ -1490,7 +1491,7 @@ class SMCDetector:
         
         # Trade direction = DAILY CHoCH direction = FVG direction
         # ✅ CRITICAL FIX by ФорексГод: Asset-specific minimum SL distances
-        asset_class = self._get_asset_class(fvg.symbol)
+        asset_class = self._get_asset_class(symbol)  # ✅ FIX: Use symbol parameter
         
         if fvg.direction == 'bullish':
             # LONG TRADE (Daily bullish trend)
@@ -1524,12 +1525,12 @@ class SMCDetector:
             stop_loss = swing_low - (1.5 * atr_4h)
             
             # ✅ THE 30-PIP HARD FLOOR (Forex) / 1.5% CRYPTO SCALE FIX
-            min_distance = self._calculate_minimum_sl_distance(fvg.symbol, entry, asset_class)
+            min_distance = self._calculate_minimum_sl_distance(symbol, entry, asset_class)  # ✅ FIX: Use symbol parameter
             current_distance = abs(entry - stop_loss)
             
             if current_distance < min_distance:
                 stop_loss = entry - min_distance
-                print(f"✅ [SL ENFORCED] {fvg.symbol} LONG: {current_distance:.5f} → {min_distance:.5f}")
+                print(f"✅ [SL ENFORCED] {symbol} LONG: {current_distance:.5f} → {min_distance:.5f}")  # ✅ FIX: Use symbol parameter
                 
                 # Fallback pe 1H dacă există și distanța e mai bună
                 if df_1h is not None:
@@ -1600,12 +1601,12 @@ class SMCDetector:
             stop_loss = swing_high + (1.5 * atr_4h)
             
             # ✅ THE 30-PIP HARD FLOOR (Forex) / 1.5% CRYPTO SCALE FIX
-            min_distance = self._calculate_minimum_sl_distance(fvg.symbol, entry, asset_class)
+            min_distance = self._calculate_minimum_sl_distance(symbol, entry, asset_class)  # ✅ FIX: Use symbol parameter
             current_distance = abs(entry - stop_loss)
             
             if current_distance < min_distance:
                 stop_loss = entry + min_distance
-                print(f"✅ [SL ENFORCED] {fvg.symbol} SHORT: {current_distance:.5f} → {min_distance:.5f}")
+                print(f"✅ [SL ENFORCED] {symbol} SHORT: {current_distance:.5f} → {min_distance:.5f}")  # ✅ FIX: Use symbol parameter
                 
                 # Fallback pe 1H dacă există și distanța e mai bună
                 if df_1h is not None:
@@ -2559,7 +2560,7 @@ class SMCDetector:
             
             # TP calculation still uses Daily structure (unchanged)
             # Calculate via calculate_entry_sl_tp but override entry/SL
-            _, _, tp = self.calculate_entry_sl_tp(fvg, h4_signal, df_4h, df_daily) if h4_signal else (entry, sl, entry * 1.02 if current_trend == 'bullish' else entry * 0.98)
+            _, _, tp = self.calculate_entry_sl_tp(symbol, fvg, h4_signal, df_4h, df_daily) if h4_signal else (entry, sl, entry * 1.02 if current_trend == 'bullish' else entry * 0.98)
             
             if debug:
                 print(f"   ✅ Entry: {entry:.5f} (OB middle)")
@@ -2568,7 +2569,7 @@ class SMCDetector:
         
         elif h4_signal:
             # Fallback: Use FVG-based entry/SL from calculate_entry_sl_tp
-            entry, sl, tp = self.calculate_entry_sl_tp(fvg, h4_signal, df_4h, df_daily)
+            entry, sl, tp = self.calculate_entry_sl_tp(symbol, fvg, h4_signal, df_4h, df_daily)
             if debug:
                 print(f"\n💰 FVG-based Trade Levels (no high-quality OB):")
         

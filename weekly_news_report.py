@@ -40,28 +40,50 @@ class WeeklyNewsReport(NewsCalendarMonitor):
         return flags.get(currency, '🏴')
     
     def format_weekly_telegram_message(self, events: List[NewsEvent]) -> str:
-        """Format weekly news report for Telegram - COMPACT v4.0"""
+        """Format weekly news report for Telegram - PREMIUM v5.0"""
+        
+        # ━━━━━━━━━━━━━━━━━━
+        # PREMIUM SEPARATOR: 18 chars (consistent across all sections)
+        # ━━━━━━━━━━━━━━━━━━
+        SEPARATOR = "━━━━━━━━━━━━━━━━━━"
+        
         if not events:
-            return """📅 *WEEKLY REPORT*
-🗓️ Week: {week_start}
+            return f"""📅 *WEEKLY REPORT*
+
+🗓️ Week: {datetime.now().strftime('%b %d')}
 ✅ No high-impact news
 🟢 Clear trading
-╼╼╼╼╼╼╼╼
-✨ *Glitch in Matrix*
-👑 ФорексГод
-╼╼╼╼╼╼╼╼""".format(week_start=datetime.now().strftime('%b %d'))
+
+{SEPARATOR}
+✨ *Glitch in Matrix by ФорексГод* ✨
+🧠 AI-Powered • 💎 Smart Money"""
         
         # Sort events by time
         events.sort(key=lambda x: x.time)
+        
         # Calculate week range
         today = datetime.now()
         week_start = today + timedelta(days=(7 - today.weekday()))
         week_end = week_start + timedelta(days=6)
-        message = f"📅 *WEEKLY REPORT*\n"
+        
+        # ━━━━━━━━━━━━━━━━━━━━━
+        # HEADER SECTION
+        # ━━━━━━━━━━━━━━━━━━━━━
+        message = f"📅 *WEEKLY REPORT*\n\n"
         message += f"🗓️ {week_start.strftime('%b %d')}-{week_end.strftime('%b %d')}\n"
         message += f"🔥 {len(events)} HIGH impact\n"
-        message += f"⏰ {datetime.now().strftime('%a %H:%M')}\n"
-        message += "╼╼╼╼╼╼╼╼\n"
+        message += f"⏰ {datetime.now().strftime('%a %H:%M')}\n\n"
+        message += f"{SEPARATOR}\n"
+        
+        # Count critical events
+        critical_count = sum(1 for e in events if self.is_critical_event(e))
+        if critical_count > 0:
+            message += f"\n⚠️ *{critical_count} CRITICAL*\n"
+        
+        # ━━━━━━━━━━━━━━━━━━━━━
+        # EVENTS BY DAY
+        # ━━━━━━━━━━━━━━━━━━━━━
+        
         # Group by day
         events_by_day = {}
         for event in events:
@@ -69,24 +91,24 @@ class WeeklyNewsReport(NewsCalendarMonitor):
             if day_key not in events_by_day:
                 events_by_day[day_key] = []
             events_by_day[day_key].append(event)
-        # Count critical
-        critical_count = sum(1 for e in events if self.is_critical_event(e))
-        if critical_count > 0:
-            message += f"⚠️ *{critical_count} CRITICAL*\n"
         
         # Format each day
         for day_label, day_events in events_by_day.items():
-            message += f"📍 *{day_label}*\n"
-            message += "╼╼╼╼╼╼╼╼\n"
+            message += f"\n📍 *{day_label}*\n"
+            message += f"{SEPARATOR}\n\n"
+            
             day_events.sort(key=lambda x: x.time)
             for event in day_events:
                 flag = self._get_currency_flag(event.currency)
-                critical_marker = "⚠️" if self.is_critical_event(event) else ""
+                critical_marker = "⚠️ " if self.is_critical_event(event) else ""
+                
                 message += f"{critical_marker}{flag} *{event.currency}* {event.event}\n"
                 message += f"🕐 {event.time.strftime('%H:%M')}\n"
+                
                 if event.forecast:
-                    message += f"📊 F:`{event.forecast}` P:`{event.previous or 'N/A'}`\n"
-                # Warnings for critical
+                    message += f"📊 F: `{event.forecast}` P: `{event.previous or 'N/A'}`\n"
+                
+                # Warnings for critical events
                 if self.is_critical_event(event):
                     if 'NFP' in event.event.upper():
                         message += "💥 *EXTREME VOL*\n"
@@ -94,11 +116,15 @@ class WeeklyNewsReport(NewsCalendarMonitor):
                         message += "💥 *FED*\n"
                     elif 'CPI' in event.event.upper():
                         message += "📊 *INFLATION*\n"
+                
                 message += "\n"
         
-        # Weekly summary - COMPACT
-        message += "╼╼╼╼╼╼╼╼\n"
-        message += "📊 *SUMMARY:*\n"
+        # ━━━━━━━━━━━━━━━━━━━━━
+        # SUMMARY SECTION
+        # ━━━━━━━━━━━━━━━━━━━━━
+        message += f"{SEPARATOR}\n\n"
+        message += "📊 *SUMMARY:*\n\n"
+        
         currency_counts = {}
         for event in events:
             if event.currency not in currency_counts:
@@ -106,29 +132,36 @@ class WeeklyNewsReport(NewsCalendarMonitor):
             currency_counts[event.currency]['total'] += 1
             if self.is_critical_event(event):
                 currency_counts[event.currency]['critical'] += 1
+        
         sorted_currencies = sorted(currency_counts.items(), key=lambda x: x[1]['total'], reverse=True)
         for currency, counts in sorted_currencies:
             flag = self._get_currency_flag(currency)
-            crit = f"⚠️{counts['critical']}" if counts['critical'] > 0 else ""
-            message += f"{flag}{currency}:{counts['total']} {crit}\n"
-        # Strategy - COMPACT
-        message += "╼╼╼╼╼╼╼╼\n"
-        message += "🎯 *STRATEGY:*\n"
+            crit = f" ⚠️ {counts['critical']}" if counts['critical'] > 0 else ""
+            message += f"{flag} {currency}: {counts['total']}{crit}\n"
+        
+        # ━━━━━━━━━━━━━━━━━━━━━
+        # STRATEGY SECTION
+        # ━━━━━━━━━━━━━━━━━━━━━
+        message += f"\n{SEPARATOR}\n\n"
+        message += "🎯 *STRATEGY:*\n\n"
+        
         if critical_count > 3:
             message += "⚠️ HIGH VOL WEEK\n• Reduce sizing\n• Wider SL\n"
         elif critical_count > 0:
             message += "⚡ MODERATE\n• Standard risk\n• Close before news\n"
         else:
             message += "✅ LOW NEWS\n• Focus technicals\n"
-        # Footer - COMPACT
-        message += "╼╼╼╼╼╼╼╼\n"
-        message += f"📅 Next: {(datetime.now() + timedelta(days=7)).strftime('%a %b %d')}\n"
-        message += "╼╼╼╼╼╼╼╼\n"
-        message += "✨ *Glitch in Matrix*\n"
-        message += "👑 ФорексГод\n"
-        message += "╼╼╼╼╼╼╼╼"
         
-        return message.strip()
+        # ━━━━━━━━━━━━━━━━━━━━━
+        # FOOTER SECTION
+        # ━━━━━━━━━━━━━━━━━━━━━
+        message += f"\n{SEPARATOR}\n\n"
+        message += f"📅 Next: {(datetime.now() + timedelta(days=7)).strftime('%a %b %d')}\n\n"
+        message += f"{SEPARATOR}\n"
+        message += "✨ *Glitch in Matrix by ФорексГод* ✨\n"
+        message += "🧠 AI-Powered • 💎 Smart Money"
+        
+        return message
     
     def run_weekly_report(self):
         """Generate and send weekly news report"""
