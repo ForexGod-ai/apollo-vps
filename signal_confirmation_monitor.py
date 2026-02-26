@@ -19,6 +19,8 @@ class SignalConfirmationMonitor:
     """
     Monitors trade confirmations from cTrader
     Sends instant Telegram notifications
+    
+    V6.0 UPGRADE: Prevents duplicate alerts on restart
     """
     
     def __init__(self, confirmation_file: str = None):
@@ -31,12 +33,49 @@ class SignalConfirmationMonitor:
             confirmation_file = str(script_dir / confirmation_file)
         
         self.confirmation_file = confirmation_file
+        
+        # V6.0: Seen confirmations tracking (prevents duplicate alerts on restart)
+        self.seen_file = str(Path(__file__).parent.resolve() / ".seen_confirmations.json")
+        self.seen_signal_ids = self._load_seen_confirmations()
+        
         self.telegram = TelegramNotifier()
         self.last_processed_id = None
         self.last_check_time = 0
         
-        logger.success(f"✅ Confirmation monitor initialized")
+        logger.success(f"✅ Confirmation monitor initialized (V6.0 - Duplicate Prevention)")
         logger.info(f"📁 Watching: {self.confirmation_file}")
+        logger.info(f"💾 Seen tracking: {len(self.seen_signal_ids)} confirmations in history")
+    
+    def _load_seen_confirmations(self) -> set:
+        """
+        V6.0: Load previously seen Signal IDs to prevent duplicate alerts
+        
+        This prevents the monitor from re-alerting old confirmations when restarted.
+        Similar to Position Monitor's .seen_positions.json tracking.
+        """
+        try:
+            if os.path.exists(self.seen_file):
+                with open(self.seen_file, 'r') as f:
+                    data = json.load(f)
+                seen_ids = set(data.get('seen_signal_ids', []))
+                logger.info(f"📥 Loaded {len(seen_ids)} seen confirmations")
+                return seen_ids
+            return set()
+        except Exception as e:
+            logger.warning(f"⚠️  Could not load seen confirmations: {e}")
+            return set()
+    
+    def _save_seen_confirmations(self):
+        """V6.0: Persist seen Signal IDs to disk"""
+        try:
+            data = {
+                'seen_signal_ids': list(self.seen_signal_ids),
+                'last_update': datetime.now().isoformat()
+            }
+            with open(self.seen_file, 'w') as f:
+                json.dump(data, f, indent=2)
+        except Exception as e:
+            logger.error(f"❌ Failed to save seen confirmations: {e}")
     
     def check_confirmation(self) -> bool:
         """Check for new confirmations"""
@@ -57,14 +96,31 @@ class SignalConfirmationMonitor:
             
             signal_id = data.get('SignalId')
             
-            # Skip if already processed
+            # V6.0: Skip if already seen (prevents duplicate alerts on restart)
+            if signal_id in self.seen_signal_ids:
+                logger.debug(f"🔇 Skipping seen confirmation: {signal_id}")
+                return False
+            
+            # Skip if already processed in this session
             if signal_id == self.last_processed_id:
                 return False
             
             self.last_processed_id = signal_id
             
+            # V6.0: Add to seen list
+            self.seen_signal_ids.add(signal_id)
+            self._save_seen_confirmations()
+            
             # Process confirmation
             self._process_confirmation(data)
+            
+            # 🚨 V6.1 CRITICAL: Delete confirmation file to prevent Ghost Notifications
+            try:
+                os.remove(self.confirmation_file)
+                logger.debug(f"🗑️  Deleted {os.path.basename(self.confirmation_file)} (anti-spam)")
+            except Exception as e:
+                logger.warning(f"⚠️  Could not delete confirmation file: {e}")
+            
             return True
             
         except Exception as e:

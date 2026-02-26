@@ -108,6 +108,7 @@ class SignalQueue:
         ✅ TWO-WAY HANDSHAKE PROTOCOL:
         - Checks BOTH execution_report.json (new) and trade_confirmations.json (legacy)
         - Polls every 1 second for up to 30 seconds
+        - **DELETES confirmation files after reading to prevent Ghost Notifications**
         - Returns confirmation dict if found, None on timeout
         """
         start_time = time.time()
@@ -125,6 +126,14 @@ class SignalQueue:
                     
                     if data.get('SignalId') == signal_id:
                         logger.debug(f"✅ Found confirmation in execution_report.json")
+                        
+                        # 🚨 CRITICAL: Delete file immediately to prevent Ghost Notifications
+                        try:
+                            os.remove(execution_report_path)
+                            logger.debug(f"🗑️  Deleted execution_report.json (anti-spam)")
+                        except Exception as e:
+                            logger.warning(f"⚠️  Could not delete execution_report.json: {e}")
+                        
                         return data
                 
                 # Fallback to LEGACY (trade_confirmations.json)
@@ -134,6 +143,14 @@ class SignalQueue:
                     
                     if data.get('SignalId') == signal_id:
                         logger.debug(f"✅ Found confirmation in trade_confirmations.json (legacy)")
+                        
+                        # 🚨 CRITICAL: Delete file immediately to prevent Ghost Notifications
+                        try:
+                            os.remove(legacy_path)
+                            logger.debug(f"🗑️  Deleted trade_confirmations.json (anti-spam)")
+                        except Exception as e:
+                            logger.warning(f"⚠️  Could not delete trade_confirmations.json: {e}")
+                        
                         return data
                 
             except Exception as e:
