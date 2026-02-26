@@ -64,6 +64,12 @@ class MatrixDashboard:
                 'emoji': '🔗',
                 'description': 'Broker synchronization daemon',
                 'interval': 'Continuous'
+            },
+            'news_calendar_monitor.py': {
+                'name': 'News Calendar',
+                'emoji': '📰',
+                'description': 'Economic events tracker (NFP, CPI)',
+                'interval': 'Real-time'
             }
         }
     
