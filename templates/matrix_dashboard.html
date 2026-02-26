@@ -1,0 +1,837 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🌐 MATRIX Dashboard - Glitch in Matrix</title>
+    <style>
+        /* ═══════════════════════════════════════════════════════════════════ */
+        /* 🎨 MATRIX THEME - Dark Mode with Neon Green/Cyan Accents           */
+        /* ═══════════════════════════════════════════════════════════════════ */
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        :root {
+            /* Matrix Color Palette */
+            --bg-primary: #0d0d0d;
+            --bg-secondary: #1a1a1a;
+            --bg-card: #1e1e1e;
+            --bg-hover: #252525;
+            
+            --text-primary: #00ff41;      /* Matrix Green */
+            --text-secondary: #00d9ff;    /* Cyan Accent */
+            --text-muted: #808080;
+            --text-white: #ffffff;
+            
+            --border-color: #333;
+            --border-glow: #00ff41;
+            
+            --status-running: #00ff41;
+            --status-stopped: #ff0055;
+            --status-manual: #ffaa00;
+            
+            --shadow-glow: 0 0 20px rgba(0, 255, 65, 0.3);
+            --shadow-card: 0 4px 12px rgba(0, 0, 0, 0.5);
+        }
+        
+        body {
+            font-family: 'Courier New', monospace;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            line-height: 1.6;
+            overflow-x: hidden;
+        }
+        
+        /* ═══════════════════════════════════════════════════════════════════ */
+        /* 🎯 HEADER                                                           */
+        /* ═══════════════════════════════════════════════════════════════════ */
+        
+        .header {
+            background: var(--bg-secondary);
+            padding: 20px;
+            border-bottom: 2px solid var(--border-glow);
+            box-shadow: var(--shadow-glow);
+            position: sticky;
+            top: 0;
+            z-index: 1000;
+        }
+        
+        .header-content {
+            max-width: 1400px;
+            margin: 0 auto;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+        
+        .logo h1 {
+            font-size: 28px;
+            color: var(--text-primary);
+            text-shadow: 0 0 10px var(--text-primary);
+            animation: pulse 2s infinite;
+        }
+        
+        .logo .subtitle {
+            font-size: 12px;
+            color: var(--text-secondary);
+            margin-top: 5px;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+        
+        .system-stats {
+            display: flex;
+            gap: 30px;
+            font-size: 14px;
+        }
+        
+        .stat-item {
+            text-align: center;
+        }
+        
+        .stat-value {
+            font-size: 24px;
+            font-weight: bold;
+            color: var(--text-primary);
+        }
+        
+        .stat-label {
+            font-size: 11px;
+            color: var(--text-muted);
+            text-transform: uppercase;
+        }
+        
+        /* ═══════════════════════════════════════════════════════════════════ */
+        /* 📦 CONTAINER & SECTIONS                                             */
+        /* ═══════════════════════════════════════════════════════════════════ */
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 30px 20px;
+        }
+        
+        .section {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 25px;
+            margin-bottom: 30px;
+            box-shadow: var(--shadow-card);
+            transition: all 0.3s ease;
+        }
+        
+        .section:hover {
+            border-color: var(--border-glow);
+            box-shadow: var(--shadow-glow);
+        }
+        
+        .section-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 1px solid var(--border-color);
+        }
+        
+        .section-title {
+            font-size: 22px;
+            color: var(--text-primary);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .section-subtitle {
+            font-size: 13px;
+            color: var(--text-muted);
+            margin-top: 5px;
+        }
+        
+        .refresh-btn {
+            background: transparent;
+            border: 1px solid var(--text-primary);
+            color: var(--text-primary);
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-family: inherit;
+            font-size: 12px;
+            transition: all 0.3s ease;
+        }
+        
+        .refresh-btn:hover {
+            background: var(--text-primary);
+            color: var(--bg-primary);
+            box-shadow: 0 0 15px var(--text-primary);
+        }
+        
+        /* ═══════════════════════════════════════════════════════════════════ */
+        /* 🌳 ECOSYSTEM ARCHITECTURE                                           */
+        /* ═══════════════════════════════════════════════════════════════════ */
+        
+        .architecture-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+        }
+        
+        .component-group {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            padding: 15px;
+        }
+        
+        .component-group-title {
+            font-size: 16px;
+            color: var(--text-secondary);
+            margin-bottom: 15px;
+            font-weight: bold;
+        }
+        
+        .component-card {
+            background: var(--bg-hover);
+            border-left: 3px solid var(--border-glow);
+            padding: 12px;
+            margin-bottom: 10px;
+            border-radius: 4px;
+            transition: all 0.2s ease;
+        }
+        
+        .component-card:hover {
+            background: var(--bg-card);
+            transform: translateX(5px);
+        }
+        
+        .component-name {
+            font-size: 14px;
+            color: var(--text-primary);
+            font-weight: bold;
+            margin-bottom: 5px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .component-status {
+            font-size: 11px;
+            padding: 3px 8px;
+            border-radius: 3px;
+            font-weight: normal;
+        }
+        
+        .status-active {
+            background: rgba(0, 255, 65, 0.2);
+            color: var(--status-running);
+            border: 1px solid var(--status-running);
+        }
+        
+        .status-stopped {
+            background: rgba(255, 0, 85, 0.2);
+            color: var(--status-stopped);
+            border: 1px solid var(--status-stopped);
+        }
+        
+        .status-manual {
+            background: rgba(255, 170, 0, 0.2);
+            color: var(--status-manual);
+            border: 1px solid var(--status-manual);
+        }
+        
+        .component-description {
+            font-size: 12px;
+            color: var(--text-muted);
+            margin-bottom: 8px;
+        }
+        
+        .component-files {
+            font-size: 11px;
+            color: var(--text-secondary);
+            opacity: 0.7;
+        }
+        
+        /* ═══════════════════════════════════════════════════════════════════ */
+        /* 🟢 MONITOR STATUS                                                   */
+        /* ═══════════════════════════════════════════════════════════════════ */
+        
+        .monitor-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 15px;
+        }
+        
+        .monitor-card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            padding: 15px;
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .monitor-card.running {
+            border-left: 4px solid var(--status-running);
+        }
+        
+        .monitor-card.stopped {
+            border-left: 4px solid var(--status-stopped);
+        }
+        
+        .monitor-card:hover {
+            background: var(--bg-hover);
+            transform: translateY(-3px);
+            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+        }
+        
+        .monitor-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+        
+        .monitor-name {
+            font-size: 16px;
+            color: var(--text-primary);
+            font-weight: bold;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .monitor-status-badge {
+            font-size: 24px;
+            animation: blink 2s infinite;
+        }
+        
+        @keyframes blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        .monitor-description {
+            font-size: 12px;
+            color: var(--text-muted);
+            margin-bottom: 10px;
+        }
+        
+        .monitor-details {
+            display: flex;
+            justify-content: space-between;
+            font-size: 11px;
+            color: var(--text-secondary);
+            padding-top: 10px;
+            border-top: 1px solid var(--border-color);
+        }
+        
+        .monitor-pid {
+            color: var(--text-primary);
+            font-weight: bold;
+        }
+        
+        /* ═══════════════════════════════════════════════════════════════════ */
+        /* 🎯 SETUPS RADAR                                                     */
+        /* ═══════════════════════════════════════════════════════════════════ */
+        
+        .setups-table-container {
+            overflow-x: auto;
+        }
+        
+        .setups-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+        }
+        
+        .setups-table thead {
+            background: var(--bg-secondary);
+            border-bottom: 2px solid var(--border-glow);
+        }
+        
+        .setups-table th {
+            padding: 12px;
+            text-align: left;
+            color: var(--text-secondary);
+            font-weight: bold;
+            text-transform: uppercase;
+            font-size: 11px;
+        }
+        
+        .setups-table td {
+            padding: 12px;
+            border-bottom: 1px solid var(--border-color);
+            color: var(--text-white);
+        }
+        
+        .setups-table tbody tr {
+            transition: all 0.2s ease;
+        }
+        
+        .setups-table tbody tr:hover {
+            background: var(--bg-hover);
+            box-shadow: inset 0 0 10px rgba(0, 255, 65, 0.1);
+        }
+        
+        .direction-buy {
+            color: var(--status-running);
+            font-weight: bold;
+        }
+        
+        .direction-sell {
+            color: var(--status-stopped);
+            font-weight: bold;
+        }
+        
+        .status-badge {
+            padding: 4px 10px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: bold;
+            text-transform: uppercase;
+        }
+        
+        .status-monitoring {
+            background: rgba(0, 217, 255, 0.2);
+            color: var(--text-secondary);
+            border: 1px solid var(--text-secondary);
+        }
+        
+        .status-ready {
+            background: rgba(0, 255, 65, 0.2);
+            color: var(--status-running);
+            border: 1px solid var(--status-running);
+        }
+        
+        .status-closed {
+            background: rgba(128, 128, 128, 0.2);
+            color: var(--text-muted);
+            border: 1px solid var(--text-muted);
+        }
+        
+        .no-setups {
+            text-align: center;
+            padding: 40px;
+            color: var(--text-muted);
+            font-size: 14px;
+        }
+        
+        /* ═══════════════════════════════════════════════════════════════════ */
+        /* 🎬 LOADING & ANIMATIONS                                             */
+        /* ═══════════════════════════════════════════════════════════════════ */
+        
+        .loading {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 40px;
+            color: var(--text-primary);
+            font-size: 14px;
+        }
+        
+        .loading::before {
+            content: "⚡ ";
+            animation: spin 1s linear infinite;
+        }
+        
+        @keyframes spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+        
+        /* ═══════════════════════════════════════════════════════════════════ */
+        /* 📱 RESPONSIVE                                                       */
+        /* ═══════════════════════════════════════════════════════════════════ */
+        
+        @media (max-width: 768px) {
+            .header-content {
+                flex-direction: column;
+                gap: 15px;
+            }
+            
+            .system-stats {
+                flex-wrap: wrap;
+                gap: 15px;
+            }
+            
+            .architecture-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .monitor-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .setups-table {
+                font-size: 11px;
+            }
+            
+            .setups-table th,
+            .setups-table td {
+                padding: 8px;
+            }
+        }
+        
+        /* ═══════════════════════════════════════════════════════════════════ */
+        /* 🎨 FOOTER                                                           */
+        /* ═══════════════════════════════════════════════════════════════════ */
+        
+        .footer {
+            text-align: center;
+            padding: 30px 20px;
+            color: var(--text-muted);
+            font-size: 12px;
+            border-top: 1px solid var(--border-color);
+            margin-top: 40px;
+        }
+        
+        .footer a {
+            color: var(--text-secondary);
+            text-decoration: none;
+        }
+        
+        .footer a:hover {
+            color: var(--text-primary);
+        }
+    </style>
+</head>
+<body>
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
+    <!-- 🎯 HEADER                                                           -->
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
+    
+    <div class="header">
+        <div class="header-content">
+            <div class="logo">
+                <div>
+                    <h1>🌐 MATRIX DASHBOARD</h1>
+                    <div class="subtitle">✨ Glitch in Matrix by ФорексГод ✨ • 🧠 AI-Powered • 💎 Smart Money</div>
+                </div>
+            </div>
+            <div class="system-stats">
+                <div class="stat-item">
+                    <div class="stat-value" id="stat-health">--/--</div>
+                    <div class="stat-label">Monitors</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value" id="stat-setups">--</div>
+                    <div class="stat-label">Active Setups</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value" id="stat-positions">--</div>
+                    <div class="stat-label">Open Positions</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value" id="stat-uptime" style="font-size: 16px;">--</div>
+                    <div class="stat-label">System Uptime</div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
+    <!-- 📦 MAIN CONTAINER                                                   -->
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
+    
+    <div class="container">
+        
+        <!-- 🌳 ECOSYSTEM ARCHITECTURE -->
+        <div class="section">
+            <div class="section-header">
+                <div>
+                    <div class="section-title">
+                        🌳 Ecosystem Architecture
+                    </div>
+                    <div class="section-subtitle">Visual map of all system components</div>
+                </div>
+                <button class="refresh-btn" onclick="loadArchitecture()">⟳ Refresh</button>
+            </div>
+            <div id="architecture-container" class="loading">Loading architecture...</div>
+        </div>
+        
+        <!-- 🟢 MONITOR STATUS -->
+        <div class="section">
+            <div class="section-header">
+                <div>
+                    <div class="section-title">
+                        🟢 Live Monitor Status
+                    </div>
+                    <div class="section-subtitle">Real-time health check of background processes</div>
+                </div>
+                <button class="refresh-btn" onclick="loadMonitors()">⟳ Refresh</button>
+            </div>
+            <div id="monitors-container" class="loading">Loading monitors...</div>
+        </div>
+        
+        <!-- 🎯 ACTIVE SETUPS RADAR -->
+        <div class="section">
+            <div class="section-header">
+                <div>
+                    <div class="section-title">
+                        🎯 Active Setups Radar
+                    </div>
+                    <div class="section-subtitle">Live positioning - pairs waiting for 4H confirmation</div>
+                </div>
+                <button class="refresh-btn" onclick="loadSetups()">⟳ Refresh</button>
+            </div>
+            <div id="setups-container" class="loading">Loading setups...</div>
+        </div>
+        
+    </div>
+    
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
+    <!-- 🎨 FOOTER                                                           -->
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
+    
+    <div class="footer">
+        © 2026 Glitch in Matrix by ФорексГод • Powered by AI + Smart Money Concepts<br>
+        <small>Dashboard V1.0 • Auto-refresh every 10s</small>
+    </div>
+    
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
+    <!-- 📜 JAVASCRIPT                                                       -->
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
+    
+    <script>
+        // Auto-refresh interval (10 seconds)
+        const REFRESH_INTERVAL = 10000;
+        
+        // Load system stats
+        async function loadStats() {
+            try {
+                const response = await fetch('/api/stats');
+                const data = await response.json();
+                
+                document.getElementById('stat-health').textContent = data.monitors_health;
+                document.getElementById('stat-setups').textContent = data.active_setups;
+                document.getElementById('stat-positions').textContent = data.open_positions;
+                document.getElementById('stat-uptime').textContent = data.uptime;
+            } catch (error) {
+                console.error('Error loading stats:', error);
+            }
+        }
+        
+        // Load ecosystem architecture
+        async function loadArchitecture() {
+            const container = document.getElementById('architecture-container');
+            container.innerHTML = '<div class="loading">Loading architecture...</div>';
+            
+            try {
+                const response = await fetch('/api/architecture');
+                const data = await response.json();
+                
+                let html = '<div class="architecture-grid">';
+                
+                // Core Components
+                html += `
+                    <div class="component-group">
+                        <div class="component-group-title">⚡ Core Components</div>
+                        ${data.core_components.map(comp => `
+                            <div class="component-card">
+                                <div class="component-name">
+                                    ${comp.name}
+                                    <span class="component-status status-${comp.status}">${comp.status.toUpperCase()}</span>
+                                </div>
+                                <div class="component-description">${comp.description}</div>
+                                <div class="component-files">📁 ${comp.files.join(', ')}</div>
+                            </div>
+                        `).join('')}
+                    </div>
+                `;
+                
+                // Optional Monitors
+                html += `
+                    <div class="component-group">
+                        <div class="component-group-title">🔧 Optional Monitors</div>
+                        ${data.optional_monitors.map(comp => `
+                            <div class="component-card">
+                                <div class="component-name">
+                                    ${comp.name}
+                                    <span class="component-status status-${comp.status}">${comp.status.toUpperCase()}</span>
+                                </div>
+                                <div class="component-description">${comp.description}</div>
+                                <div class="component-files">📁 ${comp.files.join(', ')}</div>
+                            </div>
+                        `).join('')}
+                    </div>
+                `;
+                
+                // Execution Layer
+                html += `
+                    <div class="component-group">
+                        <div class="component-group-title">🔄 Execution Layer</div>
+                        ${data.execution_layer.map(comp => `
+                            <div class="component-card">
+                                <div class="component-name">
+                                    ${comp.name}
+                                    <span class="component-status status-${comp.status}">${comp.status.toUpperCase()}</span>
+                                </div>
+                                <div class="component-description">${comp.description}</div>
+                                <div class="component-files">📁 ${comp.files.join(', ')}</div>
+                            </div>
+                        `).join('')}
+                    </div>
+                `;
+                
+                // Protection Layer
+                html += `
+                    <div class="component-group">
+                        <div class="component-group-title">🛡️ Protection Layer</div>
+                        ${data.protection_layer.map(comp => `
+                            <div class="component-card">
+                                <div class="component-name">
+                                    ${comp.name}
+                                    <span class="component-status status-${comp.status}">${comp.status.toUpperCase()}</span>
+                                </div>
+                                <div class="component-description">${comp.description}</div>
+                                <div class="component-files">📁 ${comp.files.join(', ')}</div>
+                            </div>
+                        `).join('')}
+                    </div>
+                `;
+                
+                html += '</div>';
+                container.innerHTML = html;
+            } catch (error) {
+                console.error('Error loading architecture:', error);
+                container.innerHTML = '<div class="no-setups">❌ Error loading architecture</div>';
+            }
+        }
+        
+        // Load monitor status
+        async function loadMonitors() {
+            const container = document.getElementById('monitors-container');
+            container.innerHTML = '<div class="loading">Loading monitors...</div>';
+            
+            try {
+                const response = await fetch('/api/monitors');
+                const data = await response.json();
+                
+                let html = '<div class="monitor-grid">';
+                
+                data.forEach(monitor => {
+                    const statusClass = monitor.running ? 'running' : 'stopped';
+                    html += `
+                        <div class="monitor-card ${statusClass}">
+                            <div class="monitor-header">
+                                <div class="monitor-name">
+                                    ${monitor.emoji} ${monitor.name}
+                                </div>
+                                <div class="monitor-status-badge">${monitor.status_emoji}</div>
+                            </div>
+                            <div class="monitor-description">${monitor.description}</div>
+                            <div class="monitor-details">
+                                <div>⏱️ Interval: ${monitor.interval}</div>
+                                <div>PID: <span class="monitor-pid">${monitor.pid || 'N/A'}</span></div>
+                            </div>
+                        </div>
+                    `;
+                });
+                
+                html += '</div>';
+                container.innerHTML = html;
+            } catch (error) {
+                console.error('Error loading monitors:', error);
+                container.innerHTML = '<div class="no-setups">❌ Error loading monitors</div>';
+            }
+        }
+        
+        // Load active setups
+        async function loadSetups() {
+            const container = document.getElementById('setups-container');
+            container.innerHTML = '<div class="loading">Loading setups...</div>';
+            
+            try {
+                const response = await fetch('/api/setups');
+                const data = await response.json();
+                
+                if (data.length === 0) {
+                    container.innerHTML = '<div class="no-setups">📭 No active setups found</div>';
+                    return;
+                }
+                
+                let html = `
+                    <div class="setups-table-container">
+                        <table class="setups-table">
+                            <thead>
+                                <tr>
+                                    <th>Pair</th>
+                                    <th>Direction</th>
+                                    <th>Status</th>
+                                    <th>FVG Zone</th>
+                                    <th>Entry Price</th>
+                                    <th>Current Price</th>
+                                    <th>Distance (Pips)</th>
+                                    <th>Waiting (Hours)</th>
+                                    <th>Detected At</th>
+                                    <th>Confidence</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                `;
+                
+                data.forEach(setup => {
+                    const directionClass = setup.direction === 'BUY' ? 'direction-buy' : 'direction-sell';
+                    const statusClass = `status-${setup.status.toLowerCase()}`;
+                    
+                    html += `
+                        <tr>
+                            <td><strong>${setup.pair}</strong></td>
+                            <td class="${directionClass}">${setup.direction_emoji} ${setup.direction}</td>
+                            <td><span class="status-badge ${statusClass}">${setup.status}</span></td>
+                            <td>${setup.fvg_zone}</td>
+                            <td>${setup.entry_price.toFixed(5)}</td>
+                            <td>${setup.current_price.toFixed(5)}</td>
+                            <td>${setup.distance_pips} pips</td>
+                            <td>${setup.hours_waiting}h</td>
+                            <td>${setup.detected_at}</td>
+                            <td>${setup.confidence}</td>
+                        </tr>
+                    `;
+                });
+                
+                html += `
+                            </tbody>
+                        </table>
+                    </div>
+                `;
+                
+                container.innerHTML = html;
+            } catch (error) {
+                console.error('Error loading setups:', error);
+                container.innerHTML = '<div class="no-setups">❌ Error loading setups</div>';
+            }
+        }
+        
+        // Initial load
+        window.addEventListener('DOMContentLoaded', () => {
+            loadStats();
+            loadArchitecture();
+            loadMonitors();
+            loadSetups();
+            
+            // Auto-refresh every 10 seconds
+            setInterval(() => {
+                loadStats();
+                loadMonitors();
+                loadSetups();
+            }, REFRESH_INTERVAL);
+        });
+    </script>
+</body>
+</html>
