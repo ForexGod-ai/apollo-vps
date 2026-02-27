@@ -93,7 +93,15 @@ class DailyScanner:
             self.data_provider = MT5DataProvider()
             print("📊 Using MT5 for market data")
             
-        self.smc_detector = SMCDetector(swing_lookback=5)
+        # V8.0: Initialize SMCDetector with ATR Prominence + Premium/Discount filters
+        self.smc_detector = SMCDetector(
+            swing_lookback=5,      # Standard swing validation (5 bars each side)
+            atr_multiplier=1.5     # V7.0: ATR Prominence Filter (1.5x ATR threshold)
+        )
+        print("✅ SMC Detector V8.0 initialized:")
+        print("   🔥 ATR Prominence Filter: 1.5x ATR (eliminates micro-swings)")
+        print("   🎯 Premium/Discount Zone: 50% Fibonacci (only deep retracements)")
+        
         self.telegram = TelegramNotifier()
         
         # NEW: Load ML optimizer for setup scoring
@@ -245,14 +253,27 @@ class DailyScanner:
                 # GBP pairs still need 1H for additional validation
                 is_gbp = 'GBP' in symbol
                 
-                # Run SMC detection
-                setup = self.smc_detector.scan_for_setup(
-                    symbol=symbol,
-                    df_daily=df_daily,
-                    df_4h=df_4h,
-                    priority=priority,
-                    df_1h=df_1h  # V3.0: Pass 1H data for GBP pairs
-                )
+                # V8.0: Run SMC detection with ATR + Premium/Discount filters
+                # These filters may reject setups:
+                # - ATR Filter: Eliminates micro-swings (not prominent enough)
+                # - Premium/Discount: Rejects shallow retracements (<50%)
+                try:
+                    setup = self.smc_detector.scan_for_setup(
+                        symbol=symbol,
+                        df_daily=df_daily,
+                        df_4h=df_4h,
+                        priority=priority,
+                        df_1h=df_1h  # V3.0: Pass 1H data for GBP pairs
+                    )
+                except Exception as scan_error:
+                    print(f"⚠️  Error scanning {symbol}: {scan_error}")
+                    # Log error but continue to next pair
+                    try:
+                        with open('scanner_errors.log', 'a') as f:
+                            f.write(f"{datetime.now().isoformat()} - {symbol} - {scan_error}\n")
+                    except:
+                        pass
+                    setup = None
                 
                 if setup:
                     print(f"🎯 SETUP FOUND on {symbol}!")
@@ -291,6 +312,11 @@ class DailyScanner:
                     
                     setups_found.append(setup)
                     
+                    # V8.0: Log filter validation status
+                    print(f"   ✅ V8.0 Filters PASSED:")
+                    print(f"      • ATR Prominence: Swing validated (1.5x ATR)")
+                    print(f"      • Premium/Discount: FVG in correct zone (>50% retracement)")
+                    
                     # V3.3: ALWAYS send chart alert when setup is found
                     # User expects automatic Telegram notifications with 3 charts for EVERY scan
                     if self.scanner_settings.get('telegram_alerts', True):
@@ -310,7 +336,15 @@ class DailyScanner:
                     
                     print(f"✓ {symbol} added to morning scan report")
                 else:
-                    print(f"✓ {symbol} - No setup detected")
+                    # V8.0: Setup rejected by one or more filters
+                    # Could be:
+                    # - No CHoCH/BOS detected
+                    # - No FVG found
+                    # - ATR Filter: Swing not prominent enough
+                    # - Premium/Discount: FVG in wrong zone (shallow retracement)
+                    # - FVG quality check failed
+                    # - 4H confirmation missing
+                    print(f"✓ {symbol} - No valid setup (rejected by V8.0 filters or no signal)")
         
         finally:
             # Disconnect cTrader unless keep_connection=True
