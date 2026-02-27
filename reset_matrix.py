@@ -124,19 +124,32 @@ def reset_monitoring_file(monitoring_file: Path, create_backup: bool = True) -> 
             if backup_path:
                 print(f"{Colors.CYAN}💾 Backup created: {backup_path.name}{Colors.RESET}")
         
-        # Suprascrie cu array gol
+        # V8.0 FIX: Suprascrie cu structura corectă (dict cu 'setups' key)
+        # Compatible cu daily_scanner.py care se așteaptă la data.get("setups", [])
+        reset_data = {
+            "setups": [],
+            "last_updated": datetime.now().isoformat()
+        }
+        
         with open(monitoring_file, 'w', encoding='utf-8') as f:
-            json.dump([], f, indent=2)
+            json.dump(reset_data, f, indent=2)
         
         # Verifică integritatea
         with open(monitoring_file, 'r', encoding='utf-8') as f:
             data = json.load(f)
         
-        if not isinstance(data, list):
-            raise ValueError("File content is not a valid array")
-        
-        if len(data) != 0:
-            raise ValueError("File was not properly reset")
+        # Acceptă atât dict cu 'setups' key, cât și array direct (backward compatible)
+        if isinstance(data, dict):
+            setups = data.get('setups', [])
+            if not isinstance(setups, list):
+                raise ValueError("'setups' field is not a valid array")
+            if len(setups) != 0:
+                raise ValueError("File was not properly reset (setups not empty)")
+        elif isinstance(data, list):
+            if len(data) != 0:
+                raise ValueError("File was not properly reset")
+        else:
+            raise ValueError("File content is not a valid structure")
         
         return True
     
@@ -164,22 +177,30 @@ def print_stats(monitoring_file: Path):
         with open(monitoring_file, 'r', encoding='utf-8') as f:
             data = json.load(f)
         
-        if not isinstance(data, list):
-            print(f"{Colors.YELLOW}⚠️  WARNING: File contains invalid data (not an array){Colors.RESET}")
+        # V8.0 FIX: Handle both formats (dict with 'setups' key or direct list)
+        if isinstance(data, dict):
+            setups = data.get('setups', [])
+            last_updated = data.get('last_updated', 'N/A')
+        elif isinstance(data, list):
+            setups = data
+            last_updated = 'N/A (old format)'
+        else:
+            print(f"{Colors.YELLOW}⚠️  WARNING: File contains invalid data (unknown format){Colors.RESET}")
             return
         
         print(f"{Colors.BOLD}📊 CURRENT STATUS:{Colors.RESET}")
         print(f"   File: {Colors.CYAN}{monitoring_file.name}{Colors.RESET}")
         print(f"   Location: {Colors.WHITE}{monitoring_file.parent}{Colors.RESET}")
-        print(f"   Setups: {Colors.YELLOW}{len(data)}{Colors.RESET}")
+        print(f"   Setups: {Colors.YELLOW}{len(setups)}{Colors.RESET}")
         print(f"   Size: {Colors.WHITE}{monitoring_file.stat().st_size} bytes{Colors.RESET}")
+        print(f"   Last Updated: {Colors.WHITE}{last_updated}{Colors.RESET}")
         
-        if len(data) > 0:
+        if len(setups) > 0:
             # Analiză rapidă a setup-urilor
             symbols = set()
             directions = {'bullish': 0, 'bearish': 0}
             
-            for setup in data:
+            for setup in setups:
                 if isinstance(setup, dict):
                     symbols.add(setup.get('symbol', 'UNKNOWN'))
                     direction = setup.get('daily_choch', {}).get('direction', '').lower()

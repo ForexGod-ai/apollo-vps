@@ -193,11 +193,25 @@ class DailyScanner:
         try:
             with open('monitoring_setups.json', 'r') as f:
                 data = json.load(f)
-                existing_setups = data.get("setups", [])
-                monitoring_symbols = {s['symbol'] for s in existing_setups if s.get('status') == 'MONITORING'}
+                
+                # V8.0 FAILSAFE: Handle both formats (dict with 'setups' key or direct list)
+                if isinstance(data, dict):
+                    existing_setups = data.get("setups", [])
+                elif isinstance(data, list):
+                    # Old format: direct array - convert to dict format
+                    existing_setups = data
+                    print(f"⚠️  WARNING: monitoring_setups.json in old format (list). Converting...")
+                else:
+                    print(f"⚠️  WARNING: monitoring_setups.json has invalid format. Skipping...")
+                    existing_setups = []
+                
+                monitoring_symbols = {s['symbol'] for s in existing_setups if isinstance(s, dict) and s.get('status') == 'MONITORING'}
                 if monitoring_symbols:
                     print(f"\n🔄 Re-evaluating {len(monitoring_symbols)} MONITORING setups: {', '.join(monitoring_symbols)}")
         except FileNotFoundError:
+            pass
+        except json.JSONDecodeError as e:
+            print(f"⚠️  ERROR: monitoring_setups.json is corrupted: {e}")
             pass
         
         try:
@@ -356,9 +370,19 @@ class DailyScanner:
         try:
             with open('monitoring_setups.json', 'r') as f:
                 data = json.load(f)
-                monitoring_setups = data.get("setups", [])
+                
+                # V8.0 FAILSAFE: Handle both formats
+                if isinstance(data, dict):
+                    monitoring_setups = data.get("setups", [])
+                elif isinstance(data, list):
+                    monitoring_setups = data
+                else:
+                    monitoring_setups = []
         except FileNotFoundError:
             pass  # No existing file
+        except json.JSONDecodeError:
+            print(f"⚠️  WARNING: monitoring_setups.json corrupted. Skipping...")
+            pass
         
         # Include ALL open positions from trade_history.json as active setups
         active_setups_count = len(monitoring_setups)
@@ -392,7 +416,12 @@ class DailyScanner:
         try:
             with open('monitoring_setups.json', 'r') as f:
                 data = json.load(f)
-                final_monitoring_count = len(data.get("setups", []))
+                
+                # V8.0 FAILSAFE: Handle both formats
+                if isinstance(data, dict):
+                    final_monitoring_count = len(data.get("setups", []))
+                elif isinstance(data, list):
+                    final_monitoring_count = len(data)
         except:
             pass
         
@@ -515,10 +544,24 @@ def save_monitoring_setups(setups: List[TradeSetup]):
         try:
             with open('monitoring_setups.json', 'r') as f:
                 data = json.load(f)
-                for setup in data.get("setups", []):
-                    existing_setups[setup["symbol"]] = setup
+                
+                # V8.0 FAILSAFE: Handle both formats (dict with 'setups' key or direct list)
+                if isinstance(data, dict):
+                    setups_list = data.get("setups", [])
+                elif isinstance(data, list):
+                    # Old format: direct array
+                    setups_list = data
+                else:
+                    setups_list = []
+                
+                for setup in setups_list:
+                    if isinstance(setup, dict) and "symbol" in setup:
+                        existing_setups[setup["symbol"]] = setup
         except FileNotFoundError:
             pass  # No existing file, start fresh
+        except json.JSONDecodeError:
+            print(f"⚠️  WARNING: monitoring_setups.json corrupted. Starting fresh...")
+            pass
         
         # Add/update with new setups (both MONITORING and READY)
         for setup in setups:
