@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-🛡️ WATCHDOG MONITOR V3.9 - 5 MONITORS (FULL PROTECTION)
+🛡️ WATCHDOG MONITOR V4.0 - 6 MONITORS (COMPLETE PROTECTION)
 ──────────────────
 ✨ Glitch in Matrix by ФорексГод ✨
 🧠 AI-Powered • 💎 Smart Money
@@ -9,16 +9,16 @@ System Guardian - Monitors and auto-restarts ALL critical processes:
 - setup_executor_monitor.py (Setup Scanner & Executor)
 - position_monitor.py (Position & Profit Tracker)
 - telegram_command_center.py (Command Center V3.7)
-- realtime_monitor.py (4H Candle Analysis) 🆕
-- ctrader_sync_daemon.py (Broker Sync with --loop) 🆕
+- realtime_monitor.py (4H Candle Analysis)
+- ctrader_sync_daemon.py (Broker Sync with --loop)
+- news_calendar_monitor.py (Economic Calendar - V2.0 Always-On) 🆕
 
-Note: news_calendar_monitor.py is a scheduled task (not a daemon), runs via cron/launchd
-
-🆕 V3.9 Features:
-✅ 5 Monitors Protected (was 3 in V3.8)
+🆕 V4.0 Features:
+✅ 6 Monitors Protected (was 5 in V3.9)
+✅ All monitors now run as daemons (Always-On architecture)
 ✅ State Tracking - Notifications only on state changes (stopped → running)
 ✅ Rate Limiter - Max 1 alert per process every 15 minutes (Anti-Spam)
-✅ Aggregated Startup - Single boot message instead of 5 separate alerts
+✅ Aggregated Startup - Single boot message instead of 6 separate alerts
 
 If any process dies → Instant restart (no manual intervention)
 ──────────────────
@@ -87,6 +87,14 @@ class WatchdogMonitor:
                 'last_restart': None,
                 'state': 'unknown',  # 🔥 NEW: Track state
                 'last_notification': 0  # 🔥 NEW: Rate limiter
+            },
+            'news_calendar_monitor.py': {
+                'name': 'News Calendar',
+                'command': [self.python_path, 'news_calendar_monitor.py', '--interval', '24'],
+                'restart_count': 0,
+                'last_restart': None,
+                'state': 'unknown',  # 🔥 NEW: Track state
+                'last_notification': 0  # 🔥 NEW: Rate limiter
             }
         }
         
@@ -96,7 +104,7 @@ class WatchdogMonitor:
         self.telegram_token = os.getenv('TELEGRAM_BOT_TOKEN')
         self.telegram_chat_id = os.getenv('TELEGRAM_CHAT_ID')
         
-        logger.info("🛡️ Watchdog Monitor V3.9 - 5 MONITORS (FULL PROTECTION)")
+        logger.info("🛡️ Watchdog Monitor V4.0 - 6 MONITORS (COMPLETE PROTECTION)")
         logger.info(f"⏱️  Check interval: {check_interval}s")
         logger.info(f"🔇 Notification cooldown: {self.notification_cooldown}s (15 min)")
         logger.info(f"🐍 Python: {self.python_path}")
@@ -280,7 +288,7 @@ class WatchdogMonitor:
     def run(self):
         """Main monitoring loop"""
         logger.info("\n" + "="*60)
-        logger.info("🛡️ WATCHDOG MONITOR V3.9 - ARMED & PROTECTING")
+        logger.info("🛡️ WATCHDOG MONITOR V4.0 - ARMED & PROTECTING")
         logger.info(f"⏱️  Check Interval: {self.check_interval}s")
         logger.info(f"🔇 Anti-Spam: 15 min cooldown per alert")
         logger.info(f"📊 Monitoring: {len(self.processes)} processes")
@@ -304,7 +312,7 @@ class WatchdogMonitor:
         running_count = sum(1 for p in self.processes.values() if p['state'] == 'running')
         total_count = len(self.processes)
         
-        startup_msg = f"""🛡️ <b>WATCHDOG V3.9 ONLINE</b>
+        startup_msg = f"""🛡️ <b>WATCHDOG V4.0 ONLINE</b>
 
 ✅ System guardian activated
 ⏱️ Check interval: <code>{self.check_interval}s</code>
@@ -353,7 +361,7 @@ def main():
     """Entry point"""
     import argparse
     
-    parser = argparse.ArgumentParser(description='Watchdog Monitor V3.9 - 5 Monitors (Full Protection)')
+    parser = argparse.ArgumentParser(description='Watchdog Monitor V4.0 - 6 Monitors (Complete Protection)')
     parser.add_argument('--interval', type=int, default=60,
                         help='Check interval in seconds (default: 60)')
     

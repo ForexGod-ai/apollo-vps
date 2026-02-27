@@ -1,34 +1,87 @@
+#!/usr/bin/env python3
 """
-Forex News Calendar Monitor for ForexGod Trading System
+🗞️ NEWS CALENDAR MONITOR V2.0 - ALWAYS-ON DAEMON
+──────────────────
+✨ Glitch in Matrix by ФорексГод ✨
+🧠 AI-Powered • 💎 Smart Money
+
+Forex News Calendar Monitor - Continuous Background Daemon
 Monitors high-impact economic events and sends Telegram alerts
 Uses ForexFactory calendar with Selenium to bypass Cloudflare
+
+🆕 V2.0 Features:
+✅ Always-On Daemon (infinite loop, never exits)
+✅ Daily calendar check (configurable interval)
+✅ Auto-retry on errors (graceful degradation)
+✅ Watchdog-compatible (always shows RUNNING status)
+
+Usage:
+    python3 news_calendar_monitor.py [--interval HOURS]
+    
+    --interval: Hours between calendar checks (default: 24)
+──────────────────
 """
 
 import os
+import sys
+import time
+import argparse
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional
+from pathlib import Path
 from dotenv import load_dotenv
-from bs4 import BeautifulSoup
-import logging
-import requests  # For Telegram API and cTrader calendar
-from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from webdriver_manager.chrome import ChromeDriverManager
-import time
-import pytz
+from loguru import logger
+
+# Try importing optional dependencies with graceful fallback
+try:
+    from bs4 import BeautifulSoup
+    HAS_BS4 = True
+except ImportError:
+    logger.warning("⚠️ BeautifulSoup4 not installed - HTML parsing disabled")
+    HAS_BS4 = False
+
+try:
+    import requests
+    HAS_REQUESTS = True
+except ImportError:
+    logger.warning("⚠️ requests not installed - HTTP fetching disabled")
+    HAS_REQUESTS = False
+
+try:
+    from selenium import webdriver
+    from selenium.webdriver.chrome.service import Service
+    from selenium.webdriver.chrome.options import Options
+    from selenium.webdriver.common.by import By
+    from selenium.webdriver.support.ui import WebDriverWait
+    from selenium.webdriver.support import expected_conditions as EC
+    from webdriver_manager.chrome import ChromeDriverManager
+    HAS_SELENIUM = True
+except ImportError:
+    logger.warning("⚠️ Selenium not installed - Web scraping disabled")
+    HAS_SELENIUM = False
+
+try:
+    import pytz
+    HAS_PYTZ = True
+except ImportError:
+    logger.warning("⚠️ pytz not installed - Timezone handling limited")
+    HAS_PYTZ = False
 
 load_dotenv()
 
-# Setup logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
+# Configure logger (remove default, add custom)
+logger.remove()
+logger.add(
+    sys.stdout,
+    format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{message}</cyan>",
+    level="INFO"
 )
-logger = logging.getLogger(__name__)
+logger.add(
+    "news_calendar.log",
+    format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {message}",
+    level="DEBUG",
+    rotation="10 MB"
+)
 
 
 class NewsEvent:
@@ -48,19 +101,32 @@ class NewsEvent:
 
 
 class NewsCalendarMonitor:
-    """Monitors forex economic calendar and sends alerts"""
+    """Monitors forex economic calendar and sends alerts - Always-On Daemon"""
     
-    def __init__(self):
+    def __init__(self, check_interval_hours: int = 24):
         self.bot_token = os.getenv('TELEGRAM_BOT_TOKEN')
         self.chat_id = os.getenv('TELEGRAM_CHAT_ID')
-        self.base_url = f"https://api.telegram.org/bot{self.bot_token}"
+        
+        if HAS_REQUESTS:
+            self.base_url = f"https://api.telegram.org/bot{self.bot_token}"
+        
+        # 🔥 NEW: Check interval for daemon loop
+        self.check_interval_hours = check_interval_hours
+        self.check_interval_seconds = check_interval_hours * 3600
         
         # Timezone for Romania (GMT+2 / EET)
-        self.local_tz = pytz.timezone('Europe/Bucharest')
-        self.utc_tz = pytz.UTC
+        if HAS_PYTZ:
+            self.local_tz = pytz.timezone('Europe/Bucharest')
+            self.utc_tz = pytz.UTC
+        else:
+            self.local_tz = None
+            self.utc_tz = None
         
         if not self.bot_token or not self.chat_id:
-            raise ValueError("TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID must be set in .env")
+            logger.warning("⚠️ TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not set - alerts disabled")
+            self.alerts_enabled = False
+        else:
+            self.alerts_enabled = True
         
         # Critical news keywords to highlight
         self.critical_keywords = [
@@ -656,17 +722,83 @@ class NewsCalendarMonitor:
         self.send_telegram_alert(message)
         
         logger.info("✅ Daily news check complete!")
+    
+    def run_daemon(self):
+        """
+        🔥 ALWAYS-ON DAEMON MODE
+        Infinite loop - checks calendar at regular intervals
+        Never exits (watchdog-compatible)
+        """
+        logger.info("\n" + "="*60)
+        logger.info("🗞️ NEWS CALENDAR MONITOR V2.0 - DAEMON MODE")
+        logger.info(f"⏱️  Check interval: {self.check_interval_hours} hours")
+        logger.info(f"📊 Alerts enabled: {self.alerts_enabled}")
+        logger.info("="*60 + "\n")
+        
+        iteration = 0
+        
+        while True:
+            iteration += 1
+            logger.info(f"\n{'='*60}")
+            logger.info(f"📰 Calendar Check #{iteration} - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+            logger.info(f"{'='*60}\n")
+            
+            try:
+                # Run daily news check
+                self.run_daily_check()
+                logger.success(f"✅ Check #{iteration} complete!")
+                
+            except Exception as e:
+                logger.error(f"❌ Check #{iteration} failed: {e}")
+                logger.debug("Stack trace:", exc_info=True)
+                # Don't crash - continue daemon loop
+            
+            # Calculate next check time
+            next_check = datetime.now() + timedelta(hours=self.check_interval_hours)
+            logger.info(f"\n⏰ Next check at: {next_check.strftime('%Y-%m-%d %H:%M:%S')}")
+            logger.info(f"💤 Sleeping {self.check_interval_hours} hours ({self.check_interval_seconds}s)...")
+            
+            # Sleep until next check (daemon stays alive)
+            try:
+                time.sleep(self.check_interval_seconds)
+            except KeyboardInterrupt:
+                logger.warning("\n⚠️ Daemon interrupted by user (Ctrl+C)")
+                logger.info("🛑 Shutting down gracefully...")
+                break
+            except Exception as e:
+                logger.error(f"❌ Sleep interrupted: {e}")
+                # Wait 60s before retry
+                logger.info("⏳ Retrying in 60 seconds...")
+                time.sleep(60)
 
 
 def main():
-    """Entry point for script"""
+    """Entry point for daemon"""
+    parser = argparse.ArgumentParser(
+        description='News Calendar Monitor V2.0 - Always-On Daemon'
+    )
+    parser.add_argument(
+        '--interval',
+        type=int,
+        default=24,
+        help='Hours between calendar checks (default: 24)'
+    )
+    
+    args = parser.parse_args()
+    
     try:
-        monitor = NewsCalendarMonitor()
-        monitor.run_daily_check()
+        logger.info("🚀 Starting News Calendar Monitor V2.0...")
+        monitor = NewsCalendarMonitor(check_interval_hours=args.interval)
+        monitor.run_daemon()
+        
+    except KeyboardInterrupt:
+        logger.warning("\n⚠️ Daemon stopped by user")
+        sys.exit(0)
+        
     except Exception as e:
         logger.error(f"❌ Fatal error: {e}")
-        import traceback
-        traceback.print_exc()
+        logger.debug("Stack trace:", exc_info=True)
+        sys.exit(1)
 
 
 if __name__ == "__main__":
