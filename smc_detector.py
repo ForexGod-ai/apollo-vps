@@ -83,8 +83,9 @@ class TradeSetup:
 
 
 class SMCDetector:
-    def __init__(self, swing_lookback: int = 5):
+    def __init__(self, swing_lookback: int = 5, atr_multiplier: float = 1.5):
         self.swing_lookback = swing_lookback
+        self.atr_multiplier = atr_multiplier  # 🔥 NEW: ATR multiplier for prominence filter
         # Track FVG zones with trade count for ALL pairs (UNIVERSAL anti-overtrading)
         # Format: {symbol: [(top, bottom, date, trade_count), ...]}
         self.fvg_zones_tracker = {}  # UNIVERSAL for all pairs
@@ -115,6 +116,174 @@ class SMCDetector:
         # DEBUG LOG
         print(f"🎯 ORDER BLOCK MAGNET: {symbol} {timeframe} - Stored FVG zone {fvg.bottom:.5f}-{fvg.top:.5f}")
         print(f"   Total magnets for {symbol} {timeframe}: {len(self.fvg_magnets[symbol][timeframe])}")
+    
+    def calculate_atr(self, df: pd.DataFrame, period: int = 14) -> float:
+        """🔥 Calculate Average True Range for prominence filtering
+        
+        ATR measures volatility and helps distinguish major swings from micro-structure.
+        A swing must move at least atr_multiplier * ATR to be considered significant.
+        
+        Args:
+            df: DataFrame with OHLC data
+            period: ATR period (default 14)
+        
+        Returns:
+            ATR value or 0.0 if insufficient data
+        """
+        if df is None or len(df) < period + 1:
+            return 0.0
+        
+        try:
+            # Calculate True Range
+            high_low = df['high'] - df['low']
+            high_prev_close = abs(df['high'] - df['close'].shift(1))
+            low_prev_close = abs(df['low'] - df['close'].shift(1))
+            
+            true_range = pd.concat([high_low, high_prev_close, low_prev_close], axis=1).max(axis=1)
+            
+            # Calculate ATR (simple moving average of TR)
+            atr = true_range.rolling(window=period).mean().iloc[-1]
+            
+            return atr if not pd.isna(atr) else 0.0
+        except Exception as e:
+            print(f"❌ ATR calculation error: {e}")
+            return 0.0
+    
+    def calculate_equilibrium(self, df: pd.DataFrame, swing_highs: List[SwingPoint], swing_lows: List[SwingPoint]) -> Optional[float]:
+        """🎯 Calculate 50% Equilibrium Level (Premium/Discount Threshold)
+        
+        SMART MONEY CONCEPT:
+        - Premium Zone (50-100%): Optimal for SELL setups (distribution)
+        - Discount Zone (0-50%): Optimal for LONG setups (accumulation)
+        - Equilibrium (50%): Fair value - rejects weak retracements
+        
+        We only trade deep pullbacks (>50% retracement) to avoid retail inducement zones.
+        
+        Args:
+            df: DataFrame with OHLC data
+            swing_highs: List of detected swing highs
+            swing_lows: List of detected swing lows
+        
+        Returns:
+            Equilibrium price level (50% of last macro swing leg) or None if insufficient swings
+        """
+        if not swing_highs or not swing_lows:
+            return None
+        
+        try:
+            # Get last macro swing high and low
+            last_high = swing_highs[-1]
+            last_low = swing_lows[-1]
+            
+            # Determine which is more recent (defines current swing leg)
+            if last_high.index > last_low.index:
+                # Last move was UP (from low to high)
+                macro_high = last_high.price
+                macro_low = last_low.price
+                swing_direction = 'bullish'
+            else:
+                # Last move was DOWN (from high to low)
+                macro_high = last_high.price
+                macro_low = last_low.price
+                swing_direction = 'bearish'
+            
+            # Calculate 50% equilibrium
+            equilibrium = (macro_high + macro_low) / 2.0
+            
+            return equilibrium
+        
+        except Exception as e:
+            print(f"❌ Equilibrium calculation error: {e}")
+            return None
+    
+    def validate_fvg_zone(self, fvg: FVG, equilibrium: float, current_trend: str, debug: bool = False) -> bool:
+        """🔥 PREMIUM/DISCOUNT ZONE VALIDATION (50% Fibonacci Filter)
+        
+        MASTERCLASS RULE:
+        - Only trade deep retracements (>50% of swing leg)
+        - Avoid retail inducement zones (20-30% shallow pullbacks)
+        
+        VALIDATION LOGIC:
+        
+        For BEARISH (SELL) setups:
+        - FVG must be in PREMIUM ZONE (above 50% equilibrium)
+        - This means price retraced deeply into supply
+        - Optimal distribution zone for smart money
+        
+        For BULLISH (LONG) setups:
+        - FVG must be in DISCOUNT ZONE (below 50% equilibrium)
+        - This means price retraced deeply into demand
+        - Optimal accumulation zone for smart money
+        
+        Args:
+            fvg: FVG object to validate
+            equilibrium: 50% level of macro swing leg
+            current_trend: 'bullish' or 'bearish'
+            debug: Print validation details
+        
+        Returns:
+            True if FVG is in correct zone, False if rejected
+        """
+        if equilibrium is None:
+            if debug:
+                print("⚠️  No equilibrium level - skipping Premium/Discount validation")
+            return True  # Can't validate without equilibrium
+        
+        fvg_middle = fvg.middle
+        fvg_top = fvg.top
+        fvg_bottom = fvg.bottom
+        
+        if current_trend == 'bearish':
+            # BEARISH SETUP: FVG must be ABOVE 50% (Premium Zone)
+            # Check if FVG is entirely or partially above equilibrium
+            is_in_premium = fvg_bottom >= equilibrium  # Entire FVG above 50%
+            is_partial_premium = fvg_middle > equilibrium  # At least middle above 50%
+            
+            if debug:
+                zone_pct = ((fvg_middle - equilibrium) / equilibrium) * 100
+                print(f"\n🔍 PREMIUM/DISCOUNT VALIDATION (BEARISH):")
+                print(f"   Equilibrium (50%): {equilibrium:.5f}")
+                print(f"   FVG Zone: {fvg_bottom:.5f} - {fvg_top:.5f}")
+                print(f"   FVG Middle: {fvg_middle:.5f}")
+                print(f"   Zone Position: {zone_pct:+.2f}% from equilibrium")
+                
+                if is_in_premium:
+                    print(f"   ✅ VALID: Entire FVG in PREMIUM ZONE (above 50%)")
+                elif is_partial_premium:
+                    print(f"   ✅ VALID: FVG middle in PREMIUM ZONE (above 50%)")
+                else:
+                    print(f"   ❌ REJECTED: FVG in DISCOUNT ZONE (below 50%)")
+                    print(f"      → Bearish setups require Premium zone (above 50%)")
+                    print(f"      → This is a shallow retracement (retail inducement)")
+            
+            return is_in_premium or is_partial_premium
+        
+        elif current_trend == 'bullish':
+            # BULLISH SETUP: FVG must be BELOW 50% (Discount Zone)
+            # Check if FVG is entirely or partially below equilibrium
+            is_in_discount = fvg_top <= equilibrium  # Entire FVG below 50%
+            is_partial_discount = fvg_middle < equilibrium  # At least middle below 50%
+            
+            if debug:
+                zone_pct = ((fvg_middle - equilibrium) / equilibrium) * 100
+                print(f"\n🔍 PREMIUM/DISCOUNT VALIDATION (BULLISH):")
+                print(f"   Equilibrium (50%): {equilibrium:.5f}")
+                print(f"   FVG Zone: {fvg_bottom:.5f} - {fvg_top:.5f}")
+                print(f"   FVG Middle: {fvg_middle:.5f}")
+                print(f"   Zone Position: {zone_pct:+.2f}% from equilibrium")
+                
+                if is_in_discount:
+                    print(f"   ✅ VALID: Entire FVG in DISCOUNT ZONE (below 50%)")
+                elif is_partial_discount:
+                    print(f"   ✅ VALID: FVG middle in DISCOUNT ZONE (below 50%)")
+                else:
+                    print(f"   ❌ REJECTED: FVG in PREMIUM ZONE (above 50%)")
+                    print(f"      → Bullish setups require Discount zone (below 50%)")
+                    print(f"      → This is a shallow retracement (retail inducement)")
+            
+            return is_in_discount or is_partial_discount
+        
+        return False  # Unknown trend direction
     
     def get_fvg_magnets(self, symbol: str, timeframe: str) -> List[FVG]:
         """
@@ -429,41 +598,76 @@ class SMCDetector:
         return chochs
 
     def detect_fvg(self, df: pd.DataFrame, choch, current_price) -> Optional[FVG]:
+        """
+        Detect Fair Value Gaps (FVG) - 3-candle imbalance pattern
+        
+        CORRECT FVG LOGIC (FIXED):
+        
+        BULLISH FVG (Gap Up):
+        - Condition: Candle[i-1].high < Candle[i+1].low
+        - FVG Top: Candle[i+1].low
+        - FVG Bottom: Candle[i-1].high
+        - Meaning: Price jumped UP, leaving unfilled demand zone below
+        
+        BEARISH FVG (Gap Down):
+        - Condition: Candle[i-1].low > Candle[i+1].high
+        - FVG Top: Candle[i-1].low
+        - FVG Bottom: Candle[i+1].high
+        - Meaning: Price dropped DOWN, leaving unfilled supply zone above
+        
+        3-Candle Pattern:
+        - Candle i-1: Setup candle (before gap)
+        - Candle i: Gap candle (big move creating imbalance)
+        - Candle i+1: Confirmation candle (after gap)
+        """
         all_fvgs = []
         start_idx = choch.index if hasattr(choch, 'index') else 0
         end_idx = len(df)
+        
         # METHOD 1: Strict 3-candle gap (classic FVG)
-        for i in range(start_idx + 2, end_idx):
+        # Need at least 2 candles after start_idx for i-1, i, i+1 pattern
+        for i in range(start_idx + 1, end_idx - 1):
             if choch.direction == 'bullish':
-                if df['high'].iloc[i - 2] < df['low'].iloc[i]:
-                    gap_top = df['low'].iloc[i]
-                    gap_bottom = df['high'].iloc[i - 2]
-                    fvg = FVG(
-                        index=i,
-                        direction='bullish',
-                        top=gap_top,
-                        bottom=gap_bottom,
-                        middle=(gap_top + gap_bottom) / 2,
-                        candle_time=df['time'].iloc[i] if 'time' in df.columns else i,
-                        is_filled=False,
-                        associated_choch=choch
-                    )
-                    all_fvgs.append(fvg)
+                # BULLISH FVG: high[i-1] < low[i+1] (gap up)
+                if df['high'].iloc[i - 1] < df['low'].iloc[i + 1]:
+                    gap_top = df['low'].iloc[i + 1]
+                    gap_bottom = df['high'].iloc[i - 1]
+                    
+                    # Validate gap size (must be significant)
+                    gap_size = gap_top - gap_bottom
+                    if gap_size > 0 and (gap_size / gap_bottom) >= 0.0005:  # Min 0.05% gap
+                        fvg = FVG(
+                            index=i,  # Middle candle created the gap
+                            direction='bullish',
+                            top=gap_top,
+                            bottom=gap_bottom,
+                            middle=(gap_top + gap_bottom) / 2,
+                            candle_time=df['time'].iloc[i] if 'time' in df.columns else i,
+                            is_filled=False,
+                            associated_choch=choch
+                        )
+                        all_fvgs.append(fvg)
+            
             elif choch.direction == 'bearish':
-                if df['low'].iloc[i - 2] > df['high'].iloc[i]:
-                    gap_top = df['low'].iloc[i - 2]
-                    gap_bottom = df['high'].iloc[i]
-                    fvg = FVG(
-                        index=i,
-                        direction='bearish',
-                        top=gap_top,
-                        bottom=gap_bottom,
-                        middle=(gap_top + gap_bottom) / 2,
-                        candle_time=df['time'].iloc[i] if 'time' in df.columns else i,
-                        is_filled=False,
-                        associated_choch=choch
-                    )
-                    all_fvgs.append(fvg)
+                # BEARISH FVG: low[i-1] > high[i+1] (gap down)
+                if df['low'].iloc[i - 1] > df['high'].iloc[i + 1]:
+                    gap_top = df['low'].iloc[i - 1]
+                    gap_bottom = df['high'].iloc[i + 1]
+                    
+                    # Validate gap size (must be significant)
+                    gap_size = gap_top - gap_bottom
+                    if gap_size > 0 and (gap_size / gap_bottom) >= 0.0005:  # Min 0.05% gap
+                        fvg = FVG(
+                            index=i,  # Middle candle created the gap
+                            direction='bearish',
+                            top=gap_top,
+                            bottom=gap_bottom,
+                            middle=(gap_top + gap_bottom) / 2,
+                            candle_time=df['time'].iloc[i] if 'time' in df.columns else i,
+                            is_filled=False,
+                            associated_choch=choch
+                        )
+                        all_fvgs.append(fvg)
         # METHOD 2: Large imbalance zone (REVERSAL setup)
         if not all_fvgs:
             swing_highs = self.detect_swing_highs(df)
@@ -522,33 +726,47 @@ class SMCDetector:
         return None
 
     def detect_swing_lows(self, df: pd.DataFrame) -> List[SwingPoint]:
+        """🎯 GLITCH IN MATRIX - MACRO SWING DETECTION V6.0
+        
+        Detect swing lows using BODY CLOSURE (not wicks) with MACRO FILTER.
+        Uses self.swing_lookback to capture only major structure pivots.
+        Eliminates micro-swings and inside bars.
+        """
         if df is None or len(df) == 0:
             return []
         
         # 🛡️ SAFETY CHECK: Verificare lungime minimă pentru swing_lookback
         min_length = (self.swing_lookback * 2) + 1
         if len(df) < min_length:
-            return []  # Nu avem suficiente candele pentru lookback=5 (need 11 minimum)
+            return []  # Nu avem suficiente candele pentru lookback (ex: 5 needs 11 minimum)
         
         swing_lows = []
         body_lows = df[['open', 'close']].min(axis=1)
+        
+        # 🔥 MACRO FILTER: Use self.swing_lookback for consistent detection
         for i in range(self.swing_lookback, len(df) - self.swing_lookback):
             current_low = body_lows.iloc[i]
+            
+            # Check left side: current_low must be LOWER than all lookback candles
             left_check = all(
                 current_low < body_lows.iloc[i - j]
                 for j in range(1, self.swing_lookback + 1)
             )
+            
+            # Check right side: current_low must be LOWER than all lookback candles
             right_check = all(
                 current_low < body_lows.iloc[i + j]
                 for j in range(1, self.swing_lookback + 1)
             )
+            
             if left_check and right_check:
                 swing_lows.append(SwingPoint(
                     index=i,
                     price=current_low,
                     swing_type='low',
-                    candle_time=df['time'].iloc[i] if 'time' in df.columns else i
+                    candle_time=df.index[i] if not isinstance(df.index, pd.RangeIndex) else i
                 ))
+        
         return swing_lows
 
     # ...restul metodelor din SMCDetector (detect_choch_and_bos, detect_swing_highs, calculate_entry_sl_tp etc.)...
@@ -755,196 +973,332 @@ class SMCDetector:
         return chochs, bos_list
     
     def detect_swing_highs(self, df: pd.DataFrame) -> List[SwingPoint]:
-        """Detect swing highs using BODY CLOSURE (not wicks) - Smart Money Concepts principle."""
+        """🎯 GLITCH IN MATRIX - MACRO SWING DETECTION V7.0 (ATR PROMINENCE FILTER)
+        
+        Detect swing highs using BODY CLOSURE (not wicks) with:
+        1. MACRO FILTER: Uses self.swing_lookback for structure isolation
+        2. ATR PROMINENCE FILTER: Swing must have significant movement (atr_multiplier * ATR)
+        
+        This eliminates micro-swings that confuse CHoCH detection in strong trends.
+        
+        Args:
+            df: DataFrame with OHLC data
+        
+        Returns:
+            List of validated SwingPoint objects (only major structure pivots)
+        """
         if df is None or len(df) == 0:
             return []
         
-        # 🛡️ SAFETY CHECK: Verificare lungime minimă pentru swing_lookback (consistent cu detect_swing_lows)
-        min_length = (self.swing_lookback * 2) + 1
+        # 🛡️ SAFETY CHECK: Minimum length for swing_lookback + ATR calculation
+        min_length = max((self.swing_lookback * 2) + 1, 20)  # Need at least 20 bars for ATR
         if len(df) < min_length:
-            return []  # Nu avem suficiente candele pentru lookback=5 (need 11 minimum)
+            return []
+        
+        # 🔥 Calculate ATR for prominence filtering
+        atr = self.calculate_atr(df)
+        if atr == 0.0:
+            print("⚠️  ATR = 0, using basic swing detection without prominence filter")
+            prominence_threshold = 0.0  # Fallback to no filter
+        else:
+            prominence_threshold = self.atr_multiplier * atr
+            print(f"🔥 ATR Prominence Filter: {prominence_threshold:.5f} ({self.atr_multiplier}x ATR)")
         
         swing_highs = []
         # Calculate body highs (max of open/close) - ignores wicks
         body_highs = df[['open', 'close']].max(axis=1)
         
-        for i in range(2, len(df) - 2):
-            if (
-                body_highs.iloc[i] > body_highs.iloc[i - 1]
-                and body_highs.iloc[i] > body_highs.iloc[i - 2]
-                and body_highs.iloc[i] > body_highs.iloc[i + 1]
-                and body_highs.iloc[i] > body_highs.iloc[i + 2]
-            ):
-                swing_highs.append(SwingPoint(
-                    index=i,
-                    price=body_highs.iloc[i],  # Use body high, not wick
-                    swing_type='high',
-                    candle_time=df['time'].iloc[i] if 'time' in df.columns else i
-                ))
+        # 🔥 MACRO FILTER: Use self.swing_lookback (not hardcoded 2)
+        for i in range(self.swing_lookback, len(df) - self.swing_lookback):
+            current_high = body_highs.iloc[i]
+            
+            # Check left side: current_high must be HIGHER than all lookback candles
+            left_check = all(
+                current_high > body_highs.iloc[i - j]
+                for j in range(1, self.swing_lookback + 1)
+            )
+            
+            # Check right side: current_high must be HIGHER than all lookback candles
+            right_check = all(
+                current_high > body_highs.iloc[i + j]
+                for j in range(1, self.swing_lookback + 1)
+            )
+            
+            if left_check and right_check:
+                # 🔥 NEW: ATR PROMINENCE FILTER
+                # Check if swing has significant movement from surrounding lows
+                # Find lowest low in lookback window
+                window_start = max(0, i - self.swing_lookback)
+                window_end = min(len(df), i + self.swing_lookback + 1)
+                window_lows = df['low'].iloc[window_start:window_end]
+                lowest_low = window_lows.min()
+                
+                swing_range = current_high - lowest_low
+                
+                # Only accept swing if range > prominence_threshold
+                if prominence_threshold == 0.0 or swing_range >= prominence_threshold:
+                    swing_highs.append(SwingPoint(
+                        index=i,
+                        price=current_high,  # Use body high, not wick
+                        swing_type='high',
+                        candle_time=df.index[i] if not isinstance(df.index, pd.RangeIndex) else i
+                    ))
+                else:
+                    # Rejected: micro-swing (insufficient prominence)
+                    pass
+        
+        print(f"✅ Swing Highs: {len(swing_highs)} detected (ATR filter applied)")
         return swing_highs
 
     def detect_swing_lows(self, df: pd.DataFrame) -> List[SwingPoint]:
+        """🎯 GLITCH IN MATRIX - MACRO SWING DETECTION V7.0 (ATR PROMINENCE FILTER)
+        
+        Detect swing lows using BODY CLOSURE (not wicks) with:
+        1. MACRO FILTER: Uses self.swing_lookback for structure isolation (consistent with highs)
+        2. ATR PROMINENCE FILTER: Swing must have significant movement (atr_multiplier * ATR)
+        
+        This eliminates micro-swings that confuse CHoCH detection in strong trends.
+        
+        Args:
+            df: DataFrame with OHLC data
+        
+        Returns:
+            List of validated SwingPoint objects (only major structure pivots)
+        """
         if df is None or len(df) == 0:
             return []
         
-        # 🛡️ SAFETY CHECK: Asigurare că avem suficiente candele pentru swing detection
-        if len(df) < 5:
-            return []  # Minimum 5 candele pentru swing points (2 left + 1 center + 2 right)
+        # 🛡️ SAFETY CHECK: Minimum length for swing_lookback + ATR calculation
+        min_length = max((self.swing_lookback * 2) + 1, 20)  # Need at least 20 bars for ATR
+        if len(df) < min_length:
+            return []
+        
+        # 🔥 Calculate ATR for prominence filtering
+        atr = self.calculate_atr(df)
+        if atr == 0.0:
+            print("⚠️  ATR = 0, using basic swing detection without prominence filter")
+            prominence_threshold = 0.0  # Fallback to no filter
+        else:
+            prominence_threshold = self.atr_multiplier * atr
+            print(f"🔥 ATR Prominence Filter: {prominence_threshold:.5f} ({self.atr_multiplier}x ATR)")
         
         swing_lows = []
-        for i in range(2, len(df) - 2):
-            if (
-                df['low'].iloc[i] < df['low'].iloc[i - 1]
-                and df['low'].iloc[i] < df['low'].iloc[i - 2]
-                and df['low'].iloc[i] < df['low'].iloc[i + 1]
-                and df['low'].iloc[i] < df['low'].iloc[i + 2]
-            ):
-                swing_lows.append(SwingPoint(
-                    index=i,
-                    price=df['low'].iloc[i],
-                    swing_type='low',
-                    candle_time=df['time'].iloc[i] if 'time' in df.columns else i
-                ))
+        # Calculate body lows (min of open/close) - ignores wicks
+        body_lows = df[['open', 'close']].min(axis=1)
+        
+        # 🔥 MACRO FILTER: Use self.swing_lookback (consistent with detect_swing_highs)
+        for i in range(self.swing_lookback, len(df) - self.swing_lookback):
+            current_low = body_lows.iloc[i]
+            
+            # Check left side: current_low must be LOWER than all lookback candles
+            left_check = all(
+                current_low < body_lows.iloc[i - j]
+                for j in range(1, self.swing_lookback + 1)
+            )
+            
+            # Check right side: current_low must be LOWER than all lookback candles
+            right_check = all(
+                current_low < body_lows.iloc[i + j]
+                for j in range(1, self.swing_lookback + 1)
+            )
+            
+            if left_check and right_check:
+                # 🔥 NEW: ATR PROMINENCE FILTER
+                # Check if swing has significant movement from surrounding highs
+                # Find highest high in lookback window
+                window_start = max(0, i - self.swing_lookback)
+                window_end = min(len(df), i + self.swing_lookback + 1)
+                window_highs = df['high'].iloc[window_start:window_end]
+                highest_high = window_highs.max()
+                
+                swing_range = highest_high - current_low
+                
+                # Only accept swing if range > prominence_threshold
+                if prominence_threshold == 0.0 or swing_range >= prominence_threshold:
+                    swing_lows.append(SwingPoint(
+                        index=i,
+                        price=current_low,  # Use body low, not wick
+                        swing_type='low',
+                        candle_time=df.index[i] if not isinstance(df.index, pd.RangeIndex) else i
+                    ))
+                else:
+                    # Rejected: micro-swing (insufficient prominence)
+                    pass
+        
+        print(f"✅ Swing Lows: {len(swing_lows)} detected (ATR filter applied)")
         return swing_lows
 
     def detect_choch_and_bos(self, df: pd.DataFrame) -> Tuple[List[CHoCH], List[BOS]]:
+        """🎯 GLITCH IN MATRIX - CHoCH & BOS DETECTION V6.0
+        
+        CHoCH (Change of Character): Price breaks swing in OPPOSITE direction of prev trend
+        BOS (Break of Structure): Price breaks swing in SAME direction as prev trend
+        
+        MACRO FILTER: Uses consistent swing detection (self.swing_lookback) to eliminate micro-swings.
+        
+        NEW LOGIC:
+        - Track INTERLEAVED swings (alternating highs/lows)
+        - First major break = CHoCH (establishes initial trend)
+        - Subsequent breaks same direction = BOS
+        - Break opposite direction = CHoCH (trend reversal)
+        """
         chochs = []
         bos_list = []
         swing_highs = self.detect_swing_highs(df)
         swing_lows = self.detect_swing_lows(df)
-        prev_trend = None
-        for i in range(1, len(swing_highs)):
-            if swing_highs[i].price > swing_highs[i - 1].price:
-                bos_list.append(BOS(
-                    index=swing_highs[i].index,
-                    direction='bullish',
-                    break_price=swing_highs[i - 1].price,  # FIXED: Price that got broken (previous swing)
-                    candle_time=swing_highs[i].candle_time,
-                    swing_broken=swing_highs[i-1]
-                ))
-        for i in range(1, len(swing_lows)):
-            if swing_lows[i].price < swing_lows[i - 1].price:
-                bos_list.append(BOS(
-                    index=swing_lows[i].index,
-                    direction='bearish',
-                    break_price=swing_lows[i - 1].price,  # FIXED: Price that got broken (previous swing)
-                    candle_time=swing_lows[i].candle_time,
-                    swing_broken=swing_lows[i-1]
-                ))
-        # CHoCH detection with CLOSE confirmation
-        for i in range(1, min(len(swing_highs), len(swing_lows))):
-            if prev_trend == 'bearish' and swing_highs[i].price > swing_highs[i - 1].price:
-                # VALIDATION: Confirm Close price is above previous swing high
-                swing_idx = swing_highs[i].index
-                close_price = df['close'].iloc[swing_idx]
-                prev_swing_high = swing_highs[i - 1].price
-                
-                if close_price > prev_swing_high:
+        
+        if len(swing_highs) < 2 or len(swing_lows) < 2:
+            return chochs, bos_list
+        
+        # 🔥 INTERLEAVE swings (merge highs and lows in chronological order)
+        all_swings = []
+        for sh in swing_highs:
+            all_swings.append(('high', sh))
+        for sl in swing_lows:
+            all_swings.append(('low', sl))
+        
+        # Sort by index (chronological order)
+        all_swings.sort(key=lambda x: x[1].index)
+        
+        prev_trend = None  # 'bullish' or 'bearish'
+        
+        for i in range(1, len(all_swings)):
+            swing_type, swing = all_swings[i]
+            prev_swing_type, prev_swing = all_swings[i - 1]
+            
+            # BULLISH BREAK (Higher High)
+            if swing_type == 'high' and swing.price > prev_swing.price:
+                if prev_trend is None:
+                    # 🎯 FIRST BREAK = CHoCH (establishes trend)
                     chochs.append(CHoCH(
-                        index=swing_highs[i].index,
+                        index=swing.index,
                         direction='bullish',
-                        break_price=swing_highs[i].price,
-                        previous_trend=prev_trend,
-                        candle_time=swing_highs[i].candle_time,
-                        swing_broken=swing_highs[i-1]
+                        break_price=swing.price,
+                        previous_trend=None,
+                        candle_time=swing.candle_time,
+                        swing_broken=prev_swing
                     ))
                     prev_trend = 'bullish'
-            elif prev_trend == 'bullish' and swing_lows[i].price < swing_lows[i - 1].price:
-                # VALIDATION: Confirm Close price is below previous swing low
-                swing_idx = swing_lows[i].index
-                close_price = df['close'].iloc[swing_idx]
-                prev_swing_low = swing_lows[i - 1].price
-                
-                if close_price < prev_swing_low:
+                elif prev_trend == 'bearish':
+                    # 🎯 CHoCH: Break OPPOSITE to prev trend (reversal)
                     chochs.append(CHoCH(
-                        index=swing_lows[i].index,
+                        index=swing.index,
+                        direction='bullish',
+                        break_price=swing.price,
+                        previous_trend='bearish',
+                        candle_time=swing.candle_time,
+                        swing_broken=prev_swing
+                    ))
+                    prev_trend = 'bullish'
+                else:
+                    # 🎯 BOS: Break SAME direction as prev trend (continuation)
+                    bos_list.append(BOS(
+                        index=swing.index,
+                        direction='bullish',
+                        break_price=prev_swing.price,
+                        candle_time=swing.candle_time,
+                        swing_broken=prev_swing
+                    ))
+            
+            # BEARISH BREAK (Lower Low)
+            elif swing_type == 'low' and swing.price < prev_swing.price:
+                if prev_trend is None:
+                    # 🎯 FIRST BREAK = CHoCH (establishes trend)
+                    chochs.append(CHoCH(
+                        index=swing.index,
                         direction='bearish',
-                        break_price=swing_lows[i].price,
-                        previous_trend=prev_trend,
-                        candle_time=swing_lows[i].candle_time,
-                        swing_broken=swing_lows[i-1]
+                        break_price=swing.price,
+                        previous_trend=None,
+                        candle_time=swing.candle_time,
+                        swing_broken=prev_swing
                     ))
                     prev_trend = 'bearish'
-            else:
-                if swing_highs[i].price > swing_highs[i - 1].price:
-                    prev_trend = 'bullish'
-                elif swing_lows[i].price < swing_lows[i - 1].price:
+                elif prev_trend == 'bullish':
+                    # 🎯 CHoCH: Break OPPOSITE to prev trend (reversal)
+                    chochs.append(CHoCH(
+                        index=swing.index,
+                        direction='bearish',
+                        break_price=swing.price,
+                        previous_trend='bullish',
+                        candle_time=swing.candle_time,
+                        swing_broken=prev_swing
+                    ))
                     prev_trend = 'bearish'
+                else:
+                    # 🎯 BOS: Break SAME direction as prev trend (continuation)
+                    bos_list.append(BOS(
+                        index=swing.index,
+                        direction='bearish',
+                        break_price=prev_swing.price,
+                        candle_time=swing.candle_time,
+                        swing_broken=prev_swing
+                    ))
+        
         return chochs, bos_list
     
     def determine_daily_trend(self, df: pd.DataFrame) -> str:
         """
-        V5.0 ANTI-COUNTER-TREND: Determine OVERALL Daily trend from swing structure
+        🎯 GLITCH IN MATRIX - TREND DETECTION V6.0
         
-        This is NOT about latest signal (CHoCH/BOS), but about DOMINANT market structure.
-        Analyzes last 3 swing highs and lows to identify the PREVAILING trend.
+        ✨ by ФорексГод ✨
+        
+        PHILOSOPHY:
+        The LAST structure break (CHoCH or BOS) on Daily DICTATES the bias.
+        We don't care about historical 100-candle patterns.
+        We care about the MOST RECENT decision made by institutional players.
+        
+        LOGIC:
+        1. Find LATEST CHoCH or BOS on Daily
+        2. That signal's direction = Current Daily Bias
+        3. All setups must ALIGN with this bias (no counter-trend)
         
         Returns:
-            'bullish': HH + HL pattern (strong uptrend)
-            'bearish': LL + LH pattern (strong downtrend)
-            'neutral': No clear pattern or mixed signals
+            'bullish': Latest Daily CHoCH/BOS is BULLISH
+            'bearish': Latest Daily CHoCH/BOS is BEARISH
+            'neutral': No CHoCH/BOS detected (insufficient structure)
         
-        Purpose: Prevent counter-trend trades by validating setup against OVERALL bias
+        Example:
+        - Market was bullish for 3 months (HH + HL)
+        - Then CHoCH BEARISH happens yesterday
+        - Bias = BEARISH (we flip instantly, no lag)
+        - We take ONLY short setups until next CHoCH BULLISH
+        
+        This is the "Glitch in Matrix" edge: React to structure breaks INSTANTLY,
+        not after 20 candles of confirmation like traditional systems.
         """
         if df is None or len(df) < 20:
             return 'neutral'
         
-        swing_highs = self.detect_swing_highs(df)
-        swing_lows = self.detect_swing_lows(df)
+        # Detect ALL CHoCH and BOS signals on Daily
+        daily_chochs, daily_bos_list = self.detect_choch_and_bos(df)
         
-        # Need at least 3 swings of each type for pattern analysis
-        if len(swing_highs) < 3 or len(swing_lows) < 3:
+        # If no structure breaks detected, we have no bias
+        if not daily_chochs and not daily_bos_list:
             return 'neutral'
         
-        # Get last 3 swings of each type
-        recent_highs = swing_highs[-3:]
-        recent_lows = swing_lows[-3:]
+        # Find the MOST RECENT signal (CHoCH or BOS)
+        latest_signal = None
+        latest_index = -1
         
-        # BULLISH STRUCTURE: Higher Highs (HH) + Higher Lows (HL)
-        hh_count = 0
-        for i in range(1, len(recent_highs)):
-            if recent_highs[i].price > recent_highs[i-1].price:
-                hh_count += 1
+        # Check CHoCH signals
+        if daily_chochs:
+            last_choch = daily_chochs[-1]
+            if last_choch.index > latest_index:
+                latest_signal = last_choch
+                latest_index = last_choch.index
         
-        hl_count = 0
-        for i in range(1, len(recent_lows)):
-            if recent_lows[i].price > recent_lows[i-1].price:
-                hl_count += 1
+        # Check BOS signals
+        if daily_bos_list:
+            last_bos = daily_bos_list[-1]
+            if last_bos.index > latest_index:
+                latest_signal = last_bos
+                latest_index = last_bos.index
         
-        # BEARISH STRUCTURE: Lower Lows (LL) + Lower Highs (LH)
-        ll_count = 0
-        for i in range(1, len(recent_lows)):
-            if recent_lows[i].price < recent_lows[i-1].price:
-                ll_count += 1
+        # If we found a signal, return its direction as the bias
+        if latest_signal:
+            return latest_signal.direction  # 'bullish' or 'bearish'
         
-        lh_count = 0
-        for i in range(1, len(recent_highs)):
-            if recent_highs[i].price < recent_highs[i-1].price:
-                lh_count += 1
-        
-        # V5.1 FIX: More flexible pattern detection
-        # Calculate DOMINANT direction based on overall count
-        bullish_score = hh_count + hl_count
-        bearish_score = ll_count + lh_count
-        
-        # BULLISH: Requires BOTH HH and HL patterns (at least 2/3 swings each) - STRICT
-        if hh_count >= 2 and hl_count >= 1:
-            return 'bullish'
-        
-        # BEARISH: Requires BOTH LL and LH patterns (at least 2/3 swings each) - STRICT  
-        if ll_count >= 2 and lh_count >= 1:
-            return 'bearish'
-        
-        # V5.1: If no perfect pattern, use DOMINANT direction (RELAXED)
-        # This catches imperfect but clearly directional markets
-        # Example: LL=1, LH=1 (score=2) vs HH=0, HL=0 (score=0) → Bearish dominant
-        if bearish_score >= 2 and bearish_score > bullish_score:
-            return 'bearish'  # Bearish dominant
-        
-        if bullish_score >= 2 and bullish_score > bearish_score:
-            return 'bullish'  # Bullish dominant
-        
-        # No dominant pattern → neutral
+        # No valid signals found
         return 'neutral'
     
     def has_confirmation_swing(self, df: pd.DataFrame, choch: CHoCH) -> bool:
@@ -2195,6 +2549,40 @@ class SMCDetector:
             print(f"   Zone: {fvg.bottom:.5f} - {fvg.top:.5f}")
             print(f"   Gap Size: {gap_size:.5f} ({gap_pct:.3f}%)")
             print(f"   Middle: {fvg.middle:.5f}")
+        
+        # 🔥 NEW V8.0: PREMIUM/DISCOUNT ZONE VALIDATION (50% Equilibrium Filter)
+        # Calculate equilibrium level from macro swing leg
+        swing_highs = self.detect_swing_highs(df_daily)
+        swing_lows = self.detect_swing_lows(df_daily)
+        equilibrium = self.calculate_equilibrium(df_daily, swing_highs, swing_lows)
+        
+        if equilibrium is not None:
+            # Validate FVG position relative to 50% level
+            is_valid_zone = self.validate_fvg_zone(fvg, equilibrium, current_trend, debug=debug)
+            
+            if not is_valid_zone:
+                if debug:
+                    print(f"\n❌ REJECTED: FVG in wrong half of structure (Premium/Discount violation)")
+                    print(f"   Setup Type: {current_trend.upper()}")
+                    print(f"   Equilibrium: {equilibrium:.5f}")
+                    print(f"   FVG Middle: {fvg.middle:.5f}")
+                    if current_trend == 'bearish':
+                        print(f"   ⚠️  BEARISH setup requires FVG ABOVE 50% (Premium Zone)")
+                        print(f"   ⚠️  This FVG is in Discount Zone - shallow retracement (retail trap)")
+                    else:
+                        print(f"   ⚠️  BULLISH setup requires FVG BELOW 50% (Discount Zone)")
+                        print(f"   ⚠️  This FVG is in Premium Zone - shallow retracement (retail trap)")
+                
+                return None  # Reject setup - FVG not in deep retracement zone
+            
+            if debug:
+                print(f"\n✅ PREMIUM/DISCOUNT VALIDATION PASSED")
+                zone_type = "PREMIUM" if current_trend == 'bearish' else "DISCOUNT"
+                print(f"   FVG is in {zone_type} ZONE (>50% retracement)")
+                print(f"   This is a DEEP pullback (Smart Money optimal entry)")
+        else:
+            if debug:
+                print(f"\n⚠️  Could not calculate equilibrium - skipping Premium/Discount check")
         
         # V3.0: Calculate FVG Quality Score (0-100) - OPTIONAL for backtest
         if not skip_fvg_quality:
