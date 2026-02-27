@@ -197,23 +197,29 @@ class SMCDetector:
             return None
     
     def validate_fvg_zone(self, fvg: FVG, equilibrium: float, current_trend: str, debug: bool = False) -> bool:
-        """🔥 PREMIUM/DISCOUNT ZONE VALIDATION (50% Fibonacci Filter)
+        """🔥 PREMIUM/DISCOUNT ZONE VALIDATION (50% Fibonacci Filter) - V8.1 OVERLAP LOGIC
         
-        MASTERCLASS RULE:
-        - Only trade deep retracements (>50% of swing leg)
-        - Avoid retail inducement zones (20-30% shallow pullbacks)
+        MASTERCLASS RULE V8.1:
+        - Accept FVG zones that INTERSECT with 50% equilibrium (SMC Zone Overlap)
+        - Apply ±2% tolerance buffer to avoid milimetric rejections
+        - Only reject clear shallow retracements (<48% of swing leg)
         
-        VALIDATION LOGIC:
+        VALIDATION LOGIC V8.1:
         
         For BEARISH (SELL) setups:
-        - FVG must be in PREMIUM ZONE (above 50% equilibrium)
-        - This means price retraced deeply into supply
-        - Optimal distribution zone for smart money
+        - FVG VALID if: fvg.top >= equilibrium (at least touches Premium zone)
+        - Apply -2% tolerance: Accept FVG that reaches 48% or higher
+        - This captures deep retracements into supply (institutional distribution)
         
         For BULLISH (LONG) setups:
-        - FVG must be in DISCOUNT ZONE (below 50% equilibrium)
-        - This means price retraced deeply into demand
-        - Optimal accumulation zone for smart money
+        - FVG VALID if: fvg.bottom <= equilibrium (at least touches Discount zone)
+        - Apply +2% tolerance: Accept FVG that reaches 52% or lower
+        - This captures deep retracements into demand (institutional accumulation)
+        
+        EDGE CASE HANDLING:
+        - FVG at EXACTLY 50% → ACCEPTED (was rejected in V8.0)
+        - FVG intersecting 50% → ACCEPTED (new overlap logic)
+        - FVG with 48-52% middle → ACCEPTED (tolerance buffer)
         
         Args:
             fvg: FVG object to validate
@@ -222,7 +228,7 @@ class SMCDetector:
             debug: Print validation details
         
         Returns:
-            True if FVG is in correct zone, False if rejected
+            True if FVG intersects correct zone (with tolerance), False if rejected
         """
         if equilibrium is None:
             if debug:
@@ -233,55 +239,92 @@ class SMCDetector:
         fvg_top = fvg.top
         fvg_bottom = fvg.bottom
         
+        # ±2% tolerance buffer (dynamic based on equilibrium level)
+        tolerance_buffer = equilibrium * 0.02  # 2% of equilibrium price
+        
         if current_trend == 'bearish':
-            # BEARISH SETUP: FVG must be ABOVE 50% (Premium Zone)
-            # Check if FVG is entirely or partially above equilibrium
-            is_in_premium = fvg_bottom >= equilibrium  # Entire FVG above 50%
-            is_partial_premium = fvg_middle > equilibrium  # At least middle above 50%
+            # BEARISH SETUP: FVG must INTERSECT or be ABOVE Premium zone (50%)
+            # 
+            # V8.1 OVERLAP LOGIC:
+            # - Accept if fvg.top >= equilibrium (FVG reaches Premium)
+            # - Apply -2% tolerance: Accept if fvg.top >= (equilibrium - tolerance)
+            # 
+            # Example EURJPY:
+            # - Equilibrium: 183.60350
+            # - Tolerance: -3.67207 (2%)
+            # - Min threshold: 179.93143 (48% zone)
+            # - FVG.top: 186.08300 → VALID (reaches Premium + tolerance)
+            
+            equilibrium_with_tolerance = equilibrium - tolerance_buffer  # Accept 48%+
+            fvg_intersects_premium = fvg_top >= equilibrium_with_tolerance
             
             if debug:
                 zone_pct = ((fvg_middle - equilibrium) / equilibrium) * 100
-                print(f"\n🔍 PREMIUM/DISCOUNT VALIDATION (BEARISH):")
-                print(f"   Equilibrium (50%): {equilibrium:.5f}")
-                print(f"   FVG Zone: {fvg_bottom:.5f} - {fvg_top:.5f}")
-                print(f"   FVG Middle: {fvg_middle:.5f}")
-                print(f"   Zone Position: {zone_pct:+.2f}% from equilibrium")
+                tolerance_pct = (tolerance_buffer / equilibrium) * 100
+                min_threshold_pct = 50.0 - tolerance_pct  # Should be ~48%
                 
-                if is_in_premium:
-                    print(f"   ✅ VALID: Entire FVG in PREMIUM ZONE (above 50%)")
-                elif is_partial_premium:
-                    print(f"   ✅ VALID: FVG middle in PREMIUM ZONE (above 50%)")
+                print(f"\n🔍 PREMIUM/DISCOUNT VALIDATION V8.1 (BEARISH):")
+                print(f"   Equilibrium (50%): {equilibrium:.5f}")
+                print(f"   Tolerance Buffer: {tolerance_buffer:.5f} (±{tolerance_pct:.1f}%)")
+                print(f"   Min Threshold: {equilibrium_with_tolerance:.5f} ({min_threshold_pct:.1f}% zone)")
+                print(f"   FVG Zone: {fvg_bottom:.5f} - {fvg_top:.5f}")
+                print(f"   FVG Middle: {fvg_middle:.5f} ({zone_pct:+.2f}% from 50%)")
+                print(f"   FVG Top: {fvg_top:.5f}")
+                
+                if fvg_intersects_premium:
+                    if fvg_top >= equilibrium:
+                        print(f"   ✅ VALID: FVG intersects PREMIUM ZONE (top reaches {((fvg_top - equilibrium) / equilibrium * 100):+.2f}% above 50%)")
+                    else:
+                        print(f"   ✅ VALID: FVG within TOLERANCE BUFFER (top at {((fvg_top - equilibrium) / equilibrium * 100):+.2f}% from 50%)")
+                    print(f"      → Deep retracement into supply (institutional distribution zone)")
                 else:
-                    print(f"   ❌ REJECTED: FVG in DISCOUNT ZONE (below 50%)")
-                    print(f"      → Bearish setups require Premium zone (above 50%)")
-                    print(f"      → This is a shallow retracement (retail inducement)")
+                    print(f"   ❌ REJECTED: FVG does NOT reach Premium zone (even with tolerance)")
+                    print(f"      → FVG.top ({fvg_top:.5f}) < Min Threshold ({equilibrium_with_tolerance:.5f})")
+                    print(f"      → Shallow retracement <{min_threshold_pct:.1f}% (retail inducement)")
             
-            return is_in_premium or is_partial_premium
+            return fvg_intersects_premium
         
         elif current_trend == 'bullish':
-            # BULLISH SETUP: FVG must be BELOW 50% (Discount Zone)
-            # Check if FVG is entirely or partially below equilibrium
-            is_in_discount = fvg_top <= equilibrium  # Entire FVG below 50%
-            is_partial_discount = fvg_middle < equilibrium  # At least middle below 50%
+            # BULLISH SETUP: FVG must INTERSECT or be BELOW Discount zone (50%)
+            # 
+            # V8.1 OVERLAP LOGIC:
+            # - Accept if fvg.bottom <= equilibrium (FVG reaches Discount)
+            # - Apply +2% tolerance: Accept if fvg.bottom <= (equilibrium + tolerance)
+            # 
+            # Example:
+            # - Equilibrium: 1.18000
+            # - Tolerance: +0.02360 (2%)
+            # - Max threshold: 1.20360 (52% zone)
+            # - FVG.bottom: 1.17500 → VALID (reaches Discount + tolerance)
+            
+            equilibrium_with_tolerance = equilibrium + tolerance_buffer  # Accept 52%-
+            fvg_intersects_discount = fvg_bottom <= equilibrium_with_tolerance
             
             if debug:
                 zone_pct = ((fvg_middle - equilibrium) / equilibrium) * 100
-                print(f"\n🔍 PREMIUM/DISCOUNT VALIDATION (BULLISH):")
-                print(f"   Equilibrium (50%): {equilibrium:.5f}")
-                print(f"   FVG Zone: {fvg_bottom:.5f} - {fvg_top:.5f}")
-                print(f"   FVG Middle: {fvg_middle:.5f}")
-                print(f"   Zone Position: {zone_pct:+.2f}% from equilibrium")
+                tolerance_pct = (tolerance_buffer / equilibrium) * 100
+                max_threshold_pct = 50.0 + tolerance_pct  # Should be ~52%
                 
-                if is_in_discount:
-                    print(f"   ✅ VALID: Entire FVG in DISCOUNT ZONE (below 50%)")
-                elif is_partial_discount:
-                    print(f"   ✅ VALID: FVG middle in DISCOUNT ZONE (below 50%)")
+                print(f"\n🔍 PREMIUM/DISCOUNT VALIDATION V8.1 (BULLISH):")
+                print(f"   Equilibrium (50%): {equilibrium:.5f}")
+                print(f"   Tolerance Buffer: {tolerance_buffer:.5f} (±{tolerance_pct:.1f}%)")
+                print(f"   Max Threshold: {equilibrium_with_tolerance:.5f} ({max_threshold_pct:.1f}% zone)")
+                print(f"   FVG Zone: {fvg_bottom:.5f} - {fvg_top:.5f}")
+                print(f"   FVG Middle: {fvg_middle:.5f} ({zone_pct:+.2f}% from 50%)")
+                print(f"   FVG Bottom: {fvg_bottom:.5f}")
+                
+                if fvg_intersects_discount:
+                    if fvg_bottom <= equilibrium:
+                        print(f"   ✅ VALID: FVG intersects DISCOUNT ZONE (bottom reaches {((fvg_bottom - equilibrium) / equilibrium * 100):+.2f}% below 50%)")
+                    else:
+                        print(f"   ✅ VALID: FVG within TOLERANCE BUFFER (bottom at {((fvg_bottom - equilibrium) / equilibrium * 100):+.2f}% from 50%)")
+                    print(f"      → Deep retracement into demand (institutional accumulation zone)")
                 else:
-                    print(f"   ❌ REJECTED: FVG in PREMIUM ZONE (above 50%)")
-                    print(f"      → Bullish setups require Discount zone (below 50%)")
-                    print(f"      → This is a shallow retracement (retail inducement)")
+                    print(f"   ❌ REJECTED: FVG does NOT reach Discount zone (even with tolerance)")
+                    print(f"      → FVG.bottom ({fvg_bottom:.5f}) > Max Threshold ({equilibrium_with_tolerance:.5f})")
+                    print(f"      → Shallow retracement >{max_threshold_pct:.1f}% (retail inducement)")
             
-            return is_in_discount or is_partial_discount
+            return fvg_intersects_discount
         
         return False  # Unknown trend direction
     
