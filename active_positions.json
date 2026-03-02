@@ -1,79 +1,13 @@
 [
   {
-    "symbol": "EURGBP",
+    "symbol": "EURJPY",
     "direction": "sell",
-    "entry_price": 0.86657,
-    "volume": 50000,
-    "opened_at": "2026-01-16T16:22:55.662Z",
-    "stop_loss": null,
-    "take_profit": 0.84657,
-    "net_profit": -316.78,
-    "pips": -52.5
-  },
-  {
-    "symbol": "XAUUSD",
-    "direction": "sell",
-    "entry_price": 4979.1,
-    "volume": 30,
-    "opened_at": "2026-02-19T19:40:16.405Z",
-    "stop_loss": null,
-    "take_profit": 4522.74,
-    "net_profit": -6154.3,
-    "pips": -20713
-  },
-  {
-    "symbol": "BTCUSD",
-    "direction": "sell",
-    "entry_price": 66785.08,
-    "volume": 0.5,
-    "opened_at": "2026-02-25T14:55:37.92Z",
-    "stop_loss": null,
-    "take_profit": null,
-    "net_profit": -60.6,
-    "pips": -12120
-  },
-  {
-    "symbol": "BTCUSD",
-    "direction": "sell",
-    "entry_price": 66740.15,
-    "volume": 0.5,
-    "opened_at": "2026-02-25T14:55:41.822Z",
-    "stop_loss": null,
-    "take_profit": null,
-    "net_profit": -83.06,
-    "pips": -16613
-  },
-  {
-    "symbol": "BTCUSD",
-    "direction": "sell",
-    "entry_price": 66810.47,
-    "volume": 0.5,
-    "opened_at": "2026-02-25T15:11:19.654Z",
-    "stop_loss": null,
-    "take_profit": null,
-    "net_profit": -47.9,
-    "pips": -9581
-  },
-  {
-    "symbol": "BTCUSD",
-    "direction": "sell",
-    "entry_price": 66869.84,
-    "volume": 0.5,
-    "opened_at": "2026-02-25T15:19:14.48Z",
-    "stop_loss": null,
-    "take_profit": null,
-    "net_profit": -18.22,
-    "pips": -3644
-  },
-  {
-    "symbol": "BTCUSD",
-    "direction": "sell",
-    "entry_price": 66846.51,
-    "volume": 0.5,
-    "opened_at": "2026-02-25T15:24:24.632Z",
-    "stop_loss": null,
-    "take_profit": null,
-    "net_profit": -29.88,
-    "pips": -5977
+    "entry_price": 184.585,
+    "volume": 100000,
+    "opened_at": "2026-02-25T17:24:09.999Z",
+    "stop_loss": 185.096,
+    "take_profit": 180.34,
+    "net_profit": 212.23,
+    "pips": 38.8
   }
 ]

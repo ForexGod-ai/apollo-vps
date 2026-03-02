@@ -149,86 +149,189 @@ class SMCDetector:
             print(f"❌ ATR calculation error: {e}")
             return 0.0
     
-    def calculate_equilibrium(self, df: pd.DataFrame, swing_highs: List[SwingPoint], swing_lows: List[SwingPoint]) -> Optional[float]:
-        """🎯 Calculate 50% Equilibrium Level (Premium/Discount Threshold)
+    def calculate_equilibrium_reversal(self, df: pd.DataFrame, choch: CHoCH, 
+                                       swing_highs: List[SwingPoint], swing_lows: List[SwingPoint]) -> Optional[float]:
+        """🔄 V8.2: Calculate Equilibrium for REVERSAL (CHoCH) - Uses PRE-CHoCH Macro Leg
         
-        SMART MONEY CONCEPT:
-        - Premium Zone (50-100%): Optimal for SELL setups (distribution)
-        - Discount Zone (0-50%): Optimal for LONG setups (accumulation)
-        - Equilibrium (50%): Fair value - rejects weak retracements
+        REVERSAL LOGIC (CHoCH):
+        - Measures from the PREVIOUS trend's extreme to CHoCH break price
+        - BEARISH Reversal: Last swing HIGH before CHoCH → CHoCH break (LL)
+        - BULLISH Reversal: Last swing LOW before CHoCH → CHoCH break (HH)
         
-        We only trade deep pullbacks (>50% retracement) to avoid retail inducement zones.
+        WHY PRE-CHoCH?
+        - CHoCH marks trend change - we measure OLD trend's leg
+        - Deep retracement (48-52%) into old trend's range = institutional reversal
+        - Example: Downtrend ends at LL (CHoCH), price retraces 50% back to old highs
         
         Args:
             df: DataFrame with OHLC data
+            choch: CHoCH signal object
             swing_highs: List of detected swing highs
             swing_lows: List of detected swing lows
         
         Returns:
-            Equilibrium price level (50% of last macro swing leg) or None if insufficient swings
+            Equilibrium price (50% of pre-CHoCH leg) or None
         """
         if not swing_highs or not swing_lows:
             return None
         
         try:
-            # Get last macro swing high and low
-            last_high = swing_highs[-1]
-            last_low = swing_lows[-1]
+            if choch.direction == 'bearish':
+                # BEARISH CHoCH: Price broke down (made LL)
+                # Measure from last swing HIGH BEFORE CHoCH to CHoCH break price (LL)
+                macro_high = None
+                for sh in reversed(swing_highs):
+                    if sh.index < choch.index:
+                        macro_high = sh.price
+                        break
+                
+                if macro_high is None:
+                    return None
+                
+                macro_low = choch.break_price  # CHoCH break (LL)
+                
+            else:  # choch.direction == 'bullish'
+                # BULLISH CHoCH: Price broke up (made HH)
+                # Measure from last swing LOW BEFORE CHoCH to CHoCH break price (HH)
+                macro_low = None
+                for sl in reversed(swing_lows):
+                    if sl.index < choch.index:
+                        macro_low = sl.price
+                        break
+                
+                if macro_low is None:
+                    return None
+                
+                macro_high = choch.break_price  # CHoCH break (HH)
             
-            # Determine which is more recent (defines current swing leg)
-            if last_high.index > last_low.index:
-                # Last move was UP (from low to high)
-                macro_high = last_high.price
-                macro_low = last_low.price
-                swing_direction = 'bullish'
-            else:
-                # Last move was DOWN (from high to low)
-                macro_high = last_high.price
-                macro_low = last_low.price
-                swing_direction = 'bearish'
-            
-            # Calculate 50% equilibrium
+            # Calculate 50% equilibrium of PRE-CHoCH leg
             equilibrium = (macro_high + macro_low) / 2.0
             
             return equilibrium
         
         except Exception as e:
-            print(f"❌ Equilibrium calculation error: {e}")
+            print(f"❌ Reversal equilibrium calculation error: {e}")
             return None
     
-    def validate_fvg_zone(self, fvg: FVG, equilibrium: float, current_trend: str, debug: bool = False) -> bool:
-        """🔥 PREMIUM/DISCOUNT ZONE VALIDATION (50% Fibonacci Filter) - V8.1 OVERLAP LOGIC
+    def calculate_equilibrium_continuity(self, df: pd.DataFrame, bos: BOS, last_choch: Optional[CHoCH],
+                                        swing_highs: List[SwingPoint], swing_lows: List[SwingPoint]) -> Optional[float]:
+        """➡️ V8.2: Calculate Equilibrium for CONTINUITY (BOS) - Uses POST-CHoCH Impulse Leg
         
-        MASTERCLASS RULE V8.1:
-        - Accept FVG zones that INTERSECT with 50% equilibrium (SMC Zone Overlap)
-        - Apply ±2% tolerance buffer to avoid milimetric rejections
-        - Only reject clear shallow retracements (<48% of swing leg)
+        CONTINUITY LOGIC (BOS):
+        - Measures ONLY the current impulse leg (after last CHoCH)
+        - BEARISH BOS: Last swing HIGH after CHoCH → BOS break (LL in downtrend)
+        - BULLISH BOS: Last swing LOW after CHoCH → BOS break (HH in uptrend)
         
-        VALIDATION LOGIC V8.1:
+        WHY POST-CHoCH?
+        - BOS confirms trend continuation - we measure CURRENT impulse
+        - Shallower retracement (38-62%) acceptable in strong trends
+        - Example: Uptrend continues with BOS (HH), 40% pullback is healthy
         
-        For BEARISH (SELL) setups:
-        - FVG VALID if: fvg.top >= equilibrium (at least touches Premium zone)
-        - Apply -2% tolerance: Accept FVG that reaches 48% or higher
-        - This captures deep retracements into supply (institutional distribution)
+        Args:
+            df: DataFrame with OHLC data
+            bos: BOS signal object
+            last_choch: Last CHoCH before this BOS (defines impulse start)
+            swing_highs: List of detected swing highs
+            swing_lows: List of detected swing lows
         
-        For BULLISH (LONG) setups:
-        - FVG VALID if: fvg.bottom <= equilibrium (at least touches Discount zone)
-        - Apply +2% tolerance: Accept FVG that reaches 52% or lower
-        - This captures deep retracements into demand (institutional accumulation)
+        Returns:
+            Equilibrium price (50% of impulse leg) or None
+        """
+        if not swing_highs or not swing_lows:
+            return None
+        
+        try:
+            # If no CHoCH, use last swing as fallback
+            choch_index = last_choch.index if last_choch else 0
+            
+            if bos.direction == 'bullish':
+                # BULLISH BOS: Uptrend continuation (HH)
+                # Measure from last swing LOW AFTER CHoCH to BOS break (HH)
+                macro_low = None
+                for sl in reversed(swing_lows):
+                    if choch_index < sl.index < bos.index:
+                        macro_low = sl.price
+                        break
+                
+                # Fallback: Use last swing low before BOS if no swing after CHoCH
+                if macro_low is None:
+                    for sl in reversed(swing_lows):
+                        if sl.index < bos.index:
+                            macro_low = sl.price
+                            break
+                
+                if macro_low is None:
+                    return None
+                
+                macro_high = bos.break_price  # BOS break (HH)
+                
+            else:  # bos.direction == 'bearish'
+                # BEARISH BOS: Downtrend continuation (LL)
+                # Measure from last swing HIGH AFTER CHoCH to BOS break (LL)
+                macro_high = None
+                for sh in reversed(swing_highs):
+                    if choch_index < sh.index < bos.index:
+                        macro_high = sh.price
+                        break
+                
+                # Fallback: Use last swing high before BOS if no swing after CHoCH
+                if macro_high is None:
+                    for sh in reversed(swing_highs):
+                        if sh.index < bos.index:
+                            macro_high = sh.price
+                            break
+                
+                if macro_high is None:
+                    return None
+                
+                macro_low = bos.break_price  # BOS break (LL)
+            
+            # Calculate 50% equilibrium of IMPULSE leg
+            equilibrium = (macro_high + macro_low) / 2.0
+            
+            return equilibrium
+        
+        except Exception as e:
+            print(f"❌ Continuity equilibrium calculation error: {e}")
+            return None
+    
+    def validate_fvg_zone(self, fvg: FVG, equilibrium: float, current_trend: str, strategy_type: str = 'reversal', debug: bool = False) -> bool:
+        """🔥 PREMIUM/DISCOUNT ZONE VALIDATION - V8.2 STRATEGY-DIFFERENTIATED LOGIC
+        
+        V8.2 MASTERCLASS EVOLUTION:
+        - REVERSAL (CHoCH): STRICT 48-52% (±2% tolerance) - Deep retracement required
+        - CONTINUITY (BOS): RELAXED 38-62% (±12% tolerance) - Shallower acceptable in trends
+        
+        WHY DIFFERENTIATE?
+        - Reversal: Trend changes at extremes → Requires DEEP pullback (50%+) to old range
+        - Continuity: Trend persists → Accepts SHALLOWER pullback (38-45%) in momentum
+        
+        VALIDATION LOGIC V8.2:
+        
+        REVERSAL (strategy_type='reversal'):
+        - BEARISH: FVG must reach 48%+ (Premium zone with ±2% tolerance)
+        - BULLISH: FVG must reach 52%- (Discount zone with ±2% tolerance)
+        - Rejects shallow <48% retracements (retail inducement)
+        
+        CONTINUITY (strategy_type='continuation'):
+        - BEARISH: FVG must reach 38%+ (Relaxed Premium with ±12% tolerance)
+        - BULLISH: FVG must reach 62%- (Relaxed Discount with ±12% tolerance)
+        - Accepts healthy 40% pullbacks in strong trends
         
         EDGE CASE HANDLING:
-        - FVG at EXACTLY 50% → ACCEPTED (was rejected in V8.0)
-        - FVG intersecting 50% → ACCEPTED (new overlap logic)
-        - FVG with 48-52% middle → ACCEPTED (tolerance buffer)
+        - FVG at EXACTLY 50% → ACCEPTED for both strategies
+        - FVG at 38-48% → REJECTED for Reversal, ACCEPTED for Continuity
+        - FVG at 48-52% → ACCEPTED for both (overlap with tolerance)
         
         Args:
             fvg: FVG object to validate
-            equilibrium: 50% level of macro swing leg
+            equilibrium: 50% level of macro swing leg (strategy-specific)
             current_trend: 'bullish' or 'bearish'
+            strategy_type: 'reversal' (CHoCH, strict) or 'continuation' (BOS, relaxed)
             debug: Print validation details
         
         Returns:
-            True if FVG intersects correct zone (with tolerance), False if rejected
+            True if FVG intersects correct zone (with strategy tolerance), False if rejected
         """
         if equilibrium is None:
             if debug:
@@ -239,33 +342,31 @@ class SMCDetector:
         fvg_top = fvg.top
         fvg_bottom = fvg.bottom
         
-        # ±2% tolerance buffer (dynamic based on equilibrium level)
-        tolerance_buffer = equilibrium * 0.02  # 2% of equilibrium price
+        # V8.2: STRATEGY-DIFFERENTIATED TOLERANCE
+        if strategy_type == 'reversal':
+            # STRICT: Reversal requires deep retracement (48-52%)
+            tolerance_buffer = equilibrium * 0.02  # ±2% tolerance
+            threshold_pct = 2.0
+        else:  # strategy_type == 'continuation'
+            # RELAXED: Continuity allows shallower pullback (38-62%)
+            tolerance_buffer = equilibrium * 0.12  # ±12% tolerance
+            threshold_pct = 12.0
         
         if current_trend == 'bearish':
-            # BEARISH SETUP: FVG must INTERSECT or be ABOVE Premium zone (50%)
-            # 
-            # V8.1 OVERLAP LOGIC:
-            # - Accept if fvg.top >= equilibrium (FVG reaches Premium)
-            # - Apply -2% tolerance: Accept if fvg.top >= (equilibrium - tolerance)
-            # 
-            # Example EURJPY:
-            # - Equilibrium: 183.60350
-            # - Tolerance: -3.67207 (2%)
-            # - Min threshold: 179.93143 (48% zone)
-            # - FVG.top: 186.08300 → VALID (reaches Premium + tolerance)
+            # BEARISH SETUP: FVG must reach Premium zone (strategy-dependent threshold)
+            # V8.2: REVERSAL 48%+ (strict) | CONTINUITY 38%+ (relaxed)
             
-            equilibrium_with_tolerance = equilibrium - tolerance_buffer  # Accept 48%+
+            equilibrium_with_tolerance = equilibrium - tolerance_buffer
             fvg_intersects_premium = fvg_top >= equilibrium_with_tolerance
             
             if debug:
                 zone_pct = ((fvg_middle - equilibrium) / equilibrium) * 100
-                tolerance_pct = (tolerance_buffer / equilibrium) * 100
-                min_threshold_pct = 50.0 - tolerance_pct  # Should be ~48%
+                min_threshold_pct = 50.0 - threshold_pct
                 
-                print(f"\n🔍 PREMIUM/DISCOUNT VALIDATION V8.1 (BEARISH):")
+                print(f"\n🔍 PREMIUM/DISCOUNT VALIDATION V8.2 (BEARISH):")
+                print(f"   Strategy Type: {strategy_type.upper()}")
                 print(f"   Equilibrium (50%): {equilibrium:.5f}")
-                print(f"   Tolerance Buffer: {tolerance_buffer:.5f} (±{tolerance_pct:.1f}%)")
+                print(f"   Tolerance: ±{threshold_pct}% ({'STRICT' if strategy_type == 'reversal' else 'RELAXED'})")
                 print(f"   Min Threshold: {equilibrium_with_tolerance:.5f} ({min_threshold_pct:.1f}% zone)")
                 print(f"   FVG Zone: {fvg_bottom:.5f} - {fvg_top:.5f}")
                 print(f"   FVG Middle: {fvg_middle:.5f} ({zone_pct:+.2f}% from 50%)")
@@ -275,39 +376,38 @@ class SMCDetector:
                     if fvg_top >= equilibrium:
                         print(f"   ✅ VALID: FVG intersects PREMIUM ZONE (top reaches {((fvg_top - equilibrium) / equilibrium * 100):+.2f}% above 50%)")
                     else:
-                        print(f"   ✅ VALID: FVG within TOLERANCE BUFFER (top at {((fvg_top - equilibrium) / equilibrium * 100):+.2f}% from 50%)")
-                    print(f"      → Deep retracement into supply (institutional distribution zone)")
+                        print(f"   ✅ VALID: FVG within TOLERANCE (top at {((fvg_top - equilibrium) / equilibrium * 100):+.2f}% from 50%)")
+                    
+                    if strategy_type == 'reversal':
+                        print(f"      → REVERSAL: Deep retracement {zone_pct:+.1f}% (trend change at extreme)")
+                    else:
+                        print(f"      → CONTINUITY: Healthy pullback {zone_pct:+.1f}% (trend continuation)")
                 else:
-                    print(f"   ❌ REJECTED: FVG does NOT reach Premium zone (even with tolerance)")
-                    print(f"      → FVG.top ({fvg_top:.5f}) < Min Threshold ({equilibrium_with_tolerance:.5f})")
-                    print(f"      → Shallow retracement <{min_threshold_pct:.1f}% (retail inducement)")
+                    print(f"   ❌ REJECTED: FVG does NOT reach {min_threshold_pct:.1f}% Premium threshold")
+                    print(f"      → FVG.top ({fvg_top:.5f}) < Min ({equilibrium_with_tolerance:.5f})")
+                    
+                    if strategy_type == 'reversal':
+                        print(f"      → REVERSAL requires ≥48% retracement (this: {zone_pct:+.1f}%)")
+                    else:
+                        print(f"      → CONTINUITY requires ≥38% retracement (this: {zone_pct:+.1f}%)")
             
             return fvg_intersects_premium
         
         elif current_trend == 'bullish':
-            # BULLISH SETUP: FVG must INTERSECT or be BELOW Discount zone (50%)
-            # 
-            # V8.1 OVERLAP LOGIC:
-            # - Accept if fvg.bottom <= equilibrium (FVG reaches Discount)
-            # - Apply +2% tolerance: Accept if fvg.bottom <= (equilibrium + tolerance)
-            # 
-            # Example:
-            # - Equilibrium: 1.18000
-            # - Tolerance: +0.02360 (2%)
-            # - Max threshold: 1.20360 (52% zone)
-            # - FVG.bottom: 1.17500 → VALID (reaches Discount + tolerance)
+            # BULLISH SETUP: FVG must reach Discount zone (strategy-dependent threshold)
+            # V8.2: REVERSAL 52%- (strict) | CONTINUITY 62%- (relaxed)
             
-            equilibrium_with_tolerance = equilibrium + tolerance_buffer  # Accept 52%-
+            equilibrium_with_tolerance = equilibrium + tolerance_buffer
             fvg_intersects_discount = fvg_bottom <= equilibrium_with_tolerance
             
             if debug:
                 zone_pct = ((fvg_middle - equilibrium) / equilibrium) * 100
-                tolerance_pct = (tolerance_buffer / equilibrium) * 100
-                max_threshold_pct = 50.0 + tolerance_pct  # Should be ~52%
+                max_threshold_pct = 50.0 + threshold_pct
                 
-                print(f"\n🔍 PREMIUM/DISCOUNT VALIDATION V8.1 (BULLISH):")
+                print(f"\n🔍 PREMIUM/DISCOUNT VALIDATION V8.2 (BULLISH):")
+                print(f"   Strategy Type: {strategy_type.upper()}")
                 print(f"   Equilibrium (50%): {equilibrium:.5f}")
-                print(f"   Tolerance Buffer: {tolerance_buffer:.5f} (±{tolerance_pct:.1f}%)")
+                print(f"   Tolerance: ±{threshold_pct}% ({'STRICT' if strategy_type == 'reversal' else 'RELAXED'})")
                 print(f"   Max Threshold: {equilibrium_with_tolerance:.5f} ({max_threshold_pct:.1f}% zone)")
                 print(f"   FVG Zone: {fvg_bottom:.5f} - {fvg_top:.5f}")
                 print(f"   FVG Middle: {fvg_middle:.5f} ({zone_pct:+.2f}% from 50%)")
@@ -317,12 +417,20 @@ class SMCDetector:
                     if fvg_bottom <= equilibrium:
                         print(f"   ✅ VALID: FVG intersects DISCOUNT ZONE (bottom reaches {((fvg_bottom - equilibrium) / equilibrium * 100):+.2f}% below 50%)")
                     else:
-                        print(f"   ✅ VALID: FVG within TOLERANCE BUFFER (bottom at {((fvg_bottom - equilibrium) / equilibrium * 100):+.2f}% from 50%)")
-                    print(f"      → Deep retracement into demand (institutional accumulation zone)")
+                        print(f"   ✅ VALID: FVG within TOLERANCE (bottom at {((fvg_bottom - equilibrium) / equilibrium * 100):+.2f}% from 50%)")
+                    
+                    if strategy_type == 'reversal':
+                        print(f"      → REVERSAL: Deep retracement {zone_pct:+.1f}% (trend change at extreme)")
+                    else:
+                        print(f"      → CONTINUITY: Healthy pullback {zone_pct:+.1f}% (trend continuation)")
                 else:
-                    print(f"   ❌ REJECTED: FVG does NOT reach Discount zone (even with tolerance)")
-                    print(f"      → FVG.bottom ({fvg_bottom:.5f}) > Max Threshold ({equilibrium_with_tolerance:.5f})")
-                    print(f"      → Shallow retracement >{max_threshold_pct:.1f}% (retail inducement)")
+                    print(f"   ❌ REJECTED: FVG does NOT reach {max_threshold_pct:.1f}% Discount threshold")
+                    print(f"      → FVG.bottom ({fvg_bottom:.5f}) > Max ({equilibrium_with_tolerance:.5f})")
+                    
+                    if strategy_type == 'reversal':
+                        print(f"      → REVERSAL requires ≤52% retracement (this: {zone_pct:+.1f}%)")
+                    else:
+                        print(f"      → CONTINUITY requires ≤62% retracement (this: {zone_pct:+.1f}%)")
             
             return fvg_intersects_discount
         
@@ -2593,39 +2701,68 @@ class SMCDetector:
             print(f"   Gap Size: {gap_size:.5f} ({gap_pct:.3f}%)")
             print(f"   Middle: {fvg.middle:.5f}")
         
-        # 🔥 NEW V8.0: PREMIUM/DISCOUNT ZONE VALIDATION (50% Equilibrium Filter)
-        # Calculate equilibrium level from macro swing leg
+        # 🔥 V8.2: STRATEGY-DIFFERENTIATED PREMIUM/DISCOUNT VALIDATION
+        # Calculate equilibrium using CORRECT Macro Leg for strategy type
         swing_highs = self.detect_swing_highs(df_daily)
         swing_lows = self.detect_swing_lows(df_daily)
-        equilibrium = self.calculate_equilibrium(df_daily, swing_highs, swing_lows)
+        
+        # V8.2: Use different equilibrium calculation based on strategy
+        if strategy_type == 'reversal':
+            # REVERSAL: Use PRE-CHoCH Macro Leg
+            equilibrium = self.calculate_equilibrium_reversal(df_daily, latest_signal, swing_highs, swing_lows)
+            
+            if debug and equilibrium:
+                print(f"\n🔄 REVERSAL Macro Leg (Pre-CHoCH):")
+                print(f"   Equilibrium: {equilibrium:.5f}")
+                print(f"   Measured from: Last swing before CHoCH → CHoCH break")
+        else:
+            # CONTINUITY: Use POST-CHoCH Impulse Leg
+            # Find last CHoCH before this BOS
+            last_choch = daily_chochs[-1] if daily_chochs else None
+            equilibrium = self.calculate_equilibrium_continuity(df_daily, latest_signal, last_choch, swing_highs, swing_lows)
+            
+            if debug and equilibrium:
+                print(f"\n➡️ CONTINUITY Macro Leg (Post-CHoCH Impulse):")
+                print(f"   Equilibrium: {equilibrium:.5f}")
+                print(f"   Measured from: Last swing after CHoCH → BOS break")
         
         if equilibrium is not None:
-            # Validate FVG position relative to 50% level
-            is_valid_zone = self.validate_fvg_zone(fvg, equilibrium, current_trend, debug=debug)
+            # V8.2: Validate with STRATEGY-SPECIFIC threshold
+            # REVERSAL: Strict 48-52% (±2%)
+            # CONTINUITY: Relaxed 38-62% (±12%)
+            is_valid_zone = self.validate_fvg_zone(fvg, equilibrium, current_trend, strategy_type=strategy_type, debug=debug)
             
             if not is_valid_zone:
                 if debug:
-                    print(f"\n❌ REJECTED: FVG in wrong half of structure (Premium/Discount violation)")
-                    print(f"   Setup Type: {current_trend.upper()}")
+                    print(f"\n❌ REJECTED: FVG fails {strategy_type.upper()} Premium/Discount validation")
+                    print(f"   Strategy: {strategy_type.upper()}")
+                    print(f"   Trend: {current_trend.upper()}")
                     print(f"   Equilibrium: {equilibrium:.5f}")
                     print(f"   FVG Middle: {fvg.middle:.5f}")
-                    if current_trend == 'bearish':
-                        print(f"   ⚠️  BEARISH setup requires FVG ABOVE 50% (Premium Zone)")
-                        print(f"   ⚠️  This FVG is in Discount Zone - shallow retracement (retail trap)")
+                    
+                    if strategy_type == 'reversal':
+                        print(f"   ⚠️  REVERSAL requires {current_trend.upper()} FVG at 48-52% (STRICT)")
+                        print(f"   ⚠️  This FVG outside threshold - insufficient retracement")
                     else:
-                        print(f"   ⚠️  BULLISH setup requires FVG BELOW 50% (Discount Zone)")
-                        print(f"   ⚠️  This FVG is in Premium Zone - shallow retracement (retail trap)")
+                        print(f"   ⚠️  CONTINUITY requires {current_trend.upper()} FVG at 38-62% (RELAXED)")
+                        print(f"   ⚠️  This FVG outside threshold - too shallow even for BOS")
                 
-                return None  # Reject setup - FVG not in deep retracement zone
+                return None  # Reject setup
             
             if debug:
-                print(f"\n✅ PREMIUM/DISCOUNT VALIDATION PASSED")
+                print(f"\n✅ V8.2 PREMIUM/DISCOUNT VALIDATION PASSED")
                 zone_type = "PREMIUM" if current_trend == 'bearish' else "DISCOUNT"
-                print(f"   FVG is in {zone_type} ZONE (>50% retracement)")
-                print(f"   This is a DEEP pullback (Smart Money optimal entry)")
+                threshold = "48-52%" if strategy_type == 'reversal' else "38-62%"
+                print(f"   Strategy: {strategy_type.upper()}")
+                print(f"   FVG in {zone_type} ZONE (threshold: {threshold})")
+                
+                if strategy_type == 'reversal':
+                    print(f"   → REVERSAL: Deep retracement into old trend (CHoCH confirmation)")
+                else:
+                    print(f"   → CONTINUITY: Healthy pullback in strong trend (BOS continuation)")
         else:
             if debug:
-                print(f"\n⚠️  Could not calculate equilibrium - skipping Premium/Discount check")
+                print(f"\n⚠️  Could not calculate {strategy_type.upper()} equilibrium - skipping validation")
         
         # V3.0: Calculate FVG Quality Score (0-100) - OPTIONAL for backtest
         if not skip_fvg_quality:
