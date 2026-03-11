@@ -155,7 +155,7 @@ def scan_pair_for_rejections(symbol: str, detector: SMCDetector,
             if fvg:
                 # FVG exists - now check Premium/Discount validation
                 # V8.2: Use 'reversal' strategy type (STRICT 48-52%)
-                is_valid = detector.validate_fvg_zone(fvg, equilibrium, choch.direction, strategy_type='reversal', debug=False)
+                is_valid = detector.validate_fvg_zone(fvg, equilibrium, choch.direction, debug=False)
                 
                 if not is_valid:
                     # REJECTED by Premium/Discount filter
@@ -210,7 +210,7 @@ def scan_pair_for_rejections(symbol: str, detector: SMCDetector,
             if fvg:
                 # FVG exists - now check Premium/Discount validation
                 # V8.2: Use 'continuation' strategy type (RELAXED 38-62%)
-                is_valid = detector.validate_fvg_zone(fvg, equilibrium, bos.direction, strategy_type='continuation', debug=False)
+                is_valid = detector.validate_fvg_zone(fvg, equilibrium, bos.direction, debug=False)
                 
                 if not is_valid:
                     # REJECTED by Premium/Discount filter

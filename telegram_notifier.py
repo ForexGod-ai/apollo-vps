@@ -15,15 +15,16 @@ from chart_generator import ChartGenerator
 
 load_dotenv()
 
-# ──────────────────━━━━━━━
-# THE UNIVERSAL 18-CHAR RULE by ФорексГод
-# ──────────────────━━━━━━━
-# ALL separators in ALL Telegram messages MUST be EXACTLY 18 characters
-# This ensures perfect alignment with the signature footer across all devices
-# ──────────────────━━━━━━━
-UNIVERSAL_SEPARATOR = "──────────────────"  # EXACTLY 18 chars - DO NOT MODIFY!
-SEPARATOR_LENGTH = 18  # Enforced rule: All separators must be this length
-# ──────────────────━━━━━━━
+# ────────────────━━━━━━━
+# THE COMPACT FOOTER RULE by ФорексГод
+# ────────────────━━━━━━━
+# ALL separators MUST be EXACTLY 16 characters
+# Perfect symmetry with 🔱 AUTHORED BY ФорексГод 🔱
+# Branding = FOOTER ONLY. Never header. Clean & expensive.
+# ────────────────━━━━━━━
+UNIVERSAL_SEPARATOR = "────────────────"  # EXACTLY 16 chars — COMPACT SYMMETRIC
+SEPARATOR_LENGTH = 16  # Enforced rule: Name-aligned width
+# ────────────────━━━━━━━
 
 
 class TelegramNotifier:
@@ -42,29 +43,35 @@ class TelegramNotifier:
     
     def _add_branding_signature(self, message: str, parse_mode: str = "Markdown") -> str:
         """
-        Add professional branding signature to any message
-        This ensures consistent branding across all Telegram notifications
-        Adapts formatting based on parse_mode (Markdown vs HTML)
+        THE COMPACT FOOTER SIGNATURE by ФорексГод — V8.4
         
-        THE UNIVERSAL 18-CHAR RULE:
-        All separators are EXACTLY 18 characters to ensure perfect alignment
-        across all devices and message types.
+        [Message Content — clean, technical data only]
+        
+          ────────────────
+          🔱 AUTHORED BY ФорексГод 🔱
+          ────────────────
+          🏛️ INSTITUTIONAL TERMINAL 🏛️
+        
+        16-char separator. FOOTER ONLY. No header duplication.
         """
+        sep = UNIVERSAL_SEPARATOR  # 16 chars
         if parse_mode == "HTML":
-            signature = f"""
-
-{UNIVERSAL_SEPARATOR}
-✨ <b>Glitch in Matrix by ФорексГод</b> ✨
-🧠 AI-Powered • 💎 Smart Money"""
+            footer = (
+                f"\n\n  {sep}\n"
+                f"  🔱 <b>AUTHORED BY ФорексГод</b> 🔱\n"
+                f"  {sep}\n"
+                f"  🏛️ INSTITUTIONAL TERMINAL 🏛️"
+            )
         else:  # Markdown
-            signature = f"""
-
-{UNIVERSAL_SEPARATOR}
-✨ *Glitch in Matrix by ФорексГód* ✨
-🧠 AI-Powered • 💎 Smart Money"""
+            footer = (
+                f"\n\n  {sep}\n"
+                f"  🔱 *AUTHORED BY ФорексГод* 🔱\n"
+                f"  {sep}\n"
+                f"  🏛️ INSTITUTIONAL TERMINAL 🏛️"
+            )
         
-        # Add signature at the end of message
-        return f"{message.rstrip()}{signature}"
+        # FOOTER ONLY — message stays clean, stamp at the end
+        return f"{message.rstrip()}{footer}"
     
     def send_message(self, text: str, parse_mode: str = "HTML", add_signature: bool = True) -> bool:
         """Send text message to Telegram with automatic branding signature"""
@@ -205,13 +212,19 @@ class TelegramNotifier:
         status_emoji = "✅" if setup.status == 'READY' else "👀"
         status = "READY" if setup.status == 'READY' else "MONITORING"
         
-        # Strategy type
-        strategy_emoji = "🔥" if setup.strategy_type == 'reversal' else "🎯"
-        strategy = "REVERSAL" if setup.strategy_type == 'reversal' else "CONTINUATION"
+        # V8.2: Strategy type with clear labels
+        strategy_type = getattr(setup, 'strategy_type', 'reversal').upper()
+        if strategy_type == 'REVERSAL':
+            strategy_emoji = "🔄"
+            strategy_label = "REVERSAL (CHoCH)"
+        else:
+            strategy_emoji = "➡️"
+            strategy_label = "CONTINUITY (BOS)"
         
         # --- HEADER SECTION ---
         header = f"{strategy_emoji} <b>{setup.symbol}</b> {direction} {emoji}\n"
-        header += f"{status_emoji} <b>{status}</b>"
+        header += f"{status_emoji} <b>{status}</b>\n"
+        header += f"🎯 <b>Strategy: {strategy_label}</b>"
         
         # --- AI FUSION: Compact vertical layout ---
         ai_fusion = ""

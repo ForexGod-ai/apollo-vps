@@ -24,10 +24,29 @@ from datetime import datetime, timedelta
 from dotenv import load_dotenv
 import requests
 import time
+import os
 import psutil
 from loguru import logger
 
 load_dotenv()
+
+# ━━━ V8.0 VPS-READY: Force UTC timezone + persistent log file ━━━
+os.environ['TZ'] = 'UTC'
+try:
+    time.tzset()
+except AttributeError:
+    pass
+
+_LOG_DIR = Path(__file__).parent / "logs"
+_LOG_DIR.mkdir(exist_ok=True)
+logger.add(
+    str(_LOG_DIR / "telegram_command_center.log"),
+    format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {message}",
+    level="DEBUG",
+    rotation="10 MB",
+    retention="7 days",
+    compression="zip"
+)
 
 # Universal separator - EXACTLY 18 characters for alignment
 UNIVERSAL_SEPARATOR = "──────────────────"
@@ -89,13 +108,17 @@ class TelegramCommandCenter:
         self.chat_id = os.getenv('TELEGRAM_CHAT_ID', '')
         self.authorized_user_id = int(os.getenv('TELEGRAM_USER_ID', '0'))
         
-        self.db_path = Path('data/trades.db')
-        self.monitoring_file = Path('monitoring_setups.json')
+        # V8.1: Path alignment — resolve relative to script location, not CWD
+        script_dir = Path(__file__).parent.resolve()
+        self.db_path = script_dir / 'data' / 'trades.db'
+        self.monitoring_file = script_dir / 'monitoring_setups.json'
+        self.active_positions_file = script_dir / 'active_positions.json'
         
         self.last_update_id = 0
         
         logger.info("🎮 Telegram Command Center V3.7 initialized")
         logger.info(f"🔐 Authorized User ID: {self.authorized_user_id}")
+        logger.info(f"📁 Monitoring file: {self.monitoring_file}")
     
     def get_updates(self):
         """Get new messages from Telegram"""
@@ -151,9 +174,15 @@ class TelegramCommandCenter:
         try:
             url = f"https://api.telegram.org/bot{self.bot_token}/sendMessage"
             
-            # ✅ CRITICAL FIX by ФорексГод: Use UNIVERSAL_SEPARATOR (18 chars) for alignment
-            # Add ФорексГод signature to every message
-            branded_text = f"{text}\n{UNIVERSAL_SEPARATOR}\n✨ <b>Glitch in Matrix by ФорексГод</b> ✨\n🧠 AI-Powered • 💎 Smart Money"
+            # ✅ V8.4 COMPACT FOOTER — no header, branding at bottom only
+            sep = "────────────────"  # 16 chars — compact symmetric
+            branded_text = (
+                f"{text}\n\n"
+                f"  {sep}\n"
+                f"  🔱 <b>AUTHORED BY ФорексГод</b> 🔱\n"
+                f"  {sep}\n"
+                f"  🏛️ INSTITUTIONAL TERMINAL 🏛️"
+            )
             
             payload = {
                 'chat_id': self.chat_id,
@@ -249,65 +278,192 @@ class TelegramCommandCenter:
             logger.error(f"❌ Stats command error: {e}")
             return f"❌ <b>Error:</b> {str(e)}"
     
-    def handle_monitoring_command(self):
-        """Handle /monitoring command - Show active setups"""
+    def _load_broker_positions(self) -> dict:
+        """
+        Load REAL positions from active_positions.json (written by cBot sync).
+        Returns dict: {symbol: [position_data, ...]} for cross-reference.
+        """
+        broker = {}
         try:
+            if not self.active_positions_file.exists():
+                logger.warning("⚠️  active_positions.json not found — broker data unavailable")
+                return broker
+            
+            with open(self.active_positions_file, 'r') as f:
+                positions = json.load(f)
+            
+            if not isinstance(positions, list):
+                return broker
+            
+            for pos in positions:
+                sym = pos.get('symbol', '')
+                if sym:
+                    broker.setdefault(sym, []).append(pos)
+            
+            return broker
+        except Exception as e:
+            logger.error(f"❌ Error loading broker positions: {e}")
+            return broker
+    
+    def _expire_stale_actives(self, setups: list, broker_symbols: set) -> int:
+        """
+        Auto-expire ACTIVE setups that are NOT at broker.
+        If a setup has status='ACTIVE' but its symbol is missing from 
+        active_positions.json, mark it as 'EXPIRED'.
+        
+        Returns count of expired setups.
+        """
+        expired_count = 0
+        for setup in setups:
+            if setup.get('status') == 'ACTIVE':
+                sym = setup.get('symbol', '')
+                if sym and sym not in broker_symbols:
+                    setup['status'] = 'EXPIRED'
+                    setup['expired_reason'] = 'Not found at broker (auto-cleanup)'
+                    expired_count += 1
+                    logger.info(f"🧹 EXPIRED: {sym} — not at broker, status → EXPIRED")
+        
+        if expired_count > 0:
+            try:
+                with open(self.monitoring_file, 'r') as f:
+                    data = json.load(f)
+                data['setups'] = setups
+                with open(self.monitoring_file, 'w') as f:
+                    json.dump(data, f, indent=2)
+                logger.success(f"🧹 Auto-expired {expired_count} stale setup(s) from monitoring_setups.json")
+            except Exception as e:
+                logger.error(f"❌ Failed to save expired setups: {e}")
+        
+        return expired_count
+
+    def handle_monitoring_command(self):
+        """
+        /monitoring — BROKER-VERIFIED overview.
+        Cross-references monitoring_setups.json with active_positions.json
+        to show only REAL positions as LIVE, and flags desync.
+        """
+        try:
+            # ─── LOAD MONITORING SETUPS ───
             if not self.monitoring_file.exists():
-                return "❌ <b>No monitoring setups found!</b>\\n\\n<code>monitoring_setups.json</code> missing."
+                return "❌ <b>No monitoring setups found!</b>\n\n<code>monitoring_setups.json</code> missing."
             
             with open(self.monitoring_file, 'r') as f:
                 data = json.load(f)
             
             setups = data.get('setups', [])
-            active_setups = [s for s in setups if s.get('status') == 'MONITORING']
             
-            if not active_setups:
-                return "⚪ <b>No active monitoring setups</b>\\n\\nAll clear! Waiting for new opportunities."
+            # ─── LOAD REAL BROKER POSITIONS ───
+            broker = self._load_broker_positions()
+            broker_symbols = set(broker.keys())
             
-            message = f"""<b>🎯 ACTIVE MONITORING SETUPS</b>
-{UNIVERSAL_SEPARATOR}
-
-📊 Total Active: <b>{len(active_setups)}</b>
-
-"""
+            # ─── AUTO-EXPIRE stale ACTIVE setups not at broker ───
+            expired_count = self._expire_stale_actives(setups, broker_symbols)
             
-            # Sort by ML score (highest first)
-            active_setups_sorted = sorted(active_setups, key=lambda x: x.get('ml_score', 0), reverse=True)
+            # ─── RE-CLASSIFY after cleanup ───
+            monitoring_setups = [s for s in setups if s.get('status') == 'MONITORING']
+            confirmed_live = [s for s in setups if s.get('status') == 'ACTIVE' and s.get('symbol') in broker_symbols]
+            desync_setups = [s for s in setups if s.get('status') == 'ACTIVE' and s.get('symbol') not in broker_symbols]
+            expired_setups = [s for s in setups if s.get('status') == 'EXPIRED']
             
-            for idx, setup in enumerate(active_setups_sorted[:10], 1):  # Max 10 setups
-                symbol = setup.get('symbol', 'UNKNOWN')
-                direction = setup.get('direction', '?')
-                entry = setup.get('entry_price')
-                risk_reward = setup.get('risk_reward')
-                ml_score = setup.get('ml_score', 0)
-                ai_prob = setup.get('ai_probability', 0)
+            total_broker = sum(len(v) for v in broker.values())
+            
+            if not monitoring_setups and not confirmed_live and not broker_symbols:
+                return "⚪ <b>All clear</b>\n\nNo setups in pândă, no positions at broker.\nWaiting for new opportunities."
+            
+            message = (
+                f"<b>🎯 COMMAND CENTER — BROKER VERIFIED</b>\n"
+                f"{UNIVERSAL_SEPARATOR}\n\n"
+                f"👁️ Pândă: <b>{len(monitoring_setups)}</b> | "
+                f"🔥 Live: <b>{len(confirmed_live)}</b> ({total_broker} pos) | "
+                f"🧹 Expired: <b>{expired_count}</b>\n"
+            )
+            
+            # ═══ SECTION 1: 🔥 LIVE AT BROKER (confirmed by active_positions.json) ═══
+            if broker_symbols:
+                message += f"\n{UNIVERSAL_SEPARATOR}\n"
+                message += "🔥 <b>LIVE LA BROKER</b> (confirmed)\n\n"
                 
-                # ✅ CRITICAL FIX by ФорексГод: TypeError Protection
-                # Skip setups with None values to prevent format string crash
-                if entry is None:
-                    entry = 0.0
-                if risk_reward is None:
-                    risk_reward = 0.0
-                
-                dir_emoji = "🔴" if direction == "SHORT" else "🟢"
-                
-                # Score stars
-                if ml_score >= 70:
-                    stars = "⭐⭐⭐"
-                elif ml_score >= 50:
-                    stars = "⭐⭐"
-                else:
-                    stars = "⭐"
-                
-                message += f"""<b>{idx}. <code>{symbol}</code></b> {dir_emoji} {direction}
-   📊 ML Score: <code>{ml_score}/100</code> {stars}
-   🧠 AI: <code>{ai_prob}%</code>
-   💰 Entry: <code>${entry:,.2f}</code>
-
-"""
+                idx = 0
+                for sym in sorted(broker_symbols):
+                    positions = broker[sym]
+                    for pos in positions:
+                        idx += 1
+                        direction = pos.get('direction', '?')
+                        entry = pos.get('entry_price', 0)
+                        profit = pos.get('net_profit', 0)
+                        pips = pos.get('pips', 0)
+                        sl = pos.get('stop_loss')
+                        tp = pos.get('take_profit')
+                        
+                        dir_emoji = "🟢" if direction in ('buy', 'BUY') else "🔴"
+                        dir_label = direction.upper()
+                        
+                        # Profit coloring
+                        if profit > 0:
+                            pl_emoji = "💚"
+                            pl_text = f"+${profit:.2f}"
+                        elif profit < 0:
+                            pl_emoji = "❤️"
+                            pl_text = f"-${abs(profit):.2f}"
+                        else:
+                            pl_emoji = "💛"
+                            pl_text = "$0.00"
+                        
+                        sl_text = f"{sl:.5f}" if sl else "NONE ⚠️"
+                        tp_text = f"{tp:.5f}" if tp else "NONE ⚠️"
+                        
+                        message += (
+                            f"<b>{idx}.</b> <code>{sym}</code> {dir_emoji} <b>{dir_label}</b>\n"
+                            f"   📍 Entry: <code>{entry:.5f}</code>\n"
+                            f"   🛡️ SL: <code>{sl_text}</code> | 🎯 TP: <code>{tp_text}</code>\n"
+                            f"   {pl_emoji} P/L: <code>{pl_text}</code> ({pips:+.1f} pips)\n\n"
+                        )
             
-            if len(active_setups) > 10:
-                message += f"<i>... and {len(active_setups) - 10} more setups</i>\\n"
+            # ═══ SECTION 2: 👁️ PÂNDĂ ACTIVĂ (waiting for confirmation) ═══
+            if monitoring_setups:
+                message += f"{UNIVERSAL_SEPARATOR}\n"
+                message += "👁️ <b>PÂNDĂ ACTIVĂ</b> (waiting 1H CHoCH)\n\n"
+                
+                monitoring_sorted = sorted(monitoring_setups, key=lambda x: x.get('ml_score', 0), reverse=True)
+                
+                for idx, setup in enumerate(monitoring_sorted[:10], 1):
+                    symbol = setup.get('symbol', 'UNKNOWN')
+                    direction = setup.get('direction', '?')
+                    entry = setup.get('entry_price') or 0.0
+                    risk_reward = setup.get('risk_reward') or 0.0
+                    ml_score = setup.get('ml_score', 0)
+                    ai_prob = setup.get('ai_probability', 0)
+                    
+                    dir_emoji = "🟢" if direction in ('buy', 'BUY', 'LONG') else "🔴"
+                    dir_label = direction.upper()
+                    
+                    if ml_score >= 70:
+                        stars = "⭐⭐⭐"
+                    elif ml_score >= 50:
+                        stars = "⭐⭐"
+                    else:
+                        stars = "⭐"
+                    
+                    message += (
+                        f"<b>{idx}.</b> <code>{symbol}</code> {dir_emoji} <b>{dir_label}</b>\n"
+                        f"   📊 ML: <code>{ml_score}/100</code> {stars} | 🧠 AI: <code>{ai_prob}%</code>\n"
+                        f"   💰 Entry: <code>{entry:.5f}</code> | ⚖️ RR: <code>1:{risk_reward:.1f}</code>\n\n"
+                    )
+                
+                if len(monitoring_setups) > 10:
+                    message += f"<i>... and {len(monitoring_setups) - 10} more in pândă</i>\n"
+            
+            # ═══ SECTION 3: ⚠️ DESYNC (ACTIVE in JSON but NOT at broker) ═══
+            if desync_setups:
+                message += f"{UNIVERSAL_SEPARATOR}\n"
+                message += "⚠️ <b>DESYNC</b> (in JSON, not at broker)\n\n"
+                
+                for setup in desync_setups:
+                    symbol = setup.get('symbol', '?')
+                    direction = setup.get('direction', '?').upper()
+                    message += f"   ⚠️ <code>{symbol}</code> {direction} — <i>ghost position</i>\n"
+                
+                message += "\n"
             
             return message
             
@@ -348,29 +504,29 @@ class TelegramCommandCenter:
                     else:
                         status = "<code>❌ OFFLINE</code>"
                     
-                    message += f"{display_name}\\n   Status: {status}\\n\\n"
+                    message += f"{display_name}\n   Status: {status}\n\n"
                 except:
-                    message += f"{display_name}\\n   Status: <code>⚠️ UNKNOWN</code>\\n\\n"
+                    message += f"{display_name}\n   Status: <code>⚠️ UNKNOWN</code>\n\n"
             
-            message += "<b>📡 CONNECTIONS:</b>\\n\\n"
+            message += "<b>📡 CONNECTIONS:</b>\n\n"
             
             # Check cTrader cBot
             try:
                 response = requests.get('http://localhost:8767/health', timeout=2)
                 if response.status_code == 200:
-                    message += "🤖 cTrader cBot\\n   Status: <code>✅ CONNECTED</code>\\n\\n"
+                    message += "🤖 cTrader cBot\n   Status: <code>✅ CONNECTED</code>\n\n"
                 else:
-                    message += "🤖 cTrader cBot\\n   Status: <code>⚠️ RESPONDING</code>\\n\\n"
+                    message += "🤖 cTrader cBot\n   Status: <code>⚠️ RESPONDING</code>\n\n"
             except:
-                message += "🤖 cTrader cBot\\n   Status: <code>❌ OFFLINE</code>\\n\\n"
+                message += "🤖 cTrader cBot\n   Status: <code>❌ OFFLINE</code>\n\n"
             
             # Check database
             if self.db_path.exists():
-                message += "💾 Database\\n   Status: <code>✅ ACCESSIBLE</code>\\n\\n"
+                message += "💾 Database\n   Status: <code>✅ ACCESSIBLE</code>\n\n"
             else:
-                message += "💾 Database\\n   Status: <code>❌ NOT FOUND</code>\\n\\n"
+                message += "💾 Database\n   Status: <code>❌ NOT FOUND</code>\n\n"
             
-            message += f"{UNIVERSAL_SEPARATOR}\\n<b>🎯 VERDICT:</b> System operational!"
+            message += f"{UNIVERSAL_SEPARATOR}\n<b>🎯 VERDICT:</b> System operational!"
             
             return message
             
@@ -417,7 +573,7 @@ class TelegramCommandCenter:
                     
                     return message
             
-            return "⚪ <b>BTCUSD - No Active Setup</b>\\n\\nNot currently in monitoring list."
+            return "⚪ <b>BTCUSD - No Active Setup</b>\n\nNot currently in monitoring list."
             
         except Exception as e:
             logger.error(f"❌ BTCUSD command error: {e}")
@@ -548,7 +704,7 @@ class TelegramCommandCenter:
 <code>/btcusd</code> - Quick BTCUSD analysis
 <code>/help</code> - Show this message"""
             else:
-                response = f"❌ <b>Unknown command:</b> <code>{command}</code>\\n\\nUse <code>/help</code> for available commands."
+                response = f"❌ <b>Unknown command:</b> <code>{command}</code>\n\nUse <code>/help</code> for available commands."
             
             self.send_message(response)
             

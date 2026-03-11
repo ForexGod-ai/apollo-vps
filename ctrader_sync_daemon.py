@@ -32,7 +32,9 @@ logger.add(
     "ctrader_sync.log",
     format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {message}",
     level="DEBUG",
-    rotation="10 MB"
+    rotation="10 MB",
+    retention="7 days",
+    compression="zip"
 )
 
 CTRADER_API_URL = "http://localhost:8767/history"

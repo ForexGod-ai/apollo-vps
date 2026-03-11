@@ -208,55 +208,58 @@ def cleanup_old_signals_file(signals_file: Path, max_age_hours: int = 1):
             logger.info(f"📂 Signals file already empty: {signals_file}")
             return
         
-        signal = json.loads(content)
+        data = json.loads(content)
         
-        # Check if it's an array or single object
-        if isinstance(signal, list):
-            if not signal:
-                logger.info(f"📂 Signals file contains empty array")
-                return
-            # Take first signal if array
-            signal = signal[0] if signal else None
-        
-        if not signal:
-            logger.info(f"📂 No signal to process")
+        # ── V7.0: Handle both array and legacy single-object format ──
+        if isinstance(data, dict):
+            # Legacy single-object → wrap in array for uniform processing
+            signals = [data] if data else []
+        elif isinstance(data, list):
+            signals = data
+        else:
+            logger.warning(f"⚠️ Unexpected signals format: {type(data)}")
             return
         
-        # Extract timestamp from SignalId
-        # Format: "SYMBOL_direction_timestamp" or "TEST_V9_3_timestamp"
-        signal_id = signal.get('SignalId', '')
-        timestamp_str = signal.get('Timestamp', '')
+        if not signals:
+            logger.info(f"📂 No signals to process")
+            return
         
-        # Try to extract timestamp from SignalId
-        try:
-            # Split by underscore and take last part
-            parts = signal_id.split('_')
-            if parts:
-                timestamp_unix = int(parts[-1])
-                signal_time = datetime.fromtimestamp(timestamp_unix)
+        # Filter: keep only fresh signals
+        fresh_signals = []
+        removed_count = 0
+        
+        for signal in signals:
+            signal_id = signal.get('SignalId', '')
+            timestamp_str = signal.get('Timestamp', '')
+            
+            # Try to extract timestamp from SignalId
+            try:
+                parts = signal_id.split('_')
+                if parts:
+                    timestamp_unix = int(parts[-1])
+                    signal_time = datetime.fromtimestamp(timestamp_unix)
+                else:
+                    signal_time = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+            except (ValueError, IndexError):
+                logger.warning(f"⚠️ Cannot parse signal timestamp: {signal_id}")
+                signal_time = datetime.now() - timedelta(hours=max_age_hours + 1)
+            
+            age = datetime.now() - signal_time
+            age_hours = age.total_seconds() / 3600
+            
+            if age_hours > max_age_hours:
+                logger.warning(f"🧹 CLEANING OLD SIGNAL: {signal_id} (age: {age_hours:.1f}h)")
+                logger.info(f"   Signal details: {signal.get('Symbol')} {signal.get('Direction')} @ {signal.get('EntryPrice')}")
+                removed_count += 1
             else:
-                # Fallback to Timestamp field
-                signal_time = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
-        except (ValueError, IndexError):
-            logger.warning(f"⚠️ Cannot parse signal timestamp: {signal_id}")
-            # If we can't parse, assume it's old and clear it
-            signal_time = datetime.now() - timedelta(hours=max_age_hours + 1)
+                logger.info(f"📂 Signal is fresh ({age_hours:.1f}h old), keeping: {signal_id}")
+                fresh_signals.append(signal)
         
-        # Check age
-        age = datetime.now() - signal_time
-        age_hours = age.total_seconds() / 3600
-        
-        if age_hours > max_age_hours:
-            logger.warning(f"🧹 CLEANING OLD SIGNAL: {signal_id} (age: {age_hours:.1f}h)")
-            logger.info(f"   Signal details: {signal.get('Symbol')} {signal.get('Direction')} @ {signal.get('EntryPrice')}")
-            
-            # Clear the file
+        # Write back only fresh signals (always array format for V7.0)
+        if removed_count > 0:
             with open(signals_file, 'w') as f:
-                json.dump({}, f)  # Empty object instead of array
-            
-            logger.success(f"✅ Old signal removed from {signals_file}")
-        else:
-            logger.info(f"📂 Signal is fresh ({age_hours:.1f}h old), keeping it")
+                json.dump(fresh_signals, f, indent=2)
+            logger.success(f"✅ Removed {removed_count} old signal(s), kept {len(fresh_signals)} fresh")
     
     except Exception as e:
         logger.error(f"❌ Failed to cleanup signals file: {e}")

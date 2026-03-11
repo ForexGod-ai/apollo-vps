@@ -199,7 +199,8 @@ class CTraderAccountStats:
             logger.warning("Telegram credentials missing")
             return False
         
-        # Build message
+        sep = "────────────────"
+        # Build message — V8.4 FOOTER ONLY
         message = f"""
 📊 <b>CTRADER ACCOUNT STATISTICS</b>
 🏦 IC Markets - Account {stats['account_id']}
@@ -239,6 +240,10 @@ class CTraderAccountStats:
                 message += f"   {emoji} {direction} {lot} {symbol} @ {entry:.5f} (${profit:+.2f})\n"
         
         message += f"\n⏰ <i>Updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</i>"
+        message += f"\n\n  {sep}"
+        message += f"\n  🔱 AUTHORED BY ФорексГод 🔱"
+        message += f"\n  {sep}"
+        message += f"\n  🏛️ INSTITUTIONAL TERMINAL 🏛️"
         
         try:
             url = f"https://api.telegram.org/bot{self.telegram_token}/sendMessage"

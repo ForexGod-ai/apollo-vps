@@ -43,6 +43,7 @@ class FVG:
     is_filled: bool = False
     associated_choch: Optional[CHoCH] = None
     quality_score: int = 0
+    is_momentum_entry: bool = False  # 🔥 V8.0: True for MOMENTUM_CONTINUATION (3+ BOS, no pullback FVG)
 
 
 @dataclass
@@ -83,9 +84,9 @@ class TradeSetup:
 
 
 class SMCDetector:
-    def __init__(self, swing_lookback: int = 5, atr_multiplier: float = 1.5):
+    def __init__(self, swing_lookback: int = 5, atr_multiplier: float = 1.2):
         self.swing_lookback = swing_lookback
-        self.atr_multiplier = atr_multiplier  # 🔥 NEW: ATR multiplier for prominence filter
+        self.atr_multiplier = atr_multiplier  # 🔥 V8.2: ATR relaxed (1.5→1.2) for more valid swings
         # Track FVG zones with trade count for ALL pairs (UNIVERSAL anti-overtrading)
         # Format: {symbol: [(top, bottom, date, trade_count), ...]}
         self.fvg_zones_tracker = {}  # UNIVERSAL for all pairs
@@ -295,146 +296,157 @@ class SMCDetector:
             print(f"❌ Continuity equilibrium calculation error: {e}")
             return None
     
-    def validate_fvg_zone(self, fvg: FVG, equilibrium: float, current_trend: str, strategy_type: str = 'reversal', debug: bool = False) -> bool:
-        """🔥 PREMIUM/DISCOUNT ZONE VALIDATION - V8.2 STRATEGY-DIFFERENTIATED LOGIC
+    def validate_fvg_zone(self, fvg: FVG, equilibrium: float, current_trend: str, debug: bool = False) -> bool:
+        """🔥 PREMIUM/DISCOUNT ZONE VALIDATION - V8.4 ULTRA-SIMPLE BINARY LOGIC
         
-        V8.2 MASTERCLASS EVOLUTION:
-        - REVERSAL (CHoCH): STRICT 48-52% (±2% tolerance) - Deep retracement required
-        - CONTINUITY (BOS): RELAXED 38-62% (±12% tolerance) - Shallower acceptable in trends
+        V8.4 FILOZOFIA SIMPLICITĂȚII:
+        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        EROAREA V8.2-V8.3: Matematică procentuală complicată, tolerance buffers,
+        calcule complexe de "38%", "62%", etc. → Respingea setup-uri valide!
         
-        WHY DIFFERENTIATE?
-        - Reversal: Trend changes at extremes → Requires DEEP pullback (50%+) to old range
-        - Continuity: Trend persists → Accepts SHALLOWER pullback (38-45%) in momentum
+        SOLUȚIA V8.4: LOGICĂ BINARĂ PURĂ - DOAR COMPARARE DE PREȚURI (FLOAT)
+        → Dacă prețul e peste 50% = Premium (bun pentru SHORT)
+        → Dacă prețul e sub 50% = Discount (bun pentru LONG)
+        → PUNCTUL DE 50% = (macro_high + macro_low) / 2.0 (simplu!)
+        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         
-        VALIDATION LOGIC V8.2:
+        CONCEPTUL VIZUAL (Pe grafic):
         
-        REVERSAL (strategy_type='reversal'):
-        - BEARISH: FVG must reach 48%+ (Premium zone with ±2% tolerance)
-        - BULLISH: FVG must reach 52%- (Discount zone with ±2% tolerance)
-        - Rejects shallow <48% retracements (retail inducement)
+        macro_high ━━━━━━━━━━━━━━━━┓
+                                   ┃ 
+                                   ┃ PREMIUM ZONE (pentru BEARISH SHORT)
+                                   ┃ → FVG.top >= equilibrium = VALID ✅
+        equilibrium (50%) ━━━━━━━━━┫ (Cu cât mai sus, cu atât mai bun)
+                                   ┃ 
+                                   ┃ DISCOUNT ZONE (pentru BULLISH LONG)
+                                   ┃ → FVG.bottom <= equilibrium = VALID ✅
+        macro_low ━━━━━━━━━━━━━━━━┛ (Cu cât mai jos, cu atât mai bun)
         
-        CONTINUITY (strategy_type='continuation'):
-        - BEARISH: FVG must reach 38%+ (Relaxed Premium with ±12% tolerance)
-        - BULLISH: FVG must reach 62%- (Relaxed Discount with ±12% tolerance)
-        - Accepts healthy 40% pullbacks in strong trends
+        VALIDARE ULTRA-SIMPLĂ:
         
-        EDGE CASE HANDLING:
-        - FVG at EXACTLY 50% → ACCEPTED for both strategies
-        - FVG at 38-48% → REJECTED for Reversal, ACCEPTED for Continuity
-        - FVG at 48-52% → ACCEPTED for both (overlap with tolerance)
+        BEARISH SHORT (Premium Zone):
+        ├─ Check: fvg.top >= equilibrium
+        ├─ Logică: FVG atinge zona de sus (expensive = good for SHORT)
+        └─ Rezultat: True = VALID, False = REJECTED (prea jos, nu e premium)
+        
+        BULLISH LONG (Discount Zone):
+        ├─ Check: fvg.bottom <= equilibrium
+        ├─ Logică: FVG atinge zona de jos (cheap = good for LONG)
+        └─ Rezultat: True = VALID, False = REJECTED (prea sus, nu e discount)
+        
+        NO CEILING, NO FLOOR, NO PERCENTAGES!
+        - Bearish: 70%, 80%, 90% în Premium = EXCELLENT (mai scump = mai bun SHORT)
+        - Bullish: 30%, 20%, 10% în Discount = EXCELLENT (mai ieftin = mai bun LONG)
         
         Args:
             fvg: FVG object to validate
-            equilibrium: 50% level of macro swing leg (strategy-specific)
+            equilibrium: 50% level (macro_high + macro_low) / 2.0
             current_trend: 'bullish' or 'bearish'
-            strategy_type: 'reversal' (CHoCH, strict) or 'continuation' (BOS, relaxed)
             debug: Print validation details
         
         Returns:
-            True if FVG intersects correct zone (with strategy tolerance), False if rejected
+            True if FVG reaches correct zone (Premium for SHORT, Discount for LONG), False otherwise
         """
         if equilibrium is None:
             if debug:
                 print("⚠️  No equilibrium level - skipping Premium/Discount validation")
             return True  # Can't validate without equilibrium
         
-        fvg_middle = fvg.middle
+        # Extract FVG price levels
         fvg_top = fvg.top
         fvg_bottom = fvg.bottom
-        
-        # V8.2: STRATEGY-DIFFERENTIATED TOLERANCE
-        if strategy_type == 'reversal':
-            # STRICT: Reversal requires deep retracement (48-52%)
-            tolerance_buffer = equilibrium * 0.02  # ±2% tolerance
-            threshold_pct = 2.0
-        else:  # strategy_type == 'continuation'
-            # RELAXED: Continuity allows shallower pullback (38-62%)
-            tolerance_buffer = equilibrium * 0.12  # ±12% tolerance
-            threshold_pct = 12.0
+        fvg_middle = fvg.middle
         
         if current_trend == 'bearish':
-            # BEARISH SETUP: FVG must reach Premium zone (strategy-dependent threshold)
-            # V8.2: REVERSAL 48%+ (strict) | CONTINUITY 38%+ (relaxed)
+            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            # BEARISH SHORT: Price must be in PREMIUM ZONE (above equilibrium)
+            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            # SIMPLE RULE: fvg.top >= equilibrium
+            # → FVG reaches "expensive" zone = GOOD for selling SHORT
             
-            equilibrium_with_tolerance = equilibrium - tolerance_buffer
-            fvg_intersects_premium = fvg_top >= equilibrium_with_tolerance
+            is_valid = fvg_top >= equilibrium
             
             if debug:
-                zone_pct = ((fvg_middle - equilibrium) / equilibrium) * 100
-                min_threshold_pct = 50.0 - threshold_pct
-                
-                print(f"\n🔍 PREMIUM/DISCOUNT VALIDATION V8.2 (BEARISH):")
-                print(f"   Strategy Type: {strategy_type.upper()}")
+                print(f"\n🔍 V8.4 BINARY VALIDATION (BEARISH SHORT - PREMIUM ZONE):")
                 print(f"   Equilibrium (50%): {equilibrium:.5f}")
-                print(f"   Tolerance: ±{threshold_pct}% ({'STRICT' if strategy_type == 'reversal' else 'RELAXED'})")
-                print(f"   Min Threshold: {equilibrium_with_tolerance:.5f} ({min_threshold_pct:.1f}% zone)")
                 print(f"   FVG Zone: {fvg_bottom:.5f} - {fvg_top:.5f}")
-                print(f"   FVG Middle: {fvg_middle:.5f} ({zone_pct:+.2f}% from 50%)")
                 print(f"   FVG Top: {fvg_top:.5f}")
+                print(f"   FVG Middle: {fvg_middle:.5f}")
                 
-                if fvg_intersects_premium:
-                    if fvg_top >= equilibrium:
-                        print(f"   ✅ VALID: FVG intersects PREMIUM ZONE (top reaches {((fvg_top - equilibrium) / equilibrium * 100):+.2f}% above 50%)")
-                    else:
-                        print(f"   ✅ VALID: FVG within TOLERANCE (top at {((fvg_top - equilibrium) / equilibrium * 100):+.2f}% from 50%)")
+                if is_valid:
+                    # Calculate how far above equilibrium (optional, just for info)
+                    distance_above = fvg_top - equilibrium
+                    distance_pct = (distance_above / equilibrium) * 100 if equilibrium > 0 else 0
                     
-                    if strategy_type == 'reversal':
-                        print(f"      → REVERSAL: Deep retracement {zone_pct:+.1f}% (trend change at extreme)")
+                    print(f"   ✅ VALID: FVG.top ({fvg_top:.5f}) >= Equilibrium ({equilibrium:.5f})")
+                    print(f"      → FVG reaches PREMIUM ZONE (+{distance_above:.5f} pips above 50%)")
+                    print(f"      → Distance: +{distance_pct:.2f}% above equilibrium")
+                    print(f"      → PREMIUM = Price expensive = GOOD for SHORT")
+                    
+                    if fvg_top >= equilibrium * 1.15:  # Way above 50% (example: 65%+)
+                        print(f"      → 💎 EXTREME PREMIUM (70%+ zone) - Excellent SHORT setup!")
+                    elif fvg_top >= equilibrium * 1.10:  # ~60-65%
+                        print(f"      → ✨ STRONG PREMIUM (60%+ zone) - Great SHORT setup!")
                     else:
-                        print(f"      → CONTINUITY: Healthy pullback {zone_pct:+.1f}% (trend continuation)")
+                        print(f"      → 🎯 STANDARD PREMIUM (50%+ zone) - Valid SHORT setup")
                 else:
-                    print(f"   ❌ REJECTED: FVG does NOT reach {min_threshold_pct:.1f}% Premium threshold")
-                    print(f"      → FVG.top ({fvg_top:.5f}) < Min ({equilibrium_with_tolerance:.5f})")
+                    distance_below = equilibrium - fvg_top
+                    distance_pct = (distance_below / equilibrium) * 100 if equilibrium > 0 else 0
                     
-                    if strategy_type == 'reversal':
-                        print(f"      → REVERSAL requires ≥48% retracement (this: {zone_pct:+.1f}%)")
-                    else:
-                        print(f"      → CONTINUITY requires ≥38% retracement (this: {zone_pct:+.1f}%)")
+                    print(f"   ❌ REJECTED: FVG.top ({fvg_top:.5f}) < Equilibrium ({equilibrium:.5f})")
+                    print(f"      → FVG does NOT reach PREMIUM zone ({distance_below:.5f} pips short)")
+                    print(f"      → Distance: -{distance_pct:.2f}% below equilibrium")
+                    print(f"      → NOT PREMIUM = Price not expensive enough for SHORT")
             
-            return fvg_intersects_premium
+            return is_valid
         
         elif current_trend == 'bullish':
-            # BULLISH SETUP: FVG must reach Discount zone (strategy-dependent threshold)
-            # V8.2: REVERSAL 52%- (strict) | CONTINUITY 62%- (relaxed)
+            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            # BULLISH LONG: Price must be in DISCOUNT ZONE (below equilibrium)
+            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            # SIMPLE RULE: fvg.bottom <= equilibrium
+            # → FVG reaches "cheap" zone = GOOD for buying LONG
             
-            equilibrium_with_tolerance = equilibrium + tolerance_buffer
-            fvg_intersects_discount = fvg_bottom <= equilibrium_with_tolerance
+            is_valid = fvg_bottom <= equilibrium
             
             if debug:
-                zone_pct = ((fvg_middle - equilibrium) / equilibrium) * 100
-                max_threshold_pct = 50.0 + threshold_pct
-                
-                print(f"\n🔍 PREMIUM/DISCOUNT VALIDATION V8.2 (BULLISH):")
-                print(f"   Strategy Type: {strategy_type.upper()}")
+                print(f"\n🔍 V8.4 BINARY VALIDATION (BULLISH LONG - DISCOUNT ZONE):")
                 print(f"   Equilibrium (50%): {equilibrium:.5f}")
-                print(f"   Tolerance: ±{threshold_pct}% ({'STRICT' if strategy_type == 'reversal' else 'RELAXED'})")
-                print(f"   Max Threshold: {equilibrium_with_tolerance:.5f} ({max_threshold_pct:.1f}% zone)")
                 print(f"   FVG Zone: {fvg_bottom:.5f} - {fvg_top:.5f}")
-                print(f"   FVG Middle: {fvg_middle:.5f} ({zone_pct:+.2f}% from 50%)")
                 print(f"   FVG Bottom: {fvg_bottom:.5f}")
+                print(f"   FVG Middle: {fvg_middle:.5f}")
                 
-                if fvg_intersects_discount:
-                    if fvg_bottom <= equilibrium:
-                        print(f"   ✅ VALID: FVG intersects DISCOUNT ZONE (bottom reaches {((fvg_bottom - equilibrium) / equilibrium * 100):+.2f}% below 50%)")
-                    else:
-                        print(f"   ✅ VALID: FVG within TOLERANCE (bottom at {((fvg_bottom - equilibrium) / equilibrium * 100):+.2f}% from 50%)")
+                if is_valid:
+                    # Calculate how far below equilibrium (optional, just for info)
+                    distance_below = equilibrium - fvg_bottom
+                    distance_pct = (distance_below / equilibrium) * 100 if equilibrium > 0 else 0
                     
-                    if strategy_type == 'reversal':
-                        print(f"      → REVERSAL: Deep retracement {zone_pct:+.1f}% (trend change at extreme)")
+                    print(f"   ✅ VALID: FVG.bottom ({fvg_bottom:.5f}) <= Equilibrium ({equilibrium:.5f})")
+                    print(f"      → FVG reaches DISCOUNT ZONE (-{distance_below:.5f} pips below 50%)")
+                    print(f"      → Distance: -{distance_pct:.2f}% below equilibrium")
+                    print(f"      → DISCOUNT = Price cheap = GOOD for LONG")
+                    
+                    if fvg_bottom <= equilibrium * 0.85:  # Way below 50% (example: 35%-)
+                        print(f"      → 💎 EXTREME DISCOUNT (30%- zone) - Excellent LONG setup!")
+                    elif fvg_bottom <= equilibrium * 0.90:  # ~40-35%
+                        print(f"      → ✨ STRONG DISCOUNT (40%- zone) - Great LONG setup!")
                     else:
-                        print(f"      → CONTINUITY: Healthy pullback {zone_pct:+.1f}% (trend continuation)")
+                        print(f"      → 🎯 STANDARD DISCOUNT (50%- zone) - Valid LONG setup")
                 else:
-                    print(f"   ❌ REJECTED: FVG does NOT reach {max_threshold_pct:.1f}% Discount threshold")
-                    print(f"      → FVG.bottom ({fvg_bottom:.5f}) > Max ({equilibrium_with_tolerance:.5f})")
+                    distance_above = fvg_bottom - equilibrium
+                    distance_pct = (distance_above / equilibrium) * 100 if equilibrium > 0 else 0
                     
-                    if strategy_type == 'reversal':
-                        print(f"      → REVERSAL requires ≤52% retracement (this: {zone_pct:+.1f}%)")
-                    else:
-                        print(f"      → CONTINUITY requires ≤62% retracement (this: {zone_pct:+.1f}%)")
+                    print(f"   ❌ REJECTED: FVG.bottom ({fvg_bottom:.5f}) > Equilibrium ({equilibrium:.5f})")
+                    print(f"      → FVG does NOT reach DISCOUNT zone (+{distance_above:.5f} pips above)")
+                    print(f"      → Distance: +{distance_pct:.2f}% above equilibrium")
+                    print(f"      → NOT DISCOUNT = Price not cheap enough for LONG")
             
-            return fvg_intersects_discount
+            return is_valid
         
-        return False  # Unknown trend direction
+        # Unknown trend direction
+        if debug:
+            print(f"⚠️  Unknown trend direction: {current_trend}")
+        return False
     
     def get_fvg_magnets(self, symbol: str, timeframe: str) -> List[FVG]:
         """
@@ -749,21 +761,34 @@ class SMCDetector:
         return chochs
 
     def detect_fvg(self, df: pd.DataFrame, choch, current_price) -> Optional[FVG]:
-        """
-        Detect Fair Value Gaps (FVG) - 3-candle imbalance pattern
+        """🎯 GLITCH IN MATRIX - FVG DETECTION (V8.1 - ORDERFLOW ALIGNED)
         
-        CORRECT FVG LOGIC (FIXED):
+        CRITICAL V8.1 FIX: FVG selection MUST follow Daily Orderflow direction!
+        
+        🔥 ORDERFLOW ALIGNMENT RULES:
+        1. If CHoCH/BOS direction = BEARISH → Search ONLY for BEARISH FVGs (SELL zones above price)
+        2. If CHoCH/BOS direction = BULLISH → Search ONLY for BULLISH FVGs (BUY zones below price)
+        3. IGNORE opposite direction FVGs completely (they are counter-trend noise)
+        
+        🔥 BODY CLOSURE MITIGATION (V8.0):
+        - FVG is MITIGATED only when a BODY closes through it (wicks don't count)
+        - Use body_highs = df[['open','close']].max(axis=1)
+        - Use body_lows = df[['open','close']].min(axis=1)
+        
+        🔥 PROXIMITY FILTER:
+        - Choose FVG that formed IMMEDIATELY AFTER CHoCH/BOS (max 30 candles old)
+        - Ignore ancient FVGs from 3+ months ago (outdated zones)
         
         BULLISH FVG (Gap Up):
-        - Condition: Candle[i-1].high < Candle[i+1].low
-        - FVG Top: Candle[i+1].low
-        - FVG Bottom: Candle[i-1].high
+        - Condition: body_high[i-1] < body_low[i+1]
+        - FVG Top: body_low[i+1]
+        - FVG Bottom: body_high[i-1]
         - Meaning: Price jumped UP, leaving unfilled demand zone below
         
         BEARISH FVG (Gap Down):
-        - Condition: Candle[i-1].low > Candle[i+1].high
-        - FVG Top: Candle[i-1].low
-        - FVG Bottom: Candle[i+1].high
+        - Condition: body_low[i-1] > body_high[i+1]
+        - FVG Top: body_low[i-1]
+        - FVG Bottom: body_high[i+1]
         - Meaning: Price dropped DOWN, leaving unfilled supply zone above
         
         3-Candle Pattern:
@@ -775,14 +800,29 @@ class SMCDetector:
         start_idx = choch.index if hasattr(choch, 'index') else 0
         end_idx = len(df)
         
+        # 🔥 V8.1: ORDERFLOW DIRECTION - Only search for FVGs aligned with CHoCH/BOS direction
+        orderflow_direction = choch.direction  # 'bullish' or 'bearish'
+        
+        # 🔥 V8.1: ORDERFLOW DIRECTION - Only search for FVGs aligned with CHoCH/BOS direction
+        orderflow_direction = choch.direction  # 'bullish' or 'bearish'
+        
         # METHOD 1: Strict 3-candle gap (classic FVG)
+        # 🔥 V8.0: BODY CLOSURE ONLY for FVG detection (ignore wicks completely)
+        body_highs = df[['open', 'close']].max(axis=1)
+        body_lows = df[['open', 'close']].min(axis=1)
+        
+        # 🔥 V8.1: PROXIMITY FILTER - Only check last 30 candles after CHoCH/BOS (ignore ancient FVGs)
+        search_end = min(start_idx + 30, end_idx - 1)
+        
         # Need at least 2 candles after start_idx for i-1, i, i+1 pattern
-        for i in range(start_idx + 1, end_idx - 1):
-            if choch.direction == 'bullish':
-                # BULLISH FVG: high[i-1] < low[i+1] (gap up)
-                if df['high'].iloc[i - 1] < df['low'].iloc[i + 1]:
-                    gap_top = df['low'].iloc[i + 1]
-                    gap_bottom = df['high'].iloc[i - 1]
+        for i in range(start_idx + 1, search_end):
+            # 🔥 V8.1: ORDERFLOW ALIGNMENT - Search ONLY for FVGs matching orderflow direction
+            if orderflow_direction == 'bullish':
+                # BULLISH ORDERFLOW: Search ONLY for BULLISH FVGs (demand zones below price)
+                # BULLISH FVG: body_high[i-1] < body_low[i+1] (gap up)
+                if body_highs.iloc[i - 1] < body_lows.iloc[i + 1]:
+                    gap_top = body_lows.iloc[i + 1]
+                    gap_bottom = body_highs.iloc[i - 1]
                     
                     # Validate gap size (must be significant)
                     gap_size = gap_top - gap_bottom
@@ -799,11 +839,12 @@ class SMCDetector:
                         )
                         all_fvgs.append(fvg)
             
-            elif choch.direction == 'bearish':
-                # BEARISH FVG: low[i-1] > high[i+1] (gap down)
-                if df['low'].iloc[i - 1] > df['high'].iloc[i + 1]:
-                    gap_top = df['low'].iloc[i - 1]
-                    gap_bottom = df['high'].iloc[i + 1]
+            elif orderflow_direction == 'bearish':
+                # BEARISH ORDERFLOW: Search ONLY for BEARISH FVGs (supply zones above price)
+                # BEARISH FVG: body_low[i-1] > body_high[i+1] (gap down)
+                if body_lows.iloc[i - 1] > body_highs.iloc[i + 1]:
+                    gap_top = body_lows.iloc[i - 1]
+                    gap_bottom = body_highs.iloc[i + 1]
                     
                     # Validate gap size (must be significant)
                     gap_size = gap_top - gap_bottom
@@ -819,11 +860,15 @@ class SMCDetector:
                             associated_choch=choch
                         )
                         all_fvgs.append(fvg)
-        # METHOD 2: Large imbalance zone (REVERSAL setup)
+        
+        # 🔥 V8.1: METHOD 2 - Large imbalance zone (when no classic FVG found)
+        # CRITICAL: ONLY search for zones aligned with orderflow direction!
         if not all_fvgs:
             swing_highs = self.detect_swing_highs(df)
             swing_lows = self.detect_swing_lows(df)
-            if choch.direction == 'bullish':
+            
+            if orderflow_direction == 'bullish':
+                # BULLISH ORDERFLOW: Create demand zone (last swing LOW to price HIGH after CHoCH)
                 lows_before = [sl for sl in swing_lows if sl.index < choch.index]
                 highs_after = [sh for sh in swing_highs if sh.index >= choch.index and sh.index < end_idx]
                 if lows_before:
@@ -848,7 +893,9 @@ class SMCDetector:
                             is_filled=False,
                             associated_choch=choch
                         ))
-            elif choch.direction == 'bearish':
+            
+            elif orderflow_direction == 'bearish':
+                # BEARISH ORDERFLOW: Create supply zone (last swing HIGH to price LOW after CHoCH)
                 highs_before = [sh for sh in swing_highs if sh.index < choch.index]
                 lows_after = [sl for sl in swing_lows if sl.index >= choch.index and sl.index < end_idx]
                 if highs_before:
@@ -858,8 +905,10 @@ class SMCDetector:
                         gap_bottom = min([sl.price for sl in lows_after])
                         fvg_index = lows_after[0].index
                     else:
-                        gap_bottom = df['low'].iloc[start_idx:end_idx].min()
-                        fvg_index = start_idx + df['low'].iloc[start_idx:end_idx].argmin()
+                        # 🔥 V8.0: Use body lows (not wicks) for consistent FVG zone definition
+                        body_lows = df[['open', 'close']].min(axis=1)
+                        gap_bottom = body_lows.iloc[start_idx:end_idx].min()
+                        fvg_index = start_idx + body_lows.iloc[start_idx:end_idx].argmin()
                     if (gap_top - gap_bottom) / gap_bottom > 0.005:
                         all_fvgs.append(FVG(
                             index=fvg_index,
@@ -871,9 +920,44 @@ class SMCDetector:
                             is_filled=False,
                             associated_choch=choch
                         ))
+        
+        # 🔥 V8.1: MITIGATION CHECK - Filter out FVGs that were already filled by BODY closure
+        # FVG is mitigated ONLY when price BODY closes through it (wicks don't count)
         if all_fvgs:
-            all_fvgs.sort(key=lambda fvg: fvg.index)
-            return all_fvgs[-1]
+            unfilled_fvgs = []
+            current_body_highs = df[['open', 'close']].max(axis=1)
+            current_body_lows = df[['open', 'close']].min(axis=1)
+            
+            for fvg in all_fvgs:
+                is_filled = False
+                
+                # Check all candles AFTER FVG formation for body closure through zone
+                for j in range(fvg.index + 1, len(df)):
+                    body_high = current_body_highs.iloc[j]
+                    body_low = current_body_lows.iloc[j]
+                    
+                    if fvg.direction == 'bullish':
+                        # BULLISH FVG mitigated when BODY closes BELOW FVG bottom
+                        if body_low <= fvg.bottom:
+                            is_filled = True
+                            break
+                    else:  # bearish
+                        # BEARISH FVG mitigated when BODY closes ABOVE FVG top
+                        if body_high >= fvg.top:
+                            is_filled = True
+                            break
+                
+                if not is_filled:
+                    unfilled_fvgs.append(fvg)
+            
+            all_fvgs = unfilled_fvgs
+        
+        # 🔥 V8.1: PROXIMITY SELECTION - Return FVG closest to current price (most relevant)
+        if all_fvgs:
+            # Sort by distance to current price (ascending)
+            all_fvgs.sort(key=lambda fvg: abs(fvg.middle - current_price))
+            return all_fvgs[0]  # Closest FVG to current price
+        
         return None
 
     def detect_swing_lows(self, df: pd.DataFrame) -> List[SwingPoint]:
@@ -965,11 +1049,15 @@ class SMCDetector:
                 continue
             
             for j in range(break_start, break_end):
-                close = df['close'].iloc[j]
+                # 🔥 V8.1 CRITICAL FIX: STRICT BODY CLOSURE for CHoCH/BOS detection
+                # Use BODY HIGH/LOW (not close or wicks) to validate structure breaks
+                # Body = max(open, close) for highs, min(open, close) for lows
+                body_high = max(df['open'].iloc[j], df['close'].iloc[j])
+                body_low = min(df['open'].iloc[j], df['close'].iloc[j])
                 
                 if swing_type == 'high':
-                    # Check if price BROKE ABOVE this swing high
-                    if close > swing.price:
+                    # Check if BODY BROKE ABOVE this swing high (ignore wicks!)
+                    if body_high > swing.price:
                         # Price broke a high = BULLISH signal
                         if current_trend == 'bearish':
                             # VALIDATION: Was structure truly bearish before break?
@@ -1045,8 +1133,8 @@ class SMCDetector:
                         break  # Only count first break
                 
                 elif swing_type == 'low':
-                    # Check if price BROKE BELOW this swing low
-                    if close < swing.price:
+                    # Check if BODY BROKE BELOW this swing low (ignore wicks!)
+                    if body_low < swing.price:
                         # Price broke a low = BEARISH signal
                         if current_trend == 'bullish':
                             # VALIDATION: Was structure truly bullish before break?
@@ -1124,13 +1212,15 @@ class SMCDetector:
         return chochs, bos_list
     
     def detect_swing_highs(self, df: pd.DataFrame) -> List[SwingPoint]:
-        """🎯 GLITCH IN MATRIX - MACRO SWING DETECTION V7.0 (ATR PROMINENCE FILTER)
+        """🎯 GLITCH IN MATRIX - MACRO SWING DETECTION V7.1 (BODY CLOSURE ONLY)
         
-        Detect swing highs using BODY CLOSURE (not wicks) with:
-        1. MACRO FILTER: Uses self.swing_lookback for structure isolation
-        2. ATR PROMINENCE FILTER: Swing must have significant movement (atr_multiplier * ATR)
+        🆕 V7.1 CRITICAL FIX - REGULA CORPULUI:
+        - Uses ONLY body closure (max of open/close) - IGNORES WICKS completely
+        - Validates swing prominence using ATR filter
+        - Eliminates false swings from wick noise
         
-        This eliminates micro-swings that confuse CHoCH detection in strong trends.
+        PHILOSOPHY by ФорексГод:
+        "Wicks are LIES. Body is TRUTH. Price close = commitment."
         
         Args:
             df: DataFrame with OHLC data
@@ -1149,14 +1239,12 @@ class SMCDetector:
         # 🔥 Calculate ATR for prominence filtering
         atr = self.calculate_atr(df)
         if atr == 0.0:
-            print("⚠️  ATR = 0, using basic swing detection without prominence filter")
             prominence_threshold = 0.0  # Fallback to no filter
         else:
             prominence_threshold = self.atr_multiplier * atr
-            print(f"🔥 ATR Prominence Filter: {prominence_threshold:.5f} ({self.atr_multiplier}x ATR)")
         
         swing_highs = []
-        # Calculate body highs (max of open/close) - ignores wicks
+        # 🆕 V7.1: BODY CLOSURE ONLY (max of open/close) - IGNORES HIGH WICKS
         body_highs = df[['open', 'close']].max(axis=1)
         
         # 🔥 MACRO FILTER: Use self.swing_lookback (not hardcoded 2)
@@ -1198,7 +1286,7 @@ class SMCDetector:
                     # Rejected: micro-swing (insufficient prominence)
                     pass
         
-        print(f"✅ Swing Highs: {len(swing_highs)} detected (ATR filter applied)")
+        # V8.2: Silent mode - returns without console spam
         return swing_highs
 
     def detect_swing_lows(self, df: pd.DataFrame) -> List[SwingPoint]:
@@ -1227,11 +1315,10 @@ class SMCDetector:
         # 🔥 Calculate ATR for prominence filtering
         atr = self.calculate_atr(df)
         if atr == 0.0:
-            print("⚠️  ATR = 0, using basic swing detection without prominence filter")
             prominence_threshold = 0.0  # Fallback to no filter
         else:
             prominence_threshold = self.atr_multiplier * atr
-            print(f"🔥 ATR Prominence Filter: {prominence_threshold:.5f} ({self.atr_multiplier}x ATR)")
+            # V8.2: Silent mode - no console spam
         
         swing_lows = []
         # Calculate body lows (min of open/close) - ignores wicks
@@ -1276,22 +1363,31 @@ class SMCDetector:
                     # Rejected: micro-swing (insufficient prominence)
                     pass
         
-        print(f"✅ Swing Lows: {len(swing_lows)} detected (ATR filter applied)")
+        # V8.2: Silent mode - returns without console spam
         return swing_lows
 
     def detect_choch_and_bos(self, df: pd.DataFrame) -> Tuple[List[CHoCH], List[BOS]]:
-        """🎯 GLITCH IN MATRIX - CHoCH & BOS DETECTION V6.0
+        """🎯 GLITCH IN MATRIX - CHoCH & BOS DETECTION V7.1 (DYNAMIC TREND UPDATE)
         
         CHoCH (Change of Character): Price breaks swing in OPPOSITE direction of prev trend
         BOS (Break of Structure): Price breaks swing in SAME direction as prev trend
         
-        MACRO FILTER: Uses consistent swing detection (self.swing_lookback) to eliminate micro-swings.
+        🆕 V7.1 CRITICAL FIXES by ФорексГод:
+        - ✅ BODY CLOSURE validation (ignores wicks)
+        - ✅ DYNAMIC prev_trend: Re-evaluates every 20 swings from last 150 bars
+        - ✅ STRICT pattern validation: Bullish CHoCH requires LH + LL pattern
+        - ✅ STRICT pattern validation: Bearish CHoCH requires HH + HL pattern
+        - ✅ Eliminates "frozen trend" bug (prev_trend updates with market)
+        
+        PHILOSOPHY:
+        "Market structure changes. Trend must adapt or become obsolete."
         
         NEW LOGIC:
         - Track INTERLEAVED swings (alternating highs/lows)
         - First major break = CHoCH (establishes initial trend)
         - Subsequent breaks same direction = BOS
-        - Break opposite direction = CHoCH (trend reversal)
+        - Break opposite direction = CHoCH (trend reversal) - ONLY if pattern validated
+        - 🆕 Every 20 swings: Re-evaluate prev_trend from LAST 150 bars (not first 50%)
         """
         chochs = []
         bos_list = []
@@ -1311,11 +1407,46 @@ class SMCDetector:
         # Sort by index (chronological order)
         all_swings.sort(key=lambda x: x[1].index)
         
+        # 🆕 V7.1 FIX: Initialize prev_trend from LAST 150 bars (macro structure)
+        macro_lookback = min(150, len(df))
+        df_macro = df.iloc[-macro_lookback:].copy()
+        macro_highs = [sh for sh in swing_highs if sh.index >= len(df) - macro_lookback]
+        macro_lows = [sl for sl in swing_lows if sl.index >= len(df) - macro_lookback]
+        
         prev_trend = None  # 'bullish' or 'bearish'
+        if len(macro_highs) >= 2 and len(macro_lows) >= 2:
+            # Check LAST 150 bars structure (not first 50%)
+            h_ascending = macro_highs[-1].price > macro_highs[-2].price
+            l_ascending = macro_lows[-1].price > macro_lows[-2].price
+            
+            if h_ascending and l_ascending:
+                prev_trend = 'bullish'  # HH + HL structure = bullish
+            elif not h_ascending and not l_ascending:
+                prev_trend = 'bearish'  # LH + LL structure = bearish
         
         for i in range(1, len(all_swings)):
             swing_type, swing = all_swings[i]
             prev_swing_type, prev_swing = all_swings[i - 1]
+            
+            # 🔥 V8.0: REAL-TIME TREND UPDATE - Re-evaluate prev_trend at EVERY swing (instant detection)
+            # CRITICAL: Eliminates stale trend issues (like USDCAD showing 4 BULLISH BOS in downtrend)
+            if len(macro_highs) >= 3 and len(macro_lows) >= 3:
+                # Analyze LAST 150 bars for current structure
+                recent_macro_highs = [sh for sh in swing_highs if sh.index >= len(df) - macro_lookback][-5:]  # Increased from 3 to 5
+                recent_macro_lows = [sl for sl in swing_lows if sl.index >= len(df) - macro_lookback][-5:]    # Increased from 3 to 5
+                
+                if len(recent_macro_highs) >= 3 and len(recent_macro_lows) >= 3:  # Need 3+ for robust pattern
+                    # Count HH/LH and HL/LL patterns (analyze last 5 swings, not just 2)
+                    hh_count = sum(1 for j in range(1, len(recent_macro_highs)) if recent_macro_highs[j].price > recent_macro_highs[j-1].price)
+                    lh_count = sum(1 for j in range(1, len(recent_macro_highs)) if recent_macro_highs[j].price < recent_macro_highs[j-1].price)
+                    hl_count = sum(1 for j in range(1, len(recent_macro_lows)) if recent_macro_lows[j].price > recent_macro_lows[j-1].price)
+                    ll_count = sum(1 for j in range(1, len(recent_macro_lows)) if recent_macro_lows[j].price < recent_macro_lows[j-1].price)
+                    
+                    # Update prev_trend based on dominant pattern (STRICTER: need 2+ confirming swings)
+                    if lh_count >= 2 and ll_count >= 1:
+                        prev_trend = 'bearish'  # LH + LL = BEARISH macro
+                    elif hh_count >= 2 and hl_count >= 1:
+                        prev_trend = 'bullish'  # HH + HL = BULLISH macro
             
             # BULLISH BREAK (Higher High)
             if swing_type == 'high' and swing.price > prev_swing.price:
@@ -1332,15 +1463,33 @@ class SMCDetector:
                     prev_trend = 'bullish'
                 elif prev_trend == 'bearish':
                     # 🎯 CHoCH: Break OPPOSITE to prev trend (reversal)
-                    chochs.append(CHoCH(
-                        index=swing.index,
-                        direction='bullish',
-                        break_price=swing.price,
-                        previous_trend='bearish',
-                        candle_time=swing.candle_time,
-                        swing_broken=prev_swing
-                    ))
-                    prev_trend = 'bullish'
+                    # 🆕 V6.1 FIX: VALIDATE bearish structure (LH + LL pattern) before confirming reversal
+                    recent_highs = [s for s in swing_highs if s.index <= swing.index][-3:]
+                    recent_lows = [s for s in swing_lows if s.index <= swing.index][-3:]
+                    
+                    lh_pattern = False
+                    ll_pattern = False
+                    
+                    # Check for LH (Lower Highs) - confirms bearish structure
+                    if len(recent_highs) >= 2:
+                        lh_pattern = recent_highs[-1].price < recent_highs[-2].price
+                    
+                    # Check for LL (Lower Lows) - confirms bearish structure
+                    if len(recent_lows) >= 2:
+                        ll_pattern = recent_lows[-1].price < recent_lows[-2].price
+                    
+                    # STRICT VALIDATION: BOTH patterns required for true bearish structure
+                    if lh_pattern and ll_pattern:
+                        chochs.append(CHoCH(
+                            index=swing.index,
+                            direction='bullish',
+                            break_price=swing.price,
+                            previous_trend='bearish',
+                            candle_time=swing.candle_time,
+                            swing_broken=prev_swing
+                        ))
+                        prev_trend = 'bullish'
+                    # ELSE: Just a pullback in bearish trend - NO CHoCH (prevents false reversal)
                 else:
                     # 🎯 BOS: Break SAME direction as prev trend (continuation)
                     bos_list.append(BOS(
@@ -1366,15 +1515,33 @@ class SMCDetector:
                     prev_trend = 'bearish'
                 elif prev_trend == 'bullish':
                     # 🎯 CHoCH: Break OPPOSITE to prev trend (reversal)
-                    chochs.append(CHoCH(
-                        index=swing.index,
-                        direction='bearish',
-                        break_price=swing.price,
-                        previous_trend='bullish',
-                        candle_time=swing.candle_time,
-                        swing_broken=prev_swing
-                    ))
-                    prev_trend = 'bearish'
+                    # 🆕 V6.1 FIX: VALIDATE bullish structure (HH + HL pattern) before confirming reversal
+                    recent_highs = [s for s in swing_highs if s.index <= swing.index][-3:]
+                    recent_lows = [s for s in swing_lows if s.index <= swing.index][-3:]
+                    
+                    hh_pattern = False
+                    hl_pattern = False
+                    
+                    # Check for HH (Higher Highs) - confirms bullish structure
+                    if len(recent_highs) >= 2:
+                        hh_pattern = recent_highs[-1].price > recent_highs[-2].price
+                    
+                    # Check for HL (Higher Lows) - confirms bullish structure
+                    if len(recent_lows) >= 2:
+                        hl_pattern = recent_lows[-1].price > recent_lows[-2].price
+                    
+                    # STRICT VALIDATION: BOTH patterns required for true bullish structure
+                    if hh_pattern and hl_pattern:
+                        chochs.append(CHoCH(
+                            index=swing.index,
+                            direction='bearish',
+                            break_price=swing.price,
+                            previous_trend='bullish',
+                            candle_time=swing.candle_time,
+                            swing_broken=prev_swing
+                        ))
+                        prev_trend = 'bearish'
+                    # ELSE: Just a pullback in bullish trend - NO CHoCH (prevents false reversal)
                 else:
                     # 🎯 BOS: Break SAME direction as prev trend (continuation)
                     bos_list.append(BOS(
@@ -1387,49 +1554,92 @@ class SMCDetector:
         
         return chochs, bos_list
     
-    def determine_daily_trend(self, df: pd.DataFrame) -> str:
+    def determine_daily_trend(self, df: pd.DataFrame, debug: bool = False) -> str:
         """
-        🎯 GLITCH IN MATRIX - TREND DETECTION V6.0
+        🎯 GLITCH IN MATRIX - TREND DETECTION V6.2 (MACRO MEMORY UPGRADE)
         
         ✨ by ФорексГод ✨
         
+        🆕 V6.2 PERFECTIONS:
+        - 📊 Analyzes last 150 bars (not 50) for MACRO trend identification
+        - 🔍 Multiple validation layers (swing structure + CHoCH/BOS analysis)
+        - 📝 Audit logging (explains WHY direction was chosen)
+        
         PHILOSOPHY:
-        The LAST structure break (CHoCH or BOS) on Daily DICTATES the bias.
-        We don't care about historical 100-candle patterns.
-        We care about the MOST RECENT decision made by institutional players.
+        We analyze LONG-TERM structure (150 bars = ~5 months Daily) to determine
+        the REAL macro trend, not short-term noise. This prevents false reversals
+        when market is in a temporary pullback within a strong macro trend.
         
         LOGIC:
-        1. Find LATEST CHoCH or BOS on Daily
-        2. That signal's direction = Current Daily Bias
-        3. All setups must ALIGN with this bias (no counter-trend)
+        1. Analyze swing structure over 150 bars (HH+HL vs LL+LH)
+        2. Find LATEST CHoCH or BOS on Daily
+        3. Validate consistency between swing structure and latest signal
+        4. Return bias with audit trail
         
         Returns:
-            'bullish': Latest Daily CHoCH/BOS is BULLISH
-            'bearish': Latest Daily CHoCH/BOS is BEARISH
-            'neutral': No CHoCH/BOS detected (insufficient structure)
+            'bullish': Macro structure is BULLISH (HH + HL dominant)
+            'bearish': Macro structure is BEARISH (LL + LH dominant)
+            'neutral': No clear structure (choppy/ranging)
         
         Example:
-        - Market was bullish for 3 months (HH + HL)
-        - Then CHoCH BEARISH happens yesterday
-        - Bias = BEARISH (we flip instantly, no lag)
-        - We take ONLY short setups until next CHoCH BULLISH
-        
-        This is the "Glitch in Matrix" edge: React to structure breaks INSTANTLY,
-        not after 20 candles of confirmation like traditional systems.
+        - Last 150 bars show LL + LH pattern (bearish macro)
+        - Latest CHoCH is bullish (potential reversal attempt)
+        - But we're still in bearish zone → Bias = BEARISH
+        - We take ONLY short setups until macro structure changes
         """
         if df is None or len(df) < 20:
             return 'neutral'
         
-        # Detect ALL CHoCH and BOS signals on Daily
+        # 🆕 V6.2: Analyze MACRO structure (last 150 bars instead of 50)
+        macro_lookback = min(150, len(df))  # Use 150 bars or available data
+        df_macro = df.iloc[-macro_lookback:].copy()
+        
+        if debug:
+            print(f"\n{'='*80}")
+            print(f"📊 V6.2 MACRO TREND ANALYSIS (150 bars)")
+            print(f"{'='*80}")
+            print(f"   Analyzing {len(df_macro)} bars for macro structure...")
+        
+        # Detect swing highs and lows in macro window
+        swing_highs = self.detect_swing_highs(df_macro)
+        swing_lows = self.detect_swing_lows(df_macro)
+        
+        if debug:
+            print(f"   Swing Highs detected: {len(swing_highs)}")
+            print(f"   Swing Lows detected: {len(swing_lows)}")
+        
+        # LAYER 1: Swing structure analysis (HH+HL vs LL+LH)
+        macro_trend_swings = 'neutral'
+        
+        if len(swing_highs) >= 3 and len(swing_lows) >= 3:
+            # Analyze last 3 swing highs
+            recent_highs = swing_highs[-3:]
+            hh_count = sum(1 for i in range(1, len(recent_highs)) if recent_highs[i].price > recent_highs[i-1].price)
+            lh_count = sum(1 for i in range(1, len(recent_highs)) if recent_highs[i].price < recent_highs[i-1].price)
+            
+            # Analyze last 3 swing lows
+            recent_lows = swing_lows[-3:]
+            hl_count = sum(1 for i in range(1, len(recent_lows)) if recent_lows[i].price > recent_lows[i-1].price)
+            ll_count = sum(1 for i in range(1, len(recent_lows)) if recent_lows[i].price < recent_lows[i-1].price)
+            
+            # Determine macro trend from swing pattern
+            if hh_count >= 2 and hl_count >= 1:
+                macro_trend_swings = 'bullish'  # HH + HL pattern
+            elif lh_count >= 2 and ll_count >= 1:
+                macro_trend_swings = 'bearish'  # LH + LL pattern
+            
+            if debug:
+                print(f"\n   📈 Swing Analysis:")
+                print(f"      Last 3 Highs: HH={hh_count}, LH={lh_count}")
+                print(f"      Last 3 Lows:  HL={hl_count}, LL={ll_count}")
+                print(f"      Swing Pattern: {macro_trend_swings.upper()}")
+        
+        # LAYER 2: CHoCH/BOS analysis (latest signal direction)
         daily_chochs, daily_bos_list = self.detect_choch_and_bos(df)
         
-        # If no structure breaks detected, we have no bias
-        if not daily_chochs and not daily_bos_list:
-            return 'neutral'
-        
-        # Find the MOST RECENT signal (CHoCH or BOS)
         latest_signal = None
         latest_index = -1
+        signal_type = None
         
         # Check CHoCH signals
         if daily_chochs:
@@ -1437,6 +1647,7 @@ class SMCDetector:
             if last_choch.index > latest_index:
                 latest_signal = last_choch
                 latest_index = last_choch.index
+                signal_type = 'CHoCH'
         
         # Check BOS signals
         if daily_bos_list:
@@ -1444,13 +1655,71 @@ class SMCDetector:
             if last_bos.index > latest_index:
                 latest_signal = last_bos
                 latest_index = last_bos.index
+                signal_type = 'BOS'
         
-        # If we found a signal, return its direction as the bias
-        if latest_signal:
-            return latest_signal.direction  # 'bullish' or 'bearish'
+        if debug and latest_signal:
+            print(f"\n   🎯 Latest Signal:")
+            print(f"      Type: {signal_type}")
+            print(f"      Direction: {latest_signal.direction.upper()}")
+            print(f"      Index: {latest_signal.index}/{len(df)}")
         
-        # No valid signals found
-        return 'neutral'
+        # 🆕 V7.1 LAYER 3: BOS SEQUENCE DOMINANCE (Before signal analysis)
+        # Check if we have 3+ consecutive BOS in same direction (stronger than swings)
+        consecutive_bos_count = 0
+        dominant_bos_direction = None
+        
+        if len(daily_bos_list) >= 3:
+            recent_bos = daily_bos_list[-5:]
+            for bos in reversed(recent_bos):
+                if dominant_bos_direction is None:
+                    dominant_bos_direction = bos.direction
+                    consecutive_bos_count = 1
+                elif bos.direction == dominant_bos_direction:
+                    consecutive_bos_count += 1
+                else:
+                    break
+        
+        # 🆕 V7.1 LAYER 4: HIERARCHY - BOS Sequence > Swing Pattern > Latest Signal
+        # PHILOSOPHY by ФорексГод: "3+ BOS = Army. Swings = Structure. Signal = Noise."
+        
+        if consecutive_bos_count >= 3:
+            # 🔥 BOS DOMINANCE: 3+ consecutive BOS override everything
+            final_bias = dominant_bos_direction
+            confidence = f"VERY HIGH ({consecutive_bos_count}x BOS sequence dominant)"
+            
+            if debug:
+                print(f"\n   🔥 BOS SEQUENCE DOMINANCE:")
+                print(f"      {consecutive_bos_count} consecutive {dominant_bos_direction.upper()} BOS")
+                print(f"      This OVERRIDES all other signals and swing patterns")
+        
+        elif macro_trend_swings != 'neutral':
+            # SWING PATTERN WINS (150 bars > 1 signal)
+            final_bias = macro_trend_swings
+            
+            if latest_signal and latest_signal.direction == macro_trend_swings:
+                confidence = "HIGH (Signal confirms Swing Pattern)"
+            else:
+                confidence = "MEDIUM (Swing Pattern dominant, signal ignored)"
+        
+        elif latest_signal:
+            # No clear swing pattern, use latest signal (fallback only)
+            final_bias = latest_signal.direction
+            confidence = "LOW (Signal only, no swing confirmation - RISKY)"
+        
+        else:
+            # No signals, no clear swings
+            final_bias = 'neutral'
+            confidence = "NONE (Choppy/Ranging)"
+        
+        if debug:
+            print(f"\n   ✅ FINAL VERDICT (V7.1 - BOS/SWING HIERARCHY):")
+            print(f"      Macro Bias: {final_bias.upper()}")
+            print(f"      Confidence: {confidence}")
+            if latest_signal and latest_signal.direction != final_bias:
+                print(f"      ⚠️  Latest signal ({latest_signal.direction.upper()}) OVERRIDDEN by {('BOS sequence' if consecutive_bos_count >= 3 else 'swing pattern')}")
+            print(f"{'='*80}\n")
+        
+        return final_bias
     
     def has_confirmation_swing(self, df: pd.DataFrame, choch: CHoCH) -> bool:
         """
@@ -1518,6 +1787,74 @@ class SMCDetector:
             return False  # No LH found
         
         return False
+    
+    def calculate_premium_discount_zones(self, df: pd.DataFrame) -> Tuple[float, float, float, float]:
+        """
+        🆕 V6.2: Calculate Premium and Discount zones based on macro swing range
+        
+        Premium Zone: Top 40% of macro range (61.8% - 100% Fib levels)
+        Equilibrium: Middle 20% of macro range (40% - 60% Fib levels)  
+        Discount Zone: Bottom 40% of macro range (0% - 38.2% Fib levels)
+        
+        Used to validate reversal setups:
+        - Bullish Reversal (BUY) only allowed from Discount zone
+        - Bearish Reversal (SELL) only allowed from Premium zone
+        
+        Returns:
+            (macro_high, macro_low, premium_threshold, discount_threshold)
+        """
+        if df is None or len(df) < 20:
+            return (0, 0, 0, 0)
+        
+        # Analyze last 150 bars for macro swing range
+        macro_lookback = min(150, len(df))
+        df_macro = df.iloc[-macro_lookback:]
+        
+        # Get macro swing highs and lows
+        swing_highs = self.detect_swing_highs(df_macro)
+        swing_lows = self.detect_swing_lows(df_macro)
+        
+        if not swing_highs or not swing_lows:
+            # Fallback to high/low of available data
+            macro_high = df_macro['high'].max()
+            macro_low = df_macro['low'].min()
+        else:
+            # Use swing points for cleaner range
+            macro_high = max([sh.price for sh in swing_highs])
+            macro_low = min([sl.price for sl in swing_lows])
+        
+        # Calculate range
+        macro_range = macro_high - macro_low
+        
+        # Premium threshold = 61.8% Fib level (top 40% of range)
+        premium_threshold = macro_low + (macro_range * 0.618)
+        
+        # Discount threshold = 38.2% Fib level (bottom 40% of range)
+        discount_threshold = macro_low + (macro_range * 0.382)
+        
+        return (macro_high, macro_low, premium_threshold, discount_threshold)
+    
+    def is_price_in_discount(self, df: pd.DataFrame, current_price: float) -> bool:
+        """
+        🆕 V6.2: Check if price is in Discount zone (bottom 40% of macro range)
+        
+        Used to validate Bullish Reversal setups:
+        - BUY setups only allowed from Discount zone
+        - Prevents buying from Premium (high risk of rejection)
+        """
+        _, _, _, discount_threshold = self.calculate_premium_discount_zones(df)
+        return current_price <= discount_threshold
+    
+    def is_price_in_premium(self, df: pd.DataFrame, current_price: float) -> bool:
+        """
+        🆕 V6.2: Check if price is in Premium zone (top 40% of macro range)
+        
+        Used to validate Bearish Reversal setups:
+        - SELL setups only allowed from Premium zone
+        - Prevents selling from Discount (high risk of bounce)
+        """
+        _, _, premium_threshold, _ = self.calculate_premium_discount_zones(df)
+        return current_price >= premium_threshold
         
         # METHOD 2: If no strict gaps found, create LARGE imbalance zone (REVERSAL setup)
         if not all_fvgs:
@@ -2597,100 +2934,287 @@ class SMCDetector:
                 for i, bos in enumerate(daily_bos_list[-3:]):  # Last 3
                     print(f"   BOS [{i}] {bos.direction.upper()} @ {bos.break_price:.5f} (index {bos.index})")
         
-        # V3.0 LOGIC: TWO SETUP TYPES
-        # REVERSAL: Requires Daily CHoCH (trend change)
-        # CONTINUITY: Requires Daily BOS (trend continuation)
+        # 🆕 V7.1 LOGIC: BOS HIERARCHY - 3+ consecutive BOS = DOMINANT TREND
+        # PHILOSOPHY by ФорексГод: "One CHoCH cannot overturn 3+ BOS army."
         
-        # Try both strategies and pick the most recent valid signal
         latest_choch = daily_chochs[-1] if daily_chochs else None
         latest_bos = daily_bos_list[-1] if daily_bos_list else None
         
-        # Determine which signal is more recent and use that
-        latest_signal = None
-        strategy_type = None
+        # 🔥 CHECK BOS SEQUENCE: Count consecutive BOS in same direction
+        consecutive_bos_count = 0
+        dominant_bos_direction = None
         
-        if latest_choch and latest_bos:
+        if len(daily_bos_list) >= 3:
+            # Check last 5 BOS (or all if less than 5)
+            recent_bos = daily_bos_list[-5:]
+            
+            # Count consecutive same-direction BOS from end
+            for bos in reversed(recent_bos):
+                if dominant_bos_direction is None:
+                    dominant_bos_direction = bos.direction
+                    consecutive_bos_count = 1
+                elif bos.direction == dominant_bos_direction:
+                    consecutive_bos_count += 1
+                else:
+                    break  # Stop at first different direction
+        
+        # 🆕 V8.1: BOS HIERARCHY RULE - 3+ BOS = INVIOLABLE DOMINANT TREND
+        # PHILOSOPHY by ФорексГод: "3+ BOS army cannot be overturned by single CHoCH soldier"
+        if consecutive_bos_count >= 3:
+            if debug:
+                print(f"\n🔥 BOS DOMINANCE DETECTED: {consecutive_bos_count} consecutive {dominant_bos_direction.upper()} BOS")
+                print(f"   This trend is INVIOLABLE - protected by BOS army")
+            
+            # 🔥 V8.1 ULTRA-STRICT: CHoCH can only override 3+ BOS if it breaks STRONG HIGH/LOW
+            # Strong High/Low = highest/lowest point from last 100 candles (not just swing points)
+            if latest_choch and latest_bos and latest_choch.index > latest_bos.index:
+                # CHoCH is more recent - check if it's STRONG enough to override BOS dominance
+                macro_window = df_daily.iloc[-100:]  # Last 100 candles for strong levels
+                
+                if dominant_bos_direction == 'bearish':
+                    # BEARISH BOS dominant - CHoCH must break STRONG HIGH (highest in 100 candles)
+                    strong_high = macro_window['high'].max()
+                    choch_breaks_strong_high = latest_choch.break_price > strong_high
+                    
+                    if choch_breaks_strong_high:
+                        if debug:
+                            print(f"✅ CHoCH VALIDATED: Breaks Strong High {strong_high:.5f}")
+                            print(f"   CHoCH @ {latest_choch.break_price:.5f} > Strong High")
+                            print(f"   Strategy: REVERSAL {latest_choch.direction.upper()}\n")
+                        
+                        latest_signal = latest_choch
+                        strategy_type = 'reversal'
+                        current_trend = latest_choch.direction
+                    else:
+                        if debug:
+                            print(f"❌ CHoCH REJECTED: Does NOT break Strong High {strong_high:.5f}")
+                            print(f"   CHoCH @ {latest_choch.break_price:.5f} < Strong High")
+                            print(f"   BOS DOMINANCE PRESERVED: CONTINUATION {dominant_bos_direction.upper()}\n")
+                        
+                        latest_signal = latest_bos
+                        strategy_type = 'continuation'
+                        current_trend = dominant_bos_direction
+                
+                elif dominant_bos_direction == 'bullish':
+                    # BULLISH BOS dominant - CHoCH must break STRONG LOW (lowest in 100 candles)
+                    strong_low = macro_window['low'].min()
+                    choch_breaks_strong_low = latest_choch.break_price < strong_low
+                    
+                    if choch_breaks_strong_low:
+                        if debug:
+                            print(f"✅ CHoCH VALIDATED: Breaks Strong Low {strong_low:.5f}")
+                            print(f"   CHoCH @ {latest_choch.break_price:.5f} < Strong Low")
+                            print(f"   Strategy: REVERSAL {latest_choch.direction.upper()}\n")
+                        
+                        latest_signal = latest_choch
+                        strategy_type = 'reversal'
+                        current_trend = latest_choch.direction
+                    else:
+                        if debug:
+                            print(f"❌ CHoCH REJECTED: Does NOT break Strong Low {strong_low:.5f}")
+                            print(f"   CHoCH @ {latest_choch.break_price:.5f} > Strong Low")
+                            print(f"   BOS DOMINANCE PRESERVED: CONTINUATION {dominant_bos_direction.upper()}\n")
+                        
+                        latest_signal = latest_bos
+                        strategy_type = 'continuation'
+                        current_trend = dominant_bos_direction
+            else:
+                # BOS is latest OR no CHoCH → CONTINUATION
+                if debug and latest_bos:
+                    print(f"✅ BOS IS LATEST SIGNAL: CONTINUATION {dominant_bos_direction.upper()}\n")
+                
+                latest_signal = latest_bos
+                strategy_type = 'continuation'
+                current_trend = dominant_bos_direction
+        
+        # Standard logic if no BOS dominance
+        elif latest_choch and latest_bos:
             # Both exist - use the more recent one
             if latest_choch.index > latest_bos.index:
                 latest_signal = latest_choch
                 strategy_type = 'reversal'
+                current_trend = latest_choch.direction
             else:
                 latest_signal = latest_bos
                 strategy_type = 'continuation'
+                current_trend = latest_bos.direction
         elif latest_choch:
             latest_signal = latest_choch
             strategy_type = 'reversal'
+            current_trend = latest_choch.direction
         elif latest_bos:
             latest_signal = latest_bos
             strategy_type = 'continuation'
+            current_trend = latest_bos.direction
         else:
             if debug:
                 print(f"❌ REJECTED: No Daily CHoCH or BOS found")
             return None
         
-        current_trend = latest_signal.direction  # 'bullish' or 'bearish'
-        
         if debug:
             print(f"\n✅ Latest Signal: {strategy_type.upper()} - {current_trend.upper()} @ {latest_signal.break_price:.5f}")
         
-        # V5.0 ANTI-COUNTER-TREND FILTER: Check Daily alignment BEFORE continuing
-        overall_daily_trend = self.determine_daily_trend(df_daily)
+        # 🆕 V6.2 MACRO TREND ANALYSIS: Determine bias with 150-bar memory + audit logging
+        overall_daily_trend = self.determine_daily_trend(df_daily, debug=True)
         
-        if debug:
-            print(f"\n🔍 Daily Trend Analysis:")
-            print(f"   Overall Daily Structure: {overall_daily_trend.upper()}")
-            print(f"   Latest Signal Direction: {current_trend.upper()}")
-            print(f"   Strategy Type: {strategy_type.upper()}")
+        # 🆕 V6.2 PREMIUM/DISCOUNT ZONE ANALYSIS
+        current_price = df_daily['close'].iloc[-1]
+        macro_high, macro_low, premium_threshold, discount_threshold = self.calculate_premium_discount_zones(df_daily)
         
-        # STRICT RULE: No counter-trend trades!
-        if overall_daily_trend == 'bearish' and current_trend == 'bullish':
-            print(f"❌ Signal Blocked: {symbol} Buy Setup rejected due to Bearish Daily Bias")
-            print(f"   📊 Overall Daily Trend: BEARISH (LL + LH structure)")
-            print(f"   📈 Setup Signal: BULLISH ({strategy_type})")
-            print(f"   ⚠️  Counter-trend trade FORBIDDEN - wait for Daily alignment")
-            
-            # If REVERSAL, check if it has confirmation
-            if strategy_type == 'reversal' and isinstance(latest_signal, CHoCH):
-                has_confirm = self.has_confirmation_swing(df_daily, latest_signal)
-                if has_confirm:
-                    print(f"   ℹ️  Note: CHoCH has confirmation swing, but still blocked (wait for multiple BOS)")
-                else:
-                    print(f"   ℹ️  Note: CHoCH lacks confirmation swing - reversal not yet validated")
-            
-            return None
-        
-        if overall_daily_trend == 'bullish' and current_trend == 'bearish':
-            print(f"❌ Signal Blocked: {symbol} Sell Setup rejected due to Bullish Daily Bias")
-            print(f"   📊 Overall Daily Trend: BULLISH (HH + HL structure)")
-            print(f"   📉 Setup Signal: BEARISH ({strategy_type})")
-            print(f"   ⚠️  Counter-trend trade FORBIDDEN - wait for Daily alignment")
-            
-            # If REVERSAL, check if it has confirmation
-            if strategy_type == 'reversal' and isinstance(latest_signal, CHoCH):
-                has_confirm = self.has_confirmation_swing(df_daily, latest_signal)
-                if has_confirm:
-                    print(f"   ℹ️  Note: CHoCH has confirmation swing, but still blocked (wait for multiple BOS)")
-                else:
-                    print(f"   ℹ️  Note: CHoCH lacks confirmation swing - reversal not yet validated")
-            
-            return None
-        
-        # If neutral, allow trade but log warning
-        if overall_daily_trend == 'neutral':
-            if debug:
-                print(f"   ⚠️  Warning: Daily trend NEUTRAL - proceed with caution")
+        # Determine current zone
+        if current_price >= premium_threshold:
+            current_zone = "PREMIUM"
+            zone_pct = ((current_price - macro_low) / (macro_high - macro_low)) * 100
+        elif current_price <= discount_threshold:
+            current_zone = "DISCOUNT"
+            zone_pct = ((current_price - macro_low) / (macro_high - macro_low)) * 100
         else:
-            if debug:
-                print(f"   ✅ Daily alignment CONFIRMED - {overall_daily_trend.upper()} trend validated")
+            current_zone = "EQUILIBRIUM"
+            zone_pct = ((current_price - macro_low) / (macro_high - macro_low)) * 100
+        
+        print(f"\n{'='*80}")
+        print(f"🔍 V7.1 AUDIT REPORT: {symbol}")
+        print(f"{'='*80}")
+        print(f"📊 Macro Trend (150 bars): {overall_daily_trend.upper()}")
+        print(f"💰 Current Price: {current_price:.5f}")
+        print(f"📍 Macro Range: {macro_low:.5f} - {macro_high:.5f}")
+        print(f"   Premium Zone (>61.8%): Above {premium_threshold:.5f}")
+        print(f"   Discount Zone (<38.2%): Below {discount_threshold:.5f}")
+        print(f"   Current Position: {current_zone} ({zone_pct:.1f}% of range)")
+        print(f"\n🎯 Latest Signal: {strategy_type.upper()} - {current_trend.upper()}")
+        print(f"{'='*80}\n")
+        
+        # 🆕 V7.1 FORCED VALIDATION: Premium/Discount zones (MANDATORY - NO BYPASS)
+        if strategy_type == 'reversal':
+            if current_trend == 'bullish':
+                # BULLISH REVERSAL: Must originate from DISCOUNT zone
+                if not self.is_price_in_discount(df_daily, current_price):
+                    print(f"🔒 REJECTED: Counter-structure signal (Buy from {current_zone})")
+                    print(f"❌ REVERSAL BLOCKED: {symbol} Buy Reversal rejected (Not in Discount zone)")
+                    print(f"   📊 Macro Trend: {overall_daily_trend.upper()}")
+                    print(f"   💰 Current Zone: {current_zone} ({zone_pct:.1f}%)")
+                    print(f"   ⚠️  BUY Reversals FORBIDDEN from PREMIUM/EQUILIBRIUM")
+                    print(f"   💡 Wait for price to reach DISCOUNT zone (<38.2%)\n")
+                    return None
+                else:
+                    print(f"✅ REVERSAL VALIDATED: Price in DISCOUNT zone - BUY Reversal allowed")
+            
+            elif current_trend == 'bearish':
+                # BEARISH REVERSAL: Must originate from PREMIUM zone
+                if not self.is_price_in_premium(df_daily, current_price):
+                    print(f"🔒 REJECTED: Counter-structure signal (Sell from {current_zone})")
+                    print(f"❌ REVERSAL BLOCKED: {symbol} Sell Reversal rejected (Not in Premium zone)")
+                    print(f"   📊 Macro Trend: {overall_daily_trend.upper()}")
+                    print(f"   💰 Current Zone: {current_zone} ({zone_pct:.1f}%)")
+                    print(f"   ⚠️  SELL Reversals FORBIDDEN from DISCOUNT/EQUILIBRIUM")
+                    print(f"   💡 Wait for price to reach PREMIUM zone (>61.8%)\n")
+                    return None
+                else:
+                    print(f"✅ REVERSAL VALIDATED: Price in PREMIUM zone - SELL Reversal allowed")
+        
+        # 🆕 V7.1 FORCED VALIDATION: Macro alignment (MANDATORY - NO BYPASS)
+        if strategy_type == 'continuation':
+            if overall_daily_trend == 'bearish' and current_trend == 'bullish':
+                print(f"🔒 REJECTED: Counter-structure signal (Long in Bearish macro)")
+                print(f"❌ CONTINUATION BLOCKED: {symbol} Long Continuation rejected in Bearish macro")
+                print(f"   📊 Macro Trend (150 bars): BEARISH")
+                print(f"   📈 Setup Signal: BULLISH Continuation")
+                print(f"   ⚠️  LONG Continuations FORBIDDEN in BEARISH macro trend")
+                print(f"   💡 Only SHORT continuations allowed\n")
+                return None
+            
+            elif overall_daily_trend == 'bullish' and current_trend == 'bearish':
+                print(f"🔒 REJECTED: Counter-structure signal (Short in Bullish macro)")
+                print(f"❌ CONTINUATION BLOCKED: {symbol} Short Continuation rejected in Bullish macro")
+                print(f"   📊 Macro Trend (150 bars): BULLISH")
+                print(f"   📉 Setup Signal: BEARISH Continuation")
+                print(f"   ⚠️  SHORT Continuations FORBIDDEN in BULLISH macro trend")
+                print(f"   💡 Only LONG continuations allowed\n")
+                return None
+            else:
+                print(f"✅ CONTINUATION VALIDATED: {current_trend.upper()} aligns with {overall_daily_trend.upper()} macro trend")
+        
+        # 🔥 V8.2 FIX: DAILY TREND LOCK only applies to CONTINUATION setups
+        # REVERSAL setups are ALLOWED to contradict macro (that's the point of reversal!)
+        # Body Closure on latest CHoCH/BOS confirms reversal validity
+        if strategy_type == 'continuation':
+            if overall_daily_trend == 'bearish' and current_trend == 'bullish':
+                print(f"🔒 DAILY TREND LOCK: {symbol} Buy CONTINUATION BLOCKED (Daily locked to SELL)")
+                print(f"   📊 Overall Daily Trend: BEARISH (LL + LH structure)")
+                print(f"   📈 Setup Signal: BULLISH continuation")
+                print(f"   ⚠️  Counter-trend CONTINUATION forbidden\n")
+                return None
+            
+            if overall_daily_trend == 'bullish' and current_trend == 'bearish':
+                print(f"🔒 DAILY TREND LOCK: {symbol} Sell CONTINUATION BLOCKED (Daily locked to BUY)")
+                print(f"   📊 Overall Daily Trend: BULLISH (HH + HL structure)")
+                print(f"   📉 Setup Signal: BEARISH continuation")
+                print(f"   ⚠️  Counter-trend CONTINUATION forbidden\n")
+                return None
+        elif strategy_type == 'reversal':
+            # REVERSAL is ALLOWED to contradict macro - that's trend change confirmation!
+            print(f"✅ REVERSAL SETUP: Allowed to contradict macro trend (structure changed via Body Closure)")
         
         # Step 2: Find FVG after signal (CHoCH or BOS) - closest to current price
-        current_price = df_daily['close'].iloc[-1]
         fvg = self.detect_fvg(df_daily, latest_signal, current_price)
+        
+        # 🔥 V8.2: MOMENTUM_CONTINUATION - If 3+ consecutive BOS, prioritize MOMENTUM entry (even if FVG exists)
+        # EURJPY case: 4 BEARISH BOS = strong trend, generate setup regardless of FVG
+        if consecutive_bos_count >= 3 and strategy_type == 'continuation':
+            print(f"\n🚀 V8.2 MOMENTUM_CONTINUATION: {consecutive_bos_count} consecutive BOS detected")
+            print(f"   Strong {dominant_bos_direction.upper()} trend - direct entry at last swing break")
+            
+            # Create MOMENTUM entry zone from last swing levels
+            swing_highs = self.detect_swing_highs(df_daily)
+            swing_lows = self.detect_swing_lows(df_daily)
+            last_bos = daily_bos_list[-1]
+            
+            if dominant_bos_direction == 'bullish':
+                # BULLISH: Entry from last swing LOW to HIGH
+                swings_before_bos_low = [sl for sl in swing_lows if sl.index < last_bos.index]
+                swings_before_bos_high = [sh for sh in swing_highs if sh.index < last_bos.index]
+                
+                if swings_before_bos_low and swings_before_bos_high:
+                    entry_zone_bottom = swings_before_bos_low[-1].price
+                    entry_zone_top = swings_before_bos_high[-1].price
+                    
+                    # Create synthetic MOMENTUM FVG
+                    fvg = FVG(
+                        index=last_bos.index,
+                        direction='bullish',
+                        top=entry_zone_top,
+                        bottom=entry_zone_bottom,
+                        middle=(entry_zone_top + entry_zone_bottom) / 2,
+                        candle_time=last_bos.candle_time,
+                        is_momentum_entry=True
+                    )
+                    print(f"   ✅ MOMENTUM Entry Zone: {entry_zone_bottom:.5f} - {entry_zone_top:.5f}")
+            
+            elif dominant_bos_direction == 'bearish':
+                # BEARISH: Entry from last swing HIGH to LOW
+                swings_before_bos_high = [sh for sh in swing_highs if sh.index < last_bos.index]
+                swings_before_bos_low = [sl for sl in swing_lows if sl.index < last_bos.index]
+                
+                if swings_before_bos_high and swings_before_bos_low:
+                    entry_zone_top = swings_before_bos_high[-1].price
+                    entry_zone_bottom = swings_before_bos_low[-1].price
+                    
+                    # Create synthetic MOMENTUM FVG
+                    fvg = FVG(
+                        index=last_bos.index,
+                        direction='bearish',
+                        top=entry_zone_top,
+                        bottom=entry_zone_bottom,
+                        middle=(entry_zone_top + entry_zone_bottom) / 2,
+                        candle_time=last_bos.candle_time,
+                        is_momentum_entry=True
+                    )
+                    print(f"   ✅ MOMENTUM Entry Zone: {entry_zone_bottom:.5f} - {entry_zone_top:.5f}")
         
         if not fvg:
             if debug:
-                print(f"❌ REJECTED: No FVG found after {strategy_type.upper()} signal")
-            return None  # No FVG found
+                print(f"❌ REJECTED: No FVG found and MOMENTUM conditions not met")
+            return None  # No FVG and not momentum-eligible
         
         if debug:
             gap_size = fvg.top - fvg.bottom
@@ -2726,16 +3250,19 @@ class SMCDetector:
                 print(f"   Equilibrium: {equilibrium:.5f}")
                 print(f"   Measured from: Last swing after CHoCH → BOS break")
         
-        if equilibrium is not None:
-            # V8.2: Validate with STRATEGY-SPECIFIC threshold
-            # REVERSAL: Strict 48-52% (±2%)
-            # CONTINUITY: Relaxed 38-62% (±12%)
-            is_valid_zone = self.validate_fvg_zone(fvg, equilibrium, current_trend, strategy_type=strategy_type, debug=debug)
+        # 🔥 V8.0: SKIP equilibrium validation for MOMENTUM entries (breakout setups, no pullback required)
+        if hasattr(fvg, 'is_momentum_entry') and fvg.is_momentum_entry:
+            if debug:
+                print(f"\n⚡ MOMENTUM ENTRY: Skipping equilibrium validation (breakout strategy, no pullback)")
+        elif equilibrium is not None:
+            # V8.4: ULTRA-SIMPLE validation - Premium vs Discount (binary logic)
+            # BEARISH: FVG.top >= equilibrium (Premium = expensive = good for SHORT)
+            # BULLISH: FVG.bottom <= equilibrium (Discount = cheap = good for LONG)
+            is_valid_zone = self.validate_fvg_zone(fvg, equilibrium, current_trend, debug=debug)
             
             if not is_valid_zone:
                 if debug:
-                    print(f"\n❌ REJECTED: FVG fails {strategy_type.upper()} Premium/Discount validation")
-                    print(f"   Strategy: {strategy_type.upper()}")
+                    print(f"\n❌ REJECTED: FVG fails Premium/Discount validation")
                     print(f"   Trend: {current_trend.upper()}")
                     print(f"   Equilibrium: {equilibrium:.5f}")
                     print(f"   FVG Middle: {fvg.middle:.5f}")
@@ -2764,8 +3291,16 @@ class SMCDetector:
             if debug:
                 print(f"\n⚠️  Could not calculate {strategy_type.upper()} equilibrium - skipping validation")
         
+        # 🔥 V8.0: SKIP FVG quality scoring for MOMENTUM entries (breakout setups, not pullback retracements)
+        # MOMENTUM entries use last swing range → no "gap quality" to validate (synthetic FVG)
+        if hasattr(fvg, 'is_momentum_entry') and fvg.is_momentum_entry:
+            fvg.quality_score = 100  # Max score for momentum breakouts
+            if debug:
+                print(f"\n⚡ MOMENTUM ENTRY: Skipping FVG quality scoring (synthetic momentum zone, not pullback gap)")
+                print(f"   ✅ Momentum validation 1/5 passed (Quality Scoring)")
+            # Skip to price check and 4H confirmation
         # V3.0: Calculate FVG Quality Score (0-100) - OPTIONAL for backtest
-        if not skip_fvg_quality:
+        elif not skip_fvg_quality:
             fvg_score = self.calculate_fvg_quality_score(fvg, df_daily, symbol, debug=debug)
             fvg.quality_score = fvg_score  # Store score in FVG object
             
@@ -2867,9 +3402,12 @@ class SMCDetector:
         price_approaching_fvg = False
         price_in_fvg = self.is_price_in_fvg(current_price, fvg)
         
+        # 🔥 V8.0: Skip price proximity check for MOMENTUM entries (breakout, not pullback)
         # For backtesting: skip price proximity check
-        if skip_fvg_quality:
-            price_approaching_fvg = True  # Accept all price positions for backtest
+        if skip_fvg_quality or (hasattr(fvg, 'is_momentum_entry') and fvg.is_momentum_entry):
+            price_approaching_fvg = True  # Accept all price positions for backtest/momentum
+            if debug and hasattr(fvg, 'is_momentum_entry') and fvg.is_momentum_entry:
+                print(f"\n⚡ MOMENTUM ENTRY: Skipping price proximity check (breakout entry, not pullback wait)")
         else:
             if current_trend == 'bullish':
                 # BULLISH: Price should be BELOW or IN FVG (waiting for pullback to buy)
@@ -2916,11 +3454,21 @@ class SMCDetector:
         # Find H4 CHoCH that matches current trend AND happens FROM FVG zone
         valid_h4_choch = None
         
+        # 🔥 V8.0: Skip 4H CHoCH requirement for MOMENTUM entries
+        # MOMENTUM = breakout at last swing (no pullback to confirm)
+        # Standard = pullback into FVG zone, then 4H CHoCH confirms reversal
+        if hasattr(fvg, 'is_momentum_entry') and fvg.is_momentum_entry:
+            if debug:
+                print(f"\n⚡ MOMENTUM ENTRY: Skipping 4H CHoCH requirement (breakout strategy, no pullback)")
+            # Skip to Order Block detection
+            valid_h4_choch = None  # Not required for momentum
+            require_4h_choch = False  # Override for momentum logic
+        
         # V2.1 vs V3.0 DIFFERENCE:
         # V2.1: Daily CHoCH + FVG = READY (original $88k profit logic)
         # V3.0: Daily CHoCH + FVG + 4H CHoCH = READY (strict entry confirmation)
         
-        if require_4h_choch:
+        elif require_4h_choch:
             # V3.0 STRICT CONFIRMATION:
             # BOTH STRATEGIES (REVERSAL & CONTINUITY) USE H4 CHoCH FROM PULLBACK:
             # 
@@ -3020,8 +3568,9 @@ class SMCDetector:
         # 1. Single recent BOS (< 30 candles) with strong FVG (quality ≥ 70)
         # 2. Multiple BOS (any age) = strong continuation
         # REVERSAL setups (Daily CHoCH) skip this - trend just changed
+        # 🔥 V8.0: MOMENTUM entries skip this (3+ consecutive BOS by definition = strong continuation)
         continuity_validated = True
-        if not skip_fvg_quality and strategy_type == 'continuation':
+        if not skip_fvg_quality and strategy_type == 'continuation' and not (hasattr(fvg, 'is_momentum_entry') and fvg.is_momentum_entry):
             # Check last 90 candles for additional BOS before latest
             recent_bos = [bos for bos in daily_bos_list if bos.index >= len(df_daily) - 90 and bos.index < latest_signal.index]
             matching_bos = [bos for bos in recent_bos if bos.direction == current_trend]
@@ -3052,8 +3601,9 @@ class SMCDetector:
         
         # V3.0 GBP 2-TIMEFRAME FILTER (skip for backtest)
         # GBP pairs need BOTH 4H AND 1H confirmation
+        # 🔥 V8.0: Skip for MOMENTUM entries (breakout, no 4H/1H pullback confirmation)
         gbp_confirmed = True
-        if not skip_fvg_quality:
+        if not skip_fvg_quality and not (hasattr(fvg, 'is_momentum_entry') and fvg.is_momentum_entry):
             is_gbp = 'GBP' in symbol
             if is_gbp and valid_h4_choch:
                 if df_1h is not None and not valid_1h_choch:
@@ -3068,7 +3618,15 @@ class SMCDetector:
                     gbp_confirmed = False
         
         # STATUS LOGIC: V2.1 vs V3.0
-        if not require_4h_choch:
+        # 🔥 V8.0: MOMENTUM entries always READY (breakout strategy, no pullback confirmation needed)
+        if hasattr(fvg, 'is_momentum_entry') and fvg.is_momentum_entry:
+            status = 'READY'
+            if debug:
+                print(f"\n✅ STATUS: READY TO EXECUTE (MOMENTUM breakout - no wait)")
+                print(f"   ⚡ MOMENTUM ENTRY: Direct entry at last swing break")
+                print(f"   📊 Current Price: {current_price:.5f}")
+                print(f"   🎯 Entry Zone: {fvg.bottom:.5f} - {fvg.top:.5f}")
+        elif not require_4h_choch:
             # V2.1 MODE: Daily CHoCH + FVG + price in FVG = READY
             if price_in_fvg:
                 status = 'READY'

@@ -115,8 +115,15 @@
       "symbol": "NZDUSD",
       "mt5_symbol": "NZDUSD",
       "priority": 1,
-      "description": "New Zealand Dollar vs US Dollar - +8.9% return, 100% WR",
+      "description": "New Zealand Dollar vs US Dollar - +14.4% return, 83% WR",
       "category": "forex_major"
+    },
+    {
+      "symbol": "EURJPY",
+      "mt5_symbol": "EURJPY",
+      "priority": 1,
+      "description": "Euro vs Japanese Yen - V8.4 re-enabled (Premium/Discount binary logic)",
+      "category": "forex_cross"
     },
     {
       "symbol": "GBPUSD",
@@ -132,7 +139,6 @@
     "GBPAUD - Eliminated: -4% return, 0% WR",
     "GBPCHF - Eliminated: -3.6% return, 12.5% WR",
     "XAGUSD - Eliminated: 0 trades in 12 months",
-    "EURJPY - Eliminated: 0 trades in 12 months",
     "AUDNZD - Eliminated: 0 trades in 12 months",
     "NZDCAD - Eliminated: 0 trades in 12 months",
     "EURCAD - Not tested in backtest",

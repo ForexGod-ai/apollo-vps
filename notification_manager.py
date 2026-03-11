@@ -196,8 +196,15 @@ class NotificationManager:
         try:
             url = f"https://api.telegram.org/bot{self.telegram_bot_token}/sendMessage"
             
-            # Add manual branding if centralized not available
-            branded_message = f"{message}\n\n──────────────────\n✨ <b>Glitch in Matrix by ФорексГод</b> ✨\n🧠 AI-Powered • 💎 Smart Money"
+            # V8.4 COMPACT FOOTER — no header, branding at bottom only
+            sep = "────────────────"  # 16 chars — compact symmetric
+            branded_message = (
+                f"{message}\n\n"
+                f"  {sep}\n"
+                f"  🔱 <b>AUTHORED BY ФорексГод</b> 🔱\n"
+                f"  {sep}\n"
+                f"  🏛️ INSTITUTIONAL TERMINAL 🏛️"
+            )
             
             payload = {
                 'chat_id': self.telegram_chat_id,
@@ -277,7 +284,7 @@ class NotificationManager:
             return False
     
     def send_execution_alert(self, setup_data):
-        """Trimite alertă ARMAGEDDON BEGINS pentru execuție automată - ELITE STACK v32.0"""
+        """Trimite alertă TRADE LIVE — V9.1 HTML format, NO inline footer (R2/R3 AUDIT FIX by POCOVNICU)"""
         symbol = setup_data.get('symbol', 'N/A')
         direction = setup_data.get('direction', 'buy').upper()
         entry = setup_data.get('entry', 0)
@@ -292,20 +299,19 @@ class NotificationManager:
         # Direction arrow
         direction_arrow = "📈" if direction == 'BUY' else "📉"
         
-        message = f"""⚡ *TRADE LIVE* • {symbol}
-{direction_arrow} *{direction}*
-
-╼╼╼╼╼
-📥 In: `{entry:.5f}` | 🛑 SL: `{sl:.5f}` ({sl_pips:.1f}p)
-🎯 TP: `{tp:.5f}` ({tp_pips:.1f}p)
-⚖️ RR: 1:{rr:.2f}
-
-╼╼╼╼╼
-✅ EXECUTED • {datetime.now().strftime('%H:%M:%S')}
-
-╼╼╼╼╼
-✨ *Glitch in Matrix by ФорексГод* ✨
-🧠 AI-Powered • 💎 Smart Money"""
+        # V9.1: HTML format (R3 FIX) + NO inline footer (R2/R17 FIX)
+        # Footer is auto-appended by _send_telegram → telegram_notifier
+        message = (
+            f"⚡ <b>TRADE LIVE</b> • {symbol}\n"
+            f"{direction_arrow} <b>{direction}</b>\n\n"
+            f"╼╼╼╼╼\n"
+            f"📥 In: <code>{entry:.5f}</code> | 🛑 SL: <code>{sl:.5f}</code> ({sl_pips:.1f}p)\n"
+            f"🎯 TP: <code>{tp:.5f}</code> ({tp_pips:.1f}p)\n"
+            f"⚖️ RR: 1:{rr:.2f}\n\n"
+            f"╼╼╼╼╼\n"
+            f"✅ EXECUTED • {datetime.now().strftime('%H:%M:%S')}"
+        )
+        # ☝️ Footer omitted intentionally — auto-appended by telegram_notifier
         
         if self.telegram_enabled:
             return self._send_telegram(message)

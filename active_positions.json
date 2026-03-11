@@ -1,13 +1,68 @@
 [
   {
+    "symbol": "USDJPY",
+    "direction": "sell",
+    "entry_price": 157.613,
+    "volume": 200000,
+    "opened_at": "2026-03-06T15:02:49.978Z",
+    "stop_loss": null,
+    "take_profit": null,
+    "net_profit": -1173.75,
+    "pips": -87.1
+  },
+  {
+    "symbol": "USDCAD",
+    "direction": "sell",
+    "entry_price": 1.35918,
+    "volume": 89000,
+    "opened_at": "2026-03-10T05:35:16.599Z",
+    "stop_loss": 1.36237,
+    "take_profit": 1.31927,
+    "net_profit": 165.85,
+    "pips": 27
+  },
+  {
+    "symbol": "NZDUSD",
+    "direction": "sell",
+    "entry_price": 0.59384,
+    "volume": 75000,
+    "opened_at": "2026-03-10T12:44:30.114Z",
+    "stop_loss": 0.59764,
+    "take_profit": 0.55648,
+    "net_profit": 88.37,
+    "pips": 12.1
+  },
+  {
+    "symbol": "BTCUSD",
+    "direction": "buy",
+    "entry_price": 70420.6,
+    "volume": 0.5,
+    "opened_at": "2026-03-10T14:42:00.042Z",
+    "stop_loss": 66069,
+    "take_profit": 98904,
+    "net_profit": -688.17,
+    "pips": -133812
+  },
+  {
     "symbol": "EURJPY",
     "direction": "sell",
-    "entry_price": 184.585,
-    "volume": 100000,
-    "opened_at": "2026-02-25T17:24:09.999Z",
-    "stop_loss": 185.096,
-    "take_profit": 180.34,
-    "net_profit": 212.23,
-    "pips": 38.8
+    "entry_price": 183.772,
+    "volume": 38000,
+    "opened_at": "2026-03-11T09:16:23.81Z",
+    "stop_loss": 184.44,
+    "take_profit": 178.725,
+    "net_profit": -7.2,
+    "pips": -1.9
+  },
+  {
+    "symbol": "GBPNZD",
+    "direction": "sell",
+    "entry_price": 2.26658,
+    "volume": 37000,
+    "opened_at": "2026-03-11T09:16:53.755Z",
+    "stop_loss": 2.27335,
+    "take_profit": 2.21187,
+    "net_profit": -1.88,
+    "pips": 0.5
   }
 ]

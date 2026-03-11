@@ -42,11 +42,11 @@
   },
   
   "kill_switch": {
-    "enabled": true,
+    "enabled": false,
     "trigger_daily_loss_percent": 10.0,
     "flag_file": "trading_disabled.flag",
     "reset_hour": 0,
-    "comment": "Auto-disable trading if daily loss >= 10%"
+    "comment": "DISABLED - Kill switch removed, will redesign later"
   },
   
   "auto_management": {
@@ -62,7 +62,7 @@
     "send_on_risk_violation": true,
     "send_on_kill_switch": true,
     "send_daily_summary": true,
-    "branding": "✨ Glitch in Matrix by ФорексГод ✨",
+    "branding": "🏛️ GLITCH IN MATRIX • INSTITUTIONAL | 🔱 AUTHORED BY ФорексГод 🔱 | 🌌 SOVEREIGN LOGIC • V8.2",
     "comment": "All risk alerts include branding signature"
   },
   
@@ -79,7 +79,7 @@
     "check_balance_before_trade": true,
     "check_positions_count": true,
     "check_daily_loss": true,
-    "check_kill_switch": true,
+    "check_kill_switch": false,
     "check_currency_exposure": true,
     "comment": "Pre-execution validation checklist"
   }

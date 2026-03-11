@@ -164,6 +164,7 @@ class RiskManager:
             status_emoji = "🔴"
             status_text = "WARNING"
         
+        sep = "────────────────"
         message = f"""
 {status_emoji} <b>DAILY RISK REPORT</b> {status_emoji}
 
@@ -198,10 +199,10 @@ class RiskManager:
 💎 Equity: ${account.get('equity', 0):.2f}
 📈 Open Trades: {open_trades_count}/{self.max_open_trades}
 
-──────────────────
-✨ <b>Risk Manager</b> by ФорексГод ✨
-🛡️ Protecting Your Capital
-──────────────────
+  ────────────────
+  🔱 AUTHORED BY ФорексГод 🔱
+  ────────────────
+  🏛️ INSTITUTIONAL TERMINAL 🏛️
 """
         
         self._send_telegram(message)
@@ -210,13 +211,14 @@ class RiskManager:
     def send_alert(self, level, alerts, pnl, exposure, open_trades):
         """Send risk alert to Telegram"""
         emoji_map = {
-            'INFO': '🔵',
+            'INFO': '🟢',
             'WARNING': '🟡',
             'CRITICAL': '🔴'
         }
         
-        emoji = emoji_map.get(level, '🔵')
+        emoji = emoji_map.get(level, '🟢')
         
+        sep = "────────────────"
         message = f"""
 {emoji} <b>RISK ALERT - {level}</b> {emoji}
 
@@ -232,8 +234,10 @@ class RiskManager:
 💎 Total: ${pnl['total_pnl']:.2f}
 📈 Open Trades: {open_trades}
 
-──────────────────
-✨ <b>Risk Manager</b> by ФорексГод ✨
+  ────────────────
+  🔱 AUTHORED BY ФорексГод 🔱
+  ────────────────
+  🏛️ INSTITUTIONAL TERMINAL 🏛️
 """
         
         self._send_telegram(message)

@@ -1,0 +1,17 @@
+{
+  "SignalId": "GBPNZD_sell_1773220580",
+  "Status": "EXECUTED",
+  "OrderId": "590034147",
+  "Volume": 0.37,
+  "VolumeInUnits": 37000,
+  "EntryPrice": 2.26658,
+  "StopLoss": 2.27335,
+  "TakeProfit": 2.21187,
+  "Reason": "",
+  "Timestamp": "2026-03-11T09:16:53.807708Z",
+  "Symbol": "GBPNZD",
+  "Direction": "sell",
+  "Account": 9709773,
+  "Balance": 5062.43,
+  "Message": "Filled at 2,26658 | Volume: 0,37 lots"
+}

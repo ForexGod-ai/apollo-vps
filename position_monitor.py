@@ -17,6 +17,24 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# ━━━ V8.0 VPS-READY: Force UTC timezone + persistent log file ━━━
+os.environ['TZ'] = 'UTC'
+try:
+    time.tzset()
+except AttributeError:
+    pass
+
+_LOG_DIR = Path(__file__).parent / "logs"
+_LOG_DIR.mkdir(exist_ok=True)
+logger.add(
+    str(_LOG_DIR / "position_monitor.log"),
+    format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {message}",
+    level="DEBUG",
+    rotation="10 MB",
+    retention="7 days",
+    compression="zip"
+)
+
 
 def acquire_pid_lock(lock_file: Path) -> bool:
     """

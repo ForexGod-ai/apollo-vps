@@ -1,0 +1,24 @@
+{
+  "corrupted_setups": [
+    {
+      "symbol": "USDCHF",
+      "error": "entry_price is None",
+      "data": {
+        "symbol": "USDCHF",
+        "direction": "sell",
+        "entry_price": null,
+        "stop_loss": null,
+        "take_profit": 0.7534856,
+        "risk_reward": 16.760986121444194,
+        "strategy_type": "reversal",
+        "setup_time": "2026-03-02T15:52:51.818196",
+        "priority": 1,
+        "status": "MONITORING",
+        "fvg_zone_top": 0.77962,
+        "fvg_zone_bottom": 0.76496,
+        "lot_size": 0.01
+      }
+    }
+  ],
+  "timestamp": "2026-03-02T18:15:37.972613"
+}

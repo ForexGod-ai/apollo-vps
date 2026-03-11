@@ -72,6 +72,8 @@ class MarketNarrative:
             return "ready_to_trade"
         elif self.setup_status == "monitoring_closely":
             return "monitor_closely"
+        elif self.setup_status == "data_unavailable":
+            return "data_unavailable"
         else:
             return "wait_for_confirmation"
     
@@ -325,9 +327,9 @@ class SpatioTemporalAnalyzer:
                 lower_lows=False,
                 atr=0.0,
                 volatility_level="low",
-                setup_status="error",
+                setup_status="data_unavailable",
                 confidence=0.0,
-                notes="Insufficient data"
+                notes="Insufficient data - cBot may not support this symbol"
             )
         
         # Calculate ATR (4H)

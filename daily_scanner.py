@@ -8,6 +8,8 @@ import pandas as pd
 from datetime import datetime, timedelta
 import json
 import os
+import time
+import argparse
 from typing import List, Optional, Dict
 from dotenv import load_dotenv
 from loguru import logger
@@ -19,6 +21,16 @@ from strategy_optimizer import StrategyOptimizer
 from ai_probability_analyzer import AIProbabilityAnalyzer
 
 load_dotenv()
+
+# ━━━ V8.0 VPS-READY: Force UTC timezone ━━━
+os.environ['TZ'] = 'UTC'
+try:
+    time.tzset()
+except AttributeError:
+    pass
+
+# Global flag for testing/audit - ignore open positions check
+IGNORE_OPEN_POSITIONS = False
 
 
 class CTraderDataProvider:
@@ -290,7 +302,10 @@ class DailyScanner:
                     setup = None
                 
                 if setup:
-                    print(f"🎯 SETUP FOUND on {symbol}!")
+                    # V8.4: Display strategy type immediately
+                    strategy = setup.strategy_type.upper() if hasattr(setup, 'strategy_type') else "UNKNOWN"
+                    strategy_emoji = "🔄" if strategy == "REVERSAL" else "➡️"
+                    print(f"🎯 SETUP FOUND on {symbol}! {strategy_emoji} {strategy}")
                     
                     # NEW: ML SCORING - Calculate AI confidence score (0-100)
                     ml_score = self._calculate_ml_score(setup, df_4h)
@@ -393,9 +408,13 @@ class DailyScanner:
             with open('trade_history.json', 'r') as f:
                 trade_data = json.load(f)
                 all_open_positions = trade_data.get('open_positions', [])
-                open_position_symbols = {p.get('symbol') for p in all_open_positions}
-                active_setups_count += len(all_open_positions)
-                logger.info(f"📊 Found {len(all_open_positions)} open positions: {[p.get('symbol') for p in all_open_positions]}")
+                # V8.2: If IGNORE_OPEN_POSITIONS is True, treat as if no positions exist
+                if not IGNORE_OPEN_POSITIONS:
+                    open_position_symbols = {p.get('symbol') for p in all_open_positions}
+                    active_setups_count += len(all_open_positions)
+                    logger.info(f"📊 Found {len(all_open_positions)} open positions: {[p.get('symbol') for p in all_open_positions]}")
+                else:
+                    logger.info(f"⚠️  AUDIT MODE: Ignoring {len(all_open_positions)} open positions for full analysis")
         except Exception as e:
             logger.debug(f"Could not check open positions: {e}")
         
@@ -577,19 +596,28 @@ def save_monitoring_setups(setups: List[TradeSetup]):
                 else:
                     setup_time_str = datetime.now().isoformat()
                 
+                # V8.2 FAIL-SAFE: Validate critical fields before saving
+                if setup.entry_price is None or setup.stop_loss is None or setup.take_profit is None:
+                    print(f"⚠️  WARNING: Skipping {setup.symbol} - incomplete data (entry/SL/TP is None)")
+                    continue
+                
+                # Extract FVG values safely
+                fvg_top = setup.fvg.top if setup.fvg and hasattr(setup.fvg, 'top') else setup.entry_price
+                fvg_bottom = setup.fvg.bottom if setup.fvg and hasattr(setup.fvg, 'bottom') else setup.entry_price
+                
                 monitoring_setup = {
                     "symbol": setup.symbol,
                     "direction": "buy" if setup.daily_choch.direction == "bullish" else "sell",
-                    "entry_price": setup.entry_price,
-                    "stop_loss": setup.stop_loss,
-                    "take_profit": setup.take_profit,
-                    "risk_reward": setup.risk_reward,
+                    "entry_price": float(setup.entry_price),
+                    "stop_loss": float(setup.stop_loss),
+                    "take_profit": float(setup.take_profit),
+                    "risk_reward": float(setup.risk_reward) if setup.risk_reward else 0.0,
                     "strategy_type": setup.strategy_type,
                     "setup_time": setup_time_str,
                     "priority": setup.priority,
                     "status": setup.status,  # V3.0: Include status field
-                    "fvg_zone_top": setup.fvg.top if setup.fvg else None,
-                    "fvg_zone_bottom": setup.fvg.bottom if setup.fvg else None,
+                    "fvg_top": float(fvg_top) if fvg_top is not None else float(setup.entry_price),
+                    "fvg_bottom": float(fvg_bottom) if fvg_bottom is not None else float(setup.entry_price),
                     "lot_size": 0.01  # Default lot size
                 }
                 existing_setups[setup.symbol] = monitoring_setup  # Update/add
@@ -616,6 +644,22 @@ def save_monitoring_setups(setups: List[TradeSetup]):
 
 def main():
     """Main entry point"""
+    # Parse command-line arguments
+    parser = argparse.ArgumentParser(description='Daily Scanner for Glitch in Matrix V8.2')
+    parser.add_argument(
+        '--ignore-open-positions',
+        action='store_true',
+        help='Force scan all pairs even if they have open positions (for testing/audit)'
+    )
+    args = parser.parse_args()
+    
+    # Set global flag
+    global IGNORE_OPEN_POSITIONS
+    IGNORE_OPEN_POSITIONS = args.ignore_open_positions
+    
+    if IGNORE_OPEN_POSITIONS:
+        print("⚠️  AUDIT MODE: Ignoring open positions check - scanning ALL pairs\n")
+    
     scanner = DailyScanner()
     
     # Test Telegram connection first
@@ -638,7 +682,13 @@ def main():
         for i, setup in enumerate(setups, 1):
             direction = "LONG" if setup.daily_choch.direction == 'bullish' else "SHORT"
             status = f"[{setup.status}]"
-            print(f"{i}. {setup.symbol} - {direction} @ {setup.entry_price:.5f} (R:R 1:{setup.risk_reward:.2f}) {status}")
+            # V8.4: Display strategy type (REVERSAL or CONTINUITY)
+            strategy = setup.strategy_type.upper() if hasattr(setup, 'strategy_type') else "UNKNOWN"
+            strategy_emoji = "🔄" if strategy == "REVERSAL" else "➡️"
+            # V8.2 FIX: Handle None values for entry_price and risk_reward
+            entry_price = setup.entry_price if setup.entry_price is not None else 0.0
+            risk_reward = setup.risk_reward if setup.risk_reward is not None else 0.0
+            print(f"{i}. {strategy_emoji} {strategy} - {setup.symbol} - {direction} @ {entry_price:.5f} (R:R 1:{risk_reward:.2f}) {status}")
 
 
 if __name__ == "__main__":

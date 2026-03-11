@@ -8,7 +8,7 @@ Reads SUPER_CONFIG.json (shared with cBot)
 Enforces risk limits across Python and cTrader
 Activates KILL SWITCH on 10% daily loss
 
-✨ Glitch in Matrix by ФорексГод ✨
+🔱 AUTHORED BY ФорексГод 🔱
 ──────────────────
 """
 
@@ -49,15 +49,25 @@ class UnifiedRiskManager:
         self.kill_switch_enabled = self.config['kill_switch']['enabled']
         self.kill_switch_trigger = self.config['kill_switch']['trigger_daily_loss_percent']
         
-        # ✅ NEW: Load or initialize daily state (with auto-reset for new day)
-        self._load_daily_state()
-        # ✅ NEW: Load or initialize daily state (with auto-reset for new day)
+        # 🛡️ V7.1 DUPLICATE GUARD: Max 1 position per symbol
+        self.max_positions_per_symbol = 1
+        self.active_positions_file = Path(__file__).parent / "active_positions.json"
+        
+        # 🔇 V9.1 SILENT REJECTION: 4-hour cooldown per reason category (ANTI-SPAM FIX by POCOVNICU)
+        # Format: {"reason_category": {"last_sent": datetime, "count": int}}
+        self._rejection_cooldown = {}
+        self._warning_cooldown = {}
+        self.REJECTION_COOLDOWN_HOURS = 4  # Max 1 Telegram alert per reason per 4 hours
+        self.WARNING_COOLDOWN_HOURS = 4   # Max 1 warning alert per 4 hours
+        
+        # ✅ Load or initialize daily state (with auto-reset for new day)
         self._load_daily_state()
         
         print(f"\n🛡️  UNIFIED RISK MANAGER INITIALIZED")
         print(f"──────────────────")
         print(f"📊 Risk per trade: {self.risk_per_trade}%")
         print(f"📈 Max positions: {self.max_positions}")
+        print(f"🛡️ Max per symbol: {self.max_positions_per_symbol}")
         print(f"🛑 Daily loss limit: {self.max_daily_loss_pct}%")
         print(f"⚠️  Daily warning: {self.daily_warning_pct}%")
         print(f"🔴 Kill switch: {'ENABLED' if self.kill_switch_enabled else 'DISABLED'} @ {self.kill_switch_trigger}%")
@@ -68,12 +78,11 @@ class UnifiedRiskManager:
         """
         Load daily state from JSON. Auto-reset if new day detected.
         
-        ✅ NEW DAY RESET LOGIC:
-        - Checks if last_update_date != current_date
-        - Resets starting_balance to current balance
-        - Clears daily counters
+        V9.1 FIX: Uses UTC for consistent server-time 00:00 reset.
+        Also clears rejection cooldowns on new day.
         """
-        today = datetime.now().date().isoformat()
+        from datetime import timezone
+        today = datetime.now(timezone.utc).date().isoformat()
         
         try:
             if self.daily_state_file.exists():
@@ -90,6 +99,8 @@ class UnifiedRiskManager:
                 else:
                     # NEW DAY - reset everything
                     print(f"🔄 NEW DAY DETECTED: {last_date} → {today}")
+                    self._rejection_cooldown.clear()  # V9.1: Clear rejection cooldowns on new day
+                    self._warning_cooldown.clear()     # V9.1: Clear warning cooldowns on new day
                     self._reset_daily_state(today)
             else:
                 # First run - initialize
@@ -236,6 +247,43 @@ class UnifiedRiskManager:
             print(f"⚠️  Error calculating daily P&L: {e}")
             return {'closed_pnl': 0, 'open_pnl': 0, 'total_pnl': 0}
     
+    def _symbol_has_open_position(self, symbol: str) -> bool:
+        """
+        🛡️ V7.1 DUPLICATE GUARD: Check if symbol already has an open position at broker.
+        Reads active_positions.json (written by cBot every 10s in ExportActivePositions).
+        
+        Returns True if symbol already has a Glitch Matrix position → trade should be REJECTED.
+        """
+        try:
+            if not self.active_positions_file.exists():
+                print(f"⚠️  active_positions.json not found — cannot verify broker state, ALLOWING trade")
+                return False
+            
+            with open(self.active_positions_file, 'r') as f:
+                positions = json.load(f)
+            
+            if not isinstance(positions, list):
+                return False
+            
+            # Normalize symbol for comparison (remove /, spaces, case-insensitive)
+            clean_symbol = symbol.upper().replace("/", "").replace(" ", "")
+            
+            count = 0
+            for pos in positions:
+                pos_symbol = pos.get('symbol', '').upper().replace("/", "").replace(" ", "")
+                if pos_symbol == clean_symbol:
+                    count += 1
+            
+            if count >= self.max_positions_per_symbol:
+                print(f"🛡️ DUPLICATE GUARD: {symbol} has {count} position(s) at broker (max: {self.max_positions_per_symbol})")
+                return True
+            
+            return False
+            
+        except Exception as e:
+            print(f"⚠️  Error checking broker positions for {symbol}: {e} — ALLOWING trade (fail-open)")
+            return False
+    
     def get_open_positions_count(self):
         """
         Get number of open positions from cTrader LIVE SYNC
@@ -291,27 +339,16 @@ class UnifiedRiskManager:
             return 0
     
     def check_kill_switch(self):
-        """Check if kill switch is active"""
-        return self.kill_switch_file.exists()
+        """Check if kill switch is active - DISABLED (always returns False)"""
+        # DISABLED - Kill switch removed, will redesign later
+        return False
     
     def activate_kill_switch(self, reason="Daily loss limit reached"):
-        """Activate kill switch - stops all trading"""
-        try:
-            # Create flag file
-            self.kill_switch_file.touch()
-            
-            print(f"\n🔴 KILL SWITCH ACTIVATED!")
-            print(f"   Reason: {reason}")
-            print(f"   File created: {self.kill_switch_file}")
-            
-            # Send Telegram alert
-            self._send_kill_switch_alert(reason)
-            
-            return True
-            
-        except Exception as e:
-            print(f"❌ Error activating kill switch: {e}")
-            return False
+        """Activate kill switch - DISABLED, will redesign later"""
+        # DISABLED - Kill switch removed
+        print(f"\n⚠️ KILL SWITCH DISABLED - Would have triggered: {reason}")
+        print(f"   System continues trading normally.")
+        return False
     
     def deactivate_kill_switch(self):
         """Deactivate kill switch - resume trading"""
@@ -322,13 +359,15 @@ class UnifiedRiskManager:
                 print(f"   Trading resumed")
                 
                 # Send Telegram notification
+                sep = "────────────────"
                 message = (
-                    "🟢 <b>KILL SWITCH DEACTIVATED</b>\n\n"
-                    "Trading has been resumed.\n"
-                    "System is now accepting new signals.\n\n"
-                    "──────────────────\n"
-                    "✨ <b>Glitch in Matrix by ФорексГод</b> ✨\n"
-                    "🧠 <i>AI-Powered</i> • 💎 <i>Smart Money</i>"
+                    f"🟢 <b>KILL SWITCH DEACTIVATED</b>\n\n"
+                    f"Trading has been resumed.\n"
+                    f"System is now accepting new signals.\n\n"
+                    f"  {sep}\n"
+                    f"  🔱 <b>AUTHORED BY ФорексГод</b> 🔱\n"
+                    f"  {sep}\n"
+                    f"  🏛️ INSTITUTIONAL TERMINAL 🏛️"
                 )
                 self._send_telegram(message)
                 
@@ -371,10 +410,16 @@ class UnifiedRiskManager:
             print(f"   ✅ APPROVED: Direct volume injection")
             return result
         
-        # 1. Check kill switch
-        if self.check_kill_switch():
-            result['reason'] = "Kill switch active - Trading disabled"
-            print(f"⛔ TRADE REJECTED: {result['reason']}")
+        # 1. Kill switch check - DISABLED (will redesign later)
+        # if self.check_kill_switch():
+        #     result['reason'] = "Kill switch active - Trading disabled"
+        #     print(f"⛔ TRADE REJECTED: {result['reason']}")
+        #     return result
+        
+        # 🛡️ V7.1 DUPLICATE GUARD: Check if symbol already has position at broker
+        if self._symbol_has_open_position(symbol):
+            result['reason'] = f"Duplicate guard: {symbol} already has open position at broker (max {self.max_positions_per_symbol} per symbol)"
+            print(f"🛡️ TRADE REJECTED: {result['reason']}")
             return result
         
         # 2. Check position count
@@ -391,12 +436,12 @@ class UnifiedRiskManager:
         
         daily_loss_pct = (pnl['total_pnl'] / balance) * 100 if balance > 0 else 0
         
-        # Activate kill switch if loss >= trigger threshold
-        if self.kill_switch_enabled and daily_loss_pct <= -self.kill_switch_trigger:
-            self.activate_kill_switch(f"Daily loss {daily_loss_pct:.2f}% >= {self.kill_switch_trigger}%")
-            result['reason'] = f"Kill switch activated - Daily loss {daily_loss_pct:.2f}%"
-            print(f"🔴 TRADE REJECTED: {result['reason']}")
-            return result
+        # Kill switch auto-activation - DISABLED (will redesign later)
+        # if self.kill_switch_enabled and daily_loss_pct <= -self.kill_switch_trigger:
+        #     self.activate_kill_switch(f"Daily loss {daily_loss_pct:.2f}% >= {self.kill_switch_trigger}%")
+        #     result['reason'] = f"Kill switch activated - Daily loss {daily_loss_pct:.2f}%"
+        #     print(f"🔴 TRADE REJECTED: {result['reason']}")
+        #     return result
         
         # Check daily loss limit (warning, but don't block yet)
         if daily_loss_pct <= -self.max_daily_loss_pct:
@@ -488,33 +533,102 @@ class UnifiedRiskManager:
         return result
     
     def _send_rejection_alert(self, symbol, direction, reason):
-        """Send Telegram alert when trade is rejected"""
+        """
+        V9.1 SILENT REJECTION: Send Telegram ONLY on state change or after 4h cooldown.
+        Anti-spam fix by POCOVNICU — prevents hundreds of 'Daily loss limit' notifications.
+        
+        Logic:
+        - First rejection for this reason category → SEND
+        - Same reason, <4 hours since last alert → SILENT (log only)
+        - Same reason, >4 hours elapsed → SEND (reminder)
+        - Reason CHANGED (e.g. max_positions → daily_loss) → SEND
+        """
+        # Categorize the reason for cooldown grouping
+        if 'daily loss' in reason.lower() or 'loss limit' in reason.lower():
+            cooldown_key = 'daily_loss_limit'
+        elif 'max positions' in reason.lower():
+            cooldown_key = 'max_positions'
+        elif 'duplicate' in reason.lower():
+            cooldown_key = f'duplicate_{symbol}'
+        elif 'kill switch' in reason.lower():
+            cooldown_key = 'kill_switch'
+        else:
+            cooldown_key = f'other_{symbol}'
+        
+        now = datetime.now()
+        should_send = False
+        
+        if cooldown_key not in self._rejection_cooldown:
+            # First rejection for this category → SEND
+            should_send = True
+        else:
+            last_data = self._rejection_cooldown[cooldown_key]
+            elapsed_hours = (now - last_data['last_sent']).total_seconds() / 3600
+            
+            if elapsed_hours >= self.REJECTION_COOLDOWN_HOURS:
+                # Cooldown expired → SEND reminder
+                should_send = True
+            else:
+                # Within cooldown → SILENT, just increment counter
+                last_data['count'] += 1
+                suppressed = last_data['count']
+                remaining_h = self.REJECTION_COOLDOWN_HOURS - elapsed_hours
+                print(f"🔇 SILENT REJECTION #{suppressed}: {symbol} {direction} — {reason} (next alert in {remaining_h:.1f}h)")
+                return  # ← EXIT: No Telegram notification
+        
+        # Track this send
+        self._rejection_cooldown[cooldown_key] = {
+            'last_sent': now,
+            'count': 0,
+            'reason': reason
+        }
+        
+        # Build and send
+        sep = "────────────────"
         message = (
-            "⛔ <b>TRADE REJECTED</b>\n\n"
+            f"⛔ <b>TRADE REJECTED</b>\n\n"
             f"Symbol: <b>{symbol}</b>\n"
             f"Direction: <b>{direction}</b>\n"
             f"Reason: <i>{reason}</i>\n\n"
-            "──────────────────\n"
-            "✨ <b>Glitch in Matrix by ФорексГод</b> ✨\n"
-            "🧠 <i>AI-Powered</i> • 💎 <i>Smart Money</i>"
+            f"🔇 <i>Next alert for this reason in {self.REJECTION_COOLDOWN_HOURS}h</i>\n\n"
+            f"  {sep}\n"
+            f"  🔱 <b>AUTHORED BY ФорексГод</b> 🔱\n"
+            f"  {sep}\n"
+            f"  🏛️ INSTITUTIONAL TERMINAL 🏛️"
         )
         self._send_telegram(message)
     
     def _send_warning_alert(self, daily_loss_pct, balance):
-        """Send warning when approaching daily loss limit"""
+        """
+        V9.1: Send warning with 4h cooldown — max 1 warning per 4 hours.
+        Anti-spam fix by POCOVNICU.
+        """
+        now = datetime.now()
+        cooldown_key = 'daily_loss_warning'
+        
+        if cooldown_key in self._warning_cooldown:
+            elapsed_hours = (now - self._warning_cooldown[cooldown_key]['last_sent']).total_seconds() / 3600
+            if elapsed_hours < self.WARNING_COOLDOWN_HOURS:
+                print(f"🔇 SILENT WARNING: Daily loss {daily_loss_pct:.2f}% (next alert in {self.WARNING_COOLDOWN_HOURS - elapsed_hours:.1f}h)")
+                return  # ← SILENT
+        
+        self._warning_cooldown[cooldown_key] = {'last_sent': now}
+        
         pnl = self.get_daily_pnl()
         
+        sep = "────────────────"
         message = (
-            "⚠️ <b>DAILY LOSS WARNING</b>\n\n"
+            f"⚠️ <b>DAILY LOSS WARNING</b>\n\n"
             f"Current loss: <b>{daily_loss_pct:.2f}%</b>\n"
             f"Warning threshold: <b>{self.daily_warning_pct}%</b>\n"
             f"Kill switch trigger: <b>{self.kill_switch_trigger}%</b>\n\n"
             f"💰 Balance: ${balance:.2f}\n"
             f"📊 Today's P&L: ${pnl['total_pnl']:.2f}\n\n"
-            "⚠️ <i>Approaching daily loss limit!</i>\n\n"
-            "──────────────────\n"
-            "✨ <b>Glitch in Matrix by ФорексГод</b> ✨\n"
-            "🧠 <i>AI-Powered</i> • 💎 <i>Smart Money</i>"
+            f"🔇 <i>Next warning in {self.WARNING_COOLDOWN_HOURS}h</i>\n\n"
+            f"  {sep}\n"
+            f"  🔱 <b>AUTHORED BY ФорексГод</b> 🔱\n"
+            f"  {sep}\n"
+            f"  🏛️ INSTITUTIONAL TERMINAL 🏛️"
         )
         self._send_telegram(message)
     
@@ -524,22 +638,22 @@ class UnifiedRiskManager:
         equity, balance = self.get_account_balance()
         daily_loss_pct = (pnl['total_pnl'] / balance) * 100 if balance > 0 else 0
         
+        sep = "────────────────"
         message = (
-            "🔴 <b>KILL SWITCH ACTIVATED!</b> 🔴\n\n"
+            f"🔴 <b>KILL SWITCH ACTIVATED!</b> 🔴\n\n"
             f"<b>Reason:</b> {reason}\n\n"
-            "──────────────────\n"
-            "📊 <b>DAILY SUMMARY:</b>\n"
+            f"──────────────────\n"
+            f"📊 <b>DAILY SUMMARY:</b>\n"
             f"💰 Balance: ${balance:.2f}\n"
             f"💎 Equity: ${equity:.2f}\n"
             f"📉 Daily P&L: ${pnl['total_pnl']:.2f} ({daily_loss_pct:.2f}%)\n"
             f"🛑 Loss limit: {self.max_daily_loss_pct}%\n\n"
-            "⛔ <b>ALL TRADING STOPPED</b>\n"
-            "System will not accept new signals.\n"
-            "Existing positions remain open.\n\n"
-            "To resume: Delete trading_disabled.flag\n\n"
-            "──────────────────\n"
-            "✨ <b>Glitch in Matrix by ФорексГод</b> ✨\n"
-            "🧠 <i>AI-Powered</i> • 💎 <i>Smart Money</i>"
+            f"⛔ <b>ALL TRADING STOPPED</b>\n"
+            f"Existing positions remain open.\n\n"
+            f"  {sep}\n"
+            f"  🔱 <b>AUTHORED BY ФорексГод</b> 🔱\n"
+            f"  {sep}\n"
+            f"  🏛️ INSTITUTIONAL TERMINAL 🏛️"
         )
         self._send_telegram(message)
     
@@ -600,9 +714,10 @@ class UnifiedRiskManager:
             f"🛑 Daily limit: {self.max_daily_loss_pct}%\n"
             f"🔴 Kill switch: {self.kill_switch_trigger}%\n"
             f"🚦 Status: {kill_switch_status}\n\n"
-            "──────────────────\n"
-            "✨ <b>Glitch in Matrix by ФорексГод</b> ✨\n"
-            "🧠 <i>AI-Powered</i> • 💎 <i>Smart Money</i>"
+            "  ────────────────\n"
+            "  🔱 <b>AUTHORED BY ФорексГод</b> 🔱\n"
+            "  ────────────────\n"
+            "  🏛️ INSTITUTIONAL TERMINAL 🏛️"
         )
         
         self._send_telegram(message)

@@ -28,7 +28,7 @@ namespace cAlgo.Robots
         public double BreakevenTriggerPips { get; set; }
 
         private DateTime _lastFileCheck = DateTime.MinValue;
-        private string _lastProcessedSignal = "";
+        private HashSet<string> _sessionProcessedSignals = new HashSet<string>();
 
         protected override void OnStart()
         {
@@ -38,7 +38,7 @@ namespace cAlgo.Robots
             Print("║     ✨ GLITCH IN MATRIX by ФорексГод ✨         ║");
             Print("║     🧠 AI-Powered • 💎 Smart Money               ║");
             Print("║                                                   ║");
-            Print("║     Python Signal Executor V4.0                  ║");
+            Print("║     Python Signal Executor V7.0 ARRAY PROTOCOL  ║");
             Print("║     Swing Trading - Multi-Timeframe SMC          ║");
             Print("║                                                   ║");
             Print("╚═══════════════════════════════════════════════════╝");
@@ -51,6 +51,7 @@ namespace cAlgo.Robots
             Print($"   💰 Max Risk: {MaxRiskPercent}%");
             Print($"   🎯 Auto-Close: +{AutoCloseProfitPips} pips");
             Print($"   🔒 Breakeven: +{BreakevenTriggerPips} pips");
+            Print($"   📦 Protocol: V7.0 ARRAY (List<TradeSignal>)");
             Print("");
             
             // 🚨 AUDIT: Validate signal file path
@@ -65,8 +66,8 @@ namespace cAlgo.Robots
                 Print($"✅ Signal directory validated: {signalDir}");
             }
             
-            Print("🔗 MATRIX SYNC: Connected to Scanner V4.0 (SMC Level Up)");
-            Print("✅ System initialized - Ready for signals");
+            Print("🔗 MATRIX SYNC: Connected to Python V7.0 Array Protocol");
+            Print("✅ System initialized - Ready for signals (ARRAY FORMAT)");
             Print("");
             
             Timer.Start(CheckInterval);
@@ -95,86 +96,248 @@ namespace cAlgo.Robots
                 
                 _lastFileCheck = fileInfo.LastWriteTime;
                 
-                var json = File.ReadAllText(SignalFilePath);
-                Print($"🔍 Raw JSON: {json}");
-                
-                var signal = JsonSerializer.Deserialize<TradeSignal>(json);
-                
-                if (signal == null)
+                string json;
+                try
                 {
-                    Print("❌ Failed to deserialize signal (NULL)");
+                    json = File.ReadAllText(SignalFilePath);
+                }
+                catch (IOException ioEx)
+                {
+                    // File might be locked by Python writing — skip this cycle, retry next
+                    Print($"⚠️  File locked (Python writing?), retry next cycle: {ioEx.Message}");
                     return;
                 }
                 
-                Print($"✅ Signal deserialized: {signal.SignalId}");
+                if (string.IsNullOrWhiteSpace(json))
+                {
+                    Print("⚠️  Signal file is empty, skipping");
+                    return;
+                }
                 
-                // Check if signal was already processed (persistent check)
+                Print($"🔍 Raw JSON ({json.Length} chars): {json.Substring(0, Math.Min(json.Length, 200))}...");
+                
+                // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+                // ✅ V7.0 ARRAY PROTOCOL: Deserialize as List<TradeSignal>
+                // Python writes: [{signal1}, {signal2}, ...]
+                // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+                
+                List<TradeSignal> signals = null;
+                
+                json = json.Trim();
+                
+                if (json.StartsWith("["))
+                {
+                    // ✅ V7.0 ARRAY FORMAT: [{...}, {...}, ...]
+                    try
+                    {
+                        signals = JsonSerializer.Deserialize<List<TradeSignal>>(json);
+                    }
+                    catch (JsonException arrayEx)
+                    {
+                        Print($"❌ Array JSON parse error: {arrayEx.Message}");
+                        Print($"⚠️  Attempting individual signal recovery...");
+                        signals = TryRecoverSignalsFromArray(json);
+                    }
+                }
+                else if (json.StartsWith("{"))
+                {
+                    // 🔄 BACKWARDS COMPATIBLE: Single object format (legacy)
+                    try
+                    {
+                        var singleSignal = JsonSerializer.Deserialize<TradeSignal>(json);
+                        if (singleSignal != null)
+                        {
+                            signals = new List<TradeSignal> { singleSignal };
+                            Print($"🔄 Legacy single-object format detected, wrapped in array");
+                        }
+                    }
+                    catch (JsonException singleEx)
+                    {
+                        Print($"❌ Single JSON parse error: {singleEx.Message}");
+                    }
+                }
+                else
+                {
+                    Print($"❌ Unknown JSON format (first char: '{json[0]}')");
+                    return;
+                }
+                
+                if (signals == null || signals.Count == 0)
+                {
+                    Print("⚠️  No valid signals found in file (empty array or parse failure)");
+                    // Delete empty/corrupt file to prevent re-processing
+                    TryDeleteSignalFile();
+                    return;
+                }
+                
+                Print($"📦 V7.0 ARRAY: {signals.Count} signal(s) received");
+                
+                // ━━━ LOAD PERSISTENT PROCESSED LIST ━━━
                 string processedSignalsFile = Path.Combine(Path.GetDirectoryName(SignalFilePath), "processed_signals.txt");
+                HashSet<string> persistentProcessed = new HashSet<string>();
                 if (File.Exists(processedSignalsFile))
                 {
-                    string[] processedSignals = File.ReadAllLines(processedSignalsFile);
-                    if (processedSignals.Contains(signal.SignalId))
+                    try
                     {
-                        Print($"⏭️  Signal already processed (persistent): {signal.SignalId}");
-                        return;
+                        var lines = File.ReadAllLines(processedSignalsFile);
+                        foreach (var line in lines)
+                        {
+                            if (!string.IsNullOrWhiteSpace(line))
+                                persistentProcessed.Add(line.Trim());
+                        }
+                    }
+                    catch { /* ignore read errors */ }
+                }
+                
+                // ━━━ FOREACH: Process each signal individually ━━━
+                int executed = 0;
+                int skipped = 0;
+                int failed = 0;
+                
+                foreach (var signal in signals)
+                {
+                    try
+                    {
+                        if (signal == null || string.IsNullOrEmpty(signal.SignalId))
+                        {
+                            Print($"⚠️  Skipping NULL/invalid signal in array");
+                            skipped++;
+                            continue;
+                        }
+                        
+                        // Check persistent processed
+                        if (persistentProcessed.Contains(signal.SignalId))
+                        {
+                            Print($"⏭️  Already processed (persistent): {signal.SignalId}");
+                            skipped++;
+                            continue;
+                        }
+                        
+                        // Check session processed
+                        if (_sessionProcessedSignals.Contains(signal.SignalId))
+                        {
+                            Print($"⏭️  Already processed (session): {signal.SignalId}");
+                            skipped++;
+                            continue;
+                        }
+                        
+                        Print("");
+                        Print($"━━━ PROCESSING SIGNAL {executed + skipped + failed + 1}/{signals.Count} ━━━");
+                        Print($"📊 SIGNAL: {signal.Symbol} {signal.Direction?.ToUpper()} | ID: {signal.SignalId}");
+                        Print($"   Strategy: {signal.StrategyType}");
+                        Print($"   Entry: {signal.EntryPrice}");
+                        Print($"   SL: {signal.StopLoss}");
+                        Print($"   TP: {signal.TakeProfit}");
+                        Print($"   R:R: 1:{signal.RiskReward}");
+                        
+                        // ━━━ V4.0 SMC INTELLIGENCE DISPLAY ━━━
+                        if (signal.LiquiditySweep)
+                            Print($"   💧 LIQUIDITY SWEEP: {signal.SweepType} detected (+{signal.ConfidenceBoost} conf)");
+                        if (signal.OrderBlockUsed)
+                            Print($"   📦 ORDER BLOCK: Entry refined (score {signal.OrderBlockScore}/10)");
+                        
+                        // ━━━ EXECUTE THE SIGNAL ━━━
+                        ExecuteSignal(signal);
+                        
+                        // ━━━ Mark as processed (both session + persistent) ━━━
+                        _sessionProcessedSignals.Add(signal.SignalId);
+                        try
+                        {
+                            File.AppendAllText(processedSignalsFile, signal.SignalId + Environment.NewLine);
+                        }
+                        catch (Exception markEx)
+                        {
+                            Print($"⚠️  Could not mark as processed: {markEx.Message}");
+                        }
+                        
+                        executed++;
+                        Print($"✅ Signal {signal.SignalId} processed successfully");
+                    }
+                    catch (Exception signalEx)
+                    {
+                        // 🛡️ ERROR HANDLING: Skip corrupt signal, don't crash the bot!
+                        Print($"❌ ERROR processing signal {signal?.SignalId ?? "UNKNOWN"}: {signalEx.Message}");
+                        failed++;
+                        // Continue to next signal — DON'T crash!
                     }
                 }
                 
-                // Skip if already processed in current session
-                if (signal.SignalId == _lastProcessedSignal)
-                {
-                    Print($"⏭️  Signal already processed (session): {signal.SignalId}");
-                    return;
-                }
-                
-                _lastProcessedSignal = signal.SignalId;
-                Print($"📊 NEW SIGNAL RECEIVED: {signal.Symbol} {signal.Direction.ToUpper()}");
-                Print($"   Strategy: {signal.StrategyType}");
-                Print($"   Entry: {signal.EntryPrice}");
-                Print($"   SL: {signal.StopLoss}");
-                Print($"   TP: {signal.TakeProfit}");
-                Print($"   R:R: 1:{signal.RiskReward}");
-                
-                // ━━━ V4.0 SMC INTELLIGENCE DISPLAY ━━━
-                if (signal.LiquiditySweep)
-                {
-                    Print($"   💧 LIQUIDITY SWEEP: {signal.SweepType} detected (+{signal.ConfidenceBoost} conf)");
-                }
-                
-                if (signal.OrderBlockUsed)
-                {
-                    Print($"   📦 ORDER BLOCK: Entry refined (score {signal.OrderBlockScore}/10)");
-                }
-                
                 Print("");
+                Print($"📊 BATCH RESULT: {executed} executed, {skipped} skipped, {failed} failed (of {signals.Count} total)");
                 
-                ExecuteSignal(signal);
+                // ━━━ ATOMIC DELETE: Only AFTER processing entire array ━━━
+                TryDeleteSignalFile();
+            }
+            catch (Exception ex)
+            {
+                Print($"❌ CRITICAL ERROR in OnTimer: {ex.Message}");
+            }
+        }
+        
+        /// <summary>
+        /// V7.0: Try to recover individual signals from a corrupt array
+        /// Splits by "},{" and tries to parse each one
+        /// </summary>
+        private List<TradeSignal> TryRecoverSignalsFromArray(string json)
+        {
+            var recovered = new List<TradeSignal>();
+            try
+            {
+                // Remove outer brackets
+                var inner = json.Trim().TrimStart('[').TrimEnd(']').Trim();
+                if (string.IsNullOrEmpty(inner))
+                    return recovered;
                 
-                // Mark signal as processed (persistent) - reuse variable from above
-                try
-                {
-                    File.AppendAllText(processedSignalsFile, signal.SignalId + Environment.NewLine);
-                    Print($"✅ Signal marked as processed: {signal.SignalId}");
-                }
-                catch (Exception markEx)
-                {
-                    Print($"⚠️  Could not mark signal as processed: {markEx.Message}");
-                }
+                // Split on "},{" boundary
+                var parts = inner.Split(new[] { "},{" }, StringSplitOptions.RemoveEmptyEntries);
                 
-                // Clear signal file after processing
-                try
+                for (int i = 0; i < parts.Length; i++)
                 {
-                    File.Delete(SignalFilePath);
-                    Print($"🗑️  Signal file cleared");
-                }
-                catch (Exception deleteEx)
-                {
-                    Print($"⚠️  Could not delete signal file: {deleteEx.Message}");
+                    var part = parts[i].Trim();
+                    // Re-add braces that were consumed by split
+                    if (!part.StartsWith("{")) part = "{" + part;
+                    if (!part.EndsWith("}")) part = part + "}";
+                    
+                    try
+                    {
+                        var signal = JsonSerializer.Deserialize<TradeSignal>(part);
+                        if (signal != null && !string.IsNullOrEmpty(signal.SignalId))
+                        {
+                            recovered.Add(signal);
+                            Print($"🔧 Recovered signal: {signal.SignalId}");
+                        }
+                    }
+                    catch
+                    {
+                        Print($"⚠️  Could not recover signal part #{i + 1}");
+                    }
                 }
             }
             catch (Exception ex)
             {
-                Print($"❌ ERROR: {ex.Message}");
+                Print($"❌ Recovery failed: {ex.Message}");
+            }
+            
+            Print($"🔧 Recovery result: {recovered.Count} signal(s) salvaged");
+            return recovered;
+        }
+        
+        /// <summary>
+        /// Safely delete the signal file after processing
+        /// </summary>
+        private void TryDeleteSignalFile()
+        {
+            try
+            {
+                if (File.Exists(SignalFilePath))
+                {
+                    File.Delete(SignalFilePath);
+                    Print($"🗑️  Signal file deleted (atomic cleanup)");
+                }
+            }
+            catch (Exception deleteEx)
+            {
+                Print($"⚠️  Could not delete signal file: {deleteEx.Message}");
             }
         }
 
@@ -299,6 +462,124 @@ namespace cAlgo.Robots
 
         private void ExecuteSignal(TradeSignal signal)
         {
+            // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            // 🛡️ V7.1 DUPLICATE POSITION GUARD — LAST LINE OF DEFENSE
+            // Prevents opening multiple positions on the same symbol
+            // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            var guardSymbol = signal.Symbol.Replace("/", "").Replace(" ", "");
+            var guardMapped = MapSymbolName(guardSymbol);
+            if (string.IsNullOrEmpty(guardMapped)) guardMapped = guardSymbol;
+            
+            bool alreadyHasPosition = false;
+            foreach (var pos in Positions)
+            {
+                if (pos.SymbolName == guardMapped && pos.Label != null &&
+                    (pos.Label.StartsWith("Glitch Matrix") || pos.Label.StartsWith("BTC_NUCLEAR")))
+                {
+                    alreadyHasPosition = true;
+                    Print($"🛡️ DUPLICATE GUARD: Found existing {pos.TradeType} {pos.SymbolName} @ {pos.EntryPrice} (Label: {pos.Label})");
+                    break;
+                }
+            }
+            
+            if (alreadyHasPosition)
+            {
+                // Allow CLOSE signals through even if position exists (that's the point!)
+                if (string.IsNullOrEmpty(signal.Action) || signal.Action.ToUpper() != "CLOSE")
+                {
+                    Print($"⚠️ SKIP: Already have Glitch Matrix position on {guardMapped} — signal {signal.SignalId} rejected");
+                    WriteExecutionConfirmation(signal, null, "REJECTED", $"Duplicate position guard: already have position on {guardMapped}");
+                    return;
+                }
+            }
+            // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            
+            // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            // 🔴 V8.0 CLOSE POSITION HANDLER
+            // Python sends Action="CLOSE" → find matching position → ClosePosition()
+            // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            if (!string.IsNullOrEmpty(signal.Action) && signal.Action.ToUpper() == "CLOSE")
+            {
+                Print("");
+                Print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+                Print($"🔴 V8.0 CLOSE POSITION: {signal.Symbol} {signal.Direction}");
+                Print($"   Reason: {signal.CloseReason ?? "N/A"}");
+                Print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+                
+                var closeSymbol = signal.Symbol.Replace("/", "").Replace(" ", "");
+                var closeMapped = MapSymbolName(closeSymbol);
+                if (string.IsNullOrEmpty(closeMapped)) closeMapped = closeSymbol;
+                
+                var closeDir = signal.Direction?.ToLower().Trim();
+                TradeType? closeTradeType = null;
+                if (closeDir == "sell" || closeDir == "short")
+                    closeTradeType = TradeType.Sell;
+                else if (closeDir == "buy" || closeDir == "long")
+                    closeTradeType = TradeType.Buy;
+                
+                int closedCount = 0;
+                foreach (var pos in Positions)
+                {
+                    if (pos.SymbolName != closeMapped)
+                        continue;
+                    if (pos.Label == null || (!pos.Label.StartsWith("Glitch Matrix") && !pos.Label.StartsWith("BTC_NUCLEAR")))
+                        continue;
+                    
+                    // If direction specified, match it; otherwise close ALL positions on symbol
+                    if (closeTradeType.HasValue && pos.TradeType != closeTradeType.Value)
+                        continue;
+                    
+                    Print($"   🔴 Closing: {pos.TradeType} {pos.SymbolName} @ {pos.EntryPrice} (P&L: ${pos.NetProfit:F2})");
+                    var closeResult = ClosePosition(pos);
+                    if (closeResult.IsSuccessful)
+                    {
+                        Print($"   ✅ CLOSED: Position #{pos.Id} | P&L: ${pos.NetProfit:F2}");
+                        closedCount++;
+                    }
+                    else
+                    {
+                        Print($"   ❌ CLOSE FAILED: {closeResult.Error}");
+                    }
+                }
+                
+                Print($"📊 CLOSE RESULT: {closedCount} position(s) closed for {closeMapped}");
+                Print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+                
+                WriteExecutionConfirmation(signal, null, closedCount > 0 ? "CLOSED" : "NO_POSITION",
+                    closedCount > 0 ? $"Closed {closedCount} position(s) for {closeMapped}" : $"No matching position found for {closeMapped}");
+                
+                return; // EXIT — don't process as new order!
+            }
+            
+            // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            // 🛡️ V8.0 SL/TP ZERO GUARD — Reject naked orders!
+            // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            string guardCleanSymbol = signal.Symbol.ToUpper().Replace(" ", "").Replace("/", "");
+            bool isCryptoGuard = guardCleanSymbol.Contains("BTC") || guardCleanSymbol.Contains("ETH");
+            
+            if (!isCryptoGuard)
+            {
+                // Non-crypto: SL/TP are in pips
+                if (signal.StopLossPips <= 0 || signal.TakeProfitPips <= 0)
+                {
+                    Print($"🚨 SL/TP ZERO GUARD: REJECTED {signal.Symbol} — SL_Pips={signal.StopLossPips}, TP_Pips={signal.TakeProfitPips}");
+                    Print($"   Cannot execute naked order without valid SL/TP!");
+                    WriteExecutionConfirmation(signal, null, "REJECTED", $"SL/TP zero guard: SL_pips={signal.StopLossPips}, TP_pips={signal.TakeProfitPips}");
+                    return;
+                }
+            }
+            else
+            {
+                // Crypto: SL/TP are absolute prices
+                if (signal.StopLoss <= 0 || signal.TakeProfit <= 0)
+                {
+                    Print($"🚨 SL/TP ZERO GUARD (CRYPTO): REJECTED {signal.Symbol} — SL={signal.StopLoss}, TP={signal.TakeProfit}");
+                    Print($"   Cannot execute naked crypto order without valid SL/TP!");
+                    WriteExecutionConfirmation(signal, null, "REJECTED", $"SL/TP zero guard: SL={signal.StopLoss}, TP={signal.TakeProfit}");
+                    return;
+                }
+            }
+            
             // 🚨🚨🚨 V9.3 BULLETPROOF NUCLEAR OPTION: BTC EXECUTES FIRST - NO CALCULATIONS! 🚨🚨🚨
             // BULLETPROOF: Case-insensitive, ignores spaces/slashes (synced with Python V5.6)
             // V9.2 FIX: Use broker-native volume conversion (1 lot BTC = 1 unit, not 100k!)
@@ -707,6 +988,8 @@ namespace cAlgo.Robots
         public string SignalId { get; set; }
         public string Symbol { get; set; }
         public string Direction { get; set; }
+        public string Action { get; set; }  // V8.0: "CLOSE" = close position, null/empty = normal open
+        public string CloseReason { get; set; }  // V8.0: Reason for closing (CLOSE_ENTRY1, timeout, etc.)
         public string StrategyType { get; set; }
         public double EntryPrice { get; set; }
         public double StopLoss { get; set; }

@@ -1,12 +1,12 @@
 {
-  "position_id": "583482417",
-  "symbol": "GBPNZD",
-  "direction": "sell",
-  "entry_price": 2.26422,
-  "close_price": 2.2542,
-  "profit_pips": 100.2,
-  "profit_usd": 479.41,
+  "position_id": "589596254",
+  "symbol": "GBPJPY",
+  "direction": "buy",
+  "entry_price": 211.769,
+  "close_price": 212.797,
+  "profit_pips": 103,
+  "profit_usd": 467.84,
   "reason": "auto_close_100pips",
-  "closed_at": "2026-02-23T01:59:35.953097+02:00",
-  "duration_hours": 60.67065142055556
+  "closed_at": "2026-03-11T13:38:24.723791+02:00",
+  "duration_hours": 32.05778883166667
 }

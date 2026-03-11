@@ -22,6 +22,24 @@ import os
 import psutil
 import pandas as pd
 
+# ━━━ V8.0 VPS-READY: Force UTC timezone + persistent log file ━━━
+os.environ['TZ'] = 'UTC'
+try:
+    time.tzset()  # Apply TZ change (Unix only)
+except AttributeError:
+    pass  # Windows doesn't have tzset
+
+_LOG_DIR = Path(__file__).parent / "logs"
+_LOG_DIR.mkdir(exist_ok=True)
+logger.add(
+    str(_LOG_DIR / "setup_executor_monitor.log"),
+    format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {message}",
+    level="DEBUG",
+    rotation="10 MB",
+    retention="7 days",
+    compression="zip"
+)
+
 
 def acquire_pid_lock(lock_file: Path) -> bool:
     """
@@ -106,8 +124,10 @@ class SetupExecutorMonitor:
         
         self.ctrader_client = CTraderCBotClient()
         
-        # V4.4 FIX-018: Use absolute path to GlitchMatrix folder
-        signals_path = os.path.expanduser("~/GlitchMatrix/signals.json")
+        # V7.0 FIX: Use apollo folder (where cBot actually reads signals.json)
+        # Previously pointed to ~/GlitchMatrix/ which was WRONG
+        script_dir = Path(__file__).parent.resolve()
+        signals_path = str(script_dir / "signals.json")
         self.executor = CTraderExecutor(signals_file=signals_path)
         
         self.telegram = TelegramNotifier()
@@ -121,10 +141,10 @@ class SetupExecutorMonitor:
         cleanup_old_signals_file(Path(signals_path), max_age_hours=1)
         logger.success("🧹 Startup cleanup complete - old signals removed")
         
-        # V4.3 FIX-015: Track rejected trades to prevent spam
+        # V9.1 ANTI-SPAM: Track rejected trades — 4h cooldown (was 5min, caused spam)
         # Format: {symbol: {'reason': str, 'timestamp': datetime, 'count': int}}
         self.rejected_trades = {}
-        self.rejection_cooldown_seconds = 300  # 5 minutes
+        self.rejection_cooldown_seconds = 14400  # 4 hours (V9.1 fix by POCOVNICU)
         
         # Load pairs config for SCALE_IN settings and V3.2 Pullback Strategy
         self.config = self._load_config()
@@ -136,7 +156,9 @@ class SetupExecutorMonitor:
             'pullback_timeout_hours': 24,
             'swing_lookback_candles': 5,
             'sl_buffer_pips': 10,
-            'on_timeout_action': 'force_entry'
+            'on_timeout_action': 'force_entry',
+            'use_1h_sl': True,  # 🎯 V3.3 SNIPER: Use 1H SL instead of Daily SL
+            'use_4h_sl': True   # 💎 V3.3 HIGH CONFIDENCE: Use 4H SL for 4H entries
         })
         
         # SMC Detector for CHoCH detection
@@ -149,6 +171,8 @@ class SetupExecutorMonitor:
         logger.info(f"⏱️  Check interval: {check_interval}s")
         logger.info(f"📊 Execution Strategy: {self.execution_strategy.get('mode', 'N/A')}")
         logger.info(f"🎯 V3.2 Pullback Strategy: {'ENABLED' if self.pullback_config['enabled'] else 'DISABLED'}")
+        logger.info(f"🎯 V3.3 SNIPER SL (1H): {'ENABLED' if self.pullback_config.get('use_1h_sl', True) else 'DISABLED'}")
+        logger.info(f"💎 V3.3 HIGH CONFIDENCE SL (4H): {'ENABLED' if self.pullback_config.get('use_4h_sl', True) else 'DISABLED'}")
     
     def _load_config(self):
         """Load pairs_config.json"""
@@ -169,23 +193,66 @@ class SetupExecutorMonitor:
         return {}
     
     def _load_executed_setups(self):
-        """Load previously executed setups"""
+        """Load previously executed setups — V9.1: Auto-cleanup entries >30 days (R1 AUDIT FIX by POCOVNICU)"""
         if self.executed_file.exists():
             try:
                 with open(self.executed_file, 'r') as f:
                     data = json.load(f)
-                    return set(data.get('executed_keys', []))
+                
+                # V9.1 R1 FIX: Cleanup entries older than 30 days
+                executed_keys = set(data.get('executed_keys', []))
+                timestamps = data.get('timestamps', {})
+                cutoff = (datetime.now() - timedelta(days=30)).isoformat()
+                
+                if timestamps:
+                    old_count = len(executed_keys)
+                    # Keep only entries newer than 30 days
+                    keys_to_remove = set()
+                    for key in executed_keys:
+                        ts = timestamps.get(key, '')
+                        if ts and ts < cutoff and ts > '1971':  # Skip epoch dates
+                            keys_to_remove.add(key)
+                    
+                    if keys_to_remove:
+                        executed_keys -= keys_to_remove
+                        for k in keys_to_remove:
+                            timestamps.pop(k, None)
+                        # Save cleaned data
+                        with open(self.executed_file, 'w') as f:
+                            json.dump({
+                                'executed_keys': list(executed_keys),
+                                'timestamps': timestamps,
+                                'last_update': datetime.now().isoformat(),
+                                'last_cleanup': datetime.now().isoformat()
+                            }, f, indent=2)
+                        logger.success(f"🧹 R1 CLEANUP: Removed {len(keys_to_remove)} expired entries from .executed_setups.json ({old_count}→{len(executed_keys)})")
+                
+                return executed_keys
             except Exception as e:
                 logger.warning(f"Could not load executed setups: {e}")
         return set()
     
     def _save_executed_setup(self, setup_key: str):
-        """Save executed setup to prevent re-execution"""
+        """Save executed setup to prevent re-execution — V9.1: With timestamp for cleanup (R1 FIX)"""
         self.executed_setups.add(setup_key)
         try:
+            # Load existing timestamps
+            existing_timestamps = {}
+            if self.executed_file.exists():
+                try:
+                    with open(self.executed_file, 'r') as f:
+                        old_data = json.load(f)
+                        existing_timestamps = old_data.get('timestamps', {})
+                except Exception:
+                    pass
+            
+            # Add timestamp for new entry
+            existing_timestamps[setup_key] = datetime.now().isoformat()
+            
             with open(self.executed_file, 'w') as f:
                 json.dump({
                     'executed_keys': list(self.executed_setups),
+                    'timestamps': existing_timestamps,
                     'last_update': datetime.now().isoformat()
                 }, f, indent=2)
         except Exception as e:
@@ -230,7 +297,150 @@ class SetupExecutorMonitor:
             logger.error(f"Error checking price for {symbol}: {e}")
             return False, 0
     
-    def _immediate_entry_at_choch(self, setup: dict, df_h1, symbol: str) -> dict:
+    def _check_radar_entry(self, setup: dict, df_h1, symbol: str) -> dict:
+        """
+        🎯 V3.3 SNIPER ENTRY - Uses 1H/4H FVG data from multi_tf_radar.py
+        
+        Priority System:
+        1. If radar_1h_in_fvg=True → EXECUTE_ENTRY1 (SNIPER)
+        2. If radar_4h_in_fvg=True → EXECUTE_ENTRY2 (HIGH CONFIDENCE)
+        3. Otherwise → KEEP_MONITORING
+        
+        Entry Point: 
+        - 1H: Use radar_1h_fvg_entry (middle of 1H FVG)
+        - 4H: Use radar_4h_fvg_entry (middle of 4H FVG)
+        
+        Stop Loss:
+        - 1H: Use 1H CHoCH swing + 10 pips buffer (SNIPER SL)
+        - 4H: Use 4H CHoCH swing + 10 pips buffer
+        
+        This replaces Fibonacci 50% logic with actual FVG entry zones.
+        """
+        direction = setup['direction'].lower()
+        
+        # Get radar data
+        radar_1h_in_fvg = setup.get('radar_1h_in_fvg', False)
+        radar_1h_fvg_entry = setup.get('radar_1h_fvg_entry')
+        radar_1h_choch_price = setup.get('radar_1h_choch_price')
+        
+        radar_4h_in_fvg = setup.get('radar_4h_in_fvg', False)
+        radar_4h_fvg_entry = setup.get('radar_4h_fvg_entry')
+        radar_4h_choch_price = setup.get('radar_4h_choch_price')
+        
+        # Check Premium/Discount validation
+        if radar_1h_in_fvg and radar_1h_fvg_entry and radar_1h_choch_price:
+            # Validate Premium/Discount zone
+            if direction == 'buy':
+                # For LONG: FVG should be in DISCOUNT (below CHoCH)
+                zone_valid = radar_1h_fvg_entry < radar_1h_choch_price
+                zone_type = "DISCOUNT"
+            else:
+                # For SHORT: FVG should be in PREMIUM (above CHoCH)
+                zone_valid = radar_1h_fvg_entry > radar_1h_choch_price
+                zone_type = "PREMIUM"
+            
+            if not zone_valid:
+                logger.warning(f"⚠️  {symbol}: 1H FVG not in {zone_type} zone - skipping entry")
+                return {
+                    'action': 'KEEP_MONITORING',
+                    'reason': f'1H FVG not in {zone_type} zone (invalid setup)'
+                }
+            
+            # 🎯 EXECUTE SNIPER ENTRY (1H FVG)
+            logger.success(f"🎯 {symbol}: SNIPER ENTRY! Price in 1H FVG @ {radar_1h_fvg_entry:.5f}")
+            
+            # Calculate SNIPER SL (10 pips from 1H CHoCH swing)
+            if direction == 'buy':
+                # For LONG: SL below 1H CHoCH low
+                radar_1h_fvg_bottom = setup.get('radar_1h_fvg_bottom', radar_1h_fvg_entry)
+                sniper_sl = radar_1h_fvg_bottom - (10 * 0.0001)  # 10 pips below FVG
+            else:
+                # For SHORT: SL above 1H CHoCH high
+                radar_1h_fvg_top = setup.get('radar_1h_fvg_top', radar_1h_fvg_entry)
+                sniper_sl = radar_1h_fvg_top + (10 * 0.0001)  # 10 pips above FVG
+            
+            # Use config option for SL (default: use sniper SL)
+            use_sniper_sl = self.pullback_config.get('use_1h_sl', True)
+            
+            if use_sniper_sl:
+                stop_loss = sniper_sl
+                logger.info(f"   🎯 Using SNIPER SL: {stop_loss:.5f} (1H CHoCH + 10 pips)")
+            else:
+                stop_loss = setup.get('stop_loss')
+                logger.info(f"   📊 Using DAILY SL: {stop_loss:.5f}")
+            
+            return {
+                'action': 'EXECUTE_ENTRY1',
+                'entry_price': radar_1h_fvg_entry,
+                'stop_loss': stop_loss,
+                'reason': f'SNIPER ENTRY: Price in 1H FVG ({zone_type} zone validated)',
+                'entry_type': 'SNIPER_1H',
+                'choch_timestamp': setup.get('radar_1h_choch_time'),
+                'fibo_data': {}  # Not used in radar mode
+            }
+        
+        elif radar_4h_in_fvg and radar_4h_fvg_entry and radar_4h_choch_price:
+            # Validate Premium/Discount zone for 4H
+            if direction == 'buy':
+                zone_valid = radar_4h_fvg_entry < radar_4h_choch_price
+                zone_type = "DISCOUNT"
+            else:
+                zone_valid = radar_4h_fvg_entry > radar_4h_choch_price
+                zone_type = "PREMIUM"
+            
+            if not zone_valid:
+                logger.warning(f"⚠️  {symbol}: 4H FVG not in {zone_type} zone - skipping entry")
+                return {
+                    'action': 'KEEP_MONITORING',
+                    'reason': f'4H FVG not in {zone_type} zone (invalid setup)'
+                }
+            
+            # 💎 EXECUTE HIGH CONFIDENCE ENTRY (4H FVG)
+            logger.success(f"💎 {symbol}: HIGH CONFIDENCE ENTRY! Price in 4H FVG @ {radar_4h_fvg_entry:.5f}")
+            
+            # Calculate 4H SL (10 pips from 4H CHoCH swing)
+            if direction == 'buy':
+                radar_4h_fvg_bottom = setup.get('radar_4h_fvg_bottom', radar_4h_fvg_entry)
+                sniper_sl = radar_4h_fvg_bottom - (10 * 0.0001)
+            else:
+                radar_4h_fvg_top = setup.get('radar_4h_fvg_top', radar_4h_fvg_entry)
+                sniper_sl = radar_4h_fvg_top + (10 * 0.0001)
+            
+            use_sniper_sl = self.pullback_config.get('use_4h_sl', True)
+            
+            if use_sniper_sl:
+                stop_loss = sniper_sl
+                logger.info(f"   💎 Using 4H SL: {stop_loss:.5f} (4H CHoCH + 10 pips)")
+            else:
+                stop_loss = setup.get('stop_loss')
+                logger.info(f"   📊 Using DAILY SL: {stop_loss:.5f}")
+            
+            return {
+                'action': 'EXECUTE_ENTRY1',  # Or EXECUTE_ENTRY2 if Entry1 already filled
+                'entry_price': radar_4h_fvg_entry,
+                'stop_loss': stop_loss,
+                'reason': f'HIGH CONFIDENCE: Price in 4H FVG ({zone_type} zone validated)',
+                'entry_type': 'HIGH_CONFIDENCE_4H',
+                'choch_timestamp': setup.get('radar_4h_choch_time'),
+                'fibo_data': {}
+            }
+        
+        else:
+            # Not in FVG yet - keep monitoring
+            radar_1h_distance = setup.get('radar_1h_distance_pips', 999)
+            radar_4h_distance = setup.get('radar_4h_distance_pips', 999)
+            
+            if radar_1h_distance < radar_4h_distance:
+                reason = f'Waiting for 1H pullback ({radar_1h_distance:.1f} pips away)'
+            else:
+                reason = f'Waiting for 4H pullback ({radar_4h_distance:.1f} pips away)'
+            
+            return {
+                'action': 'KEEP_MONITORING',
+                'reason': reason
+            }
+    
+    def _check_pullback_entry(self, setup: dict, df_h1, symbol: str) -> dict:
         """
         V2.1 IMMEDIATE ENTRY LOGIC (for XAUUSD and fast-moving assets)
         
@@ -319,7 +529,7 @@ class SetupExecutorMonitor:
         # ========== CHECK FOR IMMEDIATE ENTRY MODE ==========
         pair_config = self.get_pair_config(symbol)
         if pair_config.get('use_immediate_entry', False):
-            logger.debug(f"🚀 {symbol}: use_immediate_entry=true, using V2.1 logic")
+            logger.debug(f"🚀 {symbol}: use_immediate_entry=true, using immediate entry logic")
             return self._immediate_entry_at_choch(setup, df_h1, symbol)
         
         # ========== STANDARD V3.3 HYBRID ENTRY LOGIC ==========
@@ -386,7 +596,7 @@ class SetupExecutorMonitor:
             if not matching_break:
                 return {
                     'action': 'KEEP_MONITORING',
-                    'reason': f'No {direction} {structure_type} in FVG zone yet'
+                    'reason': f'No {direction} CHoCH/BOS in FVG zone yet'
                 }
             
             # Structure break found! Calculate Fibonacci (V4.0 Multi-Timeframe)
@@ -694,6 +904,84 @@ class SetupExecutorMonitor:
             'reason': 'CHoCH detected but waiting for pullback validation'
         }
     
+    def _symbol_already_at_broker(self, symbol: str) -> bool:
+        """
+        🛡️ V7.1 DUPLICATE GUARD + V9.1 FRESHNESS CHECK (R7 AUDIT FIX by POCOVNICU)
+        Reads active_positions.json (written by cBot every 10s).
+        
+        V9.1: If file is older than 5 minutes → REFUSE execution (stale data = danger).
+        Returns True if symbol has existing position → should SKIP execution.
+        """
+        try:
+            active_pos_file = Path(__file__).parent / "active_positions.json"
+            if not active_pos_file.exists():
+                logger.warning(f"⚠️  active_positions.json not found — cannot verify broker, allowing {symbol}")
+                return False
+            
+            # V9.1 R7 FIX: Freshness check — refuse execution on stale data
+            file_age_seconds = time.time() - active_pos_file.stat().st_mtime
+            if file_age_seconds > 300:  # 5 minutes
+                logger.error(f"🚨 R7 SAFETY: active_positions.json is {file_age_seconds:.0f}s old (>{300}s) — BLOCKING {symbol} execution until fresh sync!")
+                return True  # Conservative: block execution when data is stale
+            
+            with open(active_pos_file, 'r') as f:
+                positions = json.load(f)
+            
+            if not isinstance(positions, list):
+                return False
+            
+            clean_symbol = symbol.upper().replace("/", "").replace(" ", "")
+            
+            for pos in positions:
+                pos_symbol = pos.get('symbol', '').upper().replace("/", "").replace(" ", "")
+                if pos_symbol == clean_symbol:
+                    logger.warning(f"🛡️ DUPLICATE GUARD: {symbol} already at broker ({pos.get('direction', '?')} @ {pos.get('entry_price', '?')})")
+                    return True
+            
+            return False
+            
+        except Exception as e:
+            logger.error(f"⚠️  Error checking broker positions for {symbol}: {e} — BLOCKING execution (conservative)")
+            return True  # V9.1: Conservative — block on error instead of allowing
+
+    def _cleanup_monitoring_setups(self):
+        """
+        🧹 V9.1 AUTO-CLEANUP: Remove EXPIRED/CLOSED/CANCELLED setups from monitoring_setups.json
+        R6 AUDIT FIX by POCOVNICU — Prevents infinite file growth
+        """
+        if not self.monitoring_file.exists():
+            return
+        
+        try:
+            with open(self.monitoring_file, 'r') as f:
+                data = json.load(f)
+            
+            if isinstance(data, dict):
+                setups = data.get('setups', [])
+            elif isinstance(data, list):
+                setups = data
+            else:
+                return
+            
+            dead_statuses = {'EXPIRED', 'CLOSED', 'CANCELLED', 'FAILED'}
+            active_setups = [s for s in setups if s.get('status', '') not in dead_statuses]
+            removed_count = len(setups) - len(active_setups)
+            
+            if removed_count > 0:
+                # Write cleaned data back
+                if isinstance(data, dict):
+                    data['setups'] = active_setups
+                    write_data = data
+                else:
+                    write_data = active_setups
+                
+                with open(self.monitoring_file, 'w') as f:
+                    json.dump(write_data, f, indent=2, default=str)
+                
+                logger.success(f"🧹 R6 CLEANUP: Removed {removed_count} dead setups from monitoring_setups.json ({len(setups)}→{len(active_setups)})")
+        except Exception as e:
+            logger.error(f"⚠️  Cleanup monitoring_setups failed: {e}")
+    
     def _process_monitoring_setups(self):
         """
         Process all setups in monitoring_setups.json using V3.2 PULLBACK + SCALE_IN.
@@ -745,7 +1033,9 @@ class SetupExecutorMonitor:
                     continue
                 
                 # 🔥 IN-ZONE INDICATOR
-                in_zone = setup.get('choch_1h_detected', False)
+                # V3.2: choch_1h_detected (Fibo 50% logic)
+                # V3.3: radar_1h_choch_detected (SNIPER MODE with FVG)
+                in_zone = setup.get('choch_1h_detected', False) or setup.get('radar_1h_choch_detected', False)
                 zone_emoji = "🎯" if in_zone else "🔍"
                 logger.debug(f"{zone_emoji} Processing {symbol} (in_zone={in_zone})")
                 
@@ -764,6 +1054,16 @@ class SetupExecutorMonitor:
                     
                     # V4.3 FIX-016: Force execute if status is READY
                     if status == 'READY' and not entry1_filled:
+                        # 🛡️ V7.1 DUPLICATE GUARD: Check broker before execution
+                        if self._symbol_already_at_broker(symbol):
+                            logger.warning(f"🛡️ SKIP {symbol}: Already has open position at broker (duplicate guard)")
+                            setups[i]['status'] = 'ACTIVE'
+                            setups[i]['entry1_filled'] = True
+                            setups[i]['force_executed'] = True
+                            setups[i]['skip_reason'] = 'duplicate_guard_broker_position_exists'
+                            updated = True
+                            continue
+                        
                         logger.success(f"🚀 EXECUTING {symbol} (status: READY, forced by owner)")
                         
                         success = self.executor.execute_trade(
@@ -791,8 +1091,21 @@ class SetupExecutorMonitor:
                         continue  # Skip pullback logic for READY status
                     
                     if not entry1_filled:
-                        # ========== V3.2 PULLBACK LOGIC FOR ENTRY 1 ==========
-                        result = self._check_pullback_entry(setup, df_1h, symbol)
+                        # ========== V3.3 SNIPER ENTRY LOGIC (RADAR-ENHANCED) ==========
+                        # Priority 1: Use 1H FVG from radar (if available)
+                        # Priority 2: Fall back to V3.2 Pullback Strategy (Fibo 50%)
+                        
+                        use_radar_data = setup.get('radar_1h_choch_detected', False)
+                        logger.debug(f"🔍 {symbol}: Entry 1 logic - use_radar_data={use_radar_data}")
+                        
+                        if use_radar_data:
+                            # 🎯 SNIPER MODE: Use 1H FVG from multi_tf_radar.py
+                            logger.info(f"🎯 {symbol}: SNIPER MODE activated - checking radar data...")
+                            result = self._check_radar_entry(setup, df_1h, symbol)
+                        else:
+                            # 🔄 FALLBACK: Use V3.2 Pullback Strategy (Fibo 50%)
+                            logger.info(f"🔄 {symbol}: FALLBACK MODE - using Fibo 50% logic...")
+                            result = self._check_pullback_entry(setup, df_1h, symbol)
                         
                         if result['action'] == 'CHOCH_1H_DETECTED':
                             # 🔔 1H CHoCH just detected - Update setup and RESEND notification
@@ -1026,13 +1339,34 @@ class SetupExecutorMonitor:
                                 logger.success(f"✅ Entry 2 executed for {symbol}, full scale in complete!")
                         
                         elif action == 'CLOSE_ENTRY1':
-                            # Close Entry 1 due to timeout + negative P&L
+                            # V8.0: ACTUALLY CLOSE THE POSITION AT BROKER!
                             close_price = result.get('close_price')
                             pnl_pips = result.get('pnl_pips', 0)
-                            logger.warning(f"   ⚠️  Closing Entry 1 for {symbol} @ {close_price} ({pnl_pips:.1f} pips)")
+                            close_direction = setup.get('direction', 'UNKNOWN')
+                            close_reason = f'Timeout expired, Entry 1 negative ({pnl_pips:.1f} pips)'
+                            
+                            logger.warning(f"   🔴 V8.0 CLOSE_ENTRY1: Closing {symbol} {close_direction} at broker!")
+                            logger.warning(f"   📊 Price: {close_price} | P&L: {pnl_pips:.1f} pips")
+                            
+                            # SEND CLOSE SIGNAL TO CBOT VIA ctrader_executor
+                            try:
+                                close_success = self.executor.close_position(
+                                    symbol=symbol,
+                                    direction=close_direction,
+                                    reason=close_reason
+                                )
+                                if close_success:
+                                    logger.success(f"   ✅ Close signal sent to cBot for {symbol} {close_direction}")
+                                else:
+                                    logger.error(f"   ❌ Failed to send close signal for {symbol}")
+                            except Exception as close_err:
+                                logger.error(f"   ❌ Exception sending close signal: {close_err}")
+                            
+                            # Update setup status regardless (signal was attempted)
                             setups[i]['status'] = 'CLOSED'
-                            setups[i]['close_reason'] = f'Timeout expired, Entry 1 negative ({pnl_pips:.1f} pips)'
+                            setups[i]['close_reason'] = close_reason
                             setups[i]['close_time'] = datetime.now().isoformat()
+                            setups[i]['broker_close_sent'] = True
                             updated = True
                         
                         elif action == 'EXPIRE':
@@ -1169,6 +1503,10 @@ class SetupExecutorMonitor:
             while True:
                 iteration += 1
                 logger.debug(f"\n🔄 Check #{iteration} - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+                
+                # 🧹 V9.1 R6 CLEANUP: Remove dead setups every 100 iterations (~50min at 30s)
+                if iteration == 1 or iteration % 100 == 0:
+                    self._cleanup_monitoring_setups()
                 
                 self._process_monitoring_setups()
                 

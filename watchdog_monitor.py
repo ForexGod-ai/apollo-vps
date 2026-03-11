@@ -37,6 +37,24 @@ import requests
 
 load_dotenv()
 
+# ━━━ V8.0 VPS-READY: Force UTC timezone + persistent log file ━━━
+os.environ['TZ'] = 'UTC'
+try:
+    time.tzset()
+except AttributeError:
+    pass
+
+_LOG_DIR = Path(__file__).parent / "logs"
+_LOG_DIR.mkdir(exist_ok=True)
+logger.add(
+    str(_LOG_DIR / "watchdog_monitor.log"),
+    format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {message}",
+    level="DEBUG",
+    rotation="10 MB",
+    retention="7 days",
+    compression="zip"
+)
+
 
 class WatchdogMonitor:
     """System guardian - monitors and restarts critical processes"""
@@ -146,12 +164,19 @@ class WatchdogMonitor:
             
             logger.info(f"🚀 Starting {process_info['name']}...")
             
-            # Start process in background
+            # V8.0 VPS-READY: Redirect stdout/stderr to log files (NOT DEVNULL!)
+            # Critical for forensics: if a process crashes, we have the output
+            log_dir = self.base_path / "logs"
+            log_dir.mkdir(exist_ok=True)
+            process_stem = process_name.replace('.py', '')
+            stdout_log = open(log_dir / f"{process_stem}_stdout.log", 'a')
+            stderr_log = open(log_dir / f"{process_stem}_stderr.log", 'a')
+            
             subprocess.Popen(
                 command,
                 cwd=self.base_path,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                stdout=stdout_log,
+                stderr=stderr_log,
                 start_new_session=True
             )
             
@@ -179,7 +204,14 @@ class WatchdogMonitor:
         try:
             url = f"https://api.telegram.org/bot{self.telegram_token}/sendMessage"
             
-            branded_message = f"{message}\n\n──────────────────\n✨ <b>Glitch in Matrix by ФорексГод</b> ✨\n🧠 AI-Powered • 💎 Smart Money"
+            sep = "────────────────"  # 16 chars — compact symmetric
+            branded_message = (
+                f"{message}\n\n"
+                f"  {sep}\n"
+                f"  🔱 <b>AUTHORED BY ФорексГод</b> 🔱\n"
+                f"  {sep}\n"
+                f"  🏛️ INSTITUTIONAL TERMINAL 🏛️"
+            )
             
             payload = {
                 'chat_id': self.telegram_chat_id,

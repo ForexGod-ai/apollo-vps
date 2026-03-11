@@ -1,389 +1,484 @@
 #!/usr/bin/env python3
 """
-🔍 AUDIT MONITORING SETUPS - Live Diagnostic Tool
-──────────────────
-✨ Glitch in Matrix by ФорексГод ✨
-🧠 AI-Powered • 💎 Smart Money
+🎯 LIVE MONITORING RADAR - V8.2
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Radar principal pentru monitorizarea setup-urilor active în timp real.
 
-Real-time analysis of all monitoring setups:
-- Reads monitoring_setups.json
-- Fetches LIVE prices from cTrader API
-- Analyzes each setup status (waiting, in-zone, invalidated)
-- Shows exact distance in pips to entry zone
+Features V8.2:
+✅ Strategy Type Display (REVERSAL/CONTINUITY)
+✅ Live Price Analysis (3 scenarii: WAITING/IN_ZONE/INVALIDATED)
+✅ Distance to FVG în pips
+✅ Tabel colorat cu status vizual
 
 Usage:
     python3 audit_monitoring_setups.py
-──────────────────
+    python3 audit_monitoring_setups.py --watch  # Auto-refresh la 30s
 """
 
 import json
 import sys
-import requests
 from datetime import datetime
-from pathlib import Path
-from loguru import logger
+from typing import Dict, List, Optional
+from dataclasses import dataclass
+from enum import Enum
 
-# Configure logger
-logger.remove()
-logger.add(
-    sys.stdout,
-    format="<level>{message}</level>",
-    level="INFO",
-    colorize=True
-)
-
-MONITORING_SETUPS_FILE = "monitoring_setups.json"
-CTRADER_API_URL = "http://localhost:8767/price"
+try:
+    from ctrader_cbot_client import CTraderCBotClient
+    CTRADER_AVAILABLE = True
+except ImportError:
+    CTRADER_AVAILABLE = False
+    print("⚠️  Warning: CTrader client not available. Using mock prices.")
 
 
-class SetupAuditor:
-    """Live diagnostic tool for monitoring setups"""
+class SetupStatus(Enum):
+    """Status-uri posibile pentru un setup în monitoring"""
+    WAITING_PULLBACK = "⏳ WAITING_PULLBACK"  # Prețul nu a atins FVG încă
+    IN_ZONE = "🎯 IN_ZONE"                     # Prețul în FVG - gata de execuție!
+    INVALIDATED = "🔴 INVALIDATED"             # Prețul a spart SL - setup invalid
+
+
+@dataclass
+class LiveSetup:
+    """Setup activ cu date live de preț"""
+    symbol: str
+    direction: str  # 'LONG' sau 'SHORT'
+    strategy_type: str  # 'REVERSAL' sau 'CONTINUITY'
+    entry_price: float
+    stop_loss: float
+    take_profit: float
+    risk_reward: float
+    fvg_top: float
+    fvg_bottom: float
+    current_price: float
+    status: SetupStatus
+    distance_pips: float  # Distanța până la FVG (sau distanța în FVG)
+    setup_time: str
+    priority: int
+    
+    def get_status_emoji(self) -> str:
+        """Emoji pentru status vizual"""
+        if self.status == SetupStatus.WAITING_PULLBACK:
+            return "⏳"
+        elif self.status == SetupStatus.IN_ZONE:
+            return "🎯"
+        else:
+            return "🔴"
+    
+    def get_direction_emoji(self) -> str:
+        """Emoji pentru direcție"""
+        return "🟢" if self.direction == "LONG" else "🔴"
+    
+    def get_strategy_emoji(self) -> str:
+        """Emoji pentru strategie"""
+        return "🔄" if self.strategy_type == "REVERSAL" else "➡️"
+
+
+class MonitoringRadar:
+    """Radar principal pentru monitorizare live"""
     
     def __init__(self):
-        self.base_path = Path(__file__).parent
-        self.setups_file = self.base_path / MONITORING_SETUPS_FILE
+        if CTRADER_AVAILABLE:
+            self.ctrader = CTraderCBotClient()
+            self.ctrader_connected = self.ctrader.is_available()
+            if self.ctrader_connected:
+                print("✅ cTrader cBot connected (live prices)")
+            else:
+                print("⚠️  cTrader cBot not running (using last known prices)")
+        else:
+            self.ctrader = None
+            self.ctrader_connected = False
     
-    def get_live_price(self, symbol: str) -> float:
-        """
-        Fetch live price from cTrader API
+    def get_current_price(self, symbol: str) -> Optional[float]:
+        """Obține prețul curent din cTrader"""
+        if not self.ctrader_connected:
+            return None
         
-        Args:
-            symbol: Trading pair (e.g., EURUSD, GBPJPY)
-        
-        Returns:
-            Current bid price or 0.0 if error
-        """
         try:
-            url = f"{CTRADER_API_URL}?symbol={symbol}"
-            response = requests.get(url, timeout=5)
+            # Fetch current price from cTrader cBot
+            import requests
+            response = requests.get(
+                f"http://localhost:8767/price",
+                params={"symbol": symbol},
+                timeout=2
+            )
             
             if response.status_code == 200:
                 data = response.json()
-                # MarketDataProvider returns bars array, use last close as current price
-                bars = data.get('bars', [])
-                if bars:
-                    return bars[-1].get('close', 0.0)
-                else:
-                    logger.warning(f"⚠️  No bars data for {symbol}")
-                    return 0.0
-            else:
-                logger.warning(f"⚠️  API error for {symbol}: {response.status_code}")
-                return 0.0
+                # Get bid price (for sell) or ask price (for buy)
+                # Use mid-price as approximation
+                bid = data.get('bid', 0)
+                ask = data.get('ask', 0)
+                if bid > 0 and ask > 0:
+                    return (bid + ask) / 2.0
+            
+            return None
         
         except Exception as e:
-            logger.error(f"❌ Failed to fetch price for {symbol}: {e}")
-            return 0.0
+            print(f"⚠️  Error fetching price for {symbol}: {e}")
+            return None
     
-    def calculate_pips(self, symbol: str, price1: float, price2: float) -> float:
+    def analyze_setup_status(
+        self, 
+        setup_data: Dict,
+        current_price: Optional[float]
+    ) -> tuple[SetupStatus, float]:
         """
-        Calculate distance in pips between two prices
-        
-        Args:
-            symbol: Trading pair
-            price1: First price
-            price2: Second price
+        Analizează statusul unui setup bazat pe prețul curent
         
         Returns:
-            Distance in pips (absolute value)
+            (status, distance_pips)
         """
-        # JPY pairs: 1 pip = 0.01
-        if 'JPY' in symbol:
-            pip_value = 0.01
-        # Gold (XAU): 1 pip = 0.10
-        elif 'XAU' in symbol:
-            pip_value = 0.10
-        # Most forex pairs: 1 pip = 0.0001
-        else:
-            pip_value = 0.0001
+        # Extract data
+        direction = setup_data.get('direction', 'SHORT').upper()
+        entry = setup_data.get('entry_price', 0)
+        stop_loss = setup_data.get('stop_loss', 0)
         
-        pips = abs(price1 - price2) / pip_value
-        return round(pips, 1)
-    
-    def parse_fvg_zone(self, fvg_zone_str: str) -> tuple:
-        """
-        Parse FVG zone string to extract top and bottom
+        # V8.2 FAIL-SAFE: Validate entry and stop_loss before calculations
+        if entry is None or entry == 0:
+            entry = 0
+        if stop_loss is None or stop_loss == 0:
+            stop_loss = 0
         
-        Args:
-            fvg_zone_str: String like "1.08234-1.08456" or "1.08234 - 1.08456"
+        # FVG zone (entry = middle of FVG în implementarea noastră)
+        fvg_top = setup_data.get('fvg_top', entry)
+        fvg_bottom = setup_data.get('fvg_bottom', entry)
         
-        Returns:
-            Tuple of (bottom, top) as floats
-        """
-        try:
-            # Remove spaces and split by dash
-            parts = fvg_zone_str.replace(' ', '').split('-')
-            if len(parts) == 2:
-                bottom = float(parts[0])
-                top = float(parts[1])
-                return (min(bottom, top), max(bottom, top))
+        # V8.2 FAIL-SAFE: Handle None in FVG fields
+        if fvg_top is None:
+            fvg_top = entry
+        if fvg_bottom is None:
+            fvg_bottom = entry
+        
+        # If no current price, assume waiting
+        if current_price is None:
+            # Calculate distance to FVG based on last known entry
+            if direction == "LONG":
+                distance = abs(entry - fvg_bottom) * 10000  # Convert to pips
             else:
-                return (0.0, 0.0)
-        except:
-            return (0.0, 0.0)
-    
-    def analyze_setup_status(self, setup: dict, current_price: float) -> dict:
-        """
-        Analyze setup status based on current price vs FVG zone
+                distance = abs(fvg_top - entry) * 10000
+            
+            return SetupStatus.WAITING_PULLBACK, distance
         
-        Args:
-            setup: Setup dictionary
-            current_price: Current market price
-        
-        Returns:
-            Status dictionary with analysis
-        """
-        direction = setup.get('direction', 'unknown').upper()
-        
-        # Get FVG zone from either format
-        fvg_zone = setup.get('fvg_zone', '')
-        if not fvg_zone:
-            # Try alternative format (fvg_zone_top/bottom)
-            fvg_top = setup.get('fvg_zone_top', 0)
-            fvg_bottom = setup.get('fvg_zone_bottom', 0)
-            if fvg_top and fvg_bottom:
-                fvg_zone = f"{fvg_bottom}-{fvg_top}"
-        
-        fvg_bottom, fvg_top = self.parse_fvg_zone(fvg_zone)
-        
-        if fvg_bottom == 0.0 or fvg_top == 0.0:
-            return {
-                'status': 'ERROR',
-                'reason': 'Invalid FVG zone format',
-                'emoji': '❌',
-                'color': 'red'
-            }
-        
-        fvg_mid = (fvg_bottom + fvg_top) / 2
-        symbol = setup.get('symbol', setup.get('pair', 'UNKNOWN'))
-        
-        # BUY SETUP (looking for bullish entry)
-        if direction == 'BUY':
-            if current_price > fvg_top:
+        # Analyze based on direction
+        if direction == "LONG":
+            # LONG Setup:
+            # - FVG below current market (discount zone)
+            # - WAITING: Price above FVG top
+            # - IN_ZONE: Price between FVG bottom and top
+            # - INVALIDATED: Price below stop loss
+            
+            if current_price < stop_loss:
+                # Price breached stop loss
+                distance = abs(current_price - stop_loss) * 10000
+                return SetupStatus.INVALIDATED, distance
+            
+            elif fvg_bottom <= current_price <= fvg_top:
+                # Price in FVG zone - READY!
+                distance = abs(current_price - entry) * 10000
+                return SetupStatus.IN_ZONE, distance
+            
+            else:
                 # Price above FVG - waiting for pullback
-                distance_pips = self.calculate_pips(symbol, current_price, fvg_top)
-                return {
-                    'status': 'WAITING_PULLBACK',
-                    'reason': f'Așteaptă pullback de {distance_pips} pips',
-                    'detail': f'Prețul ({current_price:.5f}) peste FVG ({fvg_top:.5f})',
-                    'emoji': '⏳',
-                    'color': 'yellow',
-                    'distance_pips': distance_pips
-                }
+                distance = abs(current_price - fvg_top) * 10000
+                return SetupStatus.WAITING_PULLBACK, distance
+        
+        else:  # SHORT
+            # SHORT Setup:
+            # - FVG above current market (premium zone)
+            # - WAITING: Price below FVG bottom
+            # - IN_ZONE: Price between FVG bottom and top
+            # - INVALIDATED: Price above stop loss
+            
+            if current_price > stop_loss:
+                # Price breached stop loss
+                distance = abs(current_price - stop_loss) * 10000
+                return SetupStatus.INVALIDATED, distance
             
             elif fvg_bottom <= current_price <= fvg_top:
-                # Price IN FVG - monitoring for confirmation
-                return {
-                    'status': 'IN_ZONE',
-                    'reason': f'Prețul este ÎN ZONĂ! Monitorizează 4H pentru CHoCH/Confirmare',
-                    'detail': f'Prețul ({current_price:.5f}) în FVG ({fvg_bottom:.5f}-{fvg_top:.5f})',
-                    'emoji': '🎯',
-                    'color': 'green',
-                    'distance_pips': 0.0
-                }
+                # Price in FVG zone - READY!
+                distance = abs(current_price - entry) * 10000
+                return SetupStatus.IN_ZONE, distance
             
             else:
-                # Price below FVG bottom - zone invalidated
-                distance_pips = self.calculate_pips(symbol, current_price, fvg_bottom)
-                return {
-                    'status': 'INVALIDATED',
-                    'reason': f'Zona invalidată (FVG spart cu {distance_pips} pips)',
-                    'detail': f'Prețul ({current_price:.5f}) sub FVG ({fvg_bottom:.5f})',
-                    'emoji': '🔴',
-                    'color': 'red',
-                    'distance_pips': distance_pips
-                }
-        
-        # SELL SETUP (looking for bearish entry)
-        elif direction == 'SELL':
-            if current_price < fvg_bottom:
-                # Price below FVG - waiting for pullback
-                distance_pips = self.calculate_pips(symbol, current_price, fvg_bottom)
-                return {
-                    'status': 'WAITING_PULLBACK',
-                    'reason': f'Așteaptă pullback de {distance_pips} pips',
-                    'detail': f'Prețul ({current_price:.5f}) sub FVG ({fvg_bottom:.5f})',
-                    'emoji': '⏳',
-                    'color': 'yellow',
-                    'distance_pips': distance_pips
-                }
-            
-            elif fvg_bottom <= current_price <= fvg_top:
-                # Price IN FVG - monitoring for confirmation
-                return {
-                    'status': 'IN_ZONE',
-                    'reason': f'Prețul este ÎN ZONĂ! Monitorizează 4H pentru CHoCH/Confirmare',
-                    'detail': f'Prețul ({current_price:.5f}) în FVG ({fvg_bottom:.5f}-{fvg_top:.5f})',
-                    'emoji': '🎯',
-                    'color': 'green',
-                    'distance_pips': 0.0
-                }
-            
-            else:
-                # Price above FVG top - zone invalidated
-                distance_pips = self.calculate_pips(symbol, current_price, fvg_top)
-                return {
-                    'status': 'INVALIDATED',
-                    'reason': f'Zona invalidată (FVG spart cu {distance_pips} pips)',
-                    'detail': f'Prețul ({current_price:.5f}) peste FVG ({fvg_top:.5f})',
-                    'emoji': '🔴',
-                    'color': 'red',
-                    'distance_pips': distance_pips
-                }
-        
-        return {
-            'status': 'UNKNOWN',
-            'reason': 'Direction unknown',
-            'emoji': '❓',
-            'color': 'gray'
-        }
+                # Price below FVG - waiting for retracement up
+                distance = abs(fvg_bottom - current_price) * 10000
+                return SetupStatus.WAITING_PULLBACK, distance
     
-    def load_setups(self) -> list:
-        """Load monitoring setups from JSON file"""
-        if not self.setups_file.exists():
-            logger.error(f"❌ File not found: {self.setups_file}")
+    def load_monitoring_setups(self) -> List[Dict]:
+        """Încarcă setup-urile din monitoring_setups.json"""
+        try:
+            with open('monitoring_setups.json', 'r') as f:
+                data = json.load(f)
+                
+                # Handle both formats (dict with 'setups' key or direct list)
+                if isinstance(data, dict):
+                    setups = data.get("setups", [])
+                elif isinstance(data, list):
+                    setups = data
+                else:
+                    print("⚠️  Invalid monitoring_setups.json format")
+                    return []
+                
+                # Filter only MONITORING status
+                active_setups = [
+                    s for s in setups 
+                    if isinstance(s, dict) and s.get('status') == 'MONITORING'
+                ]
+                
+                return active_setups
+        
+        except FileNotFoundError:
+            print("⚠️  monitoring_setups.json not found")
             return []
+        
+        except json.JSONDecodeError as e:
+            print(f"⚠️  Error parsing monitoring_setups.json: {e}")
+            return []
+    
+    def create_live_setup(self, setup_data: Dict) -> Optional[LiveSetup]:
+        """Creează un LiveSetup din datele JSON
+        
+        Returns:
+            LiveSetup object or None if data is corrupted/incomplete
+        """
+        symbol = setup_data.get('symbol', 'UNKNOWN')
+        
+        # V8.2 FAIL-SAFE: Validate critical fields first
+        entry_price = setup_data.get('entry_price')
+        stop_loss = setup_data.get('stop_loss')
+        take_profit = setup_data.get('take_profit')
+        
+        # Check for None/corrupted values in critical fields
+        if entry_price is None or stop_loss is None or take_profit is None:
+            print(f"⚠️  SKIPPED: Setup {symbol} is corrupted or missing data (Legacy setup)")
+            print(f"   └─ entry={entry_price}, SL={stop_loss}, TP={take_profit}")
+            return None
+        
+        # Validate numeric types
+        try:
+            entry_price = float(entry_price)
+            stop_loss = float(stop_loss)
+            take_profit = float(take_profit)
+        except (TypeError, ValueError):
+            print(f"⚠️  SKIPPED: Setup {symbol} has invalid numeric data")
+            return None
+        
+        # Get current price
+        current_price = self.get_current_price(symbol)
+        
+        # Analyze status
+        status, distance = self.analyze_setup_status(setup_data, current_price)
+        
+        # Extract direction
+        direction_raw = setup_data.get('direction', 'SHORT')
+        if isinstance(direction_raw, str):
+            direction = direction_raw.upper()
+        else:
+            # Fallback: derive from daily_choch if present
+            daily_choch = setup_data.get('daily_choch', {})
+            if isinstance(daily_choch, dict):
+                choch_dir = daily_choch.get('direction', 'bearish')
+                direction = "LONG" if choch_dir == 'bullish' else "SHORT"
+            else:
+                direction = "SHORT"
+        
+        # V8.2: Extract strategy type
+        strategy_type = setup_data.get('strategy_type', 'REVERSAL').upper()
+        if strategy_type not in ['REVERSAL', 'CONTINUITY']:
+            strategy_type = 'REVERSAL'  # Default fallback
+        
+        # Get FVG zone values (with fallback to entry_price)
+        fvg_top = setup_data.get('fvg_top', entry_price)
+        fvg_bottom = setup_data.get('fvg_bottom', entry_price)
+        
+        # Validate FVG fields
+        if fvg_top is None:
+            fvg_top = entry_price
+        if fvg_bottom is None:
+            fvg_bottom = entry_price
+        
+        # Create LiveSetup
+        return LiveSetup(
+            symbol=symbol,
+            direction=direction,
+            strategy_type=strategy_type,
+            entry_price=entry_price,
+            stop_loss=stop_loss,
+            take_profit=take_profit,
+            risk_reward=setup_data.get('risk_reward', 0) or 0,
+            fvg_top=fvg_top,
+            fvg_bottom=fvg_bottom,
+            current_price=current_price if current_price else entry_price,
+            status=status,
+            distance_pips=distance,
+            setup_time=setup_data.get('setup_time', 'Unknown'),
+            priority=setup_data.get('priority', 1)
+        )
+    
+    def print_radar_table(self, live_setups: List[LiveSetup]):
+        """Printează tabelul radar colorat"""
+        if not live_setups:
+            print("\n📭 No active setups in monitoring\n")
+            return
+        
+        # Header
+        print("\n" + "="*120)
+        print("🎯 LIVE MONITORING RADAR - V8.2")
+        print("="*120)
+        print(f"⏰ Scan Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"📊 Active Setups: {len(live_setups)}")
+        print("="*120)
+        
+        # Count by status
+        waiting_count = sum(1 for s in live_setups if s.status == SetupStatus.WAITING_PULLBACK)
+        in_zone_count = sum(1 for s in live_setups if s.status == SetupStatus.IN_ZONE)
+        invalid_count = sum(1 for s in live_setups if s.status == SetupStatus.INVALIDATED)
+        
+        print(f"\n⏳ WAITING: {waiting_count} | 🎯 IN ZONE: {in_zone_count} | 🔴 INVALIDATED: {invalid_count}\n")
+        
+        # Sort: IN_ZONE first, then WAITING, then INVALIDATED
+        status_priority = {
+            SetupStatus.IN_ZONE: 1,
+            SetupStatus.WAITING_PULLBACK: 2,
+            SetupStatus.INVALIDATED: 3
+        }
+        sorted_setups = sorted(live_setups, key=lambda s: status_priority[s.status])
+        
+        # Print each setup
+        for i, setup in enumerate(sorted_setups, 1):
+            self._print_setup_row(i, setup)
+        
+        print("="*120)
+        
+        # Summary recommendations
+        if in_zone_count > 0:
+            print(f"\n🔥 ACTION REQUIRED: {in_zone_count} setup(s) IN ZONE - Check 4H/1H for entry trigger!")
+        
+        if invalid_count > 0:
+            print(f"\n⚠️  CLEANUP REQUIRED: {invalid_count} setup(s) INVALIDATED - Consider removing from monitoring")
+        
+        print()
+    
+    def _print_setup_row(self, index: int, setup: LiveSetup):
+        """Printează un rând pentru un setup"""
+        # Status indicator
+        status_emoji = setup.get_status_emoji()
+        status_text = setup.status.value
+        
+        # Direction and strategy
+        dir_emoji = setup.get_direction_emoji()
+        strategy_emoji = setup.get_strategy_emoji()
+        
+        # Price info
+        price_str = f"{setup.current_price:.5f}" if setup.current_price > 0 else "N/A"
+        
+        # Distance display
+        if setup.status == SetupStatus.WAITING_PULLBACK:
+            distance_text = f"🔸 {setup.distance_pips:.1f} pips to FVG"
+        elif setup.status == SetupStatus.IN_ZONE:
+            distance_text = f"✅ IN FVG (±{setup.distance_pips:.1f} pips from entry)"
+        else:
+            distance_text = f"❌ SL breached by {setup.distance_pips:.1f} pips"
+        
+        # FVG zone
+        fvg_zone = f"[{setup.fvg_bottom:.5f} - {setup.fvg_top:.5f}]"
+        
+        # Print row
+        print(f"\n{index}. {status_emoji} {setup.symbol} {dir_emoji} {setup.direction} {strategy_emoji} {setup.strategy_type}")
+        print(f"   {status_text}")
+        print(f"   💰 Current Price: {price_str}")
+        print(f"   🎯 Entry: {setup.entry_price:.5f} | SL: {setup.stop_loss:.5f} | TP: {setup.take_profit:.5f}")
+        print(f"   📦 FVG Zone: {fvg_zone}")
+        print(f"   📏 {distance_text}")
+        print(f"   ⚡ R:R 1:{setup.risk_reward:.1f} | �� Setup: {setup.setup_time}")
+    
+    def run_radar_scan(self):
+        """Rulează un scan complet al tuturor setup-urilor"""
+        # Load setups
+        setups_data = self.load_monitoring_setups()
+        
+        if not setups_data:
+            print("\n📭 No active setups found in monitoring_setups.json\n")
+            return
+        
+        # Convert to LiveSetup objects
+        live_setups = []
+        skipped_count = 0
+        for setup_data in setups_data:
+            try:
+                live_setup = self.create_live_setup(setup_data)
+                
+                # V8.2 FAIL-SAFE: Skip if create_live_setup returned None (corrupted data)
+                if live_setup is None:
+                    skipped_count += 1
+                    continue
+                
+                live_setups.append(live_setup)
+            except Exception as e:
+                print(f"⚠️  Error processing setup {setup_data.get('symbol', 'UNKNOWN')}: {e}")
+                skipped_count += 1
+        
+        # Report skipped setups
+        if skipped_count > 0:
+            print(f"\n⚠️  Skipped {skipped_count} corrupted/incomplete setup(s)")
+            print("   Recommendation: Clean up monitoring_setups.json or re-run daily scanner\n")
+        
+        # Print radar table
+        self.print_radar_table(live_setups)
+    
+    def run_watch_mode(self, interval_seconds: int = 30):
+        """Rulează radar în modul watch (auto-refresh)"""
+        import time
+        
+        print("\n🔄 WATCH MODE ENABLED")
+        print(f"⏰ Auto-refresh every {interval_seconds} seconds")
+        print("Press Ctrl+C to stop\n")
         
         try:
-            with open(self.setups_file, 'r') as f:
-                data = json.load(f)
-            
-            setups = data.get('setups', [])
-            logger.info(f"✅ Loaded {len(setups)} setups from {self.setups_file.name}")
-            return setups
+            while True:
+                # Clear screen (works on Unix/Linux/Mac)
+                print("\033[2J\033[H", end="")
+                
+                # Run scan
+                self.run_radar_scan()
+                
+                # Wait
+                time.sleep(interval_seconds)
         
-        except Exception as e:
-            logger.error(f"❌ Failed to load setups: {e}")
-            return []
-    
-    def run_audit(self):
-        """Main audit function"""
-        print("\n" + "="*80)
-        print("🔍 MONITORING SETUPS - LIVE DIAGNOSTIC AUDIT")
-        print("="*80)
-        print(f"⏰ Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        print(f"📁 Source: {self.setups_file.name}")
-        print("="*80 + "\n")
-        
-        # Load setups
-        setups = self.load_setups()
-        
-        if not setups:
-            logger.warning("⚠️  No setups found!")
-            return
-        
-        # Filter only MONITORING status
-        active_setups = [s for s in setups if s.get('status', '').upper() == 'MONITORING']
-        
-        if not active_setups:
-            logger.warning("⚠️  No active MONITORING setups found!")
-            logger.info(f"ℹ️  Total setups: {len(setups)} (all closed or invalid)")
-            return
-        
-        logger.info(f"📊 Active setups: {len(active_setups)}/{len(setups)}\n")
-        
-        # Analyze each setup
-        for idx, setup in enumerate(active_setups, 1):
-            symbol = setup.get('symbol', setup.get('pair', 'UNKNOWN'))
-            direction = setup.get('direction', 'unknown').upper()
-            
-            # Get FVG zone
-            fvg_zone = setup.get('fvg_zone', '')
-            if not fvg_zone:
-                fvg_top = setup.get('fvg_zone_top', 0)
-                fvg_bottom = setup.get('fvg_zone_bottom', 0)
-                if fvg_top and fvg_bottom:
-                    fvg_zone = f"{fvg_bottom:.5f}-{fvg_top:.5f}"
-                else:
-                    fvg_zone = 'N/A'
-            
-            detected_at = setup.get('detected_at', setup.get('setup_time', 'N/A'))
-            
-            print(f"\n{'─'*80}")
-            print(f"📌 SETUP #{idx}: {symbol} - {direction}")
-            print(f"{'─'*80}")
-            
-            # Fetch live price
-            logger.info(f"📡 Fetching live price for {symbol}...")
-            current_price = self.get_live_price(symbol)
-            
-            if current_price == 0.0:
-                logger.error(f"❌ Could not fetch price for {symbol}")
-                print(f"   ⚠️  Status: API Error (cTrader connection failed)")
-                continue
-            
-            # Parse FVG zone
-            fvg_bottom, fvg_top = self.parse_fvg_zone(fvg_zone)
-            
-            # Analyze status
-            analysis = self.analyze_setup_status(setup, current_price)
-            
-            # Display results
-            print(f"   📊 Current Price: {current_price:.5f}")
-            print(f"   🎯 FVG Zone: {fvg_zone} (Bottom: {fvg_bottom:.5f}, Top: {fvg_top:.5f})")
-            print(f"   📅 Detected At: {detected_at}")
-            print(f"\n   {analysis['emoji']} STATUS: {analysis['status']}")
-            print(f"   💡 {analysis['reason']}")
-            
-            if 'detail' in analysis:
-                print(f"   ℹ️  {analysis['detail']}")
-            
-            if analysis.get('distance_pips', 0) > 0:
-                print(f"   📏 Distance: {analysis['distance_pips']} pips")
-            
-            # Additional info
-            if analysis['status'] == 'IN_ZONE':
-                print(f"\n   ✅ ACȚIUNE RECOMANDATĂ:")
-                print(f"      → Monitorizează următorul 4H candle close")
-                print(f"      → Așteaptă CHoCH (Change of Character)")
-                print(f"      → Verifică confluență cu Order Block")
-            
-            elif analysis['status'] == 'WAITING_PULLBACK':
-                print(f"\n   ⏳ ACȚIUNE RECOMANDATĂ:")
-                print(f"      → Așteaptă revenirea prețului în FVG zone")
-                print(f"      → Monitorizează rejection de la zona curentă")
-            
-            elif analysis['status'] == 'INVALIDATED':
-                print(f"\n   🔴 ACȚIUNE RECOMANDATĂ:")
-                print(f"      → Setup invalidat - șterge din monitoring")
-                print(f"      → Caută noi setups pe Daily timeframe")
-        
-        # Summary
-        print(f"\n{'='*80}")
-        print("📊 SUMMARY:")
-        print(f"{'='*80}")
-        
-        status_counts = {}
-        for setup in active_setups:
-            symbol = setup.get('symbol', setup.get('pair', ''))
-            current_price = self.get_live_price(symbol)
-            if current_price > 0:
-                analysis = self.analyze_setup_status(setup, current_price)
-                status = analysis['status']
-                status_counts[status] = status_counts.get(status, 0) + 1
-        
-        for status, count in status_counts.items():
-            emoji = '🎯' if status == 'IN_ZONE' else '⏳' if status == 'WAITING_PULLBACK' else '🔴'
-            print(f"   {emoji} {status}: {count} setup(s)")
-        
-        print(f"\n{'='*80}")
-        print("✅ AUDIT COMPLETE!")
-        print(f"{'='*80}\n")
+        except KeyboardInterrupt:
+            print("\n\n👋 Watch mode stopped\n")
 
 
 def main():
-    """Entry point"""
-    try:
-        auditor = SetupAuditor()
-        auditor.run_audit()
-    except KeyboardInterrupt:
-        print("\n\n⚠️  Audit interrupted by user")
-        sys.exit(0)
-    except Exception as e:
-        logger.error(f"❌ Fatal error: {e}")
-        import traceback
-        traceback.print_exc()
-        sys.exit(1)
+    """Main entry point"""
+    import argparse
+    
+    parser = argparse.ArgumentParser(
+        description='🎯 Live Monitoring Radar V8.2 - Track your active setups in real-time'
+    )
+    parser.add_argument(
+        '--watch',
+        action='store_true',
+        help='Enable watch mode (auto-refresh every 30s)'
+    )
+    parser.add_argument(
+        '--interval',
+        type=int,
+        default=30,
+        help='Refresh interval in seconds for watch mode (default: 30)'
+    )
+    
+    args = parser.parse_args()
+    
+    # Create radar
+    radar = MonitoringRadar()
+    
+    # Run
+    if args.watch:
+        radar.run_watch_mode(interval_seconds=args.interval)
+    else:
+        radar.run_radar_scan()
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
