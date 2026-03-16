@@ -271,7 +271,7 @@ class CTraderExecutor:
         
         self.signals_file = signals_file
         
-        # V9.1: Track rejected trades — 4h cooldown (anti-spam fix by POCOVNICU)
+        # V9.1: Track rejected trades — 4h cooldown (anti-spam fix by ФорексГод)
         self.rejected_trades = {}
         self.rejection_cooldown_seconds = 14400  # 4 hours
         
@@ -331,7 +331,7 @@ class CTraderExecutor:
                 return
             
             # Build message based on status
-            # V9.1 BRANDING — Correct V8.4 footer (R15 AUDIT FIX by POCOVNICU)
+            # V9.1 BRANDING — Correct V8.4 footer (ФорексГод)
             sep = "────────────────"  # 16 chars — compact symmetric
 
             if status == 'SUCCESS':
@@ -651,7 +651,11 @@ class CTraderExecutor:
                     "OrderBlockUsed": False,
                     "OrderBlockScore": 0,
                     "PremiumDiscountZone": "UNKNOWN",
-                    "DailyRangePercentage": 0.0
+                    "DailyRangePercentage": 0.0,
+                    
+                    # V10.3 STRATEGY TAGGING
+                    "Comment": comment,
+                    "StrategyTag": comment  # D1_4H_REVERSAL_SNIPER_E1 etc.
                 }
                 logger.warning(f"🚨 V5.6 BRUTE FORCE MODE: {symbol} with NO PIPS - using absolute prices only!")
             else:
@@ -679,7 +683,11 @@ class CTraderExecutor:
                     "OrderBlockUsed": order_block_used,
                     "OrderBlockScore": order_block_score,
                     "PremiumDiscountZone": premium_discount_zone,
-                    "DailyRangePercentage": round(daily_range_percentage, 1)
+                    "DailyRangePercentage": round(daily_range_percentage, 1),
+                    
+                    # ━━━ V10.3 STRATEGY TAGGING ━━━
+                    "Comment": comment,
+                    "StrategyTag": comment  # D1_4H_REVERSAL_SNIPER_E1 etc.
                 }
             
             # ──────────────────
@@ -860,7 +868,7 @@ class CTraderExecutor:
             logger.debug(f"📝 Rejection reason CATEGORY changed for {symbol}: {last_rejection['reason']} → {reason}")
             return True
         
-        # V9.1: Cooldown period elapsed (4 hours — anti-spam fix by POCOVNICU)
+        # V9.1: Cooldown period elapsed (4 hours — anti-spam fix by ФорексГод)
         elapsed_seconds = (now - last_rejection['timestamp']).total_seconds()
         if elapsed_seconds >= self.rejection_cooldown_seconds:
             self.rejected_trades[symbol]['timestamp'] = now

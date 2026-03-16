@@ -11,7 +11,7 @@ import fcntl
 import sys
 import atexit
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 from loguru import logger
 import requests
 import os
@@ -125,6 +125,13 @@ class RealtimeMonitor:
         self.discovered_setups: Dict[str, str] = {}  # symbol → setup_time ISO string
         self.monitoring_file = Path("monitoring_setups.json")
         logger.info("🚀 V9.0 AUTO-EXECUTION ENGINE initialized — autonomous setup discovery enabled")
+
+        # ━━━ MISSION 4: VPS H4 CACHE — 30min TTL to avoid hammering broker API ━━━
+        # Dict: symbol/timeframe → (dataframe, fetch_timestamp)
+        self._data_cache: Dict[str, Tuple[object, datetime]] = {}
+        self.H4_CACHE_TTL_MINUTES = 30  # H4 candles: refresh max once per 30min
+        self.D1_CACHE_TTL_MINUTES = 60  # D1 candles: refresh max once per 60min
+        self.H1_CACHE_TTL_MINUTES = 15  # H1 candles: refresh max once per 15min
         
         # Initialize analyzers
         for symbol in symbols:
@@ -187,7 +194,72 @@ class RealtimeMonitor:
         except Exception as e:
             logger.error(f"❌ Data download error {symbol}/{timeframe}: {e}")
             return None
+
+    def _get_historical_data_cached(self, symbol: str, timeframe: str, count: int) -> Optional[object]:
+        """
+        MISSION 4 — VPS-SAFE CACHED FETCH.
+        Returns cached data if still fresh, otherwise fetches and caches.
+        H4=30min TTL | D1=60min TTL | H1=15min TTL
+        """
+        ttl_map = {
+            "H4": self.H4_CACHE_TTL_MINUTES,
+            "D1": self.D1_CACHE_TTL_MINUTES,
+            "H1": self.H1_CACHE_TTL_MINUTES,
+        }
+        ttl_minutes = ttl_map.get(timeframe, 30)
+        cache_key = f"{symbol}_{timeframe}"
+        now = datetime.now()
+
+        # Check cache validity
+        if cache_key in self._data_cache:
+            cached_df, cached_at = self._data_cache[cache_key]
+            age_minutes = (now - cached_at).total_seconds() / 60
+            if age_minutes < ttl_minutes:
+                logger.debug(f"💾 CACHE HIT {symbol}/{timeframe} — age {age_minutes:.1f}min (TTL={ttl_minutes}min)")
+                return cached_df
+            else:
+                logger.debug(f"🔄 CACHE EXPIRED {symbol}/{timeframe} — age {age_minutes:.1f}min → refreshing")
+
+        # Cache miss or expired — fetch fresh data
+        df = self._get_historical_data(symbol, timeframe, count)
+        if df is not None:
+            self._data_cache[cache_key] = (df, now)
+            logger.debug(f"📥 CACHED {symbol}/{timeframe} at {now.strftime('%H:%M:%S')}")
+        return df
     
+    # ━━━ AUDIT: PIP_MULTIPLIER — Instrument-aware (XAU/JPY=100, BTC=1, forex=10000) ━━━
+
+    def _get_pip_multiplier(self, symbol: str) -> int:
+        """
+        Returns pip multiplier for distance calculations and price display.
+        XAU (Gold): 100 | JPY pairs: 100 | BTC/Crypto: 1 | All other forex: 10000
+        """
+        sym = symbol.upper()
+        if 'XAU' in sym or 'GOLD' in sym:
+            return 100
+        if 'JPY' in sym:
+            return 100
+        if 'BTC' in sym or 'ETH' in sym or 'XRP' in sym or 'LTC' in sym:
+            return 1
+        return 10000
+
+    def _price_decimals(self, symbol: str) -> int:
+        """
+        Returns decimal places for price display per instrument.
+        XAU/BTC: 2 | JPY: 3 | All other forex: 5
+        """
+        sym = symbol.upper()
+        if 'XAU' in sym or 'GOLD' in sym or 'BTC' in sym:
+            return 2
+        if 'JPY' in sym:
+            return 3
+        return 5
+
+    def _fmt_price(self, price: float, symbol: str) -> str:
+        """Format price with correct decimal places per instrument."""
+        dec = self._price_decimals(symbol)
+        return f"{price:.{dec}f}"
+
     def _discover_setup(self, symbol: str, narrative: MarketNarrative) -> Optional[dict]:
         """
         V9.0 AUTO-EXECUTION: Run full SMC scan to discover concrete TradeSetup.
@@ -213,9 +285,9 @@ class RealtimeMonitor:
             
             logger.info(f"🔬 V9.0 DISCOVERY: Scanning {symbol} (priority={priority})...")
             
-            df_daily = self._get_historical_data(symbol, "D1", daily_count)
-            df_4h = self._get_historical_data(symbol, "H4", h4_count)
-            df_1h = self._get_historical_data(symbol, "H1", h1_count)
+            df_daily = self._get_historical_data_cached(symbol, "D1", daily_count)
+            df_4h = self._get_historical_data_cached(symbol, "H4", h4_count)
+            df_1h = self._get_historical_data_cached(symbol, "H1", h1_count)
             
             if df_daily is None or df_4h is None:
                 logger.warning(f"⚠️ {symbol}: Cannot download D1/H4 data for setup discovery")
@@ -252,6 +324,30 @@ class RealtimeMonitor:
             fvg_top = setup.fvg.top if setup.fvg and hasattr(setup.fvg, 'top') else setup.entry_price
             fvg_bottom = setup.fvg.bottom if setup.fvg and hasattr(setup.fvg, 'bottom') else setup.entry_price
             
+            # ── TODO-4 SYNC GUARD: Validate h4_sync_fvg fields ─────────────
+            h4_sync_top_raw = getattr(setup, 'h4_sync_fvg_top', None)
+            h4_sync_bot_raw = getattr(setup, 'h4_sync_fvg_bottom', None)
+            h4_sync_top = float(h4_sync_top_raw) if h4_sync_top_raw and float(h4_sync_top_raw) > 0 else 0.0
+            h4_sync_bot = float(h4_sync_bot_raw) if h4_sync_bot_raw and float(h4_sync_bot_raw) > 0 else 0.0
+
+            if h4_sync_top == 0.0 or h4_sync_bot == 0.0:
+                logger.warning(
+                    f"⚠️ {symbol}: h4_sync_fvg missing or zero — "
+                    f"setup lacks 4H Handshake confirmation. "
+                    f"Tagging as NEEDS_RESCAN, skipping auto-arm."
+                )
+                # Do NOT save to monitoring — force a re-scan next cycle
+                return None
+
+            # ── TODO-4: Validate strategy_locked flag ─────────────────────────
+            strategy_locked = getattr(setup, 'strategy_locked', None)
+            if strategy_locked is False:
+                logger.warning(
+                    f"⚠️ {symbol}: strategy_locked=False — D1 bias not confirmed. "
+                    f"Rejecting setup until daily_scanner re-locks bias."
+                )
+                return None
+
             monitoring_dict = {
                 "symbol": setup.symbol,
                 "direction": "buy" if setup.daily_choch.direction == "bullish" else "sell",
@@ -259,14 +355,18 @@ class RealtimeMonitor:
                 "stop_loss": float(setup.stop_loss),
                 "take_profit": float(setup.take_profit),
                 "risk_reward": float(setup.risk_reward) if setup.risk_reward else 0.0,
-                "strategy_type": setup.strategy_type,
+                "strategy_type": setup.strategy_type,  # D1 bias: 'reversal' or 'continuation'
+                "strategy_locked": True,  # Only reaches here if locked
                 "setup_time": setup_time_str,
                 "priority": setup.priority,
                 "status": setup.status,  # MONITORING or READY
                 "fvg_top": float(fvg_top) if fvg_top is not None else float(setup.entry_price),
                 "fvg_bottom": float(fvg_bottom) if fvg_bottom is not None else float(setup.entry_price),
                 "lot_size": 0.01,
-                "source": "V9.0_AUTO_DISCOVERY"  # Tag auto-discovered setups
+                "source": "V9.0_AUTO_DISCOVERY",
+                # 4H Sync FVG — entry zone from 4H confirmation move (validated above)
+                "h4_sync_fvg_top": h4_sync_top,
+                "h4_sync_fvg_bottom": h4_sync_bot,
             }
             
             strategy = setup.strategy_type.upper() if hasattr(setup, 'strategy_type') else "UNKNOWN"
@@ -348,10 +448,147 @@ class RealtimeMonitor:
             
         except Exception as e:
             logger.error(f"❌ Failed to save setup for {setup_dict.get('symbol', '?')}: {e}")
-    
+
+    # ━━━ AUDIT: CLEANUP — Remove EXPIRED/CLOSED setups to save VPS CPU/RAM ━━━
+
+    def _cleanup_expired_setups(self):
+        """
+        VPS CLEANUP: Remove setups with status EXPIRED, CLOSED, CANCELLED, or FILLED
+        from monitoring_setups.json.
+        Called once per 4H cycle. Keeps file lean — no stale data accumulating.
+        """
+        try:
+            if not self.monitoring_file.exists():
+                return
+
+            with open(self.monitoring_file, 'r') as f:
+                data = json.load(f)
+
+            setups = data.get('setups', []) if isinstance(data, dict) else data
+            if not isinstance(setups, list):
+                return
+
+            DEAD_STATUSES = {'EXPIRED', 'CLOSED', 'CANCELLED', 'FILLED', 'INVALIDATED'}
+            active = [s for s in setups if s.get('status', '').upper() not in DEAD_STATUSES]
+            removed = len(setups) - len(active)
+
+            if removed > 0:
+                monitoring_data = {
+                    "setups": active,
+                    "last_updated": datetime.now().isoformat()
+                }
+                tmp_file = self.monitoring_file.with_suffix('.tmp')
+                with open(tmp_file, 'w') as f:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+                    json.dump(monitoring_data, f, indent=2)
+                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+                tmp_file.rename(self.monitoring_file)
+                logger.info(f"🧹 CLEANUP: Removed {removed} dead setup(s) from monitoring_setups.json ({len(active)} active remaining)")
+            else:
+                logger.debug(f"🧹 CLEANUP: No dead setups found ({len(active)} active)")
+
+        except Exception as e:
+            logger.error(f"❌ Cleanup error: {e}")
+
+    # ━━━ MISSION 1: BIAS AWARENESS — Read strategy_type from monitoring_setups.json ━━━
+
+    def _get_setup_from_monitoring(self, symbol: str) -> Optional[dict]:
+        """
+        MISSION 1 + TODO-4: Read the current monitoring setup for a symbol from disk.
+        Also validates: strategy_locked=True, h4_sync_fvg_top/bottom > 0.
+        Logs a warning if handshake fields are missing so operator knows re-scan needed.
+        Returns the setup dict or None.
+        """
+        try:
+            if not self.monitoring_file.exists():
+                return None
+            with open(self.monitoring_file, 'r') as f:
+                data = json.load(f)
+            setups = data.get('setups', []) if isinstance(data, dict) else data
+            for s in setups:
+                if s.get('symbol') == symbol:
+                    # Warn if handshake fields missing — operator should re-run scanner
+                    h4_top = s.get('h4_sync_fvg_top', 0.0)
+                    h4_bot = s.get('h4_sync_fvg_bottom', 0.0)
+                    locked = s.get('strategy_locked', None)
+                    if not h4_top or float(h4_top) == 0.0 or not h4_bot or float(h4_bot) == 0.0:
+                        logger.warning(
+                            f"⚠️ {symbol}: Disk setup missing h4_sync_fvg — "
+                            f"run daily_scanner.py to refresh 4H Handshake data"
+                        )
+                    if locked is not True:
+                        logger.warning(
+                            f"⚠️ {symbol}: strategy_locked != True on disk "
+                            f"(locked={locked}) — D1 bias unconfirmed"
+                        )
+                    return s
+            return None
+        except Exception as e:
+            logger.debug(f"⚠️ Could not read setup from monitoring for {symbol}: {e}")
+            return None
+
+    # ━━━ MISSION 2: 4H BODY CLOSURE GUARD ━━━
+
+    def _check_4h_body_closure(self, symbol: str) -> Tuple[bool, str]:
+        """
+        MISSION 2: Fetch the last closed 4H candle and verify it closed with a REAL BODY.
+        Returns (body_closed: bool, reason: str).
+        "Generalul 4H must close with a body — wicks don't count!"
+        """
+        try:
+            df_4h = self._get_historical_data_cached(symbol, "H4", 5)
+            if df_4h is None or len(df_4h) < 2:
+                return False, "4H data unavailable"
+
+            # Last CLOSED candle = second-to-last row (last row = current forming candle)
+            candle = df_4h.iloc[-2]
+
+            open_price = float(candle.get('open', candle.get('Open', 0)))
+            close_price = float(candle.get('close', candle.get('Close', 0)))
+            high_price = float(candle.get('high', candle.get('High', 0)))
+            low_price = float(candle.get('low', candle.get('Low', 0)))
+
+            if open_price == 0 or close_price == 0:
+                return False, "4H candle data malformed"
+
+            body_size = abs(close_price - open_price)
+            candle_range = high_price - low_price if high_price > low_price else 0
+
+            # Body must be > 30% of total candle range (not a doji/spinning top)
+            if candle_range > 0:
+                body_ratio = body_size / candle_range
+            else:
+                body_ratio = 0.0
+
+            body_direction = "BULLISH" if close_price > open_price else "BEARISH"
+
+            if body_size > 0 and body_ratio >= 0.30:
+                reason = (
+                    f"4H {body_direction} body ✅ "
+                    f"O={self._fmt_price(open_price, symbol)} "
+                    f"C={self._fmt_price(close_price, symbol)} "
+                    f"body_ratio={body_ratio:.0%}"
+                )
+                logger.info(f"   ✅ {symbol} 4H body closure confirmed: {reason}")
+                return True, reason
+            else:
+                reason = (
+                    f"4H WICK/DOJI ❌ "
+                    f"O={self._fmt_price(open_price, symbol)} "
+                    f"C={self._fmt_price(close_price, symbol)} "
+                    f"body_ratio={body_ratio:.0%} < 30%"
+                )
+                logger.warning(f"   ❌ {symbol} 4H body closure FAILED: {reason}")
+                return False, reason
+
+        except Exception as e:
+            logger.error(f"❌ 4H body closure check error for {symbol}: {e}")
+            return False, f"check error: {e}"
+
     def _send_auto_discovery_alert(self, setup_dict: dict):
         """
         V9.0: Send Telegram notification when a new setup is auto-discovered.
+        MISSION 3: Format — SYMBOL | STRATEGY | STATUS
         ONE message per setup — no spam.
         """
         try:
@@ -363,27 +600,25 @@ class RealtimeMonitor:
             rr = setup_dict['risk_reward']
             strategy = setup_dict.get('strategy_type', 'UNKNOWN').upper()
             status = setup_dict['status']
-            
-            strategy_emoji = "🔄" if strategy == "REVERSAL" else "➡️"
+
+            strategy_emoji = "🔄" if strategy == "REVERSAL" else ("➡️" if strategy == "CONTINUITY" else "❓")
             dir_emoji = "🟢" if direction == "BUY" else "🔴"
-            
-            message = f"""
-🤖 <b>V9.0 AUTO-DISCOVERY</b>
+            status_label = "READY TO TRADE" if status == "READY" else "MONITORING — WAITING FOR 4H BODY CLOSURE"
 
-{dir_emoji} <b>{symbol} — {direction}</b>
-{strategy_emoji} Strategy: <b>{strategy}</b>
+            message = (
+                f"🤖 <b>V9.0 AUTO-DISCOVERY</b>\n\n"
+                f"{dir_emoji} <b>{symbol} | {strategy} | {status_label}</b>\n\n"
+                f"{strategy_emoji} Strategy: <b>{strategy}</b>\n"
+                f"📍 Entry: <code>{entry:.5f}</code>\n"
+                f"🛡️ SL:    <code>{sl:.5f}</code>\n"
+                f"🎯 TP:    <code>{tp:.5f}</code>\n"
+                f"📊 R:R:   <code>1:{rr:.1f}</code>\n\n"
+                f"📋 Status: <b>{status}</b>\n"
+                f"⚡ <i>Auto-detected at 4H candle close — execution engine armed</i>"
+            )
 
-📍 Entry: <code>{entry:.5f}</code>
-🛡️ SL: <code>{sl:.5f}</code>
-🎯 TP: <code>{tp:.5f}</code>
-📊 R:R: <code>1:{rr:.1f}</code>
-
-📋 Status: <b>{status}</b>
-⚡ <i>Auto-detected at 4H candle close — execution engine armed</i>
-"""
-            
             self._send_telegram(message)
-            logger.info(f"📱 V9.0 auto-discovery alert sent for {symbol}")
+            logger.info(f"📱 V9.0 auto-discovery alert sent for {symbol} [{strategy}]")
             
         except Exception as e:
             logger.error(f"❌ Auto-discovery alert error: {e}")
@@ -413,6 +648,9 @@ class RealtimeMonitor:
                 self._wait_for_next_candle_close()
                 continue
             
+            # VPS CLEANUP: Remove dead setups before processing
+            self._cleanup_expired_setups()
+
             for symbol in self.symbols:
                 try:
                     self._check_symbol(symbol)
@@ -557,36 +795,85 @@ class RealtimeMonitor:
             # ❌ INVALIDATED - setup invalidated
             self._send_invalidation_alert(symbol, narrative)
     
+    @staticmethod
+    def _symbols_grid(symbols: list, cols: int = 3, max_rows: int = 5) -> str:
+        """
+        Render a list of symbols as a mobile-friendly grid.
+        Accepts plain strings OR (symbol, label) tuples.
+          str   → '• XAUUSD'
+          tuple → '• XAUUSD [REV-🔒]'
+        max_rows * cols = max symbols shown before '+ N more'.
+        """
+        max_show = cols * max_rows
+        shown = symbols[:max_show]
+        remaining = len(symbols) - len(shown)
+        lines = []
+        for i in range(0, len(shown), cols):
+            row = shown[i:i + cols]
+            cells = []
+            for item in row:
+                if isinstance(item, tuple):
+                    sym, lbl = item[0], item[1]
+                    cells.append(f"• {sym} {lbl}")
+                else:
+                    cells.append(f"• {item:<7}")
+            lines.append("  " + "  ".join(cells))
+        grid = "\n".join(lines)
+        if remaining > 0:
+            grid += f"\n  + {remaining} more"
+        return grid
+
     def _send_startup_summary(self, ready_count: int, monitor_count: int, wait_count: int):
         """
-        V8.5: ONE compact message after initial scan — replaces 16 individual alerts
+        ONE compact message after initial scan — replaces N individual alerts.
+        Mobile-friendly 3-column grid for symbol lists.
         """
         try:
-            # Collect monitoring symbols for the summary
+            # ── Build labeled symbol tuples: (symbol, '[REV-🔒]') ──
+            def _strategy_label(sym: str) -> str:
+                """Return '[REV-🔒]' / '[CNT-🔒]' / '[🔓]' based on monitoring_setups.json"""
+                try:
+                    setup = self._get_setup_from_monitoring(sym)
+                    if not setup:
+                        return ''
+                    stype = setup.get('strategy_type', '').upper()
+                    locked = setup.get('strategy_locked', False)
+                    if stype in ('REVERSAL',):
+                        tag = 'REV'
+                    elif stype in ('CONTINUATION', 'CONTINUITY'):
+                        tag = 'CNT'
+                    else:
+                        tag = ''
+                    lock_icon = '🔒' if locked else '🔓'
+                    return f'[{tag}-{lock_icon}]' if tag else f'[{lock_icon}]'
+                except Exception:
+                    return ''
+
             monitoring_symbols = [
-                sym for sym, rec in self.last_recommendations.items()
+                (sym, _strategy_label(sym))
+                for sym, rec in self.last_recommendations.items()
                 if rec == 'monitor_closely'
             ]
             ready_symbols = [
-                sym for sym, rec in self.last_recommendations.items()
+                (sym, _strategy_label(sym))
+                for sym, rec in self.last_recommendations.items()
                 if rec == 'ready_to_trade'
             ]
-            
-            message = f"""🛰️ <b>WATCHDOG SYNC COMPLETE</b>
 
-📡 Monitoring <b>{len(self.symbols)}</b> pairs
-"""
+            message = (
+                f"🛰️ <b>WATCHDOG SYNC COMPLETE</b>\n\n"
+                f"📡 Monitoring <b>{len(self.symbols)}</b> pairs\n"
+            )
+
             if ready_count > 0:
-                symbols_text = ", ".join(f"<code>{s}</code>" for s in ready_symbols)
-                message += f"\n🔥 <b>Ready:</b> {symbols_text}\n"
-            
+                grid = self._symbols_grid(ready_symbols, cols=3)
+                message += f"\n🔥 <b>Ready ({ready_count}):</b>\n{grid}\n"
+
             if monitor_count > 0:
-                symbols_text = ", ".join(f"<code>{s}</code>" for s in monitoring_symbols[:8])
-                if len(monitoring_symbols) > 8:
-                    symbols_text += f" +{len(monitoring_symbols) - 8} more"
-                message += f"\n👀 <b>Pândă ({monitor_count}):</b> {symbols_text}\n"
-            
-            message += f"⏳ <b>Waiting:</b> {wait_count}"
+                grid = self._symbols_grid(monitoring_symbols, cols=3)
+                message += f"\n👀 <b>Pândă ({monitor_count}):</b>\n{grid}\n"
+
+            message += f"\n⏳ <b>Waiting:</b> {wait_count}"
             
             self._send_telegram(message)
             logger.info(f"🛰️ Startup summary sent (ready={ready_count}, monitor={monitor_count}, wait={wait_count})")
@@ -613,79 +900,149 @@ Consecutive cycles: {consecutive_count}
     
     def _send_ready_alert(self, symbol: str, narrative: MarketNarrative):
         """
-        🚨 READY TO TRADE - toate confirmările prezente!
+        MISSION 2+3: READY TO TRADE — 4H Body Closure Gate + Strategy/Bias in message.
+        "Generalul 4H must close with body — wicks don't count!"
         """
         try:
-            scenarios = narrative.expected_scenarios if hasattr(narrative, 'expected_scenarios') else []
-            
-            if not scenarios:
-                logger.debug(f"Skipping ready alert for {symbol} - no scenarios")
+            # ── MISSION 2: 4H BODY CLOSURE GATE ──────────────────────────────
+            body_closed, body_reason = self._check_4h_body_closure(symbol)
+            if not body_closed:
+                # 4H closed as wick/doji — downgrade alert to WAITING
+                logger.warning(
+                    f"🚫 {symbol}: READY suppressed — 4H body closure FAILED ({body_reason})"
+                )
+                # Send a WAITING alert instead of READY
+                self._send_waiting_body_closure_alert(symbol, body_reason)
                 return
-            
-            scenarios_text = "\n".join(f"• {s}" for s in scenarios[:3])
-            
-            message = f"""
-🚨🔥 <b>{symbol} - READY TO TRADE!</b> 🔥🚨
 
-<b>💪 Confidence:</b> {narrative.confidence:.0%}
+            # ── MISSION 1: BIAS AWARENESS — read strategy_type from disk ─────
+            setup = self._get_setup_from_monitoring(symbol)
+            strategy_type = "UNKNOWN"
+            direction = "N/A"
+            entry = sl = tp = rr = None
+            if setup:
+                strategy_type = setup.get('strategy_type', 'UNKNOWN').upper()
+                direction = setup.get('direction', 'N/A').upper()
+                entry = setup.get('entry_price')
+                sl = setup.get('stop_loss')
+                tp = setup.get('take_profit')
+                rr = setup.get('risk_reward')
 
-<b>📊 SCENARIOS:</b>
-{scenarios_text}
+            strategy_emoji = "🔄" if strategy_type == "REVERSAL" else ("➡️" if strategy_type == "CONTINUITY" else "❓")
+            dir_emoji = "🟢" if direction == "BUY" else ("🔴" if direction == "SELL" else "⚪")
 
-<b>✅ ALL CONFIRMATIONS PRESENT - EXECUTE NOW!</b>
+            scenarios = narrative.expected_scenarios if hasattr(narrative, 'expected_scenarios') else []
+            scenarios_text = "\n".join(f"• {s}" for s in scenarios[:3]) if scenarios else "• Execution conditions met"
 
-<b>🔍 MARKET STATE:</b>
-• Structure: {narrative.condition.value}
-• CHoCH Count: {narrative.choch_count}
-• FVG Count: {narrative.fvg_count}
-• Volatility: {narrative.volatility_level}
-"""
-            
+            # Build entry/SL/TP lines only if available — instrument-aware decimals
+            levels_text = ""
+            if entry is not None and sl is not None and tp is not None:
+                levels_text = (
+                    f"\n📍 Entry: <code>{self._fmt_price(entry, symbol)}</code>"
+                    f"\n🛡️ SL:    <code>{self._fmt_price(sl, symbol)}</code>"
+                    f"\n🎯 TP:    <code>{self._fmt_price(tp, symbol)}</code>"
+                    + (f"\n📊 R:R:   <code>1:{rr:.1f}</code>" if rr else "")
+                )
+
+            message = (
+                f"🚨🔥 <b>{symbol} | {strategy_type} | READY TO TRADE!</b> 🔥🚨\n\n"
+                f"{dir_emoji} Direction: <b>{direction}</b>\n"
+                f"{strategy_emoji} Strategy: <b>{strategy_type}</b>\n"
+                f"💪 Confidence: <b>{narrative.confidence:.0%}</b>\n"
+                f"✅ 4H Body: <b>CONFIRMED</b> — {body_reason}\n"
+                f"{levels_text}\n\n"
+                f"<b>📊 SCENARIOS:</b>\n{scenarios_text}\n\n"
+                f"<b>✅ ALL CONFIRMATIONS PRESENT — EXECUTE NOW!</b>\n\n"
+                f"<b>🔍 MARKET STATE:</b>\n"
+                f"• Structure: {narrative.condition.value}\n"
+                f"• CHoCH Count: {narrative.choch_count}\n"
+                f"• FVG Count: {narrative.fvg_count}\n"
+                f"• Volatility: {narrative.volatility_level}"
+            )
+
             self._send_telegram(message)
-            logger.info(f"🚨 READY ALERT sent for {symbol}")
+            logger.info(f"🚨 READY ALERT sent for {symbol} [{strategy_type}]")
         except Exception as e:
             logger.debug(f"Could not send ready alert for {symbol}: {e}")
-    
-    def _send_monitoring_alert(self, symbol: str, narrative: MarketNarrative):
+
+    def _send_waiting_body_closure_alert(self, symbol: str, body_reason: str):
         """
-        👀 MONITOR CLOSELY - setup forming
+        MISSION 2+3: 4H candle closed as wick/doji — notify WAITING FOR 4H BODY CLOSURE.
+        Prevents false READY signals from wick-only 4H closes.
         """
         try:
-            scenarios = narrative.expected_scenarios if hasattr(narrative, 'expected_scenarios') else []
-            
-            if not scenarios:
-                logger.debug(f"Skipping alert for {symbol} - no scenarios")
-                return
-            
-            scenarios_text = "\n".join(f"• {s}" for s in scenarios[:3])
-            
-            message = f"""
-👀 <b>{symbol} - MONITOR CLOSELY</b>
+            setup = self._get_setup_from_monitoring(symbol)
+            strategy_type = setup.get('strategy_type', 'UNKNOWN').upper() if setup else "UNKNOWN"
+            direction = setup.get('direction', 'N/A').upper() if setup else "N/A"
+            status = setup.get('status', 'MONITORING') if setup else "MONITORING"
+            strategy_emoji = "🔄" if strategy_type == "REVERSAL" else ("➡️" if strategy_type == "CONTINUITY" else "❓")
+            dir_emoji = "🟢" if direction == "BUY" else ("🔴" if direction == "SELL" else "⚪")
 
-<b>📊 SCENARIO:</b>
-{scenarios_text}
-
-<b>⏳ WAITING FOR:</b>
-"""
-            
-            for conf in narrative.waiting_for[:5]:
-                message += f"• {conf.replace('_', ' ').title()}\n"
-            
-            conf_display = f"{narrative.confidence:.0%}" if narrative.confidence > 0 else "🔄 SYNCING WITH MARKET DNA..."
-            setup_display = narrative.setup_status.replace('_', ' ').title()
-            if setup_display.lower() in ('error', 'data unavailable', 'data_unavailable'):
-                setup_display = "🔍 MAPPING LIQUIDITY..."
-            
-            message += f"""
-<b>🔍 STATUS:</b>
-• Confidence: {conf_display}
-• Setup: {setup_display}
-
-🔔 <i>Will alert when READY!</i>
-            """
-            
+            message = (
+                f"⏳ <b>{symbol} | {strategy_type} | WAITING FOR 4H BODY CLOSURE</b>\n\n"
+                f"{dir_emoji} Direction: <b>{direction}</b>\n"
+                f"{strategy_emoji} Strategy: <b>{strategy_type}</b>\n"
+                f"📋 Status: <b>{status}</b>\n\n"
+                f"❌ 4H Body: <b>NOT CONFIRMED</b>\n"
+                f"<i>Reason: {body_reason}</i>\n\n"
+                f"⚠️ <b>Generalul 4H must close with body — wicks don't count!</b>\n"
+                f"🔔 <i>Will re-check at next 4H candle close</i>"
+            )
             self._send_telegram(message)
-            logger.info(f"👀 Monitoring alert sent for {symbol}")
+            logger.info(f"⏳ WAITING-BODY-CLOSURE alert sent for {symbol} [{strategy_type}]")
+        except Exception as e:
+            logger.debug(f"Could not send waiting body closure alert for {symbol}: {e}")
+
+    def _send_monitoring_alert(self, symbol: str, narrative: MarketNarrative):
+        """
+        MISSION 3: MONITOR CLOSELY — shows strategy_type + D1 bias in Telegram.
+        Format: XAUUSD | REVERSAL | PRICE IN D1 ZONE
+        """
+        try:
+            # ── MISSION 1: Read strategy_type from disk ───────────────────────
+            setup = self._get_setup_from_monitoring(symbol)
+            strategy_type = "UNKNOWN"
+            direction = "N/A"
+            fvg_top = fvg_bottom = None
+            if setup:
+                strategy_type = setup.get('strategy_type', 'UNKNOWN').upper()
+                direction = setup.get('direction', 'N/A').upper()
+                fvg_top = setup.get('fvg_top') or setup.get('h4_sync_fvg_top')
+                fvg_bottom = setup.get('fvg_bottom') or setup.get('h4_sync_fvg_bottom')
+
+            strategy_emoji = "🔄" if strategy_type == "REVERSAL" else ("➡️" if strategy_type == "CONTINUITY" else "❓")
+            dir_emoji = "🟢" if direction == "BUY" else ("🔴" if direction == "SELL" else "⚪")
+
+            scenarios = narrative.expected_scenarios if hasattr(narrative, 'expected_scenarios') else []
+            scenarios_text = "\n".join(f"• {s}" for s in scenarios[:3]) if scenarios else "• Setup forming..."
+
+            # FVG zone lines — instrument-aware decimal display
+            zone_text = ""
+            if fvg_top and fvg_bottom and float(fvg_top) > 0 and float(fvg_bottom) > 0:
+                zone_text = (
+                    f"\n📦 D1 Zone: <code>{self._fmt_price(float(fvg_bottom), symbol)}</code>"
+                    f" → <code>{self._fmt_price(float(fvg_top), symbol)}</code>"
+                )
+
+            waiting_lines = ""
+            for conf in narrative.waiting_for[:5]:
+                waiting_lines += f"• {conf.replace('_', ' ').title()}\n"
+
+            conf_display = f"{narrative.confidence:.0%}" if narrative.confidence > 0 else "🔄 SYNCING..."
+
+            message = (
+                f"👀 <b>{symbol} | {strategy_type} | PRICE IN D1 ZONE</b>\n\n"
+                f"{dir_emoji} Direction: <b>{direction}</b>\n"
+                f"{strategy_emoji} Strategy: <b>{strategy_type}</b>\n"
+                f"💪 Confidence: <b>{conf_display}</b>"
+                f"{zone_text}\n\n"
+                f"<b>📊 SCENARIO:</b>\n{scenarios_text}\n\n"
+                f"<b>⏳ WAITING FOR:</b>\n{waiting_lines}"
+                f"\n🔔 <i>Will alert when 4H closes with body → READY!</i>"
+            )
+
+            self._send_telegram(message)
+            logger.info(f"👀 Monitoring alert sent for {symbol} [{strategy_type}]")
         except Exception as e:
             logger.debug(f"Could not send monitoring alert for {symbol}: {e}")
     
@@ -745,18 +1102,19 @@ Consecutive cycles: {consecutive_count}
     
     def _send_telegram(self, message: str):
         """
-        Send Telegram message with Sovereign Signature
+        Send Telegram message — Official 4-line Sovereign Signature on every alert.
         """
         if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
             logger.warning("Telegram not configured")
             return
         
         try:
-            sep = "────────────────"  # 16 chars — compact symmetric
+            # ═══ SOVEREIGN SIGNATURE — 4-line official branding ═══
+            sep = "────────────────"  # 16 chars
             branded = (
                 f"{message.strip()}\n\n"
                 f"  {sep}\n"
-                f"  🔱 <b>AUTHORED BY ФорексГод</b> 🔱\n"
+                f"  🔱 AUTHORED BY <b>ФорексГод</b> 🔱\n"
                 f"  {sep}\n"
                 f"  🏛️ INSTITUTIONAL TERMINAL 🏛️"
             )
@@ -782,7 +1140,7 @@ def main():
     """
     Start real-time monitor pentru TOATE perechile din config (4H timeframe)
     """
-    # 🔒 V9.1 PID LOCK — Prevent duplicate instances (R9 AUDIT FIX by POCOVNICU)
+    # 🔒 PID LOCK SINGLETON — Prevent duplicate instances
     lock_file = Path("process_realtime_monitor.lock")
     if not acquire_pid_lock(lock_file):
         logger.error("🚫 DUPLICATE INSTANCE DETECTED — Exiting to prevent race conditions")

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
 🛡️ WATCHDOG MONITOR V4.0 - 6 MONITORS (COMPLETE PROTECTION)
-──────────────────
-✨ Glitch in Matrix by ФорексГод ✨
-🧠 AI-Powered • 💎 Smart Money
+────────────────
+🔱 AUTHORED BY ФорексГод 🔱
+🏛️ INSTITUTIONAL TERMINAL
 
 System Guardian - Monitors and auto-restarts ALL critical processes:
 - setup_executor_monitor.py (Setup Scanner & Executor)
@@ -25,12 +25,13 @@ If any process dies → Instant restart (no manual intervention)
 """
 
 import os
+import json
 import subprocess
 import time
 import sys
 import psutil
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 from loguru import logger
 from dotenv import load_dotenv
 import requests
@@ -113,6 +114,14 @@ class WatchdogMonitor:
                 'last_restart': None,
                 'state': 'unknown',  # 🔥 NEW: Track state
                 'last_notification': 0  # 🔥 NEW: Rate limiter
+            },
+            'news_reminder_engine.py': {
+                'name': 'News Reminder',
+                'command': [self.python_path, 'news_reminder_engine.py'],
+                'restart_count': 0,
+                'last_restart': None,
+                'state': 'unknown',
+                'last_notification': 0
             }
         }
         
@@ -122,7 +131,7 @@ class WatchdogMonitor:
         self.telegram_token = os.getenv('TELEGRAM_BOT_TOKEN')
         self.telegram_chat_id = os.getenv('TELEGRAM_CHAT_ID')
         
-        logger.info("🛡️ Watchdog Monitor V4.0 - 6 MONITORS (COMPLETE PROTECTION)")
+        logger.info("🛡️ Watchdog Monitor V4.1 - 7 MONITORS (V10.0 + News Reminder)")
         logger.info(f"⏱️  Check interval: {check_interval}s")
         logger.info(f"🔇 Notification cooldown: {self.notification_cooldown}s (15 min)")
         logger.info(f"🐍 Python: {self.python_path}")
@@ -204,11 +213,12 @@ class WatchdogMonitor:
         try:
             url = f"https://api.telegram.org/bot{self.telegram_token}/sendMessage"
             
-            sep = "────────────────"  # 16 chars — compact symmetric
+            # ═══ V10.4 SOVEREIGN SIGNATURE — 16-Line Symmetry ═══
+            sep = "────────────────"  # 16 chars
             branded_message = (
                 f"{message}\n\n"
                 f"  {sep}\n"
-                f"  🔱 <b>AUTHORED BY ФорексГод</b> 🔱\n"
+                f"  🔱 AUTHORED BY <b>ФорексГод</b> 🔱\n"
                 f"  {sep}\n"
                 f"  🏛️ INSTITUTIONAL TERMINAL 🏛️"
             )
@@ -317,14 +327,112 @@ class WatchdogMonitor:
             }
         return status
     
+    def _check_deep_sleep_reminder(self):
+        """
+        V10.6 PERSISTENT WARNING:
+        If deep_sleep_state.json exists, send a Telegram reminder every 4 hours.
+        """
+        sleep_file = self.base_path / 'data' / 'deep_sleep_state.json'
+        if not sleep_file.exists():
+            self._last_sleep_reminder = 0  # reset so next sleep gets immediate alert
+            return
+
+        now = datetime.now()
+        last_sent = getattr(self, '_last_sleep_reminder', 0)
+        elapsed_hours = (time.time() - last_sent) / 3600
+
+        if elapsed_hours < 4:
+            return  # still within cooldown
+
+        try:
+            with open(sleep_file, 'r') as f:
+                state = json.load(f)
+            wake_str = state.get('wake_time', '')
+            reason = state.get('reason', 'Unknown')
+            wake_display = wake_str[:16] if wake_str else '?'
+
+            msg = (
+                f"🚨 <b>SYSTEM ACTIVE BUT TRADING IS LOCKED</b>\n\n"
+                f"🛌 Status: <b>DEEP SLEEP / LOCKDOWN</b>\n"
+                f"📝 Reason: <i>{reason}</i>\n"
+                f"⏰ Wake: <code>{wake_display} UTC</code>\n\n"
+                f"⚠️ No trades will be opened until sleep expires\n"
+                f"or you send <code>/resume</code> to unlock manually.\n\n"
+                f"🔄 Next reminder in <b>4 hours</b>"
+            )
+            self.send_telegram_alert(msg)
+            self._last_sleep_reminder = time.time()
+            logger.warning("🚨 Deep sleep reminder sent")
+        except Exception as e:
+            logger.error(f"❌ Deep sleep reminder error: {e}")
+
+    def _check_midnight_auto_resume(self):
+        """
+        V10.6 AUTO-RESUME AUDIT:
+        At 00:05 UTC, check if deep_sleep_state.json has expired.
+        If wake_time has passed, delete the file and send SYSTEM AWAKENED.
+        """
+        now_utc = datetime.utcnow()
+        # Only run in the 00:05–00:06 UTC window
+        if not (now_utc.hour == 0 and now_utc.minute == 5):
+            return
+        # Deduplicate — only once per day
+        today = now_utc.date().isoformat()
+        if getattr(self, '_last_midnight_resume_date', '') == today:
+            return
+
+        sleep_file = self.base_path / 'data' / 'deep_sleep_state.json'
+        if not sleep_file.exists():
+            return
+
+        try:
+            with open(sleep_file, 'r') as f:
+                state = json.load(f)
+            wake_str = state.get('wake_time', '')
+            lockdown = state.get('lockdown', False)
+            if lockdown:
+                # Manual /killall lockdown — do NOT auto-resume, just warn
+                msg = (
+                    f"⚠️ <b>00:05 UTC — MANUAL LOCKDOWN STILL ACTIVE</b>\n\n"
+                    f"🛌 System remains in LOCKDOWN (triggered by /killall)\n"
+                    f"🔑 Send <code>/resume</code> to unlock trading manually."
+                )
+                self.send_telegram_alert(msg)
+                self._last_midnight_resume_date = today
+                return
+
+            # Auto-expire: check if wake_time has passed
+            if wake_str:
+                from datetime import timezone
+                wake_dt = datetime.fromisoformat(wake_str.replace('Z', '+00:00'))
+                now_aware = datetime.now(timezone.utc)
+                if now_aware >= wake_dt or True:  # at 00:05 we always reset daily state
+                    sleep_file.unlink()
+                    msg = (
+                        f"🔱 <b>SYSTEM AWAKENED</b>\n\n"
+                        f"✅ Daily reset at 00:05 UTC\n"
+                        f"🔄 <b>BIAS SYNC STARTING...</b>\n"
+                        f"📊 Daily loss counter: <b>RESET</b>\n"
+                        f"⏰ Time: <code>{now_utc.strftime('%Y-%m-%d 00:05 UTC')}</code>\n\n"
+                        f"⚠️ Scanner will re-evaluate all pairs on next 4H candle close."
+                    )
+                    self.send_telegram_alert(msg)
+                    logger.info("🔱 Midnight auto-resume: deep sleep cleared at 00:05 UTC")
+            self._last_midnight_resume_date = today
+        except Exception as e:
+            logger.error(f"❌ Midnight auto-resume error: {e}")
+
     def run(self):
         """Main monitoring loop"""
         logger.info("\n" + "="*60)
-        logger.info("🛡️ WATCHDOG MONITOR V4.0 - ARMED & PROTECTING")
+        logger.info("🛡️ WATCHDOG MONITOR V4.1 - ARMED & PROTECTING")
         logger.info(f"⏱️  Check Interval: {self.check_interval}s")
         logger.info(f"🔇 Anti-Spam: 15 min cooldown per alert")
         logger.info(f"📊 Monitoring: {len(self.processes)} processes")
         logger.info("="*60 + "\n")
+        # V10.6: init persistent-reminder state
+        self._last_sleep_reminder = 0
+        self._last_midnight_resume_date = ''
         
         # 🔥 INITIAL STATE CHECK (before sending startup message)
         # Detect which monitors are already running
@@ -368,7 +476,13 @@ class WatchdogMonitor:
                 logger.debug(f"\n🔍 Watchdog Check #{iteration} - {datetime.now().strftime('%H:%M:%S')}")
                 
                 self.check_and_restart()
-                
+
+                # V10.6: Persistent deep sleep reminder (every 4h)
+                self._check_deep_sleep_reminder()
+
+                # V10.6: Midnight auto-resume at 00:05 UTC
+                self._check_midnight_auto_resume()
+
                 # Log status every 10 checks
                 if iteration % 10 == 0:
                     status = self.get_status_report()

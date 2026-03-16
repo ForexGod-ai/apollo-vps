@@ -457,32 +457,52 @@ class DailyScanner:
         print("="*60 + "\n")
 
         if self.scanner_settings['telegram_alerts']:
-            # Create combined active setups list for Telegram
-            combined_active = monitoring_setups.copy()
-            # Add ALL open positions info, calculând corect R:R
-            for pos in all_open_positions:
-                entry = pos.get('entry_price', 0)
-                sl = pos.get('stop_loss', 0)
-                tp = pos.get('take_profit', 0)
-                direction = str(pos.get('direction', 'buy')).strip().lower()
-                # Calcul R:R: (|TP-Entry|) / (|Entry-SL|), protejat la div zero
-                risk = abs(entry - sl)
-                reward = abs(tp - entry)
-                rr = round(reward / risk, 2) if risk > 0 else 0
-                combined_active.append({
-                    'symbol': pos.get('symbol', 'N/A'),
-                    'direction': pos.get('direction', 'buy'),
-                    'entry_price': entry,
-                    'status': 'EXECUTED',
-                    'ticket': pos.get('ticket', 'N/A'),
-                    'profit': pos.get('profit', 0),
-                    'risk_reward': rr
+            # ━━━ V10.1 SCAN REPORT — The Official Stamp ━━━
+            # Anti-flood: wait 2s after last chart before sending final report
+            time.sleep(2)
+            
+            # Check Deep Sleep status from disk state file
+            deep_sleep_active = False
+            deep_sleep_until_str = None
+            try:
+                ds_file = os.path.join('data', 'deep_sleep_state.json')
+                if os.path.exists(ds_file):
+                    with open(ds_file, 'r') as f:
+                        ds_state = json.load(f)
+                    wake_str = ds_state.get('wake_time')
+                    if wake_str:
+                        from datetime import timezone
+                        wake_time = datetime.fromisoformat(wake_str)
+                        if wake_time > datetime.now(timezone.utc):
+                            deep_sleep_active = True
+                            deep_sleep_until_str = wake_time.strftime('%Y-%m-%d %H:%M UTC')
+            except Exception as e:
+                logger.debug(f"Could not check Deep Sleep state: {e}")
+            
+            # Build setup symbols info for the report
+            setup_symbols = []
+            for s in setups_found:
+                direction_str = "buy" if s.daily_choch.direction == 'bullish' else "sell"
+                strategy_str = getattr(s, 'strategy_type', 'UNKNOWN').upper()
+                setup_symbols.append({
+                    'symbol': s.symbol,
+                    'direction': direction_str,
+                    'strategy': strategy_str
                 })
-            self.telegram.send_daily_summary(
-                scanned_pairs=len(self.pairs),
-                setups_found=len(truly_new_setups),  # Only truly new setups in summary
-                active_setups=combined_active
+            
+            # Send the OFFICIAL scan report (mirrors console exactly)
+            self.telegram.send_scan_report(
+                total_pairs=len(self.pairs),
+                new_setups_found=len(setups_found),
+                truly_new=len(truly_new_setups),
+                re_detected=len(active_with_position),
+                monitoring_count=final_monitoring_count,
+                open_positions=len(all_open_positions),
+                deep_sleep_active=deep_sleep_active,
+                deep_sleep_until=deep_sleep_until_str,
+                setup_symbols=setup_symbols
             )
+            
         # DEBUG: Print status for each setup found
         print('\n--- DEBUG: Status setup-uri returnate de run_daily_scan ---')
         for s in all_active_setups:
@@ -605,6 +625,10 @@ def save_monitoring_setups(setups: List[TradeSetup]):
                 fvg_top = setup.fvg.top if setup.fvg and hasattr(setup.fvg, 'top') else setup.entry_price
                 fvg_bottom = setup.fvg.bottom if setup.fvg and hasattr(setup.fvg, 'bottom') else setup.entry_price
                 
+                # ✅ V10.5 HANDSHAKE: Extract 4H Sync FVG (entry zone from 4H confirmation move)
+                h4_sync_fvg_top    = float(setup.h4_sync_fvg_top)    if hasattr(setup, 'h4_sync_fvg_top')    and setup.h4_sync_fvg_top    else 0.0
+                h4_sync_fvg_bottom = float(setup.h4_sync_fvg_bottom) if hasattr(setup, 'h4_sync_fvg_bottom') and setup.h4_sync_fvg_bottom else 0.0
+                
                 monitoring_setup = {
                     "symbol": setup.symbol,
                     "direction": "buy" if setup.daily_choch.direction == "bullish" else "sell",
@@ -612,13 +636,20 @@ def save_monitoring_setups(setups: List[TradeSetup]):
                     "stop_loss": float(setup.stop_loss),
                     "take_profit": float(setup.take_profit),
                     "risk_reward": float(setup.risk_reward) if setup.risk_reward else 0.0,
-                    "strategy_type": setup.strategy_type,
+                    # ✅ V10.5 STRATEGY LOCK: Explicit D1 bias tag — drives ALL downstream logic
+                    "strategy_type": setup.strategy_type,  # 'reversal' or 'continuation' — NEVER empty
+                    "strategy_locked": True,               # Confirms D1 bias was explicitly determined
+                    "d1_bias_direction": setup.daily_choch.direction,  # 'bullish' or 'bearish' — for LURKING mode
                     "setup_time": setup_time_str,
                     "priority": setup.priority,
                     "status": setup.status,  # V3.0: Include status field
+                    # ✅ V10.5 FVG FIELDS: Both Daily FVG and 4H Sync FVG saved
+                    # setup_executor_monitor.py prefers h4_sync_fvg if available
                     "fvg_top": float(fvg_top) if fvg_top is not None else float(setup.entry_price),
                     "fvg_bottom": float(fvg_bottom) if fvg_bottom is not None else float(setup.entry_price),
-                    "lot_size": 0.01  # Default lot size
+                    "h4_sync_fvg_top":    h4_sync_fvg_top,     # 4H confirmation move FVG (optimal entry zone)
+                    "h4_sync_fvg_bottom": h4_sync_fvg_bottom,  # 0.0 if no 4H sync yet
+                    "lot_size": 0.01  # Default lot size — recalculated by Risk Manager at execution
                 }
                 existing_setups[setup.symbol] = monitoring_setup  # Update/add
         

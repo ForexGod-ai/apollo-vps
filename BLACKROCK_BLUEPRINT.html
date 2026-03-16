@@ -1,0 +1,1472 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>🔱 BlackRock Blueprint — Glitch in Matrix</title>
+<style>
+  :root {
+    --gold: #c9a84c;
+    --gold-bright: #f0c060;
+    --gold-dim: #8a6a20;
+    --black: #080a0d;
+    --dark: #0c0f14;
+    --panel: #111520;
+    --panel2: #161c28;
+    --border: #1e2a3a;
+    --text: #cdd5e0;
+    --text-dim: #7a8a9a;
+    --blue: #2a6fff;
+    --blue-bright: #5599ff;
+    --green: #1ecb7b;
+    --red: #e84545;
+    --orange: #f07830;
+    --purple: #9b59ef;
+    --teal: #00c8c8;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    background: var(--black);
+    color: var(--text);
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* ═══ SCROLLBAR ═══ */
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: var(--dark); }
+  ::-webkit-scrollbar-thumb { background: var(--gold-dim); border-radius: 3px; }
+
+  /* ═══ HERO ═══ */
+  .hero {
+    background: linear-gradient(135deg, #060810 0%, #0a0f1a 40%, #080c14 100%);
+    border-bottom: 1px solid var(--gold-dim);
+    padding: 60px 40px 50px;
+    text-align: center;
+    position: relative;
+    overflow: hidden;
+  }
+  .hero::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(ellipse 80% 60% at 50% 0%, rgba(201,168,76,0.07) 0%, transparent 70%);
+    pointer-events: none;
+  }
+  .hero-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    background: rgba(201,168,76,0.08);
+    border: 1px solid var(--gold-dim);
+    border-radius: 30px;
+    padding: 7px 20px;
+    font-size: 12px;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    color: var(--gold);
+    margin-bottom: 28px;
+  }
+  .hero-title {
+    font-size: clamp(32px, 5vw, 60px);
+    font-weight: 800;
+    letter-spacing: -1px;
+    background: linear-gradient(135deg, var(--gold-bright) 0%, var(--gold) 50%, #9a7020 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    line-height: 1.1;
+    margin-bottom: 14px;
+  }
+  .hero-subtitle {
+    font-size: 18px;
+    color: var(--text-dim);
+    margin-bottom: 40px;
+    letter-spacing: 1px;
+  }
+  .hero-stats {
+    display: flex;
+    justify-content: center;
+    gap: 40px;
+    flex-wrap: wrap;
+  }
+  .hero-stat {
+    text-align: center;
+  }
+  .hero-stat-num {
+    font-size: 28px;
+    font-weight: 800;
+    color: var(--gold-bright);
+  }
+  .hero-stat-label {
+    font-size: 11px;
+    letter-spacing: 2px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+  }
+  .sep { color: var(--gold-dim); margin: 0 10px; }
+
+  /* ═══ NAV ═══ */
+  .nav {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background: rgba(8,10,13,0.95);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    justify-content: center;
+    gap: 4px;
+    padding: 12px 20px;
+    flex-wrap: wrap;
+  }
+  .nav-btn {
+    background: transparent;
+    border: 1px solid transparent;
+    color: var(--text-dim);
+    padding: 8px 18px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 500;
+    transition: all 0.2s;
+    letter-spacing: 0.5px;
+  }
+  .nav-btn:hover, .nav-btn.active {
+    background: rgba(201,168,76,0.1);
+    border-color: var(--gold-dim);
+    color: var(--gold);
+  }
+
+  /* ═══ SECTIONS ═══ */
+  .section {
+    max-width: 1300px;
+    margin: 0 auto;
+    padding: 60px 30px;
+    display: none;
+  }
+  .section.active { display: block; }
+
+  .section-header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 40px;
+    padding-bottom: 20px;
+    border-bottom: 1px solid var(--border);
+  }
+  .section-icon { font-size: 32px; }
+  .section-title { font-size: 28px; font-weight: 700; color: var(--gold-bright); }
+  .section-desc { font-size: 14px; color: var(--text-dim); margin-top: 4px; }
+
+  /* ═══ CARDS GRID ═══ */
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; }
+  @media (max-width: 900px) { .grid-2,.grid-3 { grid-template-columns: 1fr; } }
+
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 24px;
+    transition: border-color 0.2s;
+  }
+  .card:hover { border-color: var(--gold-dim); }
+  .card-title {
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--gold);
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  /* ═══ FLOW DIAGRAM ═══ */
+  .flow {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    align-items: center;
+  }
+  .flow-step {
+    background: var(--panel2);
+    border: 2px solid var(--border);
+    border-radius: 16px;
+    padding: 24px 30px;
+    width: 100%;
+    max-width: 820px;
+    position: relative;
+    transition: all 0.3s;
+    cursor: default;
+  }
+  .flow-step:hover { border-color: var(--gold); transform: translateY(-2px); box-shadow: 0 8px 32px rgba(201,168,76,0.1); }
+  .flow-step.step-d1 { border-color: rgba(201,168,76,0.4); }
+  .flow-step.step-4h { border-color: rgba(42,111,255,0.4); }
+  .flow-step.step-1h { border-color: rgba(30,203,123,0.4); }
+  .flow-step.step-exec { border-color: rgba(240,120,48,0.4); }
+  .flow-step.step-risk { border-color: rgba(155,89,239,0.4); }
+
+  .flow-step-header {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-bottom: 16px;
+  }
+  .flow-badge {
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+  }
+  .badge-d1 { background: rgba(201,168,76,0.15); color: var(--gold); border: 1px solid var(--gold-dim); }
+  .badge-4h { background: rgba(42,111,255,0.15); color: var(--blue-bright); border: 1px solid rgba(42,111,255,0.4); }
+  .badge-1h { background: rgba(30,203,123,0.15); color: var(--green); border: 1px solid rgba(30,203,123,0.4); }
+  .badge-exec { background: rgba(240,120,48,0.15); color: var(--orange); border: 1px solid rgba(240,120,48,0.4); }
+  .badge-risk { background: rgba(155,89,239,0.15); color: var(--purple); border: 1px solid rgba(155,89,239,0.4); }
+
+  .flow-step-title {
+    font-size: 20px;
+    font-weight: 700;
+    color: #eaf0fc;
+  }
+  .flow-step-desc {
+    font-size: 14px;
+    color: var(--text-dim);
+    line-height: 1.8;
+    margin-bottom: 16px;
+  }
+  .flow-rules {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 10px;
+    margin-top: 14px;
+  }
+  .flow-rule {
+    background: rgba(255,255,255,0.03);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-size: 13px;
+    color: var(--text);
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+  }
+  .flow-rule-icon { font-size: 16px; flex-shrink: 0; margin-top: 1px; }
+
+  .flow-arrow {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 44px;
+    color: var(--gold-dim);
+    font-size: 24px;
+    position: relative;
+  }
+  .flow-arrow::before {
+    content: '';
+    position: absolute;
+    top: 0; bottom: 0;
+    width: 2px;
+    background: linear-gradient(to bottom, var(--gold-dim), transparent);
+    left: 50%;
+  }
+
+  .gate-box {
+    background: rgba(255,60,60,0.06);
+    border: 1px solid rgba(232,69,69,0.3);
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-size: 12px;
+    color: #ff6b6b;
+    margin-top: 14px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  /* ═══ CODE BLOCK ═══ */
+  .code-block {
+    background: #0a0d13;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px 20px;
+    font-family: 'Courier New', monospace;
+    font-size: 13px;
+    color: #a8d8a8;
+    line-height: 1.7;
+    overflow-x: auto;
+    margin-top: 12px;
+  }
+  .code-block .cm { color: #5a7a5a; }
+  .code-block .kw { color: #6699ff; }
+  .code-block .fn { color: #ffcc66; }
+  .code-block .st { color: #99cc99; }
+  .code-block .nm { color: #ff9966; }
+
+  /* ═══ TABLE ═══ */
+  .data-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    margin-top: 16px;
+  }
+  .data-table th {
+    background: rgba(201,168,76,0.08);
+    color: var(--gold);
+    font-size: 11px;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    padding: 10px 14px;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+  }
+  .data-table td {
+    padding: 10px 14px;
+    border-bottom: 1px solid rgba(30,42,58,0.5);
+    color: var(--text);
+    vertical-align: top;
+  }
+  .data-table tr:hover td { background: rgba(255,255,255,0.02); }
+
+  /* ═══ PILLS / BADGES ═══ */
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 10px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 1px;
+  }
+  .pill-green { background: rgba(30,203,123,0.12); color: var(--green); border: 1px solid rgba(30,203,123,0.3); }
+  .pill-red { background: rgba(232,69,69,0.12); color: var(--red); border: 1px solid rgba(232,69,69,0.3); }
+  .pill-gold { background: rgba(201,168,76,0.12); color: var(--gold); border: 1px solid var(--gold-dim); }
+  .pill-blue { background: rgba(42,111,255,0.12); color: var(--blue-bright); border: 1px solid rgba(42,111,255,0.3); }
+  .pill-orange { background: rgba(240,120,48,0.12); color: var(--orange); border: 1px solid rgba(240,120,48,0.3); }
+  .pill-purple { background: rgba(155,89,239,0.12); color: var(--purple); border: 1px solid rgba(155,89,239,0.3); }
+
+  /* ═══ RISK METER ═══ */
+  .risk-meters { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-top: 20px; }
+  .risk-meter { background: var(--panel2); border: 1px solid var(--border); border-radius: 12px; padding: 18px; }
+  .risk-meter-label { font-size: 11px; letter-spacing: 1.5px; color: var(--text-dim); text-transform: uppercase; margin-bottom: 8px; }
+  .risk-meter-val { font-size: 26px; font-weight: 800; margin-bottom: 10px; }
+  .risk-meter-bar-bg { height: 4px; background: var(--border); border-radius: 2px; }
+  .risk-meter-bar { height: 4px; border-radius: 2px; transition: width 0.5s; }
+
+  /* ═══ ARCHITECTURE DIAGRAM ═══ */
+  .arch-grid {
+    display: grid;
+    grid-template-columns: 1fr 60px 1fr 60px 1fr;
+    gap: 0;
+    align-items: start;
+    margin-top: 30px;
+  }
+  @media (max-width: 1000px) { .arch-grid { grid-template-columns: 1fr; gap: 20px; } .arch-arrow { display: none; } }
+  .arch-col { display: flex; flex-direction: column; gap: 12px; }
+  .arch-arrow {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 24px;
+    color: var(--gold-dim);
+    padding-top: 20px;
+  }
+  .arch-box {
+    background: var(--panel2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 16px;
+    transition: border-color 0.2s;
+  }
+  .arch-box:hover { border-color: var(--gold-dim); }
+  .arch-box-title { font-size: 12px; font-weight: 700; color: var(--gold); letter-spacing: 1px; margin-bottom: 4px; }
+  .arch-box-file { font-size: 11px; color: var(--blue-bright); font-family: monospace; margin-bottom: 6px; }
+  .arch-box-desc { font-size: 12px; color: var(--text-dim); line-height: 1.6; }
+  .arch-col-header {
+    text-align: center;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    padding: 8px 0;
+    margin-bottom: 6px;
+    border-bottom: 2px solid var(--border);
+  }
+
+  /* ═══ GLOSSARY ═══ */
+  .gloss-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; margin-top: 20px; }
+  .gloss-item {
+    background: var(--panel2);
+    border-left: 3px solid var(--gold-dim);
+    border-radius: 0 10px 10px 0;
+    padding: 16px 18px;
+  }
+  .gloss-term { font-size: 14px; font-weight: 700; color: var(--gold-bright); margin-bottom: 6px; }
+  .gloss-def { font-size: 13px; color: var(--text-dim); line-height: 1.6; }
+
+  /* ═══ ALERTS ═══ */
+  .alert {
+    border-radius: 10px;
+    padding: 14px 18px;
+    font-size: 13px;
+    line-height: 1.7;
+    margin-bottom: 14px;
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+  }
+  .alert-icon { font-size: 20px; flex-shrink: 0; }
+  .alert-green { background: rgba(30,203,123,0.07); border: 1px solid rgba(30,203,123,0.25); color: #a8e8c8; }
+  .alert-yellow { background: rgba(240,190,48,0.07); border: 1px solid rgba(240,190,48,0.25); color: #e8d888; }
+  .alert-red { background: rgba(232,69,69,0.07); border: 1px solid rgba(232,69,69,0.25); color: #f0a0a0; }
+  .alert-blue { background: rgba(42,111,255,0.07); border: 1px solid rgba(42,111,255,0.25); color: #a0c0f8; }
+
+  /* ═══ TIMELINE ═══ */
+  .timeline { position: relative; padding-left: 36px; }
+  .timeline::before { content: ''; position: absolute; left: 12px; top: 0; bottom: 0; width: 2px; background: var(--border); }
+  .timeline-item { position: relative; margin-bottom: 28px; }
+  .timeline-dot {
+    position: absolute;
+    left: -30px;
+    top: 3px;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--gold-dim);
+    border: 2px solid var(--black);
+    z-index: 1;
+  }
+  .timeline-title { font-size: 14px; font-weight: 700; color: var(--gold-bright); margin-bottom: 4px; }
+  .timeline-desc { font-size: 13px; color: var(--text-dim); line-height: 1.7; }
+
+  /* ═══ SIGNATURE ═══ */
+  .signature {
+    text-align: center;
+    padding: 40px 20px;
+    border-top: 1px solid var(--border);
+    margin-top: 60px;
+  }
+  .sig-line { color: var(--gold-dim); font-size: 13px; letter-spacing: 2px; }
+  .sig-name { font-size: 22px; font-weight: 800; color: var(--gold-bright); margin: 8px 0; }
+  .sig-terminal { font-size: 14px; color: var(--text-dim); letter-spacing: 2px; }
+
+  /* ═══ TABS ═══ */
+  .tabs { display: flex; gap: 4px; margin-bottom: 20px; border-bottom: 1px solid var(--border); padding-bottom: 0; }
+  .tab-btn {
+    background: none; border: none; color: var(--text-dim);
+    padding: 10px 18px; cursor: pointer; font-size: 13px; font-weight: 500;
+    border-bottom: 2px solid transparent; margin-bottom: -1px;
+    transition: all 0.2s;
+  }
+  .tab-btn:hover { color: var(--text); }
+  .tab-btn.active { color: var(--gold); border-bottom-color: var(--gold); }
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
+
+  /* ═══ HIGHLIGHT ═══ */
+  .highlight { color: var(--gold-bright); font-weight: 600; }
+  .code-inline {
+    background: rgba(42,111,255,0.1);
+    border: 1px solid rgba(42,111,255,0.2);
+    border-radius: 4px;
+    padding: 1px 6px;
+    font-family: monospace;
+    font-size: 12px;
+    color: var(--blue-bright);
+  }
+
+  /* ═══ VERDICT BOX ═══ */
+  .verdict {
+    background: linear-gradient(135deg, rgba(201,168,76,0.08), rgba(42,111,255,0.05));
+    border: 1px solid rgba(201,168,76,0.3);
+    border-radius: 16px;
+    padding: 28px;
+    margin: 30px 0;
+  }
+  .verdict-title { font-size: 18px; font-weight: 800; color: var(--gold-bright); margin-bottom: 14px; }
+  .verdict-list { list-style: none; }
+  .verdict-list li { padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.04); font-size: 14px; color: var(--text); display: flex; gap: 12px; align-items: flex-start; }
+  .verdict-list li:last-child { border-bottom: none; }
+
+  /* ═══ PAIR LIST ═══ */
+  .pair-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 10px; margin-top: 14px; }
+  .pair-chip {
+    background: var(--panel2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    text-align: center;
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--text);
+    transition: all 0.2s;
+  }
+  .pair-chip:hover { border-color: var(--gold-dim); color: var(--gold); }
+</style>
+</head>
+<body>
+
+<!-- ═══ HERO ═══ -->
+<div class="hero">
+  <div class="hero-badge">
+    <span>🔱</span>
+    <span>Institutional Grade System</span>
+    <span>•</span>
+    <span>V10.4</span>
+  </div>
+  <div class="hero-title">BlackRock Blueprint</div>
+  <div class="hero-subtitle">Glitch in Matrix — D1 Bias → 4H Sync → 1H Entry</div>
+  <div class="hero-stats">
+    <div class="hero-stat"><div class="hero-stat-num">D1→4H→1H</div><div class="hero-stat-label">Timeframe Stack</div></div>
+    <div class="hero-stat"><div class="hero-stat-num" style="color:var(--green)">5%</div><div class="hero-stat-label">Risk / Trade</div></div>
+    <div class="hero-stat"><div class="hero-stat-num" style="color:var(--red)">10%</div><div class="hero-stat-label">Daily Loss Limit</div></div>
+    <div class="hero-stat"><div class="hero-stat-num" style="color:var(--blue-bright)">21+</div><div class="hero-stat-label">Pairs Scanned</div></div>
+    <div class="hero-stat"><div class="hero-stat-num" style="color:var(--purple)">24/7</div><div class="hero-stat-label">Autonomous</div></div>
+  </div>
+</div>
+
+<!-- ═══ NAV ═══ -->
+<nav class="nav">
+  <button class="nav-btn active" onclick="showSection('strategy')">🎯 Strategy</button>
+  <button class="nav-btn" onclick="showSection('architecture')">🏗️ Architecture</button>
+  <button class="nav-btn" onclick="showSection('smc')">📐 SMC Core</button>
+  <button class="nav-btn" onclick="showSection('risk')">🛡️ Risk Engine</button>
+  <button class="nav-btn" onclick="showSection('execution')">⚡ Execution</button>
+  <button class="nav-btn" onclick="showSection('glossary')">📖 Glossary</button>
+  <button class="nav-btn" onclick="showSection('audit')">🔍 Audit</button>
+</nav>
+
+<!-- ══════════════════════════════════════════════════════════════════════
+     SECTION 1: STRATEGY
+═══════════════════════════════════════════════════════════════════════ -->
+<section class="section active" id="section-strategy">
+  <div class="section-header">
+    <span class="section-icon">🎯</span>
+    <div>
+      <div class="section-title">Glitch in Matrix — The 3-Layer Strategy</div>
+      <div class="section-desc">D1 paints the Film → 4H is the Gate → 1H is the Sniper Trigger</div>
+    </div>
+  </div>
+
+  <div class="alert alert-gold" style="background:rgba(201,168,76,0.07);border:1px solid rgba(201,168,76,0.25);color:#d8c080;">
+    <span class="alert-icon">🧠</span>
+    <div><strong>Philosophy:</strong> Generals (D1 + 4H) give the attack order — 1H only executes. The Daily candle establishes the "Film" (overall narrative). No trade happens without all three layers aligned. Bot stays completely silent until all 3 conditions are met.</div>
+  </div>
+
+  <br>
+
+  <div class="flow">
+
+    <!-- STEP D1 -->
+    <div class="flow-step step-d1">
+      <div class="flow-step-header">
+        <span class="flow-badge badge-d1">Layer 1 — D1</span>
+        <div class="flow-step-title">The Film — Daily Bias Lock</div>
+      </div>
+      <div class="flow-step-desc">
+        The Daily chart tells us the big story. Is the market in a <strong>Reversal</strong> pattern (trend change expected) or a <strong>Continuity</strong> pattern (trend continuation)?
+        This determines the entire trade direction. Everything else MUST align with this.
+      </div>
+      <div class="flow-rules">
+        <div class="flow-rule"><span class="flow-rule-icon">🔄</span><div><strong>REVERSAL</strong><br>D1 CHoCH detected (HH+HL broken = bearish, LL+LH broken = bullish). Structure flip. Enter on retest of FVG/OB.</div></div>
+        <div class="flow-rule"><span class="flow-rule-icon">➡️</span><div><strong>CONTINUITY</strong><br>D1 BOS detected (trend extension). Price in Premium/Discount zone (50% EQ). Follow institutional direction.</div></div>
+        <div class="flow-rule"><span class="flow-rule-icon">🎯</span><div><strong>D1 FVG / POI</strong><br>The daily Fair Value Gap is the Target Zone where price must return. All lower TF entries must be inside this zone.</div></div>
+        <div class="flow-rule"><span class="flow-rule-icon">⚖️</span><div><strong>Premium / Discount</strong><br>50% equilibrium of the D1 macro leg. BEARISH entry only in Premium (>50%). BULLISH entry only in Discount (&lt;50%).</div></div>
+      </div>
+      <div class="gate-box"><span>🔒</span> <strong>LOCK:</strong> Strategy type (REVERSAL / CONTINUITY) is saved as <code>strategy_type</code> in setup and never changes for that trade.</div>
+    </div>
+
+    <div class="flow-arrow">↓</div>
+
+    <!-- STEP 4H -->
+    <div class="flow-step step-4h">
+      <div class="flow-step-header">
+        <span class="flow-badge badge-4h">Layer 2 — 4H</span>
+        <div class="flow-step-title">The Gate — 4H Structure Sync</div>
+      </div>
+      <div class="flow-step-desc">
+        The 4H timeframe is the <strong>confirmation gate</strong>. Bot stays completely silent (zero HTTP calls, zero execution) until a 4H CHoCH with <strong>BODY CLOSURE</strong> confirms the D1 bias direction.
+        A wick through a level is NOT enough — only a candle BODY closing on the other side counts.
+      </div>
+      <div class="flow-rules">
+        <div class="flow-rule"><span class="flow-rule-icon">🔒</span><div><strong>4H Body Closure</strong><br>CHoCH candle must have its body (max(open,close)) break the swing level. Wicks are rejected as noise. This is the critical V10.4 rule.</div></div>
+        <div class="flow-rule"><span class="flow-rule-icon">⏱️</span><div><strong>Max Age 12 Candles</strong><br>The 4H CHoCH must be recent — no older than 12 × 4H = 48 hours. Stale structure breaks are ignored.</div></div>
+        <div class="flow-rule"><span class="flow-rule-icon">📐</span><div><strong>Direction Match</strong><br>If D1 = REVERSAL BEARISH → 4H CHoCH must be BEARISH too. Mismatched direction = no trade. Period.</div></div>
+        <div class="flow-rule"><span class="flow-rule-icon">🎯</span><div><strong>4H Sync FVG</strong><br>After 4H CHoCH is confirmed, system detects the FVG generated by that confirmation move. This becomes the primary entry zone for 1H.</div></div>
+      </div>
+      <div class="gate-box"><span>⛔</span> <strong>GATE:</strong> If no valid 4H CHoCH matching D1 bias → bot returns "KEEP_MONITORING" and stays completely silent. Tagged as <code>D1_REVERSAL_4H_SYNC</code> or <code>D1_CONTINUITY_4H_SYNC</code>.</div>
+    </div>
+
+    <div class="flow-arrow">↓</div>
+
+    <!-- STEP 1H -->
+    <div class="flow-step step-1h">
+      <div class="flow-step-header">
+        <span class="flow-badge badge-1h">Layer 3 — 1H</span>
+        <div class="flow-step-title">The Trigger — 1H Sniper Entry</div>
+      </div>
+      <div class="flow-step-desc">
+        Once D1 + 4H are both locked, the 1H chart is monitored for a structure break inside the entry FVG zone.
+        The entry uses Fibonacci 50% (equilibrium) of the 1H swing as the optimal pullback target.
+      </div>
+      <div class="flow-rules">
+        <div class="flow-rule"><span class="flow-rule-icon">📊</span><div><strong>1H CHoCH / BOS</strong><br>Any 1H structure break (CHoCH or BOS) in the same direction INSIDE the 4H sync FVG zone triggers monitoring for pullback.</div></div>
+        <div class="flow-rule"><span class="flow-rule-icon">📏</span><div><strong>Fibonacci 50%</strong><br>Pullback target = 50% of the 1H swing that created the structure break. Entry executed when price touches Fibo 50% ± 10 pips tolerance.</div></div>
+        <div class="flow-rule"><span class="flow-rule-icon">⏱️</span><div><strong>6H Momentum Fallback</strong><br>If pullback not reached in 6 hours AND price showing strong momentum beyond Fibo 50% → continuation entry triggered automatically.</div></div>
+        <div class="flow-rule"><span class="flow-rule-icon">🎯</span><div><strong>Sniper SL</strong><br>Stop Loss = 10 pips beyond the FVG zone bottom (buy) or top (sell). Tight SL for maximum R:R. Crypto uses 0.5% buffer instead.</div></div>
+      </div>
+      <div class="gate-box" style="border-color:rgba(30,203,123,0.3);color:#7be8a8;background:rgba(30,203,123,0.06)"><span>✅</span> <strong>EXECUTE:</strong> Entry 1 fires at Fibo 50% with SNIPER SL. Entry uses Fibo 50% as exact price (not wick touch level). Tagged with full trade ID.</div>
+    </div>
+
+    <div class="flow-arrow">↓</div>
+
+    <!-- RISK -->
+    <div class="flow-step step-risk">
+      <div class="flow-step-header">
+        <span class="flow-badge badge-risk">Risk Gate</span>
+        <div class="flow-step-title">Unified Risk Manager Validation</div>
+      </div>
+      <div class="flow-step-desc">
+        Before any signal reaches the broker, Unified Risk Manager runs a full 6-point validation checklist.
+        Every single trade must pass ALL checks — no exceptions.
+      </div>
+      <div class="flow-rules">
+        <div class="flow-rule"><span class="flow-rule-icon">💰</span><div><strong>5% Risk / Trade</strong><br>Lot size dynamically calculated: Risk$ = Equity × 5% ÷ SL_pips × pip_value. Never exceeds max_lot = 2.0.</div></div>
+        <div class="flow-rule"><span class="flow-rule-icon">📊</span><div><strong>Max Positions</strong><br>Hard limit from SUPER_CONFIG. Reads live <code>account_info.json</code> from cBot (not SQLite) for real-time count.</div></div>
+        <div class="flow-rule"><span class="flow-rule-icon">🛡️</span><div><strong>Duplicate Guard</strong><br>Max 1 position per symbol. Checks <code>active_positions.json</code> (exported by cBot every 10s) against symbol.</div></div>
+        <div class="flow-rule"><span class="flow-rule-icon">📅</span><div><strong>Daily Loss 10%</strong><br>If equity dropped 10% from today's starting equity → Deep Sleep activated until 00:05 UTC next day.</div></div>
+        <div class="flow-rule"><span class="flow-rule-icon">💱</span><div><strong>Currency Exposure 30%</strong><br>Max 30% exposure per single currency (e.g., USD) across all positions. Prevents concentration risk.</div></div>
+        <div class="flow-rule"><span class="flow-rule-icon">😴</span><div><strong>Deep Sleep Check</strong><br>If Deep Sleep active (from prior -10% loss) → ALL execution rejected silently until wake time.</div></div>
+      </div>
+    </div>
+
+    <div class="flow-arrow">↓</div>
+
+    <!-- EXEC -->
+    <div class="flow-step step-exec">
+      <div class="flow-step-header">
+        <span class="flow-badge badge-exec">Execution</span>
+        <div class="flow-step-title">cTrader Signal Fire — Fire & Forget</div>
+      </div>
+      <div class="flow-step-desc">
+        Risk-validated signals are written to <code>signals.json</code> using atomic array append + file locking.
+        The PythonSignalExecutor cBot reads this file every second and places market orders at IC Markets.
+      </div>
+      <div class="flow-rules">
+        <div class="flow-rule"><span class="flow-rule-icon">⚡</span><div><strong>Atomic Write</strong><br>fcntl file locking + temp file + os.replace() ensures zero corruption during concurrent writes.</div></div>
+        <div class="flow-rule"><span class="flow-rule-icon">📡</span><div><strong>cBot Processing</strong><br>PythonSignalExecutor cBot reads signals.json → places order → writes execution_report.json confirmation.</div></div>
+        <div class="flow-rule"><span class="flow-rule-icon">🔔</span><div><strong>Telegram Notification</strong><br>Full trade details sent to Telegram with D1 bias tag, entry, SL, TP, lot size, and 4-line signature.</div></div>
+        <div class="flow-rule"><span class="flow-rule-icon">🗄️</span><div><strong>SQLite Log</strong><br>Every trade written to data/trades.db (open_positions + closed_trades tables) for P&amp;L tracking.</div></div>
+      </div>
+    </div>
+
+  </div><!-- end flow -->
+
+  <!-- Pairs -->
+  <br><br>
+  <div class="card">
+    <div class="card-title">📊 Scanned Currency Pairs</div>
+    <div class="pair-grid" id="pair-grid">
+      <div class="pair-chip">GBPUSD</div><div class="pair-chip">EURUSD</div><div class="pair-chip">USDJPY</div>
+      <div class="pair-chip">GBPJPY</div><div class="pair-chip">EURJPY</div><div class="pair-chip">AUDUSD</div>
+      <div class="pair-chip">USDCAD</div><div class="pair-chip">USDCHF</div><div class="pair-chip">NZDUSD</div>
+      <div class="pair-chip">AUDJPY</div><div class="pair-chip">CADJPY</div><div class="pair-chip">CHFJPY</div>
+      <div class="pair-chip">GBPAUD</div><div class="pair-chip">GBPCAD</div><div class="pair-chip">GBPCHF</div>
+      <div class="pair-chip">EURCAD</div><div class="pair-chip">EURAUD</div><div class="pair-chip">EURCHF</div>
+      <div class="pair-chip">EURGBP</div><div class="pair-chip">BTCUSD</div><div class="pair-chip">XAUUSD</div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════════════════
+     SECTION 2: ARCHITECTURE
+═══════════════════════════════════════════════════════════════════════ -->
+<section class="section" id="section-architecture">
+  <div class="section-header">
+    <span class="section-icon">🏗️</span>
+    <div>
+      <div class="section-title">System Architecture</div>
+      <div class="section-desc">5 autonomous processes + 1 cTrader cBot, coordinated via JSON file bus</div>
+    </div>
+  </div>
+
+  <div class="alert alert-blue">
+    <span class="alert-icon">💡</span>
+    <div>All Python processes run as background daemons managed by <code>watchdog_monitor.py</code>. Communication between Python and cTrader happens via JSON files in the apollo folder — <strong>no direct API calls between processes</strong>.</div>
+  </div>
+
+  <div class="arch-grid">
+    <!-- COL 1 -->
+    <div class="arch-col">
+      <div class="arch-col-header">📡 Data Layer</div>
+      <div class="arch-box">
+        <div class="arch-box-title">DAILY SCANNER</div>
+        <div class="arch-box-file">daily_scanner.py</div>
+        <div class="arch-box-desc">Runs at 00:05 UTC daily. Full SMC scan of all 21+ pairs. Writes discovered setups to <code>monitoring_setups.json</code>. Uses SpatioTemporalAnalyzer + SMCDetector for narrative building.</div>
+      </div>
+      <div class="arch-box">
+        <div class="arch-box-title">REALTIME MONITOR</div>
+        <div class="arch-box-file">realtime_monitor.py</div>
+        <div class="arch-box-desc">Wakes at every 4H candle close (00, 04, 08, 12, 16, 20 UTC). Re-scans pairs with <code>ready_to_trade</code> narrative. Discovers setups and updates monitoring_setups.json between daily scans.</div>
+      </div>
+      <div class="arch-box">
+        <div class="arch-box-title">CTRADER cBOT</div>
+        <div class="arch-box-file">MarketDataProvider (cTrader)</div>
+        <div class="arch-box-desc">Runs inside cTrader platform. Serves historical OHLC data via HTTP on port 8080. Both Python scanners fetch D1, H4, H1 candles through this cBot.</div>
+      </div>
+    </div>
+
+    <!-- ARROW -->
+    <div class="arch-arrow">→</div>
+
+    <!-- COL 2 -->
+    <div class="arch-col">
+      <div class="arch-col-header">⚙️ Processing Layer</div>
+      <div class="arch-box" style="border-color:rgba(201,168,76,0.3)">
+        <div class="arch-box-title">SETUP EXECUTOR MONITOR</div>
+        <div class="arch-box-file">setup_executor_monitor.py</div>
+        <div class="arch-box-desc">The BRAIN. Checks every 5s. Reads monitoring_setups.json → validates 4H Structure Lock → monitors 1H CHoCH → calculates Fibo 50% → sends to Risk Manager → writes to signals.json. The critical V10.4 engine.</div>
+      </div>
+      <div class="arch-box">
+        <div class="arch-box-title">SMC DETECTOR</div>
+        <div class="arch-box-file">smc_detector.py</div>
+        <div class="arch-box-desc">Core detection library (4,901 lines). Detects: Swing Highs/Lows, CHoCH, BOS, FVG, Order Blocks, Liquidity Sweeps, Premium/Discount zones, Fibonacci, ATR filter.</div>
+      </div>
+      <div class="arch-box">
+        <div class="arch-box-title">UNIFIED RISK MANAGER</div>
+        <div class="arch-box-file">unified_risk_manager.py</div>
+        <div class="arch-box-desc">6-checkpoint validation before every trade. Dynamic lot sizing (5% risk). Daily P&amp;L tracking from data/daily_state.json. Deep Sleep trigger at -10% daily. Single Source of Truth via SUPER_CONFIG.json.</div>
+      </div>
+    </div>
+
+    <!-- ARROW -->
+    <div class="arch-arrow">→</div>
+
+    <!-- COL 3 -->
+    <div class="arch-col">
+      <div class="arch-col-header">🚀 Execution Layer</div>
+      <div class="arch-box" style="border-color:rgba(240,120,48,0.3)">
+        <div class="arch-box-title">CTRADER EXECUTOR</div>
+        <div class="arch-box-file">ctrader_executor.py</div>
+        <div class="arch-box-desc">Atomic signal writer. Appends to signals.json array using fcntl file lock + temp rename. Signal queue (max 20). Fire-and-forget protocol. Waits for execution_report.json confirmation up to 30s.</div>
+      </div>
+      <div class="arch-box" style="border-color:rgba(240,120,48,0.3)">
+        <div class="arch-box-title">PYTHON SIGNAL EXECUTOR cBOT</div>
+        <div class="arch-box-file">PythonSignalExecutor (cTrader)</div>
+        <div class="arch-box-desc">Runs inside cTrader. Polls signals.json every 1s. Places market orders at IC Markets. Exports active_positions.json + account_info.json every 10s for Python feedback loop.</div>
+      </div>
+      <div class="arch-box">
+        <div class="arch-box-title">WATCHDOG MONITOR</div>
+        <div class="arch-box-file">watchdog_monitor.py</div>
+        <div class="arch-box-desc">Process supervisor. Checks every 30s that setup_executor, realtime_monitor, and telegram_command are running. Auto-restarts crashed processes. Sends Telegram alerts on restart.</div>
+      </div>
+    </div>
+  </div>
+
+  <br>
+  <!-- Data Files Map -->
+  <div class="card" style="margin-top:20px">
+    <div class="card-title">📂 Critical JSON Files (Communication Bus)</div>
+    <table class="data-table">
+      <thead><tr><th>File</th><th>Writer</th><th>Reader</th><th>Purpose</th><th>TTL</th></tr></thead>
+      <tbody>
+        <tr><td><code class="code-inline">signals.json</code></td><td>ctrader_executor.py</td><td>cTrader cBot</td><td>Trade signals queue (array format)</td><td>Consumed on read</td></tr>
+        <tr><td><code class="code-inline">monitoring_setups.json</code></td><td>daily_scanner / realtime_monitor</td><td>setup_executor_monitor</td><td>Active setups to watch</td><td>Persistent</td></tr>
+        <tr><td><code class="code-inline">active_positions.json</code></td><td>cTrader cBot (10s)</td><td>unified_risk_manager</td><td>Live broker positions for duplicate guard</td><td>10 seconds</td></tr>
+        <tr><td><code class="code-inline">account_info.json</code></td><td>cTrader cBot (10s)</td><td>unified_risk_manager</td><td>Live equity, balance, position count</td><td>10 seconds</td></tr>
+        <tr><td><code class="code-inline">data/daily_state.json</code></td><td>unified_risk_manager</td><td>unified_risk_manager</td><td>Starting balance for daily P&amp;L calc</td><td>Daily reset 00:05 UTC</td></tr>
+        <tr><td><code class="code-inline">data/deep_sleep_state.json</code></td><td>setup_executor_monitor</td><td>setup_executor_monitor</td><td>Deep sleep persistence across restarts</td><td>Until wake_time</td></tr>
+        <tr><td><code class="code-inline">data/upcoming_news.json</code></td><td>news_fetcher.py (05:00 UTC)</td><td>setup_executor_monitor</td><td>HIGH impact news for news guard warnings</td><td>Daily</td></tr>
+        <tr><td><code class="code-inline">SUPER_CONFIG.json</code></td><td>Manual</td><td>Both Python + cBot</td><td>Single source of truth for all parameters</td><td>Static</td></tr>
+        <tr><td><code class="code-inline">execution_report.json</code></td><td>cTrader cBot</td><td>ctrader_executor.py</td><td>Trade execution confirmation + fill price</td><td>Consumed on read</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <br>
+  <!-- Daily Schedule -->
+  <div class="card">
+    <div class="card-title">🕐 Daily Automation Schedule (UTC)</div>
+    <div class="timeline" style="margin-top: 16px;">
+      <div class="timeline-item"><div class="timeline-dot" style="background:var(--gold)"></div><div class="timeline-title">00:05 UTC — Day Reset</div><div class="timeline-desc">daily_state.json resets starting_balance. Deep sleep wakes. All daily counters cleared. daily_scanner.py runs full 21-pair SMC scan.</div></div>
+      <div class="timeline-item"><div class="timeline-dot" style="background:var(--blue-bright)"></div><div class="timeline-title">Every 4H (00, 04, 08, 12, 16, 20 UTC) — Realtime Scan</div><div class="timeline-desc">realtime_monitor.py wakes at every 4H candle close. Rescans pairs with active narratives. Updates monitoring_setups.json with new setups.</div></div>
+      <div class="timeline-item"><div class="timeline-dot" style="background:var(--green)"></div><div class="timeline-title">Every 5 seconds — Setup Executor</div><div class="timeline-desc">setup_executor_monitor checks all setups. Validates 4H lock, monitors 1H CHoCH, checks Fibo pullbacks. Executes when conditions met.</div></div>
+      <div class="timeline-item"><div class="timeline-dot" style="background:var(--orange)"></div><div class="timeline-title">05:00 UTC — News Fetch</div><div class="timeline-desc">news_fetcher.py downloads economic calendar from ForexFactory mirror. Saves HIGH impact events to data/upcoming_news.json.</div></div>
+      <div class="timeline-item"><div class="timeline-dot" style="background:var(--purple)"></div><div class="timeline-title">Every 30s — Watchdog Check</div><div class="timeline-desc">watchdog_monitor checks all 3 daemon processes. Auto-restarts any that crashed. Sends Telegram alert with restart details.</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════════════════
+     SECTION 3: SMC CORE
+═══════════════════════════════════════════════════════════════════════ -->
+<section class="section" id="section-smc">
+  <div class="section-header">
+    <span class="section-icon">📐</span>
+    <div>
+      <div class="section-title">Smart Money Concepts (SMC) Core</div>
+      <div class="section-desc">smc_detector.py — 4,901 lines of institutional price action logic</div>
+    </div>
+  </div>
+
+  <div class="tabs">
+    <button class="tab-btn active" onclick="showTab('smc','choch')">CHoCH / BOS</button>
+    <button class="tab-btn" onclick="showTab('smc','fvg')">FVG Detection</button>
+    <button class="tab-btn" onclick="showTab('smc','premium')">Premium/Discount</button>
+    <button class="tab-btn" onclick="showTab('smc','ob')">Order Blocks</button>
+    <button class="tab-btn" onclick="showTab('smc','swing')">Swing Detection</button>
+  </div>
+
+  <div class="tab-panel active" id="smc-choch">
+    <div class="grid-2">
+      <div class="card">
+        <div class="card-title">🔄 CHoCH — Change of Character</div>
+        <p style="font-size:13px;color:var(--text-dim);line-height:1.8;margin-bottom:14px">
+          CHoCH is the primary signal of a <strong>trend reversal</strong>. It requires strict validation to avoid false signals.
+        </p>
+        <div class="alert alert-yellow" style="margin-bottom:10px">
+          <span class="alert-icon">⚠️</span>
+          <div><strong>Strict Body Closure Rule:</strong> CHoCH is only valid when a candle <em>body</em> (max(open,close)) breaks the swing level. Wicks/tails through the level are ignored as noise.</div>
+        </div>
+        <div class="alert alert-blue">
+          <span class="alert-icon">🔍</span>
+          <div><strong>Dual Pattern Requirement:</strong> For BEARISH CHoCH — price must have formed both Higher Highs (HH) AND Higher Lows (HL) before the break. Single pattern → BOS, not CHoCH. This prevents false reversals.</div>
+        </div>
+        <div class="code-block">
+<span class="cm"># BEARISH CHoCH validation:</span>
+<span class="kw">if</span> hh_pattern <span class="kw">and</span> hl_pattern:  <span class="cm"># BOTH required</span>
+    <span class="cm"># AND body closure check:</span>
+    body_low = <span class="fn">min</span>(open[j], close[j])
+    <span class="kw">if</span> body_low &lt; swing.price:  <span class="cm"># body broke below</span>
+        CHoCH(direction=<span class="st">'bearish'</span>, ...)
+
+<span class="cm"># Whipsaw protection:</span>
+<span class="kw">if</span> chochs <span class="kw">and</span> (j - chochs[-<span class="nm">1</span>].index) &lt; <span class="nm">10</span>:
+    <span class="kw">continue</span>  <span class="cm"># Min 10 candles between CHoCH</span></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">📈 BOS — Break of Structure</div>
+        <p style="font-size:13px;color:var(--text-dim);line-height:1.8;margin-bottom:14px">
+          BOS signals <strong>trend continuation</strong>. Price breaks a swing in the same direction as the existing trend — confirming continuation.
+        </p>
+        <table class="data-table" style="margin-top:0">
+          <thead><tr><th>Signal</th><th>Pattern Required</th><th>Meaning</th></tr></thead>
+          <tbody>
+            <tr><td><span class="pill pill-green">BULLISH CHoCH</span></td><td>LL + LH pattern (downtrend) + body breaks swing high</td><td>Reversal from bearish → bullish</td></tr>
+            <tr><td><span class="pill pill-red">BEARISH CHoCH</span></td><td>HH + HL pattern (uptrend) + body breaks swing low</td><td>Reversal from bullish → bearish</td></tr>
+            <tr><td><span class="pill pill-green">BULLISH BOS</span></td><td>Already bullish trend + body breaks previous swing high</td><td>Continuation of uptrend</td></tr>
+            <tr><td><span class="pill pill-red">BEARISH BOS</span></td><td>Already bearish trend + body breaks previous swing low</td><td>Continuation of downtrend</td></tr>
+          </tbody>
+        </table>
+        <div style="margin-top:12px;font-size:13px;color:var(--text-dim)">
+          <strong>Key difference:</strong> CHoCH requires OPPOSING structure to break. BOS requires SAME-direction break. System checks both in <code>detect_choch_and_bos()</code> and tags each correctly.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="tab-panel" id="smc-fvg">
+    <div class="card">
+      <div class="card-title">🎯 Fair Value Gap (FVG) — Imbalance Zone</div>
+      <p style="font-size:13px;color:var(--text-dim);line-height:1.8;margin-bottom:16px">
+        An FVG is a 3-candle price imbalance where the market moved too fast, leaving an "unfilled" zone.
+        Institutional traders use these zones to enter as price returns to fill the gap.
+      </p>
+      <div class="grid-2">
+        <div>
+          <div style="font-size:13px;font-weight:700;color:var(--green);margin-bottom:10px">🟢 BULLISH FVG (Demand Zone)</div>
+          <div class="code-block">
+<span class="cm"># 3-candle gap detection:</span>
+<span class="cm"># body_high[i-1] &lt; body_low[i+1]</span>
+FVG(
+  direction=<span class="st">'bullish'</span>,
+  top = body_low[i+<span class="nm">1</span>],     <span class="cm"># Upper edge</span>
+  bottom = body_high[i-<span class="nm">1</span>],  <span class="cm"># Lower edge</span>
+  <span class="cm"># Minimum gap size: 0.05% of price</span>
+)
+<span class="cm"># MITIGATED when: body_low &lt;= fvg.bottom</span>
+<span class="cm"># (body must close through, not wick)</span></div>
+        </div>
+        <div>
+          <div style="font-size:13px;font-weight:700;color:var(--red);margin-bottom:10px">🔴 BEARISH FVG (Supply Zone)</div>
+          <div class="code-block">
+<span class="cm"># 3-candle gap detection:</span>
+<span class="cm"># body_low[i-1] > body_high[i+1]</span>
+FVG(
+  direction=<span class="st">'bearish'</span>,
+  top = body_low[i-<span class="nm">1</span>],     <span class="cm"># Upper edge</span>
+  bottom = body_high[i+<span class="nm">1</span>],  <span class="cm"># Lower edge</span>
+  <span class="cm"># Minimum gap size: 0.05% of price</span>
+)
+<span class="cm"># MITIGATED when: body_high >= fvg.top</span>
+<span class="cm"># (body must close through, not wick)</span></div>
+        </div>
+      </div>
+      <div class="alert alert-yellow" style="margin-top:16px">
+        <span class="alert-icon">🔑</span>
+        <div><strong>Orderflow Alignment (V8.1):</strong> FVG search is strictly directional. If CHoCH/BOS is BEARISH → system ONLY searches for BEARISH FVGs. Opposite-direction FVGs are completely ignored. If no classic 3-candle FVG found → Method 2 creates an imbalance zone from swing high/low to the impulse. Proximity filter: only last 30 candles after CHoCH are searched.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="tab-panel" id="smc-premium">
+    <div class="card">
+      <div class="card-title">⚖️ Premium / Discount Zone Validation (V8.4 Binary Logic)</div>
+      <div class="alert alert-blue" style="margin-bottom:16px">
+        <span class="alert-icon">💡</span>
+        <div>V8.4 replaced complex percentage calculations with pure binary price comparison. The equilibrium (50% level) is simply <code>(macro_high + macro_low) / 2.0</code>. Above = Premium, Below = Discount.</div>
+      </div>
+      <div class="grid-2">
+        <div>
+          <div style="font-size:14px;font-weight:700;color:var(--red);margin-bottom:12px">🔴 BEARISH SHORT — Premium Zone</div>
+          <div style="background:var(--panel2);border-radius:10px;padding:16px;font-family:monospace;font-size:12px;line-height:2">
+            <div style="color:var(--red)">macro_high ━━━━━━━━ 100%</div>
+            <div style="color:var(--text-dim);padding-left:20px">│ PREMIUM ZONE</div>
+            <div style="color:var(--gold)">equilibrium ━━━━━━━ 50%</div>
+            <div style="color:var(--text-dim);padding-left:20px">│ DISCOUNT ZONE</div>
+            <div style="color:var(--green)">macro_low ━━━━━━━━ 0%</div>
+          </div>
+          <div style="margin-top:12px;font-size:13px;color:var(--text-dim)">
+            ✅ VALID if: <code>fvg.top ≥ equilibrium</code><br>
+            ❌ REJECTED if: FVG is entirely below 50% level
+          </div>
+        </div>
+        <div>
+          <div style="font-size:14px;font-weight:700;color:var(--green);margin-bottom:12px">🟢 BULLISH LONG — Discount Zone</div>
+          <div style="background:var(--panel2);border-radius:10px;padding:16px;font-size:13px;line-height:1.8;color:var(--text-dim)">
+            <strong>REVERSAL Logic</strong>: Equilibrium measured from PRE-CHoCH macro leg (old trend's extreme to CHoCH break price). Deep retracement (48–52%) into old range = institutional reversal zone.<br><br>
+            <strong>CONTINUITY Logic</strong>: Equilibrium measured from POST-CHoCH impulse leg (current trend's pullback zone). Shallower retracement (38–62%) acceptable in strong trends.
+          </div>
+          <div style="margin-top:12px;font-size:13px;color:var(--text-dim)">
+            ✅ VALID if: <code>fvg.bottom ≤ equilibrium</code><br>
+            ❌ REJECTED if: FVG is entirely above 50% level
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="tab-panel" id="smc-ob">
+    <div class="card">
+      <div class="card-title">📦 Order Blocks (V3.5)</div>
+      <p style="font-size:13px;color:var(--text-dim);line-height:1.8;margin-bottom:14px">
+        An Order Block is the <strong>last opposing candle before an institutional impulse</strong>. When combined with an unfilled FVG nearby, it creates a 10/10 setup.
+      </p>
+      <div class="flow-rules" style="grid-template-columns:1fr 1fr 1fr;">
+        <div class="flow-rule"><span class="flow-rule-icon">🔍</span><div><strong>Detection</strong><br>Bullish CHoCH → find last BEARISH candle before impulse. Bearish CHoCH → find last BULLISH candle. Lookback = 10 candles.</div></div>
+        <div class="flow-rule"><span class="flow-rule-icon">📏</span><div><strong>Zone Definition</strong><br>Bullish OB: Body_high to Wick_low. Bearish OB: Wick_high to Body_low. Represents full range of institutional accumulation/distribution candle.</div></div>
+        <div class="flow-rule"><span class="flow-rule-icon">⭐</span><div><strong>Scoring (1-10)</strong><br>Base score 5. +5 if unfilled FVG within 2× OB size nearby → score 10 (PERFECT). +1 if impulse &gt;1% strength. OB + unfilled FVG = "Setup 10/10".</div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="tab-panel" id="smc-swing">
+    <div class="card">
+      <div class="card-title">📊 Swing Detection (Body-Based, ATR-Filtered)</div>
+      <div class="alert alert-green">
+        <span class="alert-icon">✅</span>
+        <div>All swing detection uses <strong>candle bodies</strong> (min/max of open and close), NOT wicks/tails. This prevents liquidity sweep spikes from being counted as real swing levels.</div>
+      </div>
+      <br>
+      <div class="grid-2">
+        <div>
+          <div style="font-size:13px;font-weight:700;color:var(--gold);margin-bottom:10px">Swing Low Algorithm</div>
+          <div class="code-block">body_lows = <span class="fn">min</span>(df[<span class="st">'open'</span>], df[<span class="st">'close'</span>])
+<span class="cm"># swing_lookback = 5 (default)</span>
+<span class="kw">for</span> i <span class="kw">in</span> <span class="fn">range</span>(lookback, n - lookback):
+  current = body_lows[i]
+  left = <span class="fn">all</span>(current &lt; body_lows[i-j]
+         <span class="kw">for</span> j <span class="kw">in</span> <span class="fn">range</span>(<span class="nm">1</span>, lookback+<span class="nm">1</span>))
+  right = <span class="fn">all</span>(current &lt; body_lows[i+j]
+          <span class="kw">for</span> j <span class="kw">in</span> <span class="fn">range</span>(<span class="nm">1</span>, lookback+<span class="nm">1</span>))
+  <span class="kw">if</span> left <span class="kw">and</span> right:
+    swing_lows.<span class="fn">append</span>(i)</div>
+        </div>
+        <div>
+          <div style="font-size:13px;font-weight:700;color:var(--gold);margin-bottom:10px">ATR Filter (V8.2)</div>
+          <p style="font-size:13px;color:var(--text-dim);line-height:1.8">
+            ATR (14-period) is calculated to measure volatility. Only swings that represent moves of at least <code>1.2 × ATR</code> are considered significant. This prevents micro-structure noise from generating false CHoCH signals on range-bound days.
+            <br><br>
+            <strong>ATR Multiplier:</strong> 1.5 (relaxed from earlier versions to capture more valid swings on less volatile pairs like EURCHF).
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════════════════
+     SECTION 4: RISK ENGINE
+═══════════════════════════════════════════════════════════════════════ -->
+<section class="section" id="section-risk">
+  <div class="section-header">
+    <span class="section-icon">🛡️</span>
+    <div>
+      <div class="section-title">Risk Engine — SUPER_CONFIG.json</div>
+      <div class="section-desc">unified_risk_manager.py — Single Source of Truth for all risk parameters</div>
+    </div>
+  </div>
+
+  <div class="risk-meters">
+    <div class="risk-meter">
+      <div class="risk-meter-label">Risk Per Trade</div>
+      <div class="risk-meter-val" style="color:var(--green)">5%</div>
+      <div class="risk-meter-bar-bg"><div class="risk-meter-bar" style="width:50%;background:var(--green)"></div></div>
+      <div style="font-size:11px;color:var(--text-dim);margin-top:6px">Max 7% | Min 2%</div>
+    </div>
+    <div class="risk-meter">
+      <div class="risk-meter-label">Daily Loss Limit</div>
+      <div class="risk-meter-val" style="color:var(--red)">-10%</div>
+      <div class="risk-meter-bar-bg"><div class="risk-meter-bar" style="width:100%;background:var(--red)"></div></div>
+      <div style="font-size:11px;color:var(--text-dim);margin-top:6px">Deep Sleep triggered</div>
+    </div>
+    <div class="risk-meter">
+      <div class="risk-meter-label">Daily Warning</div>
+      <div class="risk-meter-val" style="color:var(--orange)">-7%</div>
+      <div class="risk-meter-bar-bg"><div class="risk-meter-bar" style="width:70%;background:var(--orange)"></div></div>
+      <div style="font-size:11px;color:var(--text-dim);margin-top:6px">Telegram alert sent</div>
+    </div>
+    <div class="risk-meter">
+      <div class="risk-meter-label">Max Positions</div>
+      <div class="risk-meter-val" style="color:var(--blue-bright)">15</div>
+      <div class="risk-meter-bar-bg"><div class="risk-meter-bar" style="width:75%;background:var(--blue-bright)"></div></div>
+      <div style="font-size:11px;color:var(--text-dim);margin-top:6px">Reduce to 5 on live</div>
+    </div>
+    <div class="risk-meter">
+      <div class="risk-meter-label">Per Currency Max</div>
+      <div class="risk-meter-val" style="color:var(--purple)">30%</div>
+      <div class="risk-meter-bar-bg"><div class="risk-meter-bar" style="width:30%;background:var(--purple)"></div></div>
+      <div style="font-size:11px;color:var(--text-dim);margin-top:6px">Concentration limit</div>
+    </div>
+    <div class="risk-meter">
+      <div class="risk-meter-label">Max Per Symbol</div>
+      <div class="risk-meter-val" style="color:var(--teal)">1</div>
+      <div class="risk-meter-bar-bg"><div class="risk-meter-bar" style="width:10%;background:var(--teal)"></div></div>
+      <div style="font-size:11px;color:var(--text-dim);margin-top:6px">Duplicate Guard</div>
+    </div>
+  </div>
+
+  <br>
+  <!-- LOT SIZING -->
+  <div class="card">
+    <div class="card-title">📏 Dynamic Lot Size Calculation</div>
+    <div class="grid-2">
+      <div>
+        <p style="font-size:13px;color:var(--text-dim);line-height:1.8;margin-bottom:14px">Lot size is calculated dynamically based on the actual Stop Loss distance in pips, ensuring exactly 5% risk regardless of trade volatility.</p>
+        <div class="code-block">
+<span class="cm"># Lot Calculation Formula:</span>
+risk_amount = equity * <span class="nm">0.05</span>  <span class="cm"># 5% of equity</span>
+sl_pips = <span class="fn">abs</span>(entry - stop_loss) * pip_mult
+pip_value = <span class="nm">10</span>  <span class="cm"># USD per pip (1 std lot)</span>
+
+lot_size = risk_amount / (sl_pips * pip_value)
+lot_size = <span class="fn">round</span>(lot_size / <span class="nm">0.01</span>) * <span class="nm">0.01</span>  <span class="cm"># step</span>
+lot_size = <span class="fn">max</span>(<span class="nm">0.01</span>, <span class="fn">min</span>(lot_size, <span class="nm">2.0</span>))  <span class="cm"># clamp</span>
+
+<span class="cm"># JPY pairs: pip_mult = 100 (not 10000)</span>
+<span class="cm"># Crypto: percentage-based (1% of price)</span></div>
+      </div>
+      <div>
+        <div style="font-size:13px;font-weight:700;color:var(--gold);margin-bottom:12px">Example: GBPUSD SELL Setup</div>
+        <table class="data-table" style="margin-top:0">
+          <tr><td>Equity</td><td><strong>$1,000</strong></td></tr>
+          <tr><td>5% Risk Amount</td><td><strong>$50.00</strong></td></tr>
+          <tr><td>SL Distance</td><td><strong>30 pips</strong></td></tr>
+          <tr><td>Pip Value (1 lot)</td><td><strong>$10.00</strong></td></tr>
+          <tr><td>Calculated Lot</td><td><strong>50 ÷ (30 × 10) = 0.17</strong></td></tr>
+          <tr><td style="color:var(--gold)">Final Lot</td><td><strong style="color:var(--gold)">0.17 lots</strong></td></tr>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <br>
+  <!-- DEEP SLEEP -->
+  <div class="card">
+    <div class="card-title">😴 Deep Sleep Mode (V9.3)</div>
+    <div class="alert alert-red">
+      <span class="alert-icon">🚨</span>
+      <div><strong>Trigger:</strong> When daily equity loss reaches -10% from <code>data/daily_state.json</code> starting_balance → Deep Sleep activates. <strong>All scanning stops immediately</strong> — zero HTTP calls, zero CPU usage. Persisted to <code>data/deep_sleep_state.json</code> so it survives process restarts.</div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:14px">
+      <div class="flow-rule" style="display:flex"><span class="flow-rule-icon">⏰</span><div>Wake time: 00:05 UTC next day (5-minute safety buffer after midnight daily state reset)</div></div>
+      <div class="flow-rule" style="display:flex"><span class="flow-rule-icon">📊</span><div>Impact: 77,760 HTTP calls/day → ZERO. From 27 API calls/iteration × every 30s → 0</div></div>
+      <div class="flow-rule" style="display:flex"><span class="flow-rule-icon">📱</span><div>One Telegram notification sent when entering Deep Sleep, one when waking up</div></div>
+      <div class="flow-rule" style="display:flex"><span class="flow-rule-icon">⚠️</span><div>KNOWN BUG HISTORY: daily_state starting_balance used account balance (not equity). Fixed manually 2025-01-30 to use equity value.</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════════════════
+     SECTION 5: EXECUTION
+═══════════════════════════════════════════════════════════════════════ -->
+<section class="section" id="section-execution">
+  <div class="section-header">
+    <span class="section-icon">⚡</span>
+    <div>
+      <div class="section-title">Trade Execution Pipeline</div>
+      <div class="section-desc">ctrader_executor.py + PythonSignalExecutor cBot</div>
+    </div>
+  </div>
+
+  <div class="grid-2">
+    <div class="card">
+      <div class="card-title">📤 Signal Write Protocol (V7.0)</div>
+      <div class="code-block">
+<span class="cm"># Array-based fire-and-forget:</span>
+<span class="cm">1. Acquire fcntl LOCK_EX on signals.json.lock</span>
+<span class="cm">2. Read existing signals.json array (or [])</span>
+<span class="cm">3. Append new signal to array</span>
+<span class="cm">4. Write to temp file (tempfile.mkstemp)</span>
+<span class="cm">5. os.replace() atomic rename → signals.json</span>
+<span class="cm">6. Release lock</span>
+<span class="cm">7. Log: "Signal APPENDED" + queue size</span>
+
+<span class="cm"># Signal structure:</span>
+{
+  <span class="st">"Symbol"</span>: <span class="st">"GBPUSD"</span>,
+  <span class="st">"Action"</span>: <span class="st">"SELL"</span>,
+  <span class="st">"EntryPrice"</span>: <span class="nm">1.27500</span>,
+  <span class="st">"StopLoss"</span>: <span class="nm">1.27800</span>,
+  <span class="st">"TakeProfit"</span>: <span class="nm">1.26900</span>,
+  <span class="st">"LotSize"</span>: <span class="nm">0.17</span>,
+  <span class="st">"SignalId"</span>: <span class="st">"GBPUSD_SELL_127500_xxx"</span>,
+  <span class="st">"Comment"</span>: <span class="st">"D1_REVERSAL_4H_SYNC"</span>
+}</div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">🤝 Two-Way Handshake Protocol</div>
+      <div class="flow-rules" style="grid-template-columns:1fr;">
+        <div class="flow-rule"><span class="flow-rule-icon">1️⃣</span><div><strong>Python writes signal</strong> to signals.json with unique SignalId (symbol_direction_price_timestamp)</div></div>
+        <div class="flow-rule"><span class="flow-rule-icon">2️⃣</span><div><strong>cBot reads signals.json</strong> every 1 second, finds new signal, places market order at IC Markets</div></div>
+        <div class="flow-rule"><span class="flow-rule-icon">3️⃣</span><div><strong>cBot writes confirmation</strong> to execution_report.json with matching SignalId + fill price + actual lot</div></div>
+        <div class="flow-rule"><span class="flow-rule-icon">4️⃣</span><div><strong>Python polls for confirmation</strong> up to 30 seconds. On success: sends Telegram notification with fill details</div></div>
+        <div class="flow-rule"><span class="flow-rule-icon">5️⃣</span><div><strong>Confirmation file deleted</strong> immediately after reading to prevent ghost notifications (anti-spam)</div></div>
+      </div>
+    </div>
+  </div>
+
+  <br>
+  <div class="card">
+    <div class="card-title">📊 Telegram Notification Format</div>
+    <div style="background:#0a0d13;border:1px solid var(--border);border-radius:10px;padding:20px;font-size:13px;line-height:1.8;font-family:monospace;color:#a8c8a8">
+      <div style="color:#f0c060">🎯 <b>TRADE EXECUTED</b></div>
+      <div style="color:#888">━━━━━━━━━━━━━━━━━━━━━━━━━</div>
+      <div>Symbol: <span style="color:#fff">GBPUSD</span></div>
+      <div>Direction: <span style="color:#e84545">🔴 SELL</span></div>
+      <div>Strategy: <span style="color:#6699ff">D1_REVERSAL_4H_SYNC</span></div>
+      <div>Entry: <span style="color:#fff">1.27500</span></div>
+      <div>Stop Loss: <span style="color:#e84545">1.27800</span> (30 pips)</div>
+      <div>Take Profit: <span style="color:#1ecb7b">1.26900</span> (60 pips)</div>
+      <div>Lot Size: <span style="color:#fff">0.17</span></div>
+      <div>Risk: <span style="color:#f07830">$50.00 (5.0%)</span></div>
+      <div>R:R = <span style="color:#1ecb7b">1:2.0</span></div>
+      <div style="color:#888">━━━━━━━━━━━━━━━━━━━━━━━━━</div>
+      <div style="color:#f0c060">  ────────────────</div>
+      <div style="color:#f0c060">  🔱 AUTHORED BY <b>ФорексГод</b> 🔱</div>
+      <div style="color:#f0c060">  ────────────────</div>
+      <div style="color:#a0a0c0">  🏛️ INSTITUTIONAL TERMINAL 🏛️</div>
+    </div>
+  </div>
+
+  <br>
+  <!-- News Guard -->
+  <div class="card">
+    <div class="card-title">📰 V10.3 News Guard (Information Only)</div>
+    <div class="alert alert-blue">
+      <span class="alert-icon">ℹ️</span>
+      <div>News Guard is <strong>informational only — it does NOT block execution</strong>. If a HIGH impact news event for an affected currency is within 30 minutes of the trade, a warning is sent to Telegram. The trade still executes. This gives the trader context to manually manage the position if needed.</div>
+    </div>
+    <div style="margin-top:12px;font-size:13px;color:var(--text-dim);line-height:1.8">
+      <strong>Source:</strong> <code>data/upcoming_news.json</code> (populated by news_fetcher.py at 05:00 UTC daily)<br>
+      <strong>Window:</strong> 0–30 minutes before event<br>
+      <strong>Affected pairs:</strong> Extracts both currencies from pair name (e.g., GBPUSD → GBP + USD events)<br>
+      <strong>Impact filter:</strong> Only HIGH impact events trigger the warning
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════════════════
+     SECTION 6: GLOSSARY
+═══════════════════════════════════════════════════════════════════════ -->
+<section class="section" id="section-glossary">
+  <div class="section-header">
+    <span class="section-icon">📖</span>
+    <div>
+      <div class="section-title">SMC Glossary</div>
+      <div class="section-desc">Smart Money Concept definitions as implemented in this system</div>
+    </div>
+  </div>
+
+  <div class="gloss-grid">
+    <div class="gloss-item">
+      <div class="gloss-term">CHoCH — Change of Character</div>
+      <div class="gloss-def">The first signal of a trend reversal. Price breaks a swing level that requires BOTH patterns to be present (HH+HL for bearish CHoCH, LL+LH for bullish). The breaking candle's BODY must close beyond the level — wicks are rejected.</div>
+    </div>
+    <div class="gloss-item">
+      <div class="gloss-term">BOS — Break of Structure</div>
+      <div class="gloss-def">Trend continuation signal. Price breaks a swing level in the SAME direction as the existing trend. No dual-pattern requirement — just the most recent swing high/low in trend direction. Also requires body closure.</div>
+    </div>
+    <div class="gloss-item">
+      <div class="gloss-term">FVG — Fair Value Gap</div>
+      <div class="gloss-def">A 3-candle imbalance where the middle candle's movement left a gap: body_high[i-1] &lt; body_low[i+1] (bullish) or body_low[i-1] &gt; body_high[i+1] (bearish). Minimum size: 0.05% of price. FVG is "mitigated" only when a body (not wick) closes through it.</div>
+    </div>
+    <div class="gloss-item">
+      <div class="gloss-term">Order Block (OB)</div>
+      <div class="gloss-def">Last opposing candle before a strong institutional impulse. For bullish moves: last bearish candle. For bearish moves: last bullish candle. Zone = body_high to wick_low (bullish OB) or wick_high to body_low (bearish OB). Score 10/10 if unfilled FVG nearby.</div>
+    </div>
+    <div class="gloss-item">
+      <div class="gloss-term">Premium Zone</div>
+      <div class="gloss-def">Price above the 50% equilibrium of the macro leg. Considered "expensive" — ideal for SHORT entries. Equilibrium = (macro_high + macro_low) / 2. No ceiling — the higher above 50%, the stronger the Premium.</div>
+    </div>
+    <div class="gloss-item">
+      <div class="gloss-term">Discount Zone</div>
+      <div class="gloss-def">Price below the 50% equilibrium of the macro leg. Considered "cheap" — ideal for LONG entries. No floor — the lower below 50%, the stronger the Discount.</div>
+    </div>
+    <div class="gloss-item">
+      <div class="gloss-term">Equilibrium (50% Level)</div>
+      <div class="gloss-def">Simple midpoint: (macro_high + macro_low) / 2. For REVERSALS: uses pre-CHoCH macro leg (old trend's extreme to break price). For CONTINUITY: uses post-CHoCH impulse leg (last swing to BOS break price).</div>
+    </div>
+    <div class="gloss-item">
+      <div class="gloss-term">Liquidity Sweep</div>
+      <div class="gloss-def">Smart Money manipulation tactic. Equal highs/lows are identified (within 5 pips tolerance). A sweep = wick THROUGH the equal level BUT close back INSIDE. SSL sweep (fake breakdown) precedes bullish CHoCH. BSL sweep (fake breakout) precedes bearish CHoCH. Adds +20 confidence boost.</div>
+    </div>
+    <div class="gloss-item">
+      <div class="gloss-term">Fibonacci 50% Entry</div>
+      <div class="gloss-def">Entry target = 50% of the 1H (or 4H/D1 for REVERSAL) swing that created the CHoCH/BOS. Price must touch this level ± tolerance (10 pips standard, 1% for crypto). Entry executed at exact Fibo 50% price, not the wick touch level.</div>
+    </div>
+    <div class="gloss-item">
+      <div class="gloss-term">4H Structure Lock</div>
+      <div class="gloss-def">V10.4 gate: D1 bias is set. Now the 4H chart must confirm with a CHoCH in the SAME direction, with body closure, within the last 48 hours (12 × 4H candles). Until this lock is achieved, the bot stays completely silent for that setup.</div>
+    </div>
+    <div class="gloss-item">
+      <div class="gloss-term">4H Sync FVG</div>
+      <div class="gloss-def">The FVG generated specifically by the 4H confirmation move (not the D1 FVG). This is the preferred entry zone over the D1 FVG because it's more precise. Only detected after 4H Structure Lock is achieved.</div>
+    </div>
+    <div class="gloss-item">
+      <div class="gloss-term">Deep Sleep</div>
+      <div class="gloss-def">System state when daily loss limit (-10%) is hit. ALL scanning stops. Zero HTTP calls, zero CPU usage. Persisted to data/deep_sleep_state.json. Survives process restarts. Wakes at 00:05 UTC next day when daily state resets.</div>
+    </div>
+    <div class="gloss-item">
+      <div class="gloss-term">Reversal Strategy</div>
+      <div class="gloss-def">D1 CHoCH detected — the market is changing its primary trend direction. Enter on retest of D1 FVG/OB in the new direction. High R:R setups because catching a trend change early. Requires strictest validation.</div>
+    </div>
+    <div class="gloss-item">
+      <div class="gloss-term">Continuity Strategy</div>
+      <div class="gloss-def">D1 BOS detected — the market is extending its existing trend. Enter on pullback to D1 FVG in trend direction. More frequent setups. Still requires 4H + 1H alignment before execution.</div>
+    </div>
+    <div class="gloss-item">
+      <div class="gloss-term">Signal Cache / Anti-Spam</div>
+      <div class="gloss-def">V3.8 system. Telegram debouncer prevents identical messages from being sent more than once per 4 hours per reason category. Rejection cooldown: 14,400 seconds (4H). Prevents notification flooding on repeated rejections.</div>
+    </div>
+    <div class="gloss-item">
+      <div class="gloss-term">SpatioTemporal Analyzer</div>
+      <div class="gloss-def">Builds narrative (ready_to_trade / monitor_closely / wait / avoid) for each pair by analyzing price action across D1 + 4H + 1H simultaneously. Used by realtime_monitor.py to determine which pairs to deeply scan.</div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════════════════
+     SECTION 7: AUDIT
+═══════════════════════════════════════════════════════════════════════ -->
+<section class="section" id="section-audit">
+  <div class="section-header">
+    <span class="section-icon">🔍</span>
+    <div>
+      <div class="section-title">System Audit — VPS/Investor Readiness</div>
+      <div class="section-desc">Full assessment of strengths, risks, and improvements before live deployment</div>
+    </div>
+  </div>
+
+  <!-- VERDICT -->
+  <div class="verdict">
+    <div class="verdict-title">🏛️ Overall Verdict: INSTITUTIONALLY SOUND — 3 Items Need Attention</div>
+    <ul class="verdict-list">
+      <li><span style="color:var(--green);font-size:18px">✅</span> Strategy logic is solid — D1→4H→1H alignment is proper institutional methodology used by hedge funds</li>
+      <li><span style="color:var(--green);font-size:18px">✅</span> Body closure requirement (not wicks) for CHoCH/BOS/FVG is the correct way to validate structure breaks</li>
+      <li><span style="color:var(--green);font-size:18px">✅</span> Risk management is comprehensive — 5% risk, 10% daily limit, duplicate guard, currency exposure cap</li>
+      <li><span style="color:var(--green);font-size:18px">✅</span> Atomic file writes + fcntl locking prevent race conditions in signal delivery</li>
+      <li><span style="color:var(--green);font-size:18px">✅</span> Deep Sleep is intelligent — prevents over-trading after daily limit hit, survives restarts</li>
+      <li><span style="color:var(--orange);font-size:18px">⚠️</span> <strong>CRITICAL:</strong> daily_state.json reset uses <code>balance</code> (not equity) — causes false daily loss readings when open positions exist overnight</li>
+      <li><span style="color:var(--orange);font-size:18px">⚠️</span> <strong>IMPORTANT:</strong> max_open_positions = 15 is too high for $1,000 live account — reduce to 3-5 max before going live</li>
+      <li><span style="color:var(--orange);font-size:18px">⚠️</span> <strong>MEDIUM:</strong> SUPER_CONFIG.json still has old branding in "telegram_alerts.branding" field (cosmetic only)</li>
+    </ul>
+  </div>
+
+  <div class="grid-2">
+    <!-- STRENGTHS -->
+    <div class="card">
+      <div class="card-title" style="color:var(--green)">✅ System Strengths</div>
+      <div class="timeline" style="padding-left:30px">
+        <div class="timeline-item">
+          <div class="timeline-dot" style="background:var(--green)"></div>
+          <div class="timeline-title">True Institutional Logic</div>
+          <div class="timeline-desc">D1→4H→1H alignment with body closure validation matches how professional traders analyze markets. Not a simple indicator system.</div>
+        </div>
+        <div class="timeline-item">
+          <div class="timeline-dot" style="background:var(--green)"></div>
+          <div class="timeline-title">Anti-Wick Filtering Everywhere</div>
+          <div class="timeline-desc">Body-based swing detection, body-closure CHoCH validation, body-closure FVG mitigation — consistent across all timeframes. This is the key to avoiding false signals.</div>
+        </div>
+        <div class="timeline-item">
+          <div class="timeline-dot" style="background:var(--green)"></div>
+          <div class="timeline-title">Intelligent HTTP Caching</div>
+          <div class="timeline-desc">D1 data cached 4h, H4 cached 30min, H1 cached 5min. Reduces broker API load by ~74%. Critical for VPS stability.</div>
+        </div>
+        <div class="timeline-item">
+          <div class="timeline-dot" style="background:var(--green)"></div>
+          <div class="timeline-title">Process Resilience</div>
+          <div class="timeline-desc">PID locks prevent duplicate instances. Watchdog auto-restarts crashes. Deep sleep persists across restarts. Signal queue prevents signal loss.</div>
+        </div>
+        <div class="timeline-item">
+          <div class="timeline-dot" style="background:var(--green)"></div>
+          <div class="timeline-title">Live Broker Sync</div>
+          <div class="timeline-desc">account_info.json (every 10s) provides real-time position count from cTrader instead of relying on potentially stale SQLite data.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- RISKS -->
+    <div class="card">
+      <div class="card-title" style="color:var(--red)">🚨 Known Risks & Required Fixes</div>
+
+      <div class="alert alert-red">
+        <span class="alert-icon">🔴</span>
+        <div>
+          <strong>[CRITICAL] Daily Loss Calculation Bug</strong><br>
+          <code>_reset_daily_state()</code> sets <code>starting_balance = balance</code> but should use <code>equity</code>.
+          When open positions have floating loss overnight, balance stays high but equity is lower → causes false "daily loss" readings.
+          <br><strong>Fix:</strong> In <code>unified_risk_manager.py</code>, change <code>self.starting_balance_today = balance</code> to <code>self.starting_balance_today = equity</code> in <code>_reset_daily_state()</code>.
+        </div>
+      </div>
+
+      <div class="alert alert-yellow">
+        <span class="alert-icon">🟡</span>
+        <div>
+          <strong>[IMPORTANT] Max Positions Too High for Live</strong><br>
+          SUPER_CONFIG has <code>max_open_positions = 15</code> (set for current 11 open positions on demo). On a $1,000 live account with 5% risk per trade, 15 trades = 75% account at risk simultaneously.
+          <br><strong>Fix:</strong> Reduce to <code>max_open_positions = 3</code> or <code>5</code> before going live with investor money.
+        </div>
+      </div>
+
+      <div class="alert alert-blue">
+        <span class="alert-icon">🔵</span>
+        <div>
+          <strong>[LOW] Kill Switch Disabled</strong><br>
+          <code>SUPER_CONFIG.kill_switch.enabled = false</code>. The kill switch (hard stop all trading) is commented out pending redesign. Currently Deep Sleep handles the -10% limit, but kill switch as a broker-level circuit breaker would be safer.
+          <br><strong>Status:</strong> Deep Sleep provides equivalent protection for now.
+        </div>
+      </div>
+
+      <div class="alert alert-blue">
+        <span class="alert-icon">🔵</span>
+        <div>
+          <strong>[LOW] Take Profit Not Calculated by Bot</strong><br>
+          Checking execution flow: the bot calculates Entry and SL dynamically. TP is set by the cBot (auto_close_profit_pips = 100 pips). No dynamic R:R take profit based on the actual setup swing structure.
+          <br><strong>Fix:</strong> Add TP = entry ± (SL_distance × 2.0) for minimum 1:2 R:R as default.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <br>
+  <!-- VPS CHECKLIST -->
+  <div class="card">
+    <div class="card-title">🚀 VPS Deployment Checklist</div>
+    <table class="data-table">
+      <thead><tr><th>#</th><th>Item</th><th>Status</th><th>Action Required</th></tr></thead>
+      <tbody>
+        <tr><td>1</td><td>Fix _reset_daily_state() to use equity not balance</td><td><span class="pill pill-red">MUST FIX</span></td><td>1 line change in unified_risk_manager.py</td></tr>
+        <tr><td>2</td><td>Reduce max_open_positions to 3-5 for $1K live</td><td><span class="pill pill-red">MUST FIX</span></td><td>Edit SUPER_CONFIG.json before live</td></tr>
+        <tr><td>3</td><td>Verify all 4 processes start on VPS boot</td><td><span class="pill pill-orange">TODO</span></td><td>Set up launchd/systemd service files</td></tr>
+        <tr><td>4</td><td>Confirm cTrader cBot running on VPS or dedicated PC</td><td><span class="pill pill-orange">TODO</span></td><td>cBot must be running 24/7 for data + execution</td></tr>
+        <tr><td>5</td><td>Set TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID in .env</td><td><span class="pill pill-green">DONE</span></td><td>Already configured</td></tr>
+        <tr><td>6</td><td>Ensure data/ directory exists with correct permissions</td><td><span class="pill pill-orange">TODO</span></td><td>mkdir -p data && chmod 755 data</td></tr>
+        <tr><td>7</td><td>Test daily state reset at midnight UTC</td><td><span class="pill pill-orange">TODO</span></td><td>Monitor logs for "NEW DAY DETECTED" message</td></tr>
+        <tr><td>8</td><td>Verify signals.json path matches cBot read path</td><td><span class="pill pill-green">DONE</span></td><td>V7.0 fix: uses script_dir/signals.json</td></tr>
+        <tr><td>9</td><td>Test News Guard with upcoming_news.json populated</td><td><span class="pill pill-orange">TODO</span></td><td>Verify news_fetcher.py runs at 05:00 UTC</td></tr>
+        <tr><td>10</td><td>Add dynamic Take Profit (Entry ± 2× SL distance)</td><td><span class="pill pill-gold">OPTIONAL</span></td><td>Improves R:R tracking and strategy statistics</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <br>
+  <!-- KNOWN BUGS HISTORY -->
+  <div class="card">
+    <div class="card-title">🐛 Bug History Log</div>
+    <div class="timeline" style="padding-left:30px">
+      <div class="timeline-item">
+        <div class="timeline-dot" style="background:var(--green)"></div>
+        <div class="timeline-title">✅ FIXED: Old "POCOVNICU TERMINAL" Signatures</div>
+        <div class="timeline-desc">8 runtime files had verbose 5+ line branding. Replaced with clean 4-line official signature (AUTHORED BY ФорексГод + INSTITUTIONAL TERMINAL) across all files.</div>
+      </div>
+      <div class="timeline-item">
+        <div class="timeline-dot" style="background:var(--green)"></div>
+        <div class="timeline-title">✅ FIXED: False "Daily loss -49.92%" Block</div>
+        <div class="timeline-desc">starting_balance_today was $6,362 (account balance) but equity was $4,776 due to USDJPY SELL -$2,624 floating P&L. System correctly rejected all trades. Fixed by resetting daily_state.json starting_balance to $4,863 (actual equity at fix time).</div>
+      </div>
+      <div class="timeline-item">
+        <div class="timeline-dot" style="background:var(--green)"></div>
+        <div class="timeline-title">✅ FIXED: Race Condition in signals.json (V7.0)</div>
+        <div class="timeline-desc">Old format wrote single JSON object, each new signal OVERWROTE the previous one. Fixed with array-based format — signals are appended, cBot processes the full queue.</div>
+      </div>
+      <div class="timeline-item">
+        <div class="timeline-dot" style="background:var(--green)"></div>
+        <div class="timeline-title">✅ FIXED: Duplicate Process Instances (V9.1)</div>
+        <div class="timeline-desc">Watchdog would restart processes even when they were running, creating duplicates. Fixed with PID lock files + psutil verification of actual process identity.</div>
+      </div>
+      <div class="timeline-item">
+        <div class="timeline-dot" style="background:var(--green)"></div>
+        <div class="timeline-title">✅ FIXED: CHoCH Wick-Only False Signals</div>
+        <div class="timeline-desc">Early versions counted wick touches as structure breaks. Fixed in V8.0-V8.1 by requiring body closure (max(open,close) for highs, min(open,close) for lows) for all CHoCH/BOS/FVG detection.</div>
+      </div>
+      <div class="timeline-item">
+        <div class="timeline-dot" style="background:var(--red)"></div>
+        <div class="timeline-title">🔴 OPEN: daily_state reset uses balance not equity</div>
+        <div class="timeline-desc">unified_risk_manager.py _reset_daily_state() calls get_account_balance() which returns (equity, balance) but assigns starting_balance_today = balance (second return value). Should be starting_balance_today = equity.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ SIGNATURE ═══ -->
+<div class="signature">
+  <div class="sig-line">────────────────</div>
+  <div class="sig-name">🔱 AUTHORED BY ФорексГод 🔱</div>
+  <div class="sig-line">────────────────</div>
+  <div class="sig-terminal">🏛️ INSTITUTIONAL TERMINAL 🏛️</div>
+  <div style="margin-top:16px;font-size:11px;color:var(--text-dim);letter-spacing:1.5px">GLITCH IN MATRIX — V10.4 MTF PRECISION • BUILD 2026</div>
+</div>
+
+<script>
+function showSection(id) {
+  document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+  document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('section-' + id).classList.add('active');
+  event.target.classList.add('active');
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function showTab(section, tab) {
+  const panels = document.querySelectorAll('#section-' + section + ' .tab-panel');
+  const btns = document.querySelectorAll('#section-' + section + ' .tab-btn');
+  panels.forEach(p => p.classList.remove('active'));
+  btns.forEach(b => b.classList.remove('active'));
+  document.getElementById(section + '-' + tab).classList.add('active');
+  event.target.classList.add('active');
+}
+</script>
+
+</body>
+</html>

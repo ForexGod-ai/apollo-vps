@@ -35,11 +35,11 @@ namespace cAlgo.Robots
             // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
             Print("╔═══════════════════════════════════════════════════╗");
             Print("║                                                   ║");
-            Print("║     ✨ GLITCH IN MATRIX by ФорексГод ✨         ║");
-            Print("║     🧠 AI-Powered • 💎 Smart Money               ║");
+            Print("║     🔱 ФорексГод — POCOVNICU TERMINAL 🔱    ║");
+            Print("║     🏛️ Institutional Grade • MTF Perfection      ║");
             Print("║                                                   ║");
-            Print("║     Python Signal Executor V7.0 ARRAY PROTOCOL  ║");
-            Print("║     Swing Trading - Multi-Timeframe SMC          ║");
+            Print("║     Python Signal Executor V10.4 ARRAY PROTOCOL ║");
+            Print("║     D1 Bias → 4H Sync → 1H Entry                ║");
             Print("║                                                   ║");
             Print("╚═══════════════════════════════════════════════════╝");
             // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -740,11 +740,16 @@ namespace cAlgo.Robots
             // Normal execution for non-BTCUSD symbols
             Print($"📈 Executing: {signal.Direction.ToUpper()} {symbol.VolumeInUnitsToQuantity(volume)} lots");
             
+            // V10.3: Include StrategyTag in Label for trade identification
+            var tradeLabel = !string.IsNullOrEmpty(signal.StrategyTag) 
+                ? $"Glitch Matrix - {signal.StrategyTag}"
+                : $"Glitch Matrix - {signal.StrategyType}";
+            
             TradeResult result2 = ExecuteMarketOrder(
                 tradeType2,
                 symbolName,
                 volume,
-                $"Glitch Matrix - {signal.StrategyType}",
+                tradeLabel,
                 signal.StopLossPips,
                 signal.TakeProfitPips
             );
@@ -947,6 +952,12 @@ namespace cAlgo.Robots
                     if (symbol == null)
                         continue;
 
+                    // V10.3: Extract strategy tag from Label
+                    var label = position.Label ?? "";
+                    var strategyTag = label.StartsWith("Glitch Matrix - ") 
+                        ? label.Substring("Glitch Matrix - ".Length) 
+                        : label;
+                    
                     var exportObj = new
                     {
                         symbol = position.SymbolName,
@@ -957,7 +968,8 @@ namespace cAlgo.Robots
                         stop_loss = position.StopLoss,
                         take_profit = position.TakeProfit,
                         net_profit = position.NetProfit,
-                        pips = position.Pips
+                        pips = position.Pips,
+                        strategy_tag = strategyTag  // V10.3: D1_4H_REVERSAL_SNIPER_E1
                     };
                     positionsList.Add(exportObj);
                 }
@@ -976,8 +988,8 @@ namespace cAlgo.Robots
         {
             Print("");
             Print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-            Print("🛑 GLITCH IN MATRIX - Executor Stopped");
-            Print("✨ by ФорексГод • AI-Powered Trading • V4.0");
+            Print("🛑 ФорексГод — Executor Stopped");
+            Print("🏛️ POCOVNICU TERMINAL • V10.4 MTF Perfection");
             Print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
         }
     }
@@ -1012,5 +1024,9 @@ namespace cAlgo.Robots
         public int OrderBlockScore { get; set; }  // 1-10 (0 if not used)
         
         // V9.0: Daily Range fields REMOVED (caused UNKNOWN errors and 0 volume cascade)
+        
+        // ━━━ V10.3 STRATEGY TAGGING ━━━
+        public string Comment { get; set; }  // D1_4H_REVERSAL_SNIPER_E1
+        public string StrategyTag { get; set; }  // Same as Comment — human-readable strategy label
     }
 }

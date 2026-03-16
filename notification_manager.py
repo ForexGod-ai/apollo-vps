@@ -284,7 +284,7 @@ class NotificationManager:
             return False
     
     def send_execution_alert(self, setup_data):
-        """Trimite alertă TRADE LIVE — V9.1 HTML format, NO inline footer (R2/R3 AUDIT FIX by POCOVNICU)"""
+        """Trimite alertă TRADE LIVE — V9.1 HTML format, NO inline footer (R2/R3 AUDIT FIX by ФорексГод)"""
         symbol = setup_data.get('symbol', 'N/A')
         direction = setup_data.get('direction', 'buy').upper()
         entry = setup_data.get('entry', 0)

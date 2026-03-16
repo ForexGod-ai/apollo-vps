@@ -15,10 +15,10 @@
   },
   
   "position_limits": {
-    "max_open_positions": 15,
+    "max_open_positions": 5,
     "max_positions_per_symbol": 1,
     "max_trades_per_day": 8,
-    "comment": "Temporary 15 for current 11 positions, reduce to 5 on live"
+    "comment": "Live $1000 account — 5 positions x 5% risk = $250 max simultaneous exposure (25% of capital)"
   },
   
   "daily_limits": {

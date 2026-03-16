@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.forexgod.newsfetcher</string>
+    
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Library/Frameworks/Python.framework/Versions/3.14/bin/python3</string>
+        <string>/Users/forexgod/Desktop/Glitch in Matrix/trading-ai-agent apollo/news_fetcher.py</string>
+        <string>--days</string>
+        <string>7</string>
+    </array>
+    
+    <!-- Run daily at 05:00 UTC (08:00 Bucharest summer / 07:00 winter) -->
+    <!-- macOS uses local time — adjust for your timezone -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>8</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+    
+    <key>StandardOutPath</key>
+    <string>/Users/forexgod/Desktop/Glitch in Matrix/trading-ai-agent apollo/logs/news_fetcher.log</string>
+    
+    <key>StandardErrorPath</key>
+    <string>/Users/forexgod/Desktop/Glitch in Matrix/trading-ai-agent apollo/logs/news_fetcher_error.log</string>
+    
+    <key>RunAtLoad</key>
+    <true/>
+    
+    <key>WorkingDirectory</key>
+    <string>/Users/forexgod/Desktop/Glitch in Matrix/trading-ai-agent apollo</string>
+    
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/Library/Frameworks/Python.framework/Versions/3.14/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+</dict>
+</plist>

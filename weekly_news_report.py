@@ -1,26 +1,31 @@
 """
-Weekly Forex News Report - ForexGod Trading System
-Runs every Sunday at 21:00 to show all HIGH impact news for the coming week
-Gives you a complete overview to plan your trading week
+⛔ DEPRECATED — V10.4 NEWS SOURCE UNIFICATION
+────────────────
+🔱 ФорексГод — ФорексГод INSTITUTIONAL TERMINAL 🔱
+
+This module is DISABLED as of V10.4.
+All news notifications now flow EXCLUSIVELY through:
+  news_fetcher.py → data/upcoming_news.json → news_reminder_engine.py → Telegram
+
+The weekly_news_report.py used a DIFFERENT data source (news_calendar_monitor)
+which caused contradictory news data in Telegram. UNIFIED path only.
+
+To re-enable (NOT recommended): remove the sys.exit() guard below.
+────────────────
 """
 
-import os
-import requests
-from datetime import datetime, timedelta
-from typing import List
-from dotenv import load_dotenv
+import sys
 import logging
 
-# Reuse NewsEvent and NewsCalendarMonitor from news_calendar_monitor
-from news_calendar_monitor import NewsEvent, NewsCalendarMonitor
-
-load_dotenv()
-
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
 logger = logging.getLogger(__name__)
+
+# ═══ V10.4 KILL SWITCH — SINGLE NEWS SOURCE ENFORCEMENT ═══
+logger.warning("⛔ weekly_news_report.py is DISABLED (V10.4 News Unification)")
+logger.warning("   All news now flows through: news_fetcher.py → news_reminder_engine.py")
+print("⛔ DEPRECATED: weekly_news_report.py disabled by V10.4 News Unification")
+print("   Use news_fetcher.py + news_reminder_engine.py instead.")
+sys.exit(0)
+# ═══════════════════════════════════════════════════════════
 
 
 class WeeklyNewsReport(NewsCalendarMonitor):

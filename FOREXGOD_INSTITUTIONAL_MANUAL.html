@@ -1,0 +1,2147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>POCOVNICU Terminal — ФорексГод Edition | Institutional Architecture Manual</title>
+<style>
+  /* ═══════════════════════════════════════════════════════════════
+     POCOVNICU TERMINAL — ФорексГод EDITION
+     Institutional Architecture Manual — Single File Interactive
+     Dark Mode · Gold/Blue Accents · Inter/Roboto Typography
+     ═══════════════════════════════════════════════════════════════ */
+
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Roboto+Mono:wght@300;400;500;600;700&family=Playfair+Display:wght@400;500;600;700;800;900&display=swap');
+
+  :root {
+    --bg-primary: #0a0a0f;
+    --bg-secondary: #101018;
+    --bg-card: #14141e;
+    --bg-card-hover: #1a1a28;
+    --bg-code: #0d0d15;
+    --gold: #d4af37;
+    --gold-dim: #b8962e;
+    --gold-glow: rgba(212, 175, 55, 0.15);
+    --gold-bright: #f0d060;
+    --blue: #4a9eff;
+    --blue-dim: #3a7ecc;
+    --blue-glow: rgba(74, 158, 255, 0.12);
+    --blue-bright: #6bb5ff;
+    --green: #22c55e;
+    --green-dim: #16a34a;
+    --red: #ef4444;
+    --orange: #f59e0b;
+    --purple: #a855f7;
+    --text-primary: #e8e8f0;
+    --text-secondary: #9898a8;
+    --text-dim: #606070;
+    --border: #1e1e30;
+    --border-gold: rgba(212, 175, 55, 0.25);
+    --border-blue: rgba(74, 158, 255, 0.2);
+    --radius: 12px;
+    --radius-sm: 8px;
+    --shadow-gold: 0 0 30px rgba(212, 175, 55, 0.08);
+    --shadow-blue: 0 0 30px rgba(74, 158, 255, 0.06);
+    --transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    line-height: 1.7;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  ::selection {
+    background: rgba(212, 175, 55, 0.3);
+    color: var(--gold-bright);
+  }
+
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: var(--bg-primary); }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--gold-dim); }
+
+  /* ── HEADER ── */
+  .header {
+    position: relative;
+    padding: 80px 0 60px;
+    text-align: center;
+    background: linear-gradient(180deg, rgba(212,175,55,0.04) 0%, transparent 70%);
+    border-bottom: 1px solid var(--border);
+    overflow: hidden;
+  }
+
+  .header::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 50%;
+    transform: translateX(-50%);
+    width: 600px; height: 600px;
+    background: radial-gradient(circle, rgba(212,175,55,0.06) 0%, transparent 70%);
+    pointer-events: none;
+  }
+
+  .header-badge {
+    display: inline-block;
+    padding: 6px 20px;
+    border: 1px solid var(--border-gold);
+    border-radius: 20px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    color: var(--gold);
+    margin-bottom: 24px;
+    background: rgba(212,175,55,0.05);
+  }
+
+  .header h1 {
+    font-family: 'Playfair Display', serif;
+    font-size: clamp(32px, 5vw, 56px);
+    font-weight: 800;
+    letter-spacing: 2px;
+    color: var(--text-primary);
+    margin-bottom: 8px;
+  }
+
+  .header h1 span.gold { color: var(--gold); }
+
+  .header .subtitle {
+    font-size: 16px;
+    font-weight: 300;
+    color: var(--text-secondary);
+    letter-spacing: 4px;
+    text-transform: uppercase;
+    margin-bottom: 32px;
+  }
+
+  .header-meta {
+    display: flex;
+    justify-content: center;
+    gap: 32px;
+    flex-wrap: wrap;
+    font-size: 12px;
+    color: var(--text-dim);
+    letter-spacing: 1px;
+  }
+
+  .header-meta span {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .header-meta .dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    display: inline-block;
+  }
+
+  .dot-gold { background: var(--gold); }
+  .dot-blue { background: var(--blue); }
+  .dot-green { background: var(--green); }
+
+  /* ── NAVIGATION ── */
+  .nav-bar {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background: rgba(10, 10, 15, 0.92);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border-bottom: 1px solid var(--border);
+    padding: 0 24px;
+  }
+
+  .nav-inner {
+    max-width: 1200px;
+    margin: 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    overflow-x: auto;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+    padding: 12px 0;
+  }
+
+  .nav-inner::-webkit-scrollbar { display: none; }
+
+  .nav-link {
+    padding: 8px 16px;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    text-decoration: none;
+    border-radius: var(--radius-sm);
+    white-space: nowrap;
+    transition: var(--transition);
+    letter-spacing: 0.5px;
+  }
+
+  .nav-link:hover {
+    color: var(--gold);
+    background: var(--gold-glow);
+  }
+
+  .nav-link.active {
+    color: var(--gold);
+    background: var(--gold-glow);
+    font-weight: 600;
+  }
+
+  /* ── CONTAINER ── */
+  .container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 0 24px;
+  }
+
+  /* ── SECTIONS ── */
+  .section {
+    padding: 80px 0 40px;
+  }
+
+  .section-label {
+    display: inline-block;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    color: var(--gold);
+    margin-bottom: 12px;
+    padding: 4px 12px;
+    border-left: 2px solid var(--gold);
+    background: linear-gradient(90deg, var(--gold-glow), transparent);
+  }
+
+  .section-title {
+    font-family: 'Playfair Display', serif;
+    font-size: clamp(26px, 3.5vw, 40px);
+    font-weight: 700;
+    color: var(--text-primary);
+    margin-bottom: 16px;
+    line-height: 1.2;
+  }
+
+  .section-desc {
+    font-size: 15px;
+    color: var(--text-secondary);
+    max-width: 680px;
+    line-height: 1.8;
+    margin-bottom: 48px;
+  }
+
+  /* ── ARCHITECTURE TREE ── */
+  .tree-container {
+    position: relative;
+    padding: 48px 0;
+  }
+
+  .tree-root {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0;
+  }
+
+  .tree-node {
+    position: relative;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px 32px;
+    text-align: center;
+    transition: var(--transition);
+    cursor: default;
+    min-width: 280px;
+  }
+
+  .tree-node:hover {
+    border-color: var(--border-gold);
+    box-shadow: var(--shadow-gold);
+    transform: translateY(-2px);
+  }
+
+  .tree-node.root-node {
+    background: linear-gradient(135deg, var(--bg-card), rgba(212,175,55,0.08));
+    border-color: var(--gold-dim);
+    box-shadow: var(--shadow-gold);
+    min-width: 360px;
+    padding: 28px 40px;
+  }
+
+  .tree-node .node-icon {
+    font-size: 28px;
+    margin-bottom: 8px;
+  }
+
+  .tree-node .node-title {
+    font-weight: 700;
+    font-size: 15px;
+    color: var(--text-primary);
+    margin-bottom: 4px;
+  }
+
+  .tree-node .node-sub {
+    font-size: 11px;
+    color: var(--text-dim);
+    letter-spacing: 1px;
+    text-transform: uppercase;
+  }
+
+  .tree-connector {
+    width: 2px;
+    height: 40px;
+    background: linear-gradient(180deg, var(--gold-dim), var(--border));
+    margin: 0 auto;
+  }
+
+  .tree-branch {
+    display: flex;
+    justify-content: center;
+    gap: 24px;
+    flex-wrap: wrap;
+    position: relative;
+    padding-top: 20px;
+  }
+
+  .tree-branch::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    width: calc(100% - 140px);
+    height: 2px;
+    background: linear-gradient(90deg, transparent, var(--border-gold), var(--border-gold), transparent);
+  }
+
+  .tree-branch-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0;
+  }
+
+  .tree-branch-connector {
+    width: 2px;
+    height: 20px;
+    background: var(--border-gold);
+  }
+
+  .tree-node.branch-node {
+    min-width: 200px;
+    max-width: 220px;
+    padding: 16px 20px;
+  }
+
+  .tree-node.branch-node .node-icon { font-size: 22px; }
+  .tree-node.branch-node .node-title { font-size: 13px; }
+
+  /* ── LAYER CARDS ── */
+  .layer-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 24px;
+  }
+
+  .layer-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    transition: var(--transition);
+  }
+
+  .layer-card:hover {
+    border-color: var(--border-gold);
+    box-shadow: var(--shadow-gold);
+  }
+
+  .layer-card-header {
+    padding: 28px 32px 20px;
+    cursor: pointer;
+    display: flex;
+    align-items: flex-start;
+    gap: 20px;
+    user-select: none;
+  }
+
+  .layer-card-icon {
+    width: 52px; height: 52px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 26px;
+    border-radius: 14px;
+    flex-shrink: 0;
+  }
+
+  .icon-kernel { background: linear-gradient(135deg, rgba(239,68,68,0.15), rgba(239,68,68,0.05)); }
+  .icon-analytical { background: linear-gradient(135deg, rgba(74,158,255,0.15), rgba(74,158,255,0.05)); }
+  .icon-execution { background: linear-gradient(135deg, rgba(212,175,55,0.15), rgba(212,175,55,0.05)); }
+  .icon-risk { background: linear-gradient(135deg, rgba(168,85,247,0.15), rgba(168,85,247,0.05)); }
+  .icon-comms { background: linear-gradient(135deg, rgba(34,197,94,0.15), rgba(34,197,94,0.05)); }
+  .icon-data { background: linear-gradient(135deg, rgba(245,158,11,0.15), rgba(245,158,11,0.05)); }
+  .icon-infra { background: linear-gradient(135deg, rgba(99,102,241,0.15), rgba(99,102,241,0.05)); }
+
+  .layer-card-info { flex: 1; }
+
+  .layer-card-info .layer-tag {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    margin-bottom: 6px;
+  }
+
+  .tag-kernel { color: var(--red); }
+  .tag-analytical { color: var(--blue); }
+  .tag-execution { color: var(--gold); }
+  .tag-risk { color: var(--purple); }
+  .tag-comms { color: var(--green); }
+  .tag-data { color: var(--orange); }
+  .tag-infra { color: #6366f1; }
+
+  .layer-card-info h3 {
+    font-family: 'Playfair Display', serif;
+    font-size: 22px;
+    font-weight: 700;
+    color: var(--text-primary);
+    margin-bottom: 8px;
+  }
+
+  .layer-card-info .layer-desc {
+    font-size: 14px;
+    color: var(--text-secondary);
+    line-height: 1.7;
+  }
+
+  .layer-card-toggle {
+    width: 32px; height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    background: var(--bg-secondary);
+    color: var(--text-dim);
+    flex-shrink: 0;
+    transition: var(--transition);
+    font-size: 14px;
+    margin-top: 6px;
+  }
+
+  .layer-card.open .layer-card-toggle {
+    transform: rotate(180deg);
+    color: var(--gold);
+    background: var(--gold-glow);
+  }
+
+  .layer-card-body {
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  .layer-card.open .layer-card-body {
+    max-height: 3000px;
+  }
+
+  .layer-card-content {
+    padding: 0 32px 32px;
+    border-top: 1px solid var(--border);
+    margin: 0 20px;
+    padding-top: 24px;
+  }
+
+  /* ── MODULE ITEMS ── */
+  .module-list {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .module-item {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 20px 24px;
+    transition: var(--transition);
+  }
+
+  .module-item:hover {
+    border-color: var(--border-blue);
+    background: var(--bg-card-hover);
+  }
+
+  .module-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 10px;
+    flex-wrap: wrap;
+  }
+
+  .module-name {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--gold);
+    padding: 3px 10px;
+    background: rgba(212,175,55,0.08);
+    border-radius: 6px;
+    border: 1px solid rgba(212,175,55,0.15);
+  }
+
+  .module-lines {
+    font-size: 11px;
+    color: var(--text-dim);
+    font-family: 'Roboto Mono', monospace;
+  }
+
+  .module-role {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-family: 'Inter', sans-serif;
+  }
+
+  .role-engine { color: var(--blue); background: rgba(74,158,255,0.1); }
+  .role-protocol { color: var(--green); background: rgba(34,197,94,0.1); }
+  .role-module { color: var(--gold); background: rgba(212,175,55,0.1); }
+  .role-daemon { color: var(--purple); background: rgba(168,85,247,0.1); }
+  .role-cbot { color: var(--orange); background: rgba(245,158,11,0.1); }
+  .role-interface { color: #ec4899; background: rgba(236,72,153,0.1); }
+
+  .module-description {
+    font-size: 13px;
+    color: var(--text-secondary);
+    line-height: 1.7;
+    margin-bottom: 12px;
+  }
+
+  .module-capabilities {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .capability-tag {
+    font-size: 10px;
+    font-weight: 500;
+    padding: 3px 10px;
+    border-radius: 4px;
+    background: rgba(255,255,255,0.03);
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    letter-spacing: 0.5px;
+  }
+
+  /* ── STATS GRID ── */
+  .stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 16px;
+    margin-bottom: 40px;
+  }
+
+  .stat-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 24px;
+    text-align: center;
+    transition: var(--transition);
+  }
+
+  .stat-card:hover {
+    border-color: var(--border-gold);
+    box-shadow: var(--shadow-gold);
+  }
+
+  .stat-value {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 32px;
+    font-weight: 700;
+    color: var(--gold);
+    margin-bottom: 4px;
+  }
+
+  .stat-label {
+    font-size: 11px;
+    color: var(--text-dim);
+    letter-spacing: 1px;
+    text-transform: uppercase;
+  }
+
+  /* ── TECH STACK ── */
+  .tech-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 16px;
+  }
+
+  .tech-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 24px;
+    transition: var(--transition);
+  }
+
+  .tech-card:hover {
+    border-color: var(--border-blue);
+    box-shadow: var(--shadow-blue);
+  }
+
+  .tech-card h4 {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 4px;
+  }
+
+  .tech-card .tech-detail {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 12px;
+    color: var(--blue);
+    margin-bottom: 8px;
+  }
+
+  .tech-card p {
+    font-size: 13px;
+    color: var(--text-secondary);
+    line-height: 1.6;
+  }
+
+  /* ── DATA FLOW DIAGRAM ── */
+  .flow-container {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 32px 0;
+  }
+
+  .flow-node {
+    padding: 12px 20px;
+    border-radius: var(--radius-sm);
+    font-size: 12px;
+    font-weight: 600;
+    text-align: center;
+    min-width: 120px;
+  }
+
+  .flow-arrow {
+    color: var(--text-dim);
+    font-size: 18px;
+    flex-shrink: 0;
+  }
+
+  .flow-python { background: rgba(74,158,255,0.1); border: 1px solid rgba(74,158,255,0.2); color: var(--blue); }
+  .flow-json { background: rgba(245,158,11,0.1); border: 1px solid rgba(245,158,11,0.2); color: var(--orange); }
+  .flow-csharp { background: rgba(168,85,247,0.1); border: 1px solid rgba(168,85,247,0.2); color: var(--purple); }
+  .flow-broker { background: rgba(34,197,94,0.1); border: 1px solid rgba(34,197,94,0.2); color: var(--green); }
+  .flow-telegram { background: rgba(212,175,55,0.1); border: 1px solid rgba(212,175,55,0.2); color: var(--gold); }
+
+  /* ── VERSION TIMELINE ── */
+  .timeline {
+    position: relative;
+    padding-left: 32px;
+  }
+
+  .timeline::before {
+    content: '';
+    position: absolute;
+    left: 11px;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background: linear-gradient(180deg, var(--gold), var(--blue), var(--border));
+  }
+
+  .timeline-item {
+    position: relative;
+    padding-bottom: 32px;
+  }
+
+  .timeline-item::before {
+    content: '';
+    position: absolute;
+    left: -32px;
+    top: 6px;
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    background: var(--gold);
+    border: 2px solid var(--bg-primary);
+    box-shadow: 0 0 0 3px rgba(212,175,55,0.2);
+  }
+
+  .timeline-item.current::before {
+    background: var(--green);
+    box-shadow: 0 0 0 3px rgba(34,197,94,0.2);
+    animation: pulse-green 2s infinite;
+  }
+
+  @keyframes pulse-green {
+    0%, 100% { box-shadow: 0 0 0 3px rgba(34,197,94,0.2); }
+    50% { box-shadow: 0 0 0 6px rgba(34,197,94,0.1); }
+  }
+
+  .timeline-version {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--gold);
+    margin-bottom: 4px;
+  }
+
+  .timeline-title {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 4px;
+  }
+
+  .timeline-desc {
+    font-size: 13px;
+    color: var(--text-secondary);
+    line-height: 1.6;
+  }
+
+  /* ── PROCESS TABLE ── */
+  .process-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+
+  .process-table thead th {
+    text-align: left;
+    padding: 12px 16px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-secondary);
+  }
+
+  .process-table tbody td {
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--border);
+    color: var(--text-secondary);
+  }
+
+  .process-table tbody tr:hover td {
+    background: var(--bg-card-hover);
+    color: var(--text-primary);
+  }
+
+  .process-table .mono {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 12px;
+    color: var(--blue);
+  }
+
+  .process-table .status-active {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--green);
+    font-weight: 600;
+    font-size: 12px;
+  }
+
+  .status-dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--green);
+    animation: blink 2s infinite;
+  }
+
+  @keyframes blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }
+
+  /* ── SIGNATURE SECTION ── */
+  .signature-section {
+    padding: 100px 0 60px;
+    text-align: center;
+    position: relative;
+  }
+
+  .signature-section::before {
+    content: '';
+    position: absolute;
+    bottom: 0; left: 50%;
+    transform: translateX(-50%);
+    width: 500px; height: 500px;
+    background: radial-gradient(circle, rgba(212,175,55,0.04) 0%, transparent 70%);
+    pointer-events: none;
+  }
+
+  .signature-divider {
+    width: 80px;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, var(--gold), transparent);
+    margin: 0 auto 40px;
+  }
+
+  .signature-cyrillic {
+    font-family: 'Playfair Display', serif;
+    font-size: clamp(36px, 5vw, 64px);
+    font-weight: 800;
+    color: var(--gold);
+    letter-spacing: 6px;
+    margin-bottom: 8px;
+    text-shadow: 0 0 40px rgba(212,175,55,0.2);
+  }
+
+  .signature-latin {
+    font-family: 'Inter', sans-serif;
+    font-size: 14px;
+    font-weight: 300;
+    letter-spacing: 8px;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    margin-bottom: 40px;
+  }
+
+  .signature-poem {
+    max-width: 520px;
+    margin: 0 auto;
+    font-size: 13px;
+    color: var(--text-dim);
+    line-height: 2.2;
+    font-style: italic;
+    letter-spacing: 0.3px;
+  }
+
+  .signature-poem .line-gold {
+    color: var(--gold-dim);
+    font-weight: 500;
+    font-style: normal;
+  }
+
+  .signature-poem .line-blue {
+    color: var(--blue-dim);
+    font-weight: 500;
+    font-style: normal;
+  }
+
+  .footer {
+    padding: 32px 0;
+    text-align: center;
+    border-top: 1px solid var(--border);
+    font-size: 11px;
+    color: var(--text-dim);
+    letter-spacing: 1px;
+  }
+
+  .footer a {
+    color: var(--gold-dim);
+    text-decoration: none;
+  }
+
+  /* ── RESPONSIVE ── */
+  @media (max-width: 768px) {
+    .header { padding: 60px 0 40px; }
+    .section { padding: 60px 0 30px; }
+    .layer-card-header { padding: 20px; }
+    .layer-card-content { padding: 0 20px 20px; margin: 0 10px; }
+    .module-item { padding: 16px; }
+    .tree-branch { gap: 16px; }
+    .flow-container { flex-direction: column; }
+    .flow-arrow { transform: rotate(90deg); }
+  }
+
+  /* ── UTILITY ── */
+  .sep { height: 1px; background: var(--border); margin: 40px 0; }
+  .mb-8 { margin-bottom: 8px; }
+  .mb-16 { margin-bottom: 16px; }
+  .mb-24 { margin-bottom: 24px; }
+  .mb-32 { margin-bottom: 32px; }
+  .mb-48 { margin-bottom: 48px; }
+  .text-center { text-align: center; }
+</style>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════════════════
+     HEADER
+     ═══════════════════════════════════════════════════════════ -->
+<header class="header">
+  <div class="header-badge">Institutional Architecture Manual</div>
+  <h1>POCOVNICU <span class="gold">Terminal</span></h1>
+  <div class="subtitle">ФорексГод Edition — Glitch in Matrix Strategy</div>
+  <div class="header-meta">
+    <span><span class="dot dot-gold"></span> Version 10.4 — MTF Perfection</span>
+    <span><span class="dot dot-blue"></span> Python 3.14 · cTrader C# cBots</span>
+    <span><span class="dot dot-green"></span> 6 Autonomous Daemons · 24/7</span>
+  </div>
+</header>
+
+<!-- ═══════════════════════════════════════════════════════════
+     NAVIGATION
+     ═══════════════════════════════════════════════════════════ -->
+<nav class="nav-bar">
+  <div class="nav-inner">
+    <a href="#overview" class="nav-link active">Overview</a>
+    <a href="#architecture" class="nav-link">Architecture</a>
+    <a href="#kernel" class="nav-link">Core Kernel</a>
+    <a href="#analytical" class="nav-link">Analytical Layer</a>
+    <a href="#execution" class="nav-link">Execution Layer</a>
+    <a href="#risk" class="nav-link">Risk Layer</a>
+    <a href="#communication" class="nav-link">Communication</a>
+    <a href="#data" class="nav-link">Data Layer</a>
+    <a href="#infrastructure" class="nav-link">Infrastructure</a>
+    <a href="#dataflow" class="nav-link">Data Flow</a>
+    <a href="#versions" class="nav-link">Versions</a>
+    <a href="#tech" class="nav-link">Tech Stack</a>
+  </div>
+</nav>
+
+<!-- ═══════════════════════════════════════════════════════════
+     SECTION: OVERVIEW
+     ═══════════════════════════════════════════════════════════ -->
+<section id="overview" class="section">
+  <div class="container">
+    <div class="section-label">System Overview</div>
+    <div class="section-title">Sovereign Trading Infrastructure</div>
+    <div class="section-desc">
+      POCOVNICU Terminal is a fully autonomous institutional-grade algorithmic trading system
+      built around the proprietary <strong>Glitch in Matrix</strong> Smart Money Concepts strategy.
+      The system operates 24/7 across 28 FX pairs and BTCUSD, executing multi-timeframe
+      synchronized entries with zero human intervention.
+    </div>
+
+    <div class="stats-grid">
+      <div class="stat-card">
+        <div class="stat-value">16,837</div>
+        <div class="stat-label">Lines of Code</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value">130+</div>
+        <div class="stat-label">Python Modules</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value">4</div>
+        <div class="stat-label">C# cBots</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value">6</div>
+        <div class="stat-label">launchd Daemons</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value">29</div>
+        <div class="stat-label">Instruments Scanned</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value">24/7</div>
+        <div class="stat-label">Autonomous Operation</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════
+     SECTION: ARCHITECTURE TREE
+     ═══════════════════════════════════════════════════════════ -->
+<section id="architecture" class="section">
+  <div class="container">
+    <div class="section-label">System Architecture</div>
+    <div class="section-title">Genealogical Blueprint</div>
+    <div class="section-desc">
+      The complete hierarchical architecture of the POCOVNICU Terminal, visualized as
+      a genealogical tree. Each layer inherits context from its parent and propagates
+      intelligence downstream.
+    </div>
+
+    <div class="tree-container">
+      <div class="tree-root">
+
+        <!-- ROOT NODE -->
+        <div class="tree-node root-node">
+          <div class="node-icon">🏛️</div>
+          <div class="node-title">POCOVNICU TERMINAL</div>
+          <div class="node-sub">ФорексГод Edition · V10.4</div>
+        </div>
+
+        <div class="tree-connector"></div>
+
+        <!-- WATCHDOG -->
+        <div class="tree-node" style="border-color: var(--red); min-width: 320px;">
+          <div class="node-icon">🛡️</div>
+          <div class="node-title">WATCHDOG V4.0 — Self-Healing Protocol</div>
+          <div class="node-sub">Core Kernel · Guardian Daemon</div>
+        </div>
+
+        <div class="tree-connector"></div>
+
+        <!-- BRANCHES -->
+        <div class="tree-branch">
+
+          <!-- Analytical -->
+          <div class="tree-branch-item">
+            <div class="tree-branch-connector"></div>
+            <div class="tree-node branch-node" style="border-color: var(--blue-dim);">
+              <div class="node-icon">🔬</div>
+              <div class="node-title">Analytical Layer</div>
+              <div class="node-sub">Daily Bias Engine</div>
+            </div>
+          </div>
+
+          <!-- Execution -->
+          <div class="tree-branch-item">
+            <div class="tree-branch-connector"></div>
+            <div class="tree-node branch-node" style="border-color: var(--gold-dim);">
+              <div class="node-icon">⚡</div>
+              <div class="node-title">Execution Layer</div>
+              <div class="node-sub">MTF Sniper Protocol</div>
+            </div>
+          </div>
+
+          <!-- Risk -->
+          <div class="tree-branch-item">
+            <div class="tree-branch-connector"></div>
+            <div class="tree-node branch-node" style="border-color: var(--purple);">
+              <div class="node-icon">🔒</div>
+              <div class="node-title">Risk Layer</div>
+              <div class="node-sub">Unified Risk Shield</div>
+            </div>
+          </div>
+
+          <!-- Communication -->
+          <div class="tree-branch-item">
+            <div class="tree-branch-connector"></div>
+            <div class="tree-node branch-node" style="border-color: var(--green);">
+              <div class="node-icon">📡</div>
+              <div class="node-title">Communication</div>
+              <div class="node-sub">Sovereign Command</div>
+            </div>
+          </div>
+
+          <!-- Data -->
+          <div class="tree-branch-item">
+            <div class="tree-branch-connector"></div>
+            <div class="tree-node branch-node" style="border-color: var(--orange);">
+              <div class="node-icon">🗄️</div>
+              <div class="node-title">Data Layer</div>
+              <div class="node-sub">Atomic I/O Protocol</div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════
+     SECTION: CORE KERNEL
+     ═══════════════════════════════════════════════════════════ -->
+<section id="kernel" class="section">
+  <div class="container">
+    <div class="layer-grid">
+      <div class="layer-card open" id="card-kernel">
+        <div class="layer-card-header" onclick="toggleCard('card-kernel')">
+          <div class="layer-card-icon icon-kernel">🛡️</div>
+          <div class="layer-card-info">
+            <div class="layer-tag tag-kernel">Core Kernel · Layer 0</div>
+            <h3>Watchdog V4.0 — Self-Healing Protocol</h3>
+            <div class="layer-desc">
+              The immutable guardian daemon that ensures absolute system continuity.
+              Monitors all critical processes via PID verification every 60 seconds,
+              automatically resurrecting any process that deviates from nominal operation.
+              Operates as the root sentinel — if everything else fails, Watchdog rebuilds.
+            </div>
+          </div>
+          <div class="layer-card-toggle">▾</div>
+        </div>
+        <div class="layer-card-body">
+          <div class="layer-card-content">
+            <div class="module-list">
+              <div class="module-item">
+                <div class="module-header">
+                  <span class="module-name">watchdog_monitor.py</span>
+                  <span class="module-lines">415 lines</span>
+                  <span class="module-role role-daemon">Guardian Daemon</span>
+                </div>
+                <div class="module-description">
+                  Self-healing process supervisor that maintains a registry of all critical runtime
+                  daemons. Performs PID liveness checks via <code>os.kill(pid, 0)</code> signal probing,
+                  automatic subprocess resurrection with full argument preservation, and Telegram
+                  alerting on any process anomaly. Implements graceful degradation — individual module
+                  failure never cascades to system-wide shutdown.
+                </div>
+                <div class="module-capabilities">
+                  <span class="capability-tag">PID Liveness Probing</span>
+                  <span class="capability-tag">Auto-Resurrection</span>
+                  <span class="capability-tag">Telegram Health Alerts</span>
+                  <span class="capability-tag">60s Polling Cycle</span>
+                  <span class="capability-tag">Graceful Degradation</span>
+                  <span class="capability-tag">Log Rotation</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════
+     SECTION: ANALYTICAL LAYER
+     ═══════════════════════════════════════════════════════════ -->
+<section id="analytical" class="section">
+  <div class="container">
+    <div class="layer-grid">
+      <div class="layer-card" id="card-analytical">
+        <div class="layer-card-header" onclick="toggleCard('card-analytical')">
+          <div class="layer-card-icon icon-analytical">🔬</div>
+          <div class="layer-card-info">
+            <div class="layer-tag tag-analytical">Analytical Layer · Layer 1</div>
+            <h3>Daily Bias Engine — Glitch in Matrix</h3>
+            <div class="layer-desc">
+              The proprietary multi-timeframe Smart Money Concepts analysis engine. Detects
+              institutional order flow through D1 bias determination, 4H structural confirmation,
+              and 1H entry-grade Fair Value Gap identification. The brain of the entire operation.
+            </div>
+          </div>
+          <div class="layer-card-toggle">▾</div>
+        </div>
+        <div class="layer-card-body">
+          <div class="layer-card-content">
+            <div class="module-list">
+
+              <!-- smc_detector.py -->
+              <div class="module-item">
+                <div class="module-header">
+                  <span class="module-name">smc_detector.py</span>
+                  <span class="module-lines">4,900 lines</span>
+                  <span class="module-role role-engine">Core Engine</span>
+                </div>
+                <div class="module-description">
+                  The crown jewel of the analytical pipeline. Implements the complete Glitch in Matrix
+                  strategy: D1 bias lock (Reversal vs. Continuation), 4H CHoCH body closure confirmation
+                  with directional sync, and multi-timeframe Fair Value Gap detection. Contains
+                  <code>scan_for_setup()</code> — the master orchestrator that synthesizes all timeframes
+                  into a single actionable TradeSetup object. V10.4 introduced H4 sync FVG detection,
+                  eliminating the incorrect FVG zone restriction on 4H CHoCH validation.
+                </div>
+                <div class="module-capabilities">
+                  <span class="capability-tag">D1 Bias Lock</span>
+                  <span class="capability-tag">CHoCH Detection</span>
+                  <span class="capability-tag">BOS Detection</span>
+                  <span class="capability-tag">FVG Detection</span>
+                  <span class="capability-tag">Order Block ID</span>
+                  <span class="capability-tag">Swing Structure</span>
+                  <span class="capability-tag">ATR Prominence Filter</span>
+                  <span class="capability-tag">MTF Synchronization</span>
+                  <span class="capability-tag">H4 Sync FVG</span>
+                  <span class="capability-tag">Strategy Tagging</span>
+                </div>
+              </div>
+
+              <!-- realtime_monitor.py -->
+              <div class="module-item">
+                <div class="module-header">
+                  <span class="module-name">realtime_monitor.py</span>
+                  <span class="module-lines">819 lines</span>
+                  <span class="module-role role-daemon">Real-Time Scanner Daemon</span>
+                </div>
+                <div class="module-description">
+                  The persistent 4H scanner that continuously monitors all 29 instruments for
+                  emerging trade setups. When a valid D1+4H setup crystallizes, it atomically writes
+                  the setup to <code>monitoring_setups.json</code> with all metadata including
+                  FVG boundaries, strategy type, and H4 sync FVG coordinates. Runs perpetually
+                  via launchd with configurable scan intervals.
+                </div>
+                <div class="module-capabilities">
+                  <span class="capability-tag">Continuous 4H Scanning</span>
+                  <span class="capability-tag">Atomic JSON Write</span>
+                  <span class="capability-tag">29 Instruments</span>
+                  <span class="capability-tag">Setup Discovery</span>
+                  <span class="capability-tag">H4 Sync FVG Fields</span>
+                  <span class="capability-tag">Telegram Notifications</span>
+                </div>
+              </div>
+
+              <!-- daily_scanner.py -->
+              <div class="module-item">
+                <div class="module-header">
+                  <span class="module-name">daily_scanner.py</span>
+                  <span class="module-lines">747 lines</span>
+                  <span class="module-role role-module">Morning Scan Module</span>
+                </div>
+                <div class="module-description">
+                  Executes the comprehensive morning scan across all configured instruments.
+                  Produces daily bias reports, identifies potential reversal and continuation
+                  setups on the D1 timeframe, and generates Telegram summary reports with
+                  chart annotations. Scheduled via <code>com.forexgod.morningscan.plist</code>.
+                </div>
+                <div class="module-capabilities">
+                  <span class="capability-tag">Morning Scan Protocol</span>
+                  <span class="capability-tag">D1 Bias Reports</span>
+                  <span class="capability-tag">Chart Generation</span>
+                  <span class="capability-tag">Telegram Summaries</span>
+                  <span class="capability-tag">Pair Filtering</span>
+                </div>
+              </div>
+
+              <!-- multi_tf_radar.py -->
+              <div class="module-item">
+                <div class="module-header">
+                  <span class="module-name">multi_tf_radar.py</span>
+                  <span class="module-lines">821 lines</span>
+                  <span class="module-role role-module">MTF Radar Module</span>
+                </div>
+                <div class="module-description">
+                  Multi-timeframe radar that provides a panoramic view of structural alignment
+                  across D1, 4H, and 1H timeframes. Generates comprehensive confluence reports
+                  and identifies high-probability setup zones where all timeframes agree on direction.
+                </div>
+                <div class="module-capabilities">
+                  <span class="capability-tag">D1/4H/1H Alignment</span>
+                  <span class="capability-tag">Confluence Scoring</span>
+                  <span class="capability-tag">Radar Reports</span>
+                  <span class="capability-tag">Zone Identification</span>
+                </div>
+              </div>
+
+              <!-- ai_probability_analyzer.py -->
+              <div class="module-item">
+                <div class="module-header">
+                  <span class="module-name">ai_probability_analyzer.py</span>
+                  <span class="module-lines">—</span>
+                  <span class="module-role role-engine">AI Probability Engine</span>
+                </div>
+                <div class="module-description">
+                  Machine learning probability overlay that scores trade setups based on historical
+                  pattern recognition, win-rate statistics, and contextual factors. Provides
+                  confidence ratings that augment the SMC-based setup identification.
+                </div>
+                <div class="module-capabilities">
+                  <span class="capability-tag">ML Scoring</span>
+                  <span class="capability-tag">Pattern Recognition</span>
+                  <span class="capability-tag">Historical Analysis</span>
+                  <span class="capability-tag">Confidence Ratings</span>
+                </div>
+              </div>
+
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════
+     SECTION: EXECUTION LAYER
+     ═══════════════════════════════════════════════════════════ -->
+<section id="execution" class="section">
+  <div class="container">
+    <div class="layer-grid">
+      <div class="layer-card" id="card-execution">
+        <div class="layer-card-header" onclick="toggleCard('card-execution')">
+          <div class="layer-card-icon icon-execution">⚡</div>
+          <div class="layer-card-info">
+            <div class="layer-tag tag-execution">Execution Layer · Layer 2</div>
+            <h3>MTF Sniper — D1-4H-1H Synchronicity Protocol</h3>
+            <div class="layer-desc">
+              The precision execution pipeline that converts analytical setups into live market
+              positions. Implements the V10.4 D1 Bias + 4H Sync architecture: entries occur only
+              when D1 bias, 4H CHoCH body closure, and H4 sync FVG all align with surgical precision.
+            </div>
+          </div>
+          <div class="layer-card-toggle">▾</div>
+        </div>
+        <div class="layer-card-body">
+          <div class="layer-card-content">
+            <div class="module-list">
+
+              <!-- setup_executor_monitor.py -->
+              <div class="module-item">
+                <div class="module-header">
+                  <span class="module-name">setup_executor_monitor.py</span>
+                  <span class="module-lines">1,991 lines</span>
+                  <span class="module-role role-engine">Execution Engine</span>
+                </div>
+                <div class="module-description">
+                  The V10.4 execution brain. Monitors <code>monitoring_setups.json</code> every 30 seconds,
+                  validates pullback entries into the H4 sync FVG (with Daily FVG fallback),
+                  manages 4H structure lock with live CHoCH detection, and executes multi-entry
+                  scale-in sequences. Tag format: <code>D1_{TYPE}_4H_SYNC_{MODE}_E{N}</code>.
+                  Integrates news guard (15-min warnings), staleness checks, and forced execution
+                  override protocols.
+                </div>
+                <div class="module-capabilities">
+                  <span class="capability-tag">30s Monitoring Cycle</span>
+                  <span class="capability-tag">H4 Sync FVG Entry</span>
+                  <span class="capability-tag">4H Structure Lock</span>
+                  <span class="capability-tag">Scale-In E1→E3</span>
+                  <span class="capability-tag">News Guard</span>
+                  <span class="capability-tag">Strategy Tagging</span>
+                  <span class="capability-tag">Staleness Detection</span>
+                  <span class="capability-tag">Forced Execution Override</span>
+                </div>
+              </div>
+
+              <!-- ctrader_executor.py -->
+              <div class="module-item">
+                <div class="module-header">
+                  <span class="module-name">ctrader_executor.py</span>
+                  <span class="module-lines">898 lines</span>
+                  <span class="module-role role-protocol">Signal Protocol Bridge</span>
+                </div>
+                <div class="module-description">
+                  The Python→C# signal bridge. Constructs execution signal objects with precise
+                  SL/TP levels, lot sizes, strategy tags, and comments, then atomically writes them
+                  to <code>signals.json</code> using <code>fcntl</code> file locking for crash-safe
+                  inter-process communication. Each signal includes full metadata for C# cBot consumption.
+                </div>
+                <div class="module-capabilities">
+                  <span class="capability-tag">Atomic JSON Write</span>
+                  <span class="capability-tag">fcntl File Locking</span>
+                  <span class="capability-tag">SL/TP Calculation</span>
+                  <span class="capability-tag">Lot Sizing</span>
+                  <span class="capability-tag">Strategy Tag Injection</span>
+                  <span class="capability-tag">Signal Deduplication</span>
+                </div>
+              </div>
+
+              <!-- PythonSignalExecutor.cs -->
+              <div class="module-item">
+                <div class="module-header">
+                  <span class="module-name">PythonSignalExecutor.cs</span>
+                  <span class="module-lines">1,032 lines</span>
+                  <span class="module-role role-cbot">C# cBot · cTrader Runtime</span>
+                </div>
+                <div class="module-description">
+                  The final execution endpoint running inside cTrader's .NET runtime. Polls
+                  <code>signals.json</code> for new trade signals, validates instrument availability,
+                  calculates position volumes respecting broker constraints, and executes market/limit
+                  orders directly on the broker's matching engine. Writes execution confirmations back
+                  to <code>active_positions.json</code> for Python-side synchronization.
+                </div>
+                <div class="module-capabilities">
+                  <span class="capability-tag">cTrader .NET Runtime</span>
+                  <span class="capability-tag">Signal Polling</span>
+                  <span class="capability-tag">Market Order Execution</span>
+                  <span class="capability-tag">Volume Normalization</span>
+                  <span class="capability-tag">Position Confirmation</span>
+                  <span class="capability-tag">Label/Comment Tagging</span>
+                </div>
+              </div>
+
+              <!-- execution_radar.py -->
+              <div class="module-item">
+                <div class="module-header">
+                  <span class="module-name">execution_radar.py</span>
+                  <span class="module-lines">602 lines</span>
+                  <span class="module-role role-module">Execution Radar</span>
+                </div>
+                <div class="module-description">
+                  Post-execution surveillance module that tracks active trade performance,
+                  monitors drawdown metrics, and generates execution quality reports.
+                  Provides real-time visibility into the execution pipeline health.
+                </div>
+                <div class="module-capabilities">
+                  <span class="capability-tag">Trade Tracking</span>
+                  <span class="capability-tag">Drawdown Monitoring</span>
+                  <span class="capability-tag">Quality Reports</span>
+                  <span class="capability-tag">Pipeline Health</span>
+                </div>
+              </div>
+
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════
+     SECTION: RISK LAYER
+     ═══════════════════════════════════════════════════════════ -->
+<section id="risk" class="section">
+  <div class="container">
+    <div class="layer-grid">
+      <div class="layer-card" id="card-risk">
+        <div class="layer-card-header" onclick="toggleCard('card-risk')">
+          <div class="layer-card-icon icon-risk">🔒</div>
+          <div class="layer-card-info">
+            <div class="layer-tag tag-risk">Risk Layer · Layer 3</div>
+            <h3>Unified Risk Shield — Deep Sleep &amp; Atomic Locking</h3>
+            <div class="layer-desc">
+              The non-negotiable risk management layer that sits between analysis and execution.
+              Every trade must pass through the Risk Shield before reaching the broker. Implements
+              daily loss limits, position caps, duplicate guards, and dynamic lot calculation
+              with zero tolerance for bypass.
+            </div>
+          </div>
+          <div class="layer-card-toggle">▾</div>
+        </div>
+        <div class="layer-card-body">
+          <div class="layer-card-content">
+            <div class="module-list">
+
+              <!-- unified_risk_manager.py -->
+              <div class="module-item">
+                <div class="module-header">
+                  <span class="module-name">unified_risk_manager.py</span>
+                  <span class="module-lines">788 lines</span>
+                  <span class="module-role role-engine">Risk Engine</span>
+                </div>
+                <div class="module-description">
+                  Centralized risk validation engine. Enforces daily loss threshold (percentage-based),
+                  maximum concurrent position limits, per-pair duplicate detection, and risk-per-trade
+                  lot calculation using ATR-adjusted volatility metrics. Implements "Deep Sleep" mode —
+                  when daily loss exceeds threshold, the entire execution pipeline enters dormancy
+                  until the next trading session. All file operations use atomic writes with
+                  <code>fcntl</code> advisory locks.
+                </div>
+                <div class="module-capabilities">
+                  <span class="capability-tag">Daily Loss Threshold</span>
+                  <span class="capability-tag">Position Limits</span>
+                  <span class="capability-tag">Duplicate Guard</span>
+                  <span class="capability-tag">ATR Lot Sizing</span>
+                  <span class="capability-tag">Deep Sleep Protocol</span>
+                  <span class="capability-tag">Atomic File I/O</span>
+                  <span class="capability-tag">fcntl Advisory Locks</span>
+                </div>
+              </div>
+
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════
+     SECTION: COMMUNICATION LAYER
+     ═══════════════════════════════════════════════════════════ -->
+<section id="communication" class="section">
+  <div class="container">
+    <div class="layer-grid">
+      <div class="layer-card" id="card-comms">
+        <div class="layer-card-header" onclick="toggleCard('card-comms')">
+          <div class="layer-card-icon icon-comms">📡</div>
+          <div class="layer-card-info">
+            <div class="layer-tag tag-comms">Communication Layer · Layer 4</div>
+            <h3>Telegram Sovereign Command Center</h3>
+            <div class="layer-desc">
+              Bidirectional Telegram interface providing real-time operational intelligence,
+              trade notifications, chart delivery, and remote command execution.
+              The operator's eyes and hands across all system layers.
+            </div>
+          </div>
+          <div class="layer-card-toggle">▾</div>
+        </div>
+        <div class="layer-card-body">
+          <div class="layer-card-content">
+            <div class="module-list">
+
+              <!-- telegram_command_center.py -->
+              <div class="module-item">
+                <div class="module-header">
+                  <span class="module-name">telegram_command_center.py</span>
+                  <span class="module-lines">902 lines</span>
+                  <span class="module-role role-engine">Command Engine</span>
+                </div>
+                <div class="module-description">
+                  Full-featured Telegram bot command processor. Supports <code>/status</code>,
+                  <code>/positions</code>, <code>/scan</code>, <code>/force</code>, <code>/risk</code>,
+                  and other operator commands. Implements command parsing, permission validation,
+                  and response formatting with rich Markdown output. Acts as the remote control
+                  interface for the entire trading operation.
+                </div>
+                <div class="module-capabilities">
+                  <span class="capability-tag">Command Parser</span>
+                  <span class="capability-tag">Remote /scan</span>
+                  <span class="capability-tag">Remote /force</span>
+                  <span class="capability-tag">/status Dashboard</span>
+                  <span class="capability-tag">/positions View</span>
+                  <span class="capability-tag">Permission Guard</span>
+                </div>
+              </div>
+
+              <!-- telegram_notifier.py -->
+              <div class="module-item">
+                <div class="module-header">
+                  <span class="module-name">telegram_notifier.py</span>
+                  <span class="module-lines">1,030 lines</span>
+                  <span class="module-role role-protocol">Notification Protocol</span>
+                </div>
+                <div class="module-description">
+                  Centralized notification dispatch engine. Handles all outbound Telegram messages
+                  including setup discoveries, execution confirmations, risk alerts, watchdog status,
+                  and morning scan reports. Implements rate limiting, message queuing, and HTML/Markdown
+                  formatting with chart image attachments via multipart upload.
+                </div>
+                <div class="module-capabilities">
+                  <span class="capability-tag">Setup Alerts</span>
+                  <span class="capability-tag">Execution Confirmations</span>
+                  <span class="capability-tag">Risk Warnings</span>
+                  <span class="capability-tag">Chart Delivery</span>
+                  <span class="capability-tag">Rate Limiting</span>
+                  <span class="capability-tag">HTML Formatting</span>
+                </div>
+              </div>
+
+              <!-- news_reminder_engine.py -->
+              <div class="module-item">
+                <div class="module-header">
+                  <span class="module-name">news_reminder_engine.py</span>
+                  <span class="module-lines">413 lines</span>
+                  <span class="module-role role-daemon">News Flash Daemon</span>
+                </div>
+                <div class="module-description">
+                  Economic calendar sentinel that monitors upcoming high-impact news events.
+                  Sends 15-minute advance flash alerts via Telegram for events affecting actively
+                  monitored pairs. V10.4 operates as warning-only — does not block execution,
+                  allowing the operator to make informed decisions while preserving system autonomy.
+                </div>
+                <div class="module-capabilities">
+                  <span class="capability-tag">15-min Flash Alerts</span>
+                  <span class="capability-tag">High-Impact Filter</span>
+                  <span class="capability-tag">Pair Correlation</span>
+                  <span class="capability-tag">Warning-Only Mode</span>
+                  <span class="capability-tag">Duplicate Prevention</span>
+                </div>
+              </div>
+
+              <!-- news_fetcher.py -->
+              <div class="module-item">
+                <div class="module-header">
+                  <span class="module-name">news_fetcher.py</span>
+                  <span class="module-lines">492 lines</span>
+                  <span class="module-role role-module">Calendar Fetcher</span>
+                </div>
+                <div class="module-description">
+                  External economic calendar data provider. Fetches upcoming events from
+                  ForexFactory, Investing.com, and supplementary sources. Normalizes event data
+                  into a unified format stored in <code>data/upcoming_news.json</code> with
+                  impact classification, currency mapping, and timestamp normalization.
+                </div>
+                <div class="module-capabilities">
+                  <span class="capability-tag">Multi-Source Fetching</span>
+                  <span class="capability-tag">Impact Classification</span>
+                  <span class="capability-tag">Currency Mapping</span>
+                  <span class="capability-tag">JSON Persistence</span>
+                </div>
+              </div>
+
+              <!-- daily_report_sender.py -->
+              <div class="module-item">
+                <div class="module-header">
+                  <span class="module-name">daily_report_sender.py</span>
+                  <span class="module-lines">23 lines</span>
+                  <span class="module-role role-module">Report Dispatcher</span>
+                </div>
+                <div class="module-description">
+                  Lightweight scheduler that triggers end-of-day performance report generation
+                  and delivery via Telegram, summarizing the day's trades, P&L, and system health metrics.
+                </div>
+                <div class="module-capabilities">
+                  <span class="capability-tag">EOD Reports</span>
+                  <span class="capability-tag">P&L Summary</span>
+                </div>
+              </div>
+
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════
+     SECTION: DATA LAYER
+     ═══════════════════════════════════════════════════════════ -->
+<section id="data" class="section">
+  <div class="container">
+    <div class="layer-grid">
+      <div class="layer-card" id="card-data">
+        <div class="layer-card-header" onclick="toggleCard('card-data')">
+          <div class="layer-card-icon icon-data">🗄️</div>
+          <div class="layer-card-info">
+            <div class="layer-tag tag-data">Data Layer · Layer 5</div>
+            <h3>Atomic I/O Protocol — JSON &amp; SQLite Persistence</h3>
+            <div class="layer-desc">
+              The persistence backbone ensuring crash-safe data integrity across all system modules.
+              Implements atomic write-rename patterns with advisory file locking for all
+              inter-process communication channels.
+            </div>
+          </div>
+          <div class="layer-card-toggle">▾</div>
+        </div>
+        <div class="layer-card-body">
+          <div class="layer-card-content">
+            <div class="module-list">
+
+              <!-- ctrader_sync_daemon.py -->
+              <div class="module-item">
+                <div class="module-header">
+                  <span class="module-name">ctrader_sync_daemon.py</span>
+                  <span class="module-lines">393 lines</span>
+                  <span class="module-role role-daemon">Sync Daemon</span>
+                </div>
+                <div class="module-description">
+                  Bidirectional state synchronization daemon between the Python analytics layer
+                  and the cTrader execution environment. Reads broker-side position data and writes
+                  to <code>active_positions.json</code>, ensuring the Python ecosystem always has
+                  an accurate view of live market exposure. Implements conflict resolution for
+                  concurrent access scenarios.
+                </div>
+                <div class="module-capabilities">
+                  <span class="capability-tag">Position Sync</span>
+                  <span class="capability-tag">Conflict Resolution</span>
+                  <span class="capability-tag">Atomic Writes</span>
+                  <span class="capability-tag">State Reconciliation</span>
+                </div>
+              </div>
+
+              <!-- db_backup.py -->
+              <div class="module-item">
+                <div class="module-header">
+                  <span class="module-name">db_backup.py</span>
+                  <span class="module-lines">—</span>
+                  <span class="module-role role-module">Backup Module</span>
+                </div>
+                <div class="module-description">
+                  Automated database backup utility. Creates timestamped snapshots of the SQLite
+                  trade database and critical JSON state files. Scheduled via
+                  <code>com.forexgod.dbbackup.plist</code> for daily execution with
+                  retention policy enforcement.
+                </div>
+                <div class="module-capabilities">
+                  <span class="capability-tag">SQLite Snapshots</span>
+                  <span class="capability-tag">JSON State Backup</span>
+                  <span class="capability-tag">Retention Policy</span>
+                  <span class="capability-tag">Scheduled via launchd</span>
+                </div>
+              </div>
+
+            </div>
+
+            <div class="sep"></div>
+
+            <h4 style="color:var(--text-secondary);font-size:13px;font-weight:600;margin-bottom:16px;letter-spacing:1px;">CRITICAL DATA FILES</h4>
+
+            <div class="process-table" style="display:block;overflow-x:auto;">
+              <table class="process-table" style="min-width:600px;">
+                <thead>
+                  <tr>
+                    <th>File</th>
+                    <th>Purpose</th>
+                    <th>Access Pattern</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td class="mono">signals.json</td>
+                    <td>Python → C# trade signal bridge</td>
+                    <td>Write: Python · Read: C# cBot</td>
+                  </tr>
+                  <tr>
+                    <td class="mono">active_positions.json</td>
+                    <td>Live position state mirror</td>
+                    <td>Write: C# cBot · Read: Python</td>
+                  </tr>
+                  <tr>
+                    <td class="mono">monitoring_setups.json</td>
+                    <td>Active setup watchlist</td>
+                    <td>Write: realtime_monitor · Read: executor</td>
+                  </tr>
+                  <tr>
+                    <td class="mono">SUPER_CONFIG.json</td>
+                    <td>Master configuration registry</td>
+                    <td>Read: All modules</td>
+                  </tr>
+                  <tr>
+                    <td class="mono">pairs_config.json</td>
+                    <td>Per-pair trading parameters</td>
+                    <td>Read: scanner, executor</td>
+                  </tr>
+                  <tr>
+                    <td class="mono">data/trades.db</td>
+                    <td>SQLite trade history database</td>
+                    <td>Write: sync daemon · Read: reports</td>
+                  </tr>
+                  <tr>
+                    <td class="mono">data/upcoming_news.json</td>
+                    <td>Economic calendar cache</td>
+                    <td>Write: news_fetcher · Read: news_reminder</td>
+                  </tr>
+                  <tr>
+                    <td class="mono">data/daily_state.json</td>
+                    <td>Daily P&L and risk state</td>
+                    <td>Write: risk_manager · Read: executor</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════
+     SECTION: INFRASTRUCTURE
+     ═══════════════════════════════════════════════════════════ -->
+<section id="infrastructure" class="section">
+  <div class="container">
+    <div class="layer-grid">
+      <div class="layer-card" id="card-infra">
+        <div class="layer-card-header" onclick="toggleCard('card-infra')">
+          <div class="layer-card-icon icon-infra">🖥️</div>
+          <div class="layer-card-info">
+            <div class="layer-tag tag-infra">Infrastructure · Layer 6</div>
+            <h3>macOS launchd Orchestration — Always-On Daemons</h3>
+            <div class="layer-desc">
+              Production deployment architecture using macOS native launchd daemon management.
+              Six persistent processes ensure autonomous 24/7 operation with automatic restart
+              on failure, boot-time initialization, and log management.
+            </div>
+          </div>
+          <div class="layer-card-toggle">▾</div>
+        </div>
+        <div class="layer-card-body">
+          <div class="layer-card-content">
+
+            <h4 style="color:var(--text-secondary);font-size:13px;font-weight:600;margin-bottom:16px;letter-spacing:1px;">launchd DAEMON REGISTRY</h4>
+
+            <div class="process-table" style="display:block;overflow-x:auto;">
+              <table class="process-table" style="min-width:700px;">
+                <thead>
+                  <tr>
+                    <th>Daemon Plist</th>
+                    <th>Target Module</th>
+                    <th>Schedule</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td class="mono">com.forexgod.glitch.plist</td>
+                    <td>Watchdog + realtime_monitor + executor</td>
+                    <td>Always-on (KeepAlive)</td>
+                    <td><span class="status-active"><span class="status-dot"></span>Active</span></td>
+                  </tr>
+                  <tr>
+                    <td class="mono">com.forexgod.morningscan.plist</td>
+                    <td>daily_scanner.py + morning_scheduler.py</td>
+                    <td>Daily at market open</td>
+                    <td><span class="status-active"><span class="status-dot"></span>Active</span></td>
+                  </tr>
+                  <tr>
+                    <td class="mono">com.forexgod.newsfetcher.plist</td>
+                    <td>news_fetcher.py + news_reminder_engine.py</td>
+                    <td>Periodic (every 30 min)</td>
+                    <td><span class="status-active"><span class="status-dot"></span>Active</span></td>
+                  </tr>
+                  <tr>
+                    <td class="mono">com.forexgod.newscalendar.plist</td>
+                    <td>EconomicCalendarBot (C# cBot)</td>
+                    <td>Daily calendar sync</td>
+                    <td><span class="status-active"><span class="status-dot"></span>Active</span></td>
+                  </tr>
+                  <tr>
+                    <td class="mono">com.forexgod.dbbackup.plist</td>
+                    <td>db_backup.py</td>
+                    <td>Daily at 23:00</td>
+                    <td><span class="status-active"><span class="status-dot"></span>Active</span></td>
+                  </tr>
+                  <tr>
+                    <td class="mono">com.forexgod.weeklynews.plist</td>
+                    <td>Weekly news summary generator</td>
+                    <td>Weekly (Sunday)</td>
+                    <td><span class="status-active"><span class="status-dot"></span>Active</span></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div class="sep"></div>
+
+            <h4 style="color:var(--text-secondary);font-size:13px;font-weight:600;margin-bottom:16px;letter-spacing:1px;">C# cBOT FLEET</h4>
+
+            <div class="module-list">
+              <div class="module-item">
+                <div class="module-header">
+                  <span class="module-name">PythonSignalExecutor.cs</span>
+                  <span class="module-lines">1,032 lines</span>
+                  <span class="module-role role-cbot">Primary Executor cBot</span>
+                </div>
+                <div class="module-description">
+                  Main execution cBot — reads signals.json, executes on cTrader, writes confirmations.
+                </div>
+              </div>
+              <div class="module-item">
+                <div class="module-header">
+                  <span class="module-name">TradeHistorySyncer.cs</span>
+                  <span class="module-lines">—</span>
+                  <span class="module-role role-cbot">History Sync cBot</span>
+                </div>
+                <div class="module-description">
+                  Synchronizes closed trade history from cTrader to the SQLite database for analytics.
+                </div>
+              </div>
+              <div class="module-item">
+                <div class="module-header">
+                  <span class="module-name">MarketDataProvider_v2.cs</span>
+                  <span class="module-lines">—</span>
+                  <span class="module-role role-cbot">Data Provider cBot</span>
+                </div>
+                <div class="module-description">
+                  Streams live OHLCV market data from cTrader to the Python analytical layer via shared files.
+                </div>
+              </div>
+              <div class="module-item">
+                <div class="module-header">
+                  <span class="module-name">EconomicCalendarBot.cs</span>
+                  <span class="module-lines">—</span>
+                  <span class="module-role role-cbot">Calendar cBot</span>
+                </div>
+                <div class="module-description">
+                  Fetches economic calendar events directly from cTrader's built-in calendar API.
+                </div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════
+     SECTION: DATA FLOW
+     ═══════════════════════════════════════════════════════════ -->
+<section id="dataflow" class="section">
+  <div class="container">
+    <div class="section-label">Signal Flow</div>
+    <div class="section-title">End-to-End Execution Pipeline</div>
+    <div class="section-desc">
+      The complete journey of a trade signal from D1 bias detection to live broker execution,
+      traversing six distinct processing stages with full traceability.
+    </div>
+
+    <!-- Primary Flow -->
+    <h4 style="color:var(--text-secondary);font-size:12px;font-weight:600;margin-bottom:16px;letter-spacing:1.5px;">DISCOVERY → EXECUTION FLOW</h4>
+    <div class="flow-container mb-32">
+      <div class="flow-node flow-python">D1 Bias<br><small>smc_detector</small></div>
+      <span class="flow-arrow">→</span>
+      <div class="flow-node flow-python">4H CHoCH Sync<br><small>realtime_monitor</small></div>
+      <span class="flow-arrow">→</span>
+      <div class="flow-node flow-json">monitoring_setups<br><small>.json</small></div>
+      <span class="flow-arrow">→</span>
+      <div class="flow-node flow-python">Pullback Entry<br><small>setup_executor</small></div>
+      <span class="flow-arrow">→</span>
+      <div class="flow-node flow-python">Risk Validation<br><small>risk_manager</small></div>
+      <span class="flow-arrow">→</span>
+      <div class="flow-node flow-json">signals<br><small>.json</small></div>
+      <span class="flow-arrow">→</span>
+      <div class="flow-node flow-csharp">cBot Execution<br><small>PythonSignalExecutor</small></div>
+      <span class="flow-arrow">→</span>
+      <div class="flow-node flow-broker">Broker<br><small>cTrader</small></div>
+    </div>
+
+    <!-- Feedback Loop -->
+    <h4 style="color:var(--text-secondary);font-size:12px;font-weight:600;margin-bottom:16px;letter-spacing:1.5px;">FEEDBACK &amp; NOTIFICATION LOOP</h4>
+    <div class="flow-container mb-32">
+      <div class="flow-node flow-broker">Broker Fill<br><small>cTrader</small></div>
+      <span class="flow-arrow">→</span>
+      <div class="flow-node flow-csharp">Position Write<br><small>cBot</small></div>
+      <span class="flow-arrow">→</span>
+      <div class="flow-node flow-json">active_positions<br><small>.json</small></div>
+      <span class="flow-arrow">→</span>
+      <div class="flow-node flow-python">Sync Daemon<br><small>ctrader_sync</small></div>
+      <span class="flow-arrow">→</span>
+      <div class="flow-node flow-telegram">Telegram Alert<br><small>notifier</small></div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════
+     SECTION: VERSION HISTORY
+     ═══════════════════════════════════════════════════════════ -->
+<section id="versions" class="section">
+  <div class="container">
+    <div class="section-label">Version History</div>
+    <div class="section-title">Evolution Timeline</div>
+    <div class="section-desc">
+      The architectural evolution of the POCOVNICU Terminal from initial concept to
+      the current V10.4 institutional-grade deployment.
+    </div>
+
+    <div class="timeline">
+      <div class="timeline-item current">
+        <div class="timeline-version">V10.4 — MTF Perfection: D1 Bias + 4H Sync</div>
+        <div class="timeline-title">Current Production Release</div>
+        <div class="timeline-desc">
+          Clarified D1-4H architecture. D1 determines Reversal/Continuation bias. 4H CHoCH body closure
+          provides directional confirmation only (no FVG zone restriction). Entry targets H4 sync FVG
+          generated by the confirming move. Tag format: D1_{TYPE}_4H_SYNC_{MODE}. News guard operates
+          as 15-min warning without execution blocking.
+        </div>
+      </div>
+      <div class="timeline-item">
+        <div class="timeline-version">V10.3 — MTF Perfection: 4 Pillars</div>
+        <div class="timeline-title">D1 Dominance + 4H Structure Lock + Strategy Tags + News Guard</div>
+        <div class="timeline-desc">
+          Four-pillar implementation establishing the MTF framework: D1 dominance over lower timeframes,
+          4H structural lock mechanism, institutional strategy tagging system, and integrated
+          economic calendar news guard.
+        </div>
+      </div>
+      <div class="timeline-item">
+        <div class="timeline-version">V10.2 — Strategy Audit</div>
+        <div class="timeline-title">5-Dimension Comprehensive Pipeline Audit</div>
+        <div class="timeline-desc">
+          Full system audit scoring Setup Discovery, Risk Management, Execution Logic, Position Management,
+          and Communication across all modules. Identified gaps that led to V10.3 implementation.
+        </div>
+      </div>
+      <div class="timeline-item">
+        <div class="timeline-version">V4.0 — Watchdog</div>
+        <div class="timeline-title">Self-Healing Guardian Daemon</div>
+        <div class="timeline-desc">
+          Introduction of the bulletproof process management layer with automatic resurrection,
+          health monitoring, and graceful degradation protocols.
+        </div>
+      </div>
+      <div class="timeline-item">
+        <div class="timeline-version">V3.3 — Hybrid Entry</div>
+        <div class="timeline-title">Pullback + Scale-In Entry Architecture</div>
+        <div class="timeline-desc">
+          Advanced entry mechanics with FVG pullback detection, multi-entry scale-in sequences (E1→E3),
+          and staleness-based forced execution protocols.
+        </div>
+      </div>
+      <div class="timeline-item">
+        <div class="timeline-version">V2.1 — SMC Core</div>
+        <div class="timeline-title">Glitch in Matrix Strategy Genesis</div>
+        <div class="timeline-desc">
+          Core SMC implementation: CHoCH/BOS detection, Fair Value Gap identification,
+          Order Block mapping, and swing structure analysis across multiple timeframes.
+        </div>
+      </div>
+      <div class="timeline-item">
+        <div class="timeline-version">V1.0 — Foundation</div>
+        <div class="timeline-title">Initial cTrader Integration</div>
+        <div class="timeline-desc">
+          Python↔C# bridge architecture, signals.json IPC protocol, basic Telegram notifications,
+          and single-timeframe analysis framework.
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════
+     SECTION: TECHNOLOGY STACK
+     ═══════════════════════════════════════════════════════════ -->
+<section id="tech" class="section">
+  <div class="container">
+    <div class="section-label">Technology Stack</div>
+    <div class="section-title">Engineering Foundation</div>
+    <div class="section-desc">
+      The complete technology stack powering the POCOVNICU Terminal —
+      chosen for reliability, performance, and zero-dependency deployment.
+    </div>
+
+    <div class="tech-grid">
+      <div class="tech-card">
+        <h4>Core Runtime</h4>
+        <div class="tech-detail">Python 3.14</div>
+        <p>Analytical engine, risk management, daemon orchestration. Latest Python release for maximum performance with match-case, type hints, and asyncio patterns.</p>
+      </div>
+      <div class="tech-card">
+        <h4>Broker Execution</h4>
+        <div class="tech-detail">C# .NET · cTrader cBots</div>
+        <p>Four custom cBots running in cTrader's .NET runtime for direct broker API access, order execution, position management, and market data streaming.</p>
+      </div>
+      <div class="tech-card">
+        <h4>IPC Protocol</h4>
+        <div class="tech-detail">Atomic JSON + fcntl Locks</div>
+        <p>All inter-process communication uses atomic write-rename patterns with POSIX fcntl advisory locks. Zero data corruption across concurrent access.</p>
+      </div>
+      <div class="tech-card">
+        <h4>Process Management</h4>
+        <div class="tech-detail">macOS launchd</div>
+        <p>Native daemon management with KeepAlive policies, boot-time initialization, standard output/error log routing, and automatic restart on failure.</p>
+      </div>
+      <div class="tech-card">
+        <h4>Database</h4>
+        <div class="tech-detail">SQLite 3 · WAL Mode</div>
+        <p>Trade history persistence with Write-Ahead Logging for concurrent read access. Daily automated backups with retention policy.</p>
+      </div>
+      <div class="tech-card">
+        <h4>Communication</h4>
+        <div class="tech-detail">Telegram Bot API</div>
+        <p>Bidirectional operator interface with command processing, rich notifications, chart image delivery, and remote system control capabilities.</p>
+      </div>
+      <div class="tech-card">
+        <h4>Market Data</h4>
+        <div class="tech-detail">HTTP Caching + cTrader Feed</div>
+        <p>Dual data sourcing: HTTP-cached OHLCV data for analysis, real-time cTrader market data stream for execution-grade pricing.</p>
+      </div>
+      <div class="tech-card">
+        <h4>Charting</h4>
+        <div class="tech-detail">matplotlib + Custom Renderer</div>
+        <p>Proprietary chart generation engine producing annotated candlestick charts with SMC overlays, FVG zones, and CHoCH markers for Telegram delivery.</p>
+      </div>
+      <div class="tech-card">
+        <h4>Strategy Engine</h4>
+        <div class="tech-detail">Glitch in Matrix SMC</div>
+        <p>Proprietary Smart Money Concepts implementation: D1 bias lock, 4H CHoCH sync, FVG entry targeting, ATR prominence filtering, and institutional order flow detection.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════
+     SIGNATURE
+     ═══════════════════════════════════════════════════════════ -->
+<section class="signature-section">
+  <div class="container">
+    <div class="signature-divider"></div>
+
+    <div class="signature-cyrillic">ФорексГод</div>
+    <div class="signature-latin">POCOVNICU TERMINAL</div>
+
+    <div class="signature-poem">
+      <div class="line-gold">In the silence between candles, the code watches.</div>
+      <div>Where price folds upon itself, structure reveals intent.</div>
+      <div class="line-blue">The Daily speaks — the Weekly confirms — the Hourly obeys.</div>
+      <div>No emotion. No hesitation. Only architecture.</div>
+      <br>
+      <div class="line-gold">CHoCH breaks the old. BOS builds the new.</div>
+      <div>Fair Value Gaps are the footprints of institutions.</div>
+      <div class="line-blue">We do not predict. We detect. We synchronize. We execute.</div>
+      <div>The Matrix glitches — and we are there to capture it.</div>
+      <br>
+      <div class="line-gold">Six daemons never sleep. Four cBots never rest.</div>
+      <div>One hundred thirty modules form a single mind.</div>
+      <div class="line-blue">From D1 bias to broker fill — seventeen thousand lines of purpose.</div>
+      <div>Built not for speed, but for precision that endures.</div>
+      <br>
+      <div class="line-gold">The Terminal does not chase. The Terminal waits.</div>
+      <div>And when the glitch appears in the matrix of price,</div>
+      <div class="line-blue">it strikes with the certainty of code</div>
+      <div>that has already seen the outcome.</div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════
+     FOOTER
+     ═══════════════════════════════════════════════════════════ -->
+<footer class="footer">
+  <div class="container">
+    POCOVNICU Terminal · ФорексГод Edition · V10.4 MTF Perfection<br>
+    <span style="color:var(--gold-dim);">Glitch in Matrix Strategy</span> · Institutional Architecture Manual<br>
+    <small style="color:var(--text-dim);">Built with precision. Deployed with confidence. Runs with sovereignty.</small>
+  </div>
+</footer>
+
+<!-- ═══════════════════════════════════════════════════════════
+     JAVASCRIPT
+     ═══════════════════════════════════════════════════════════ -->
+<script>
+  // ── Card Toggle ──
+  function toggleCard(id) {
+    const card = document.getElementById(id);
+    card.classList.toggle('open');
+  }
+
+  // ── Active Nav Tracking ──
+  const sections = document.querySelectorAll('section[id]');
+  const navLinks = document.querySelectorAll('.nav-link');
+
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting) {
+        navLinks.forEach(link => link.classList.remove('active'));
+        const activeLink = document.querySelector(`.nav-link[href="#${entry.target.id}"]`);
+        if (activeLink) activeLink.classList.add('active');
+      }
+    });
+  }, { rootMargin: '-30% 0px -60% 0px' });
+
+  sections.forEach(section => observer.observe(section));
+
+  // ── Smooth Scroll ──
+  navLinks.forEach(link => {
+    link.addEventListener('click', (e) => {
+      e.preventDefault();
+      const target = document.querySelector(link.getAttribute('href'));
+      if (target) {
+        target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    });
+  });
+
+  // ── Animate Stats on Scroll ──
+  const statCards = document.querySelectorAll('.stat-value');
+  const statsObserver = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting) {
+        entry.target.style.opacity = '1';
+        entry.target.style.transform = 'translateY(0)';
+      }
+    });
+  }, { threshold: 0.5 });
+
+  statCards.forEach(card => {
+    card.style.opacity = '0';
+    card.style.transform = 'translateY(20px)';
+    card.style.transition = 'all 0.6s cubic-bezier(0.4, 0, 0.2, 1)';
+    statsObserver.observe(card);
+  });
+
+  // ── Tree Nodes Hover Effect ──
+  document.querySelectorAll('.tree-node').forEach(node => {
+    node.addEventListener('mouseenter', () => {
+      node.style.transform = 'translateY(-4px) scale(1.02)';
+    });
+    node.addEventListener('mouseleave', () => {
+      node.style.transform = '';
+    });
+  });
+
+  // ── Console Signature ──
+  console.log('%c ФорексГод ', 'background: #d4af37; color: #0a0a0f; font-size: 20px; font-weight: bold; padding: 8px 16px; border-radius: 4px;');
+  console.log('%c POCOVNICU Terminal V10.4 ', 'color: #4a9eff; font-size: 12px;');
+  console.log('%c Glitch in Matrix Strategy ', 'color: #606070; font-size: 11px;');
+</script>
+
+</body>
+</html>

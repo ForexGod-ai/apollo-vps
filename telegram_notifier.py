@@ -5,6 +5,7 @@ NOW USES ChartGenerator FOR PROFESSIONAL WHITE CHARTS
 """
 
 import os
+import time
 import requests
 import io
 from typing import Optional
@@ -15,16 +16,15 @@ from chart_generator import ChartGenerator
 
 load_dotenv()
 
-# ────────────────━━━━━━━
-# THE COMPACT FOOTER RULE by ФорексГод
-# ────────────────━━━━━━━
-# ALL separators MUST be EXACTLY 16 characters
-# Perfect symmetry with 🔱 AUTHORED BY ФорексГод 🔱
-# Branding = FOOTER ONLY. Never header. Clean & expensive.
-# ────────────────━━━━━━━
+# ════════════════════════════════════════
+# V10.4 SOVEREIGN SIGNATURE — ФорексГод EDITION
+# ════════════════════════════════════════
+# 16-line symmetrical footer on EVERY message, no exceptions.
+# Branding = FOOTER ONLY. Never header. Clean & institutional.
+# ════════════════════════════════════════
 UNIVERSAL_SEPARATOR = "────────────────"  # EXACTLY 16 chars — COMPACT SYMMETRIC
 SEPARATOR_LENGTH = 16  # Enforced rule: Name-aligned width
-# ────────────────━━━━━━━
+# ════════════════════════════════════════
 
 
 class TelegramNotifier:
@@ -43,29 +43,25 @@ class TelegramNotifier:
     
     def _add_branding_signature(self, message: str, parse_mode: str = "Markdown") -> str:
         """
-        THE COMPACT FOOTER SIGNATURE by ФорексГод — V8.4
+        V10.4 SOVEREIGN SIGNATURE — 16-Line Symmetry by ФорексГод
         
-        [Message Content — clean, technical data only]
-        
-          ────────────────
-          🔱 AUTHORED BY ФорексГод 🔱
-          ────────────────
-          🏛️ INSTITUTIONAL TERMINAL 🏛️
-        
-        16-char separator. FOOTER ONLY. No header duplication.
+        Every Telegram message ends with this institutional stamp.
+        FOOTER ONLY. No header duplication. No exceptions.
         """
         sep = UNIVERSAL_SEPARATOR  # 16 chars
         if parse_mode == "HTML":
             footer = (
-                f"\n\n  {sep}\n"
-                f"  🔱 <b>AUTHORED BY ФорексГод</b> 🔱\n"
+                f"\n\n"
+                f"  {sep}\n"
+                f"  🔱 AUTHORED BY <b>ФорексГод</b> 🔱\n"
                 f"  {sep}\n"
                 f"  🏛️ INSTITUTIONAL TERMINAL 🏛️"
             )
         else:  # Markdown
             footer = (
-                f"\n\n  {sep}\n"
-                f"  🔱 *AUTHORED BY ФорексГод* 🔱\n"
+                f"\n\n"
+                f"  {sep}\n"
+                f"  🔱 AUTHORED BY *ФорексГод* 🔱\n"
                 f"  {sep}\n"
                 f"  🏛️ INSTITUTIONAL TERMINAL 🏛️"
             )
@@ -152,6 +148,9 @@ class TelegramNotifier:
             print(f"[ERROR] Failed to send main message for {setup.symbol}")
             return False
         
+        # V10.1: Anti-flood delay — Telegram rate-limits rapid media sends
+        time.sleep(1.5)
+        
         # 2. Generate and send Daily chart
         try:
             print(f"[INFO] Generating Daily chart for {setup.symbol}...")
@@ -166,6 +165,9 @@ class TelegramNotifier:
             import traceback
             traceback.print_exc()
         
+        # V10.1: Anti-flood delay between charts
+        time.sleep(1.5)
+        
         # 3. Generate and send 4H chart
         try:
             print(f"[INFO] Generating 4H chart for {setup.symbol}...")
@@ -179,6 +181,9 @@ class TelegramNotifier:
             print(f"[ERROR] Error generating 4H chart for {setup.symbol}: {e}")
             import traceback
             traceback.print_exc()
+        
+        # V10.1: Anti-flood delay before 1H chart
+        time.sleep(1.5)
         
         # 4. Generate and send 1H chart (for SCALE_IN strategy)
         if df_1h is not None:
@@ -566,6 +571,70 @@ class TelegramNotifier:
         
         # Send with HTML parse mode
         return self.send_message(message.strip(), parse_mode="HTML")
+    
+    def send_scan_report(
+        self,
+        total_pairs: int,
+        new_setups_found: int,
+        truly_new: int,
+        re_detected: int,
+        monitoring_count: int,
+        open_positions: int,
+        deep_sleep_active: bool = False,
+        deep_sleep_until: str = None,
+        setup_symbols: list = None
+    ) -> bool:
+        """
+        V10.1 SCAN REPORT — The Official Stamp by ФорексГод
+        
+        Sends a SINGLE final message after ALL charts are delivered.
+        Mirrors the exact console output so the Telegram report matches
+        what you see in the terminal. This is the 'ștampila de control'.
+        
+        Must be called with time.sleep(2) BEFORE to dodge Telegram flood-control.
+        """
+        sep = UNIVERSAL_SEPARATOR
+        
+        # Build the report — exact mirror of console output
+        report = f"<b>✅ Scan Complete!</b>\n\n"
+        report += f"📊 Total Pairs Scanned: <code>{total_pairs}</code>\n"
+        report += f"🆕 New Setups Found: <code>{new_setups_found}</code>\n"
+        report += f"    └─ Truly New (no position): <code>{truly_new}</code>\n"
+        report += f"    └─ Re-detected (has position): <code>{re_detected}</code>\n"
+        report += f"📋 Total Active Tracking:\n"
+        report += f"    └─ Saved in Monitoring: <code>{monitoring_count}</code>\n"
+        report += f"    └─ Open Positions: <code>{open_positions}</code>\n"
+        report += f"\n⏰ <code>{datetime.now().strftime('%Y-%m-%d %H:%M UTC')}</code>"
+        
+        # V10.1: List setup symbols if available
+        if setup_symbols:
+            report += f"\n\n{sep}\n"
+            report += f"<b>🎯 DETECTED SETUPS:</b>\n"
+            for sym_info in setup_symbols:
+                symbol = sym_info.get('symbol', '?')
+                direction = sym_info.get('direction', '?')
+                dir_emoji = "🟢" if direction.lower() == 'buy' else "🔴"
+                strategy = sym_info.get('strategy', 'UNKNOWN')
+                strat_emoji = "🔄" if strategy == 'REVERSAL' else "➡️"
+                report += f"  {dir_emoji} <b>{symbol}</b> {strat_emoji} {strategy}\n"
+        
+        # V9.3: Deep Sleep status line
+        if deep_sleep_active and deep_sleep_until:
+            report += f"\n\n😴 <b>Status: DEEP SLEEP ACTIVE</b>\n"
+            report += f"    └─ Wake: <code>{deep_sleep_until}</code>"
+        else:
+            report += f"\n\n⚡ Status: <b>ACTIVE</b> — Monitoring live"
+        
+        # V10.1: Retry logic — if Telegram rejects (flood), wait and retry once
+        success = self.send_message(report.strip(), parse_mode="HTML")
+        if not success:
+            print("[WARN] Scan report send failed — retrying in 5s...")
+            time.sleep(5)
+            success = self.send_message(report.strip(), parse_mode="HTML")
+            if not success:
+                print("[ERROR] Scan report FAILED after retry. Report lost.")
+        
+        return success
     
     def send_execution_confirmation(self, setup: TradeSetup, entry_type: str = 'pullback', 
                                     momentum_score: float = 0, hours_elapsed: float = 0) -> bool:

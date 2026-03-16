@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """
-🎮 TELEGRAM COMMAND CENTER V3.7
-──────────────────
-✨ Glitch in Matrix by ФорексГод ✨
-🧠 AI-Powered • 💎 Smart Money
+🎮 TELEGRAM COMMAND CENTER V10.4
+────────────────
+🔱 AUTHORED BY ФорексГод 🔱
+🏛️ INSTITUTIONAL TERMINAL
 
 Interactive Command Interface:
 - /stats - Daily trading statistics
 - /monitoring - Active setup list
 - /status - System monitors health check
 - /btcusd - Quick BTCUSD analysis
-──────────────────
+────────────────
 """
 
 import os
@@ -20,7 +20,7 @@ import subprocess
 import sys
 import atexit
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
 import requests
 import time
@@ -174,12 +174,12 @@ class TelegramCommandCenter:
         try:
             url = f"https://api.telegram.org/bot{self.bot_token}/sendMessage"
             
-            # ✅ V8.4 COMPACT FOOTER — no header, branding at bottom only
-            sep = "────────────────"  # 16 chars — compact symmetric
+            # ═══ V10.4 SOVEREIGN SIGNATURE — 16-Line Symmetry ═══
+            sep = "────────────────"  # 16 chars
             branded_text = (
                 f"{text}\n\n"
                 f"  {sep}\n"
-                f"  🔱 <b>AUTHORED BY ФорексГод</b> 🔱\n"
+                f"  🔱 AUTHORED BY <b>ФорексГод</b> 🔱\n"
                 f"  {sep}\n"
                 f"  🏛️ INSTITUTIONAL TERMINAL 🏛️"
             )
@@ -472,61 +472,290 @@ class TelegramCommandCenter:
             return f"❌ <b>Error:</b> {str(e)}"
     
     def handle_status_command(self):
-        """Handle /status command - Check system monitors"""
+        """
+        /status DASHBOARD — Full system health + P/L + Deep Sleep + Rejections + News
+        ФорексГод INSTITUTIONAL TERMINAL
+        """
         try:
-            message = f"""<b>🔧 SYSTEM STATUS CHECK</b>
-{UNIVERSAL_SEPARATOR}
-
-⏰ Time: <b>{datetime.now().strftime('%d %B %Y, %H:%M:%S')}</b>
-
-<b>📊 MONITORS STATUS:</b>
-
-"""
+            from datetime import timezone
+            now = datetime.now(timezone.utc)
             
-            # ✅ CRITICAL FIX by ФорексГод: Vertical Layout (each service on separate line)
-            # Check running processes
+            message = (
+                f"<b>🔧 SYSTEM STATUS — V10.4</b>\n"
+                f"{UNIVERSAL_SEPARATOR}\n\n"
+                f"⏰ {now.strftime('%d %b %Y, %H:%M:%S')} UTC\n\n"
+            )
+            
+            # ═══ SECTION 1: MONITORS ═══
+            message += "<b>📊 MONITORS:</b>\n"
+            
             processes = {
-                'realtime_monitor.py': '🔄 Realtime Monitor',
-                'position_monitor.py': '📊 Position Monitor',
-                'setup_executor_monitor.py': '🎯 Setup Executor'
+                'realtime_monitor.py': '🔄 Realtime',
+                'setup_executor_monitor.py': '🎯 Executor',
+                'position_monitor.py': '📊 Positions',
+                'telegram_command_center.py': '🎮 Telegram',
+                'watchdog_monitor.py': '🛡️ Watchdog',
+                'ctrader_sync_daemon.py': '📡 Sync',
+                'news_reminder_engine.py': '🔔 News Alerts',
             }
             
-            for process_name, display_name in processes.items():
-                try:
-                    result = subprocess.run(
-                        ['ps', 'aux'],
-                        capture_output=True,
-                        text=True
-                    )
-                    
-                    if process_name in result.stdout:
-                        status = "<code>✅ ONLINE</code>"
-                    else:
-                        status = "<code>❌ OFFLINE</code>"
-                    
-                    message += f"{display_name}\n   Status: {status}\n\n"
-                except:
-                    message += f"{display_name}\n   Status: <code>⚠️ UNKNOWN</code>\n\n"
-            
-            message += "<b>📡 CONNECTIONS:</b>\n\n"
-            
-            # Check cTrader cBot
+            ps_output = ''
             try:
-                response = requests.get('http://localhost:8767/health', timeout=2)
-                if response.status_code == 200:
-                    message += "🤖 cTrader cBot\n   Status: <code>✅ CONNECTED</code>\n\n"
+                result = subprocess.run(['ps', 'aux'], capture_output=True, text=True, timeout=5)
+                ps_output = result.stdout
+            except Exception:
+                pass
+            
+            online_count = 0
+            total_count = len(processes)
+            for proc_name, display_name in processes.items():
+                if proc_name in ps_output:
+                    # Get uptime from PID
+                    uptime_str = ''
+                    try:
+                        for proc in psutil.process_iter(['pid', 'cmdline', 'create_time']):
+                            if proc.info['cmdline'] and proc_name in ' '.join(proc.info['cmdline']):
+                                age_s = time.time() - proc.info['create_time']
+                                if age_s >= 86400:
+                                    uptime_str = f" ({age_s/86400:.0f}d)"
+                                elif age_s >= 3600:
+                                    uptime_str = f" ({age_s/3600:.0f}h)"
+                                else:
+                                    uptime_str = f" ({age_s/60:.0f}m)"
+                                break
+                    except Exception:
+                        pass
+                    message += f"  {display_name} ✅{uptime_str}\n"
+                    online_count += 1
                 else:
-                    message += "🤖 cTrader cBot\n   Status: <code>⚠️ RESPONDING</code>\n\n"
-            except:
-                message += "🤖 cTrader cBot\n   Status: <code>❌ OFFLINE</code>\n\n"
+                    message += f"  {display_name} ❌ OFFLINE\n"
             
-            # Check database
-            if self.db_path.exists():
-                message += "💾 Database\n   Status: <code>✅ ACCESSIBLE</code>\n\n"
-            else:
-                message += "💾 Database\n   Status: <code>❌ NOT FOUND</code>\n\n"
+            message += f"  <i>({online_count}/{total_count} online)</i>\n\n"
             
-            message += f"{UNIVERSAL_SEPARATOR}\n<b>🎯 VERDICT:</b> System operational!"
+            # ═══ SECTION 2: CONNECTIONS ═══
+            message += "<b>📡 CONNECTIONS:</b>\n"
+            try:
+                resp = requests.get('http://localhost:8767/health', timeout=2)
+                cbot_status = '✅' if resp.status_code == 200 else '⚠️'
+            except Exception:
+                cbot_status = '❌'
+            message += f"  🤖 cTrader cBot: {cbot_status}\n"
+            message += f"  💾 Database: {'✅' if self.db_path.exists() else '❌'}\n\n"
+            
+            # ═══ SECTION 3: TODAY'S P/L ═══
+            message += "<b>💰 TODAY'S P/L:</b>\n"
+            try:
+                # Force sync for fresh data
+                self.force_sync_from_ctrader()
+                
+                conn = sqlite3.connect(self.db_path)
+                cursor = conn.cursor()
+                today = datetime.now().strftime('%Y-%m-%d')
+                
+                cursor.execute("""
+                    SELECT COALESCE(SUM(profit), 0), COUNT(*)
+                    FROM closed_trades WHERE DATE(close_time, 'localtime') = ?
+                """, (today,))
+                closed_pnl, trade_count = cursor.fetchone()
+                
+                # Get balance for percentage
+                cursor.execute("SELECT balance FROM account_snapshots ORDER BY timestamp DESC LIMIT 1")
+                row = cursor.fetchone()
+                balance = row[0] if row else 0
+                conn.close()
+                
+                pnl_pct = (closed_pnl / balance * 100) if balance > 0 else 0
+                pnl_emoji = '🟢' if closed_pnl >= 0 else '🔴'
+                
+                message += f"  {pnl_emoji} Closed: <code>${closed_pnl:+.2f}</code> ({pnl_pct:+.1f}%)\n"
+                message += f"  📊 Trades today: <code>{trade_count}</code>\n"
+                
+                # Risk status
+                max_loss = 10.0  # From SUPER_CONFIG
+                try:
+                    config_file = Path(__file__).parent.resolve() / 'SUPER_CONFIG.json'
+                    if config_file.exists():
+                        with open(config_file, 'r') as f:
+                            sc = json.load(f)
+                        max_loss = sc.get('daily_limits', {}).get('max_daily_loss_percent', 10.0)
+                except Exception:
+                    pass
+                
+                if pnl_pct >= 0:
+                    risk_label = '🟢 SAFE'
+                elif pnl_pct > -max_loss:
+                    risk_label = f'🟡 CAUTION ({pnl_pct:+.1f}%)'
+                else:
+                    risk_label = f'🔴 LIMIT HIT ({pnl_pct:+.1f}%)'
+                message += f"  🛡️ Risk: {risk_label} (limit: -{max_loss}%)\n\n"
+                
+            except Exception as e:
+                message += f"  ⚠️ Data unavailable: {e}\n\n"
+            
+            # ═══ SECTION 4: MONITORING SETUPS ═══
+            message += "<b>📋 SETUPS:</b>\n"
+            try:
+                script_dir = Path(__file__).parent.resolve()
+                mon_file = script_dir / 'monitoring_setups.json'
+                if mon_file.exists():
+                    with open(mon_file, 'r') as f:
+                        setups = json.load(f).get('setups', [])
+                    active = sum(1 for s in setups if s.get('status') == 'ACTIVE')
+                    monitoring = sum(1 for s in setups if s.get('status') == 'MONITORING')
+                    choch_waiting = sum(1 for s in setups if s.get('status') == 'MONITORING' and not s.get('choch_1h_detected', False))
+                    in_zone = sum(1 for s in setups if s.get('choch_1h_detected', False) and s.get('status') in ('MONITORING', 'READY'))
+                    message += f"  🔥 Active: <code>{active}</code> | 👀 Pândă: <code>{monitoring}</code>\n"
+                    message += f"  ⏳ CHoCH wait: <code>{choch_waiting}</code> | 🎯 In Zone: <code>{in_zone}</code>\n"
+                    # 3-column grid: symbol + strategy label [REV-🔒] / [CNT-🔒]
+                    def _setup_cell(s: dict) -> str:
+                        sym = s.get('symbol', '?')
+                        stype = s.get('strategy_type', '').upper()
+                        locked = s.get('strategy_locked', False)
+                        if stype in ('REVERSAL',):
+                            tag = 'REV'
+                        elif stype in ('CONTINUATION', 'CONTINUITY'):
+                            tag = 'CNT'
+                        else:
+                            tag = '?'
+                        lock_icon = '🔒' if locked else '🔓'
+                        return f"• {sym} [{tag}-{lock_icon}]"
+                    mon_syms = [s for s in setups if s.get('status') == 'MONITORING']
+                    if mon_syms:
+                        cols = 3
+                        cells = [_setup_cell(s) for s in mon_syms[:cols * 4]]
+                        rows = [cells[i:i+cols] for i in range(0, len(cells), cols)]
+                        grid = "\n".join("  " + "  ".join(row) for row in rows)
+                        extra = len(mon_syms) - cols * 4
+                        if extra > 0:
+                            grid += f"\n  + {extra} more"
+                        message += f"{grid}\n"
+                    message += "\n"
+                else:
+                    message += "  ⚠️ No monitoring file\n\n"
+            except Exception:
+                message += "  ⚠️ Error reading setups\n\n"
+            
+            # ═══ SECTION 5: DEEP SLEEP STATUS ═══
+            message += "<b>😴 DEEP SLEEP:</b>\n"
+            try:
+                sleep_file = Path(__file__).parent.resolve() / 'data' / 'deep_sleep_state.json'
+                if sleep_file.exists():
+                    with open(sleep_file, 'r') as f:
+                        sleep_state = json.load(f)
+                    wake_str = sleep_state.get('wake_time', '')
+                    reason = sleep_state.get('reason', 'Unknown')
+                    if wake_str:
+                        wake_time = datetime.fromisoformat(wake_str)
+                        if wake_time > now:
+                            remaining_h = (wake_time - now).total_seconds() / 3600
+                            message += f"  🔴 <b>SLEEPING</b> — {remaining_h:.1f}h remaining\n"
+                            message += f"  Reason: <i>{reason}</i>\n"
+                            message += f"  Wake: <code>{wake_time.strftime('%H:%M UTC')}</code>\n\n"
+                        else:
+                            message += "  ✅ ACTIVE (sleep expired)\n\n"
+                    else:
+                        message += "  ✅ ACTIVE\n\n"
+                else:
+                    message += "  ✅ ACTIVE — scanning normally\n\n"
+            except Exception:
+                message += "  ✅ ACTIVE\n\n"
+            
+            # ═══ SECTION 6: RISK REJECTIONS TODAY ═══
+            message += "<b>⛔ REJECTIONS TODAY:</b>\n"
+            try:
+                rej_file = Path(__file__).parent.resolve() / 'data' / 'daily_rejections.json'
+                if rej_file.exists():
+                    with open(rej_file, 'r') as f:
+                        rej_data = json.load(f)
+                    today_str = datetime.now(timezone.utc).date().isoformat()
+                    if rej_data.get('date') == today_str:
+                        total_rej = rej_data.get('total', 0)
+                        by_reason = rej_data.get('by_reason', {})
+                        message += f"  Total: <code>{total_rej}</code>\n"
+                        for reason, count in sorted(by_reason.items(), key=lambda x: -x[1]):
+                            message += f"  • {reason}: <code>{count}</code>\n"
+                        message += "\n"
+                    else:
+                        message += "  <code>0</code> (clean day)\n\n"
+                else:
+                    message += "  <code>0</code> (clean day)\n\n"
+            except Exception:
+                message += "  ⚠️ Data unavailable\n\n"
+            
+            # ═══ SECTION 7: NEXT 4H SCAN ═══
+            message += "<b>⏰ NEXT 4H SCAN:</b>\n"
+            try:
+                current_hour = now.hour
+                next_4h = [0, 4, 8, 12, 16, 20]
+                next_h = None
+                for h in next_4h:
+                    if h > current_hour:
+                        next_h = h
+                        break
+                if next_h is None:
+                    next_close = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+                else:
+                    next_close = now.replace(hour=next_h, minute=0, second=0, microsecond=0)
+                remaining = next_close - now
+                hours_left = remaining.total_seconds() / 3600
+                message += f"  <code>{next_close.strftime('%H:%M UTC')}</code> ({hours_left:.1f}h)\n\n"
+            except Exception:
+                message += "  ⚠️ Unknown\n\n"
+            
+            # ═══ SECTION 8: NEWS TODAY (synced with upcoming_news.json) ═══
+            message += "<b>📰 NEWS TODAY:</b>\n"
+            try:
+                news_file = Path(__file__).parent.resolve() / 'data' / 'upcoming_news.json'
+                if news_file.exists():
+                    with open(news_file, 'r') as f:
+                        news_data = json.load(f)
+                    
+                    today_str = now.strftime('%Y-%m-%d')
+                    all_events = news_data.get('events', [])
+                    
+                    # Filter: today's events that haven't happened yet
+                    remaining_today = []
+                    for ev in all_events:
+                        if ev.get('date') == today_str:
+                            ev_time = ev.get('time', '23:59')
+                            try:
+                                ev_hour, ev_min = map(int, ev_time.split(':'))
+                                if ev_hour > now.hour or (ev_hour == now.hour and ev_min > now.minute):
+                                    remaining_today.append(ev)
+                            except Exception:
+                                remaining_today.append(ev)  # Include if can't parse
+                    
+                    high_remaining = sum(1 for e in remaining_today if e.get('impact') == 'High')
+                    med_remaining = sum(1 for e in remaining_today if e.get('impact') == 'Medium')
+                    
+                    if remaining_today:
+                        message += f"  🔴 HIGH: <code>{high_remaining}</code> | 🟠 MED: <code>{med_remaining}</code>\n"
+                        # Show next upcoming event
+                        remaining_today.sort(key=lambda x: x.get('time', '23:59'))
+                        next_ev = remaining_today[0]
+                        next_flag = {'USD':'🇺🇸','EUR':'🇪🇺','GBP':'🇬🇧','JPY':'🇯🇵','AUD':'🇦🇺','NZD':'🇳🇿','CAD':'🇨🇦','CHF':'🇨🇭'}.get(next_ev.get('currency',''), '🏴')
+                        message += f"  ➡️ Next: {next_flag} <b>{next_ev.get('currency','?')}</b> {next_ev.get('event','?')} @ <code>{next_ev.get('time','?')} UTC</code>\n"
+                    else:
+                        message += "  ✅ No remaining events today\n"
+                    
+                    # Show data freshness
+                    last_updated = news_data.get('last_updated', 'unknown')
+                    if last_updated != 'unknown':
+                        try:
+                            upd_time = datetime.fromisoformat(last_updated)
+                            age_h = (now - upd_time).total_seconds() / 3600
+                            freshness = '✅' if age_h < 12 else '⚠️'
+                            message += f"  {freshness} Data age: <code>{age_h:.1f}h</code>\n\n"
+                        except Exception:
+                            message += f"  ℹ️ Updated: <code>{last_updated[:16]}</code>\n\n"
+                    else:
+                        message += "\n"
+                else:
+                    message += "  ⚠️ upcoming_news.json not found\n\n"
+            except Exception:
+                message += "  ⚠️ Error reading news data\n\n"
+            
+            message += f"{UNIVERSAL_SEPARATOR}\n<b>🎯 VERDICT:</b> {'😴 DEEP SLEEP' if (Path(__file__).parent.resolve() / 'data' / 'deep_sleep_state.json').exists() else '✅ OPERATIONAL'}"
             
             return message
             
@@ -660,6 +889,133 @@ class TelegramCommandCenter:
             logger.error(f"❌ Active command error: {e}")
             return f"❌ <b>Error:</b> {str(e)}"
     
+    def handle_killall_command(self) -> str:
+        """
+        V10.6 /killall — Emergency stop:
+        1. Close ALL open positions via cTrader API
+        2. Write deep_sleep_state.json for 24h
+        3. Kill all trading process locks so watchdog pauses restarts
+        4. Send LOCKED DOWN confirmation
+        """
+        try:
+            sep = "────────────────"
+            script_dir = Path(__file__).parent.resolve()
+            report_lines = []
+
+            # ── STEP 1: Close all positions via cTrader REST API ────────────
+            closed_count = 0
+            failed_symbols = []
+            try:
+                active_file = script_dir / 'active_positions.json'
+                if active_file.exists():
+                    with open(active_file, 'r') as f:
+                        positions = json.load(f)
+                    if isinstance(positions, dict):
+                        all_pos = [p for plist in positions.values() for p in plist]
+                    elif isinstance(positions, list):
+                        all_pos = positions
+                    else:
+                        all_pos = []
+
+                    ctrader_host = os.getenv('CTRADER_CBOT_HOST', 'http://localhost:5000')
+                    for pos in all_pos:
+                        pos_id = pos.get('position_id') or pos.get('id')
+                        sym = pos.get('symbol', '?')
+                        if pos_id:
+                            try:
+                                resp = requests.post(
+                                    f"{ctrader_host}/close_position",
+                                    json={'position_id': pos_id},
+                                    timeout=5
+                                )
+                                if resp.status_code == 200:
+                                    closed_count += 1
+                                    report_lines.append(f"✅ Closed: <code>{sym}</code> (#{pos_id})")
+                                else:
+                                    failed_symbols.append(sym)
+                                    report_lines.append(f"⚠️ Failed: <code>{sym}</code>")
+                            except Exception:
+                                failed_symbols.append(sym)
+                                report_lines.append(f"⚠️ Timeout: <code>{sym}</code>")
+            except Exception as e:
+                report_lines.append(f"❌ Position close error: {e}")
+
+            # ── STEP 2: Write deep_sleep_state.json (24h lockdown) ────────
+            sleep_file = script_dir / 'data' / 'deep_sleep_state.json'
+            sleep_file.parent.mkdir(parents=True, exist_ok=True)
+            wake_time = (datetime.now(timezone.utc) + timedelta(hours=24)).isoformat()
+            sleep_state = {
+                'reason': 'MANUAL_KILLALL — /killall command by operator',
+                'wake_time': wake_time,
+                'triggered_at': datetime.now(timezone.utc).isoformat(),
+                'daily_loss_reached': True,
+                'lockdown': True
+            }
+            with open(sleep_file, 'w') as f:
+                json.dump(sleep_state, f, indent=2)
+            report_lines.append(f"🛌 Deep Sleep written — wake at <code>{wake_time[:16]} UTC</code>")
+
+            # ── STEP 3: Remove setup locks / monitoring setups ────────────
+            mon_file = script_dir / 'monitoring_setups.json'
+            if mon_file.exists():
+                backup = mon_file.with_suffix('.killall_backup.json')
+                mon_file.rename(backup)
+                report_lines.append(f"📋 monitoring_setups.json cleared (backup saved)")
+
+            # ── STEP 4: Build confirmation message ──────────────────
+            status_emoji = "🔴" if failed_symbols else "🟢"
+            report_text = "\n".join(report_lines) if report_lines else "No positions found."
+
+            message = (
+                f"🚨 <b>KILLALL EXECUTED</b> {status_emoji}\n\n"
+                f"{sep}\n"
+                f"🛑 Positions closed: <b>{closed_count}</b>\n"
+                f"⚠️ Failed: <b>{len(failed_symbols)}</b>\n"
+                f"🛌 Lockdown: <b>24h DEEP SLEEP</b>\n\n"
+                f"{sep}\n"
+                f"{report_text}\n\n"
+                f"{sep}\n"
+                f"⏰ Wake time: <code>{wake_time[:16]} UTC</code>\n"
+                f"⚠️ <b>All trading HALTED. Use /resume to restart manually.</b>"
+            )
+            logger.warning(f"🚨 KILLALL executed: {closed_count} closed, {len(failed_symbols)} failed")
+            return message
+
+        except Exception as e:
+            logger.error(f"❌ KILLALL error: {e}")
+            return f"❌ <b>KILLALL ERROR:</b> {str(e)}"
+
+    def handle_resume_command(self) -> str:
+        """
+        V10.6 /resume — Remove deep_sleep_state.json and unlock trading.
+        Sends: 🔱 SYSTEM AWAKENED. BIAS SYNC STARTING...
+        """
+        try:
+            script_dir = Path(__file__).parent.resolve()
+            sleep_file = script_dir / 'data' / 'deep_sleep_state.json'
+
+            if sleep_file.exists():
+                sleep_file.unlink()
+                msg = (
+                    f"🔱 <b>SYSTEM AWAKENED</b>\n\n"
+                    f"✅ Deep sleep cleared manually\n"
+                    f"🔄 <b>BIAS SYNC STARTING...</b>\n"
+                    f"⏰ Time: <code>{datetime.now(timezone.utc).strftime('%H:%M UTC')}</code>\n\n"
+                    f"⚠️ Watchdog will restart all processes within 60s."
+                )
+            else:
+                msg = (
+                    f"✅ <b>SYSTEM ALREADY ACTIVE</b>\n\n"
+                    f"No deep sleep state found.\n"
+                    f"Trading is operational."
+                )
+            logger.info("🔱 /resume executed — deep sleep cleared")
+            return msg
+
+        except Exception as e:
+            logger.error(f"❌ Resume error: {e}")
+            return f"❌ <b>RESUME ERROR:</b> {str(e)}"
+
     def process_command(self, message_obj):
         """Process incoming command"""
         try:
@@ -691,18 +1047,24 @@ class TelegramCommandCenter:
                 response = self.handle_btcusd_command()
             elif command == '/active':
                 response = self.handle_active_command()
+            elif command == '/killall':
+                response = self.handle_killall_command()
+            elif command == '/resume':
+                response = self.handle_resume_command()
             elif command == '/help':
-                response = """<b>🎮 COMMAND CENTER V3.7</b>
-──────────────────
-
-<b>Available Commands:</b>
-
-<code>/stats</code> - Daily trading statistics
-<code>/monitoring</code> - Active setup list
-<code>/status</code> - System health check
-<code>/active</code> - Live open positions
-<code>/btcusd</code> - Quick BTCUSD analysis
-<code>/help</code> - Show this message"""
+                response = (
+                    f"<b>🎮 COMMAND CENTER V10.6</b>\n"
+                    f"{UNIVERSAL_SEPARATOR}\n\n"
+                    f"<b>Available Commands:</b>\n\n"
+                    f"<code>/stats</code> — Daily trading statistics\n"
+                    f"<code>/monitoring</code> — Active setup list\n"
+                    f"<code>/status</code> — System health check\n"
+                    f"<code>/active</code> — Live open positions\n"
+                    f"<code>/btcusd</code> — Quick BTCUSD analysis\n"
+                    f"<code>/killall</code> — 🚨 Close ALL positions + 24h lockdown\n"
+                    f"<code>/resume</code> — 🔱 Wake from deep sleep + restart trading\n"
+                    f"<code>/help</code> — Show this message"
+                )
             else:
                 response = f"❌ <b>Unknown command:</b> <code>{command}</code>\n\nUse <code>/help</code> for available commands."
             

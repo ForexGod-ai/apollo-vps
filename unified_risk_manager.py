@@ -53,7 +53,7 @@ class UnifiedRiskManager:
         self.max_positions_per_symbol = 1
         self.active_positions_file = Path(__file__).parent / "active_positions.json"
         
-        # 🔇 V9.1 SILENT REJECTION: 4-hour cooldown per reason category (ANTI-SPAM FIX by POCOVNICU)
+        # 🔇 V9.1 SILENT REJECTION: 4-hour cooldown per reason category (ANTI-SPAM FIX by ФорексГод)
         # Format: {"reason_category": {"last_sent": datetime, "count": int}}
         self._rejection_cooldown = {}
         self._warning_cooldown = {}
@@ -112,25 +112,84 @@ class UnifiedRiskManager:
             self._reset_daily_state(today)
     
     def _reset_daily_state(self, date):
-        """Reset daily state for new day"""
-        # Get current balance as starting point
+        """
+        Reset daily state for new day.
+        V10.5: Uses EQUITY not balance.
+        V10.6: Force daily_loss_reached=False + send SYSTEM AWAKENED Telegram at 00:05.
+        """
+        # V10.5: Use EQUITY (not balance) as starting point
         equity, balance = self.get_account_balance()
-        self.starting_balance_today = balance
+        self.starting_balance_today = equity  # ← EQUITY, not balance!
         self.daily_trades_count = 0
-        
+
+        # V10.6: Force-clear deep_sleep_state.json if it's a natural daily reset
+        # (not a manual /killall lockdown — those have lockdown=True)
+        try:
+            sleep_file = self.daily_state_file.parent / 'deep_sleep_state.json'
+            if sleep_file.exists():
+                with open(sleep_file, 'r') as f:
+                    sleep_state = json.load(f)
+                if not sleep_state.get('lockdown', False):
+                    sleep_file.unlink()
+                    print(f"🔱 Daily reset: deep_sleep_state.json cleared (non-lockdown)")
+        except Exception as e:
+            print(f"⚠️ Could not clear sleep file on reset: {e}")
+
         # Save to file
         state = {
             'date': date,
-            'starting_balance': balance,
+            'starting_balance': equity,   # ← EQUITY, not balance!
+            'starting_equity': equity,    # ← explicit equity field for clarity
+            'starting_balance_note': 'Uses equity (not balance) — includes floating P&L',
             'trades_count': 0,
+            'daily_loss_reached': False,  # V10.6: explicit reset
             'reset_timestamp': datetime.now().isoformat()
         }
-        
+
         self.daily_state_file.parent.mkdir(parents=True, exist_ok=True)
         with open(self.daily_state_file, 'w') as f:
             json.dump(state, f, indent=2)
-        
-        print(f"✅ Daily state RESET: Starting balance = ${balance:.2f}")
+
+        print(f"✅ Daily state RESET: Starting EQUITY = ${equity:.2f} (balance=${balance:.2f})")
+
+        # V10.6: Send Telegram AWAKENED message
+        self._send_daily_awakened_alert(equity, balance)
+
+    def _send_daily_awakened_alert(self, equity: float, balance: float):
+        """
+        V10.6: Send 🔱 SYSTEM AWAKENED confirmation to Telegram at daily reset.
+        """
+        try:
+            token = os.getenv('TELEGRAM_BOT_TOKEN')
+            chat_id = os.getenv('TELEGRAM_CHAT_ID')
+            if not token or not chat_id:
+                return
+
+            sep = "────────────────"
+            now_utc = datetime.utcnow().strftime('%Y-%m-%d 00:05 UTC')
+            message = (
+                f"🔱 <b>SYSTEM AWAKENED</b>\n\n"
+                f"✅ Daily reset complete\n"
+                f"🔄 <b>BIAS SYNC STARTING...</b>\n"
+                f"📊 Starting equity: <code>${equity:.2f}</code>\n"
+                f"💰 Balance: <code>${balance:.2f}</code>\n"
+                f"🔴 Daily loss counter: <b>RESET → 0%</b>\n"
+                f"⏰ Time: <code>{now_utc}</code>\n\n"
+                f"⚠️ Scanner will re-evaluate all pairs on next 4H candle close.\n\n"
+                f"  {sep}\n"
+                f"  🔱 AUTHORED BY <b>ФорексГод</b> 🔱\n"
+                f"  {sep}\n"
+                f"  🏛️ INSTITUTIONAL TERMINAL 🏛️"
+            )
+            import requests as _req
+            _req.post(
+                f"https://api.telegram.org/bot{token}/sendMessage",
+                data={'chat_id': chat_id, 'text': message, 'parse_mode': 'HTML'},
+                timeout=10
+            )
+            print("🔱 SYSTEM AWAKENED alert sent to Telegram")
+        except Exception as e:
+            print(f"⚠️ Could not send awakened alert: {e}")
     
     def _save_daily_state(self):
         """Save current daily state to JSON"""
@@ -394,7 +453,8 @@ class UnifiedRiskManager:
         result = {
             'approved': False,
             'reason': None,
-            'lot_size': 0.0
+            'lot_size': 0.0,
+            'deep_sleep': False  # V9.3: Signal setup_executor to enter Deep Sleep
         }
         
         # 🚀 V8.1 BULLETPROOF NO-MATH BYPASS: BTCUSD gets DIRECT volume injection
@@ -434,7 +494,13 @@ class UnifiedRiskManager:
         pnl = self.get_daily_pnl()
         equity, balance = self.get_account_balance()
         
-        daily_loss_pct = (pnl['total_pnl'] / balance) * 100 if balance > 0 else 0
+        # ✅ V10.5 FIX: Use EQUITY (not balance) as denominator for daily loss %
+        # Equity reflects floating P&L — balance stays fixed until position closed.
+        # Using balance would under-report losses on open positions.
+        # Example: balance=$1000, open loss=$80 → equity=$920
+        # Correct:  daily_loss_pct = -80/920 = -8.7%
+        # Wrong:    daily_loss_pct = -80/1000 = -8.0%  ← masks real exposure
+        daily_loss_pct = (pnl['total_pnl'] / equity) * 100 if equity > 0 else 0
         
         # Kill switch auto-activation - DISABLED (will redesign later)
         # if self.kill_switch_enabled and daily_loss_pct <= -self.kill_switch_trigger:
@@ -443,16 +509,17 @@ class UnifiedRiskManager:
         #     print(f"🔴 TRADE REJECTED: {result['reason']}")
         #     return result
         
-        # Check daily loss limit (warning, but don't block yet)
+        # Check daily loss limit → V9.3 DEEP SLEEP: Signal executor to stop ALL scanning
         if daily_loss_pct <= -self.max_daily_loss_pct:
             result['reason'] = f"Daily loss limit reached ({daily_loss_pct:.2f}%)"
-            print(f"⚠️  TRADE REJECTED: {result['reason']}")
+            result['deep_sleep'] = True  # V9.3: Trigger Deep Sleep in setup_executor
+            print(f"😴 DEEP SLEEP TRIGGER: {result['reason']}")
             self._send_rejection_alert(symbol, direction, result['reason'])
             return result
         
-        # Send warning if approaching limit
+        # Send warning if approaching limit (use equity denominator consistently)
         if daily_loss_pct <= -self.daily_warning_pct:
-            self._send_warning_alert(daily_loss_pct, balance)
+            self._send_warning_alert(daily_loss_pct, equity)
         
         # 4. Calculate lot size - CASH RISK ALIGNMENT (The $200 Rule)
         if entry_price > 0 and stop_loss > 0:
@@ -535,7 +602,7 @@ class UnifiedRiskManager:
     def _send_rejection_alert(self, symbol, direction, reason):
         """
         V9.1 SILENT REJECTION: Send Telegram ONLY on state change or after 4h cooldown.
-        Anti-spam fix by POCOVNICU — prevents hundreds of 'Daily loss limit' notifications.
+        Anti-spam fix by ФорексГод — prevents hundreds of 'Daily loss limit' notifications.
         
         Logic:
         - First rejection for this reason category → SEND
@@ -601,7 +668,7 @@ class UnifiedRiskManager:
     def _send_warning_alert(self, daily_loss_pct, balance):
         """
         V9.1: Send warning with 4h cooldown — max 1 warning per 4 hours.
-        Anti-spam fix by POCOVNICU.
+        Anti-spam fix by ФорексГод.
         """
         now = datetime.now()
         cooldown_key = 'daily_loss_warning'

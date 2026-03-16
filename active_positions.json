@@ -7,8 +7,8 @@
     "opened_at": "2026-03-06T15:02:49.978Z",
     "stop_loss": null,
     "take_profit": null,
-    "net_profit": -1173.75,
-    "pips": -87.1
+    "net_profit": -1213.91,
+    "pips": -90.3
   },
   {
     "symbol": "USDCAD",
@@ -18,8 +18,8 @@
     "opened_at": "2026-03-10T05:35:16.599Z",
     "stop_loss": 1.36237,
     "take_profit": 1.31927,
-    "net_profit": 165.85,
-    "pips": 27
+    "net_profit": 101.47,
+    "pips": 17.2
   },
   {
     "symbol": "NZDUSD",
@@ -29,8 +29,8 @@
     "opened_at": "2026-03-10T12:44:30.114Z",
     "stop_loss": 0.59764,
     "take_profit": 0.55648,
-    "net_profit": 88.37,
-    "pips": 12.1
+    "net_profit": 160.37,
+    "pips": 21.7
   },
   {
     "symbol": "BTCUSD",
@@ -40,8 +40,8 @@
     "opened_at": "2026-03-10T14:42:00.042Z",
     "stop_loss": 66069,
     "take_profit": 98904,
-    "net_profit": -688.17,
-    "pips": -133812
+    "net_profit": -600.4,
+    "pips": -116258
   },
   {
     "symbol": "EURJPY",
@@ -51,8 +51,8 @@
     "opened_at": "2026-03-11T09:16:23.81Z",
     "stop_loss": 184.44,
     "take_profit": 178.725,
-    "net_profit": -7.2,
-    "pips": -1.9
+    "net_profit": -0.72,
+    "pips": 0.8
   },
   {
     "symbol": "GBPNZD",
@@ -62,7 +62,7 @@
     "opened_at": "2026-03-11T09:16:53.755Z",
     "stop_loss": 2.27335,
     "take_profit": 2.21187,
-    "net_profit": -1.88,
-    "pips": 0.5
+    "net_profit": -25.97,
+    "pips": -10.5
   }
 ]
