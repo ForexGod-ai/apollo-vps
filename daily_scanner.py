@@ -731,6 +731,7 @@ if __name__ == "__main__":
     main()
 
 import os
+from pathlib import Path
 
 def get_active_positions(path):
     if not os.path.exists(path):
@@ -748,7 +749,7 @@ def format_telegram_active_setups(positions):
     return msg
 
 # La finalul scanării, trimite active setups din cTrader
-ACTIVE_POSITIONS_FILE = '/Users/forexgod/Desktop/Glitch in Matrix/trading-ai-agent apollo/active_positions.json'
+ACTIVE_POSITIONS_FILE = str(Path(__file__).parent / 'active_positions.json')
 active_positions = get_active_positions(ACTIVE_POSITIONS_FILE)
 active_setups_message = format_telegram_active_setups(active_positions)
 print(active_setups_message)
