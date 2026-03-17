@@ -3,7 +3,7 @@
 📡 NEWS FETCHER V10.0 — DAILY AUTO-SYNC
 ────────────────
 🔱 AUTHORED BY ФорексГод 🔱
-🏛️ INSTITUTIONAL TERMINAL 🏛️
+🏛️ Глитч Ин Матрикс 🏛️
 
 Automatically downloads HIGH + MEDIUM impact economic events every day.
 Runs at 05:00 UTC via launchd — populates data/upcoming_news.json.
@@ -405,7 +405,7 @@ def send_sync_summary(events: List[Dict]):
             f"  {sep}\n"
             f"  🔱 <b>AUTHORED BY ФорексГод</b> 🔱\n"
             f"  {sep}\n"
-            f"  🏛️ INSTITUTIONAL TERMINAL 🏛️"
+            f"  🏛️ Глитч Ин Матрикс 🏛️"
         )
 
         url = f"https://api.telegram.org/bot{bot_token}/sendMessage"

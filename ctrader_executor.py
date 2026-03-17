@@ -348,7 +348,7 @@ class CTraderExecutor:
                     f"  {sep}\n"
                     f"  🔱 <b>AUTHORED BY ФорексГод</b> 🔱\n"
                     f"  {sep}\n"
-                    f"  🏛️ INSTITUTIONAL TERMINAL 🏛️"
+                    f"  🏛️ Глитч Ин Матрикс 🏛️"
                 )
             
             elif status == 'REJECTED':
@@ -361,7 +361,7 @@ class CTraderExecutor:
                     f"  {sep}\n"
                     f"  🔱 <b>AUTHORED BY ФорексГод</b> 🔱\n"
                     f"  {sep}\n"
-                    f"  🏛️ INSTITUTIONAL TERMINAL 🏛️"
+                    f"  🏛️ Глитч Ин Матрикс 🏛️"
                 )
             
             elif status == 'DEPLOYED':
@@ -378,7 +378,7 @@ class CTraderExecutor:
                     f"  {sep}\n"
                     f"  🔱 <b>AUTHORED BY ФорексГод</b> 🔱\n"
                     f"  {sep}\n"
-                    f"  🏛️ INSTITUTIONAL TERMINAL 🏛️"
+                    f"  🏛️ Глитч Ин Матрикс 🏛️"
                 )
             
             elif status == 'UNKNOWN':
@@ -391,7 +391,7 @@ class CTraderExecutor:
                     f"  {sep}\n"
                     f"  🔱 <b>AUTHORED BY ФорексГод</b> 🔱\n"
                     f"  {sep}\n"
-                    f"  🏛️ INSTITUTIONAL TERMINAL 🏛️"
+                    f"  🏛️ Глитч Ин Матрикс 🏛️"
                 )
             
             else:

@@ -202,7 +202,7 @@ class RiskManager:
   ────────────────
   🔱 AUTHORED BY ФорексГод 🔱
   ────────────────
-  🏛️ INSTITUTIONAL TERMINAL 🏛️
+  🏛️ Глитч Ин Матрикс 🏛️
 """
         
         self._send_telegram(message)
@@ -237,7 +237,7 @@ class RiskManager:
   ────────────────
   🔱 AUTHORED BY ФорексГод 🔱
   ────────────────
-  🏛️ INSTITUTIONAL TERMINAL 🏛️
+  🏛️ Глитч Ин Матрикс 🏛️
 """
         
         self._send_telegram(message)

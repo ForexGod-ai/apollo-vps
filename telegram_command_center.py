@@ -3,7 +3,7 @@
 🎮 TELEGRAM COMMAND CENTER V10.4
 ────────────────
 🔱 AUTHORED BY ФорексГод 🔱
-🏛️ INSTITUTIONAL TERMINAL
+🏛️ Глитч Ин Матрикс 🏛️
 
 Interactive Command Interface:
 - /stats - Daily trading statistics
@@ -181,7 +181,7 @@ class TelegramCommandCenter:
                 f"  {sep}\n"
                 f"  🔱 AUTHORED BY <b>ФорексГод</b> 🔱\n"
                 f"  {sep}\n"
-                f"  🏛️ INSTITUTIONAL TERMINAL 🏛️"
+                f"  🏛️ Глитч Ин Матрикс 🏛️"
             )
             
             payload = {
@@ -474,7 +474,7 @@ class TelegramCommandCenter:
     def handle_status_command(self):
         """
         /status DASHBOARD — Full system health + P/L + Deep Sleep + Rejections + News
-        ФорексГод INSTITUTIONAL TERMINAL
+        ФорексГод — Глитч Ин Матрикс
         """
         try:
             from datetime import timezone

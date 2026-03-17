@@ -243,7 +243,7 @@ class CTraderAccountStats:
         message += f"\n\n  {sep}"
         message += f"\n  🔱 AUTHORED BY ФорексГод 🔱"
         message += f"\n  {sep}"
-        message += f"\n  🏛️ INSTITUTIONAL TERMINAL 🏛️"
+        message += f"\n  🏛️ Глитч Ин Матрикс 🏛️"
         
         try:
             url = f"https://api.telegram.org/bot{self.telegram_token}/sendMessage"

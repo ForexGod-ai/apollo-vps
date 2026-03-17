@@ -179,7 +179,7 @@ class UnifiedRiskManager:
                 f"  {sep}\n"
                 f"  🔱 AUTHORED BY <b>ФорексГод</b> 🔱\n"
                 f"  {sep}\n"
-                f"  🏛️ INSTITUTIONAL TERMINAL 🏛️"
+                f"  🏛️ Глитч Ин Матрикс 🏛️"
             )
             import requests as _req
             _req.post(
@@ -426,7 +426,7 @@ class UnifiedRiskManager:
                     f"  {sep}\n"
                     f"  🔱 <b>AUTHORED BY ФорексГод</b> 🔱\n"
                     f"  {sep}\n"
-                    f"  🏛️ INSTITUTIONAL TERMINAL 🏛️"
+                    f"  🏛️ Глитч Ин Матрикс 🏛️"
                 )
                 self._send_telegram(message)
                 
@@ -661,7 +661,7 @@ class UnifiedRiskManager:
             f"  {sep}\n"
             f"  🔱 <b>AUTHORED BY ФорексГод</b> 🔱\n"
             f"  {sep}\n"
-            f"  🏛️ INSTITUTIONAL TERMINAL 🏛️"
+            f"  🏛️ Глитч Ин Матрикс 🏛️"
         )
         self._send_telegram(message)
     
@@ -695,7 +695,7 @@ class UnifiedRiskManager:
             f"  {sep}\n"
             f"  🔱 <b>AUTHORED BY ФорексГод</b> 🔱\n"
             f"  {sep}\n"
-            f"  🏛️ INSTITUTIONAL TERMINAL 🏛️"
+            f"  🏛️ Глитч Ин Матрикс 🏛️"
         )
         self._send_telegram(message)
     
@@ -720,7 +720,7 @@ class UnifiedRiskManager:
             f"  {sep}\n"
             f"  🔱 <b>AUTHORED BY ФорексГод</b> 🔱\n"
             f"  {sep}\n"
-            f"  🏛️ INSTITUTIONAL TERMINAL 🏛️"
+            f"  🏛️ Глитч Ин Матрикс 🏛️"
         )
         self._send_telegram(message)
     
@@ -784,7 +784,7 @@ class UnifiedRiskManager:
             "  ────────────────\n"
             "  🔱 <b>AUTHORED BY ФорексГод</b> 🔱\n"
             "  ────────────────\n"
-            "  🏛️ INSTITUTIONAL TERMINAL 🏛️"
+            "  🏛️ Глитч Ин Матрикс 🏛️"
         )
         
         self._send_telegram(message)

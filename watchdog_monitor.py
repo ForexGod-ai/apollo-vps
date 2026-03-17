@@ -3,7 +3,7 @@
 🛡️ WATCHDOG MONITOR V4.0 - 6 MONITORS (COMPLETE PROTECTION)
 ────────────────
 🔱 AUTHORED BY ФорексГод 🔱
-🏛️ INSTITUTIONAL TERMINAL
+🏛️ Глитч Ин Матрикс 🏛️
 
 System Guardian - Monitors and auto-restarts ALL critical processes:
 - setup_executor_monitor.py (Setup Scanner & Executor)
@@ -220,7 +220,7 @@ class WatchdogMonitor:
                 f"  {sep}\n"
                 f"  🔱 AUTHORED BY <b>ФорексГод</b> 🔱\n"
                 f"  {sep}\n"
-                f"  🏛️ INSTITUTIONAL TERMINAL 🏛️"
+                f"  🏛️ Глитч Ин Матрикс 🏛️"
             )
             
             payload = {

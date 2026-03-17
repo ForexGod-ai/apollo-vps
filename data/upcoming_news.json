@@ -1,97 +1,9 @@
 {
-  "last_updated": "2026-03-16T06:00:05.524890+00:00",
-  "event_count": 40,
-  "high_count": 32,
-  "medium_count": 8,
+  "last_updated": "2026-03-17T06:08:10.754042+00:00",
+  "event_count": 33,
+  "high_count": 27,
+  "medium_count": 6,
   "events": [
-    {
-      "date": "2026-03-16",
-      "time": "12:30",
-      "datetime_utc": "2026-03-16T12:30:00+00:00",
-      "currency": "CAD",
-      "event": "CPI m/m",
-      "impact": "High",
-      "forecast": "0.7%",
-      "previous": "0.0%",
-      "source": "forexfactory_mirror"
-    },
-    {
-      "date": "2026-03-16",
-      "time": "12:30",
-      "datetime_utc": "2026-03-16T12:30:00+00:00",
-      "currency": "CAD",
-      "event": "Median CPI y/y",
-      "impact": "High",
-      "forecast": "2.4%",
-      "previous": "2.5%",
-      "source": "forexfactory_mirror"
-    },
-    {
-      "date": "2026-03-16",
-      "time": "12:30",
-      "datetime_utc": "2026-03-16T12:30:00+00:00",
-      "currency": "CAD",
-      "event": "Trimmed CPI y/y",
-      "impact": "High",
-      "forecast": "2.4%",
-      "previous": "2.4%",
-      "source": "forexfactory_mirror"
-    },
-    {
-      "date": "2026-03-16",
-      "time": "12:30",
-      "datetime_utc": "2026-03-16T12:30:00+00:00",
-      "currency": "CAD",
-      "event": "Common CPI y/y",
-      "impact": "Medium",
-      "forecast": "2.6%",
-      "previous": "2.7%",
-      "source": "forexfactory_mirror"
-    },
-    {
-      "date": "2026-03-16",
-      "time": "12:30",
-      "datetime_utc": "2026-03-16T12:30:00+00:00",
-      "currency": "USD",
-      "event": "Empire State Manufacturing Index",
-      "impact": "Medium",
-      "forecast": "4.0",
-      "previous": "7.1",
-      "source": "forexfactory_mirror"
-    },
-    {
-      "date": "2026-03-17",
-      "time": "03:30",
-      "datetime_utc": "2026-03-17T03:30:00+00:00",
-      "currency": "AUD",
-      "event": "Cash Rate",
-      "impact": "High",
-      "forecast": "4.10%",
-      "previous": "3.85%",
-      "source": "forexfactory_mirror"
-    },
-    {
-      "date": "2026-03-17",
-      "time": "03:30",
-      "datetime_utc": "2026-03-17T03:30:00+00:00",
-      "currency": "AUD",
-      "event": "RBA Rate Statement",
-      "impact": "High",
-      "forecast": "",
-      "previous": "",
-      "source": "forexfactory_mirror"
-    },
-    {
-      "date": "2026-03-17",
-      "time": "04:30",
-      "datetime_utc": "2026-03-17T04:30:00+00:00",
-      "currency": "AUD",
-      "event": "RBA Press Conference",
-      "impact": "High",
-      "forecast": "",
-      "previous": "",
-      "source": "forexfactory_mirror"
-    },
     {
       "date": "2026-03-17",
       "time": "14:00",
@@ -99,7 +11,7 @@
       "currency": "USD",
       "event": "Pending Home Sales m/m",
       "impact": "Medium",
-      "forecast": "-1.2%",
+      "forecast": "-0.6%",
       "previous": "-0.8%",
       "source": "forexfactory_mirror"
     },
@@ -220,7 +132,7 @@
       "currency": "AUD",
       "event": "Employment Change",
       "impact": "High",
-      "forecast": "20.3K",
+      "forecast": "20.8K",
       "previous": "17.8K",
       "source": "forexfactory_mirror"
     },
@@ -275,7 +187,7 @@
       "currency": "GBP",
       "event": "Claimant Count Change",
       "impact": "High",
-      "forecast": "24.5K",
+      "forecast": "25.8K",
       "previous": "28.6K",
       "source": "forexfactory_mirror"
     },
@@ -341,7 +253,7 @@
       "currency": "GBP",
       "event": "MPC Official Bank Rate Votes",
       "impact": "High",
-      "forecast": "0-3-6",
+      "forecast": "0-2-7",
       "previous": "0-4-5",
       "source": "forexfactory_mirror"
     },
@@ -374,7 +286,7 @@
       "currency": "USD",
       "event": "Philly Fed Manufacturing Index",
       "impact": "Medium",
-      "forecast": "17.5",
+      "forecast": "8.5",
       "previous": "16.3",
       "source": "forexfactory_mirror"
     },
@@ -418,7 +330,7 @@
       "currency": "USD",
       "event": "New Home Sales",
       "impact": "Medium",
-      "forecast": "723K",
+      "forecast": "722K",
       "previous": "745K",
       "source": "forexfactory_mirror"
     },
@@ -442,6 +354,17 @@
       "impact": "Medium",
       "forecast": "1.4%",
       "previous": "-0.4%",
+      "source": "forexfactory_mirror"
+    },
+    {
+      "date": "2026-03-21",
+      "time": "17:30",
+      "datetime_utc": "2026-03-21T17:30:00+00:00",
+      "currency": "USD",
+      "event": "Fed Chair Powell Speaks",
+      "impact": "High",
+      "forecast": "",
+      "previous": "",
       "source": "forexfactory_mirror"
     }
   ]

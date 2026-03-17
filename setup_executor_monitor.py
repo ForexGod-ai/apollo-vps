@@ -419,7 +419,7 @@ class SetupExecutorMonitor:
                 f"  {sep}\n"
                 f"  🔱 AUTHORED BY <b>ФорексГод</b> 🔱\n"
                 f"  {sep}\n"
-                f"  🏛️ INSTITUTIONAL TERMINAL 🏛️"
+                f"  🏛️ Глитч Ин Матрикс 🏛️"
             )
             url = f"https://api.telegram.org/bot{self._telegram_token}/sendMessage"
             requests.post(url, json={
@@ -603,7 +603,7 @@ class SetupExecutorMonitor:
                         f"  {sep}\n"
                         f"  🔱 AUTHORED BY <b>ФорексГод</b> 🔱\n"
                         f"  {sep}\n"
-                        f"  🏛️ INSTITUTIONAL TERMINAL 🏛️"
+                        f"  🏛️ Глитч Ин Матрикс 🏛️"
                     )
                     url = f"https://api.telegram.org/bot{self._telegram_token}/sendMessage"
                     requests.post(url, json={

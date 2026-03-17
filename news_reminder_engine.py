@@ -3,7 +3,7 @@
 ⏰ NEWS REMINDER ENGINE V10.4 — 15-MINUTE FLASH ALERTS
 ────────────────
 🔱 AUTHORED BY ФорексГод 🔱
-🏛️ INSTITUTIONAL TERMINAL
+🏛️ Глитч Ин Матрикс 🏛️
 
 Continuous daemon that checks data/upcoming_news.json every 60 seconds.
 When a HIGH or MEDIUM impact event is exactly 15 minutes away:
@@ -188,7 +188,7 @@ class NewsReminderEngine:
           ────────────────
           🔱 AUTHORED BY ФорексГод 🔱
           ────────────────
-          🏛️ INSTITUTIONAL TERMINAL 🏛️
+          🏛️ Глитч Ин Матрикс 🏛️
         """
         currency = event.get('currency', 'USD')
         flag = FLAGS.get(currency, '🏴')
@@ -226,7 +226,7 @@ class NewsReminderEngine:
             f"  {UNIVERSAL_SEPARATOR}\n"
             f"  🔱 AUTHORED BY <b>ФорексГод</b> 🔱\n"
             f"  {UNIVERSAL_SEPARATOR}\n"
-            f"  🏛️ INSTITUTIONAL TERMINAL 🏛️"
+            f"  🏛️ Глитч Ин Матрикс 🏛️"
         )
         
         return message

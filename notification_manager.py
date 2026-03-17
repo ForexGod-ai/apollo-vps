@@ -203,7 +203,7 @@ class NotificationManager:
                 f"  {sep}\n"
                 f"  🔱 <b>AUTHORED BY ФорексГод</b> 🔱\n"
                 f"  {sep}\n"
-                f"  🏛️ INSTITUTIONAL TERMINAL 🏛️"
+                f"  🏛️ Глитч Ин Матрикс 🏛️"
             )
             
             payload = {

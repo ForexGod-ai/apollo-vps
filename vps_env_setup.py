@@ -171,7 +171,7 @@ class HealthChecker:
                 f"  {sep}\n"
                 f"  🔱 *AUTHORED BY ФорексГод* 🔱\n"
                 f"  {sep}\n"
-                f"  🏛️ INSTITUTIONAL TERMINAL 🏛️"
+                f"  🏛️ Глитч Ин Матрикс 🏛️"
             )
 
             url = f"https://api.telegram.org/bot{bot_token}/sendMessage"

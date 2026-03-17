@@ -1,12 +1,12 @@
 {
-  "position_id": "589596254",
-  "symbol": "GBPJPY",
-  "direction": "buy",
-  "entry_price": 211.769,
-  "close_price": 212.797,
-  "profit_pips": 103,
-  "profit_usd": 467.84,
+  "position_id": "590034048",
+  "symbol": "EURJPY",
+  "direction": "sell",
+  "entry_price": 183.772,
+  "close_price": 182.667,
+  "profit_pips": 110.5,
+  "profit_usd": 252.37,
   "reason": "auto_close_100pips",
-  "closed_at": "2026-03-11T13:38:24.723791+02:00",
-  "duration_hours": 32.05778883166667
+  "closed_at": "2026-03-13T13:44:25.60482+02:00",
+  "duration_hours": 52.46716522861111
 }

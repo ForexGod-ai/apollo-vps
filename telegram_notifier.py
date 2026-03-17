@@ -55,7 +55,7 @@ class TelegramNotifier:
                 f"  {sep}\n"
                 f"  🔱 AUTHORED BY <b>ФорексГод</b> 🔱\n"
                 f"  {sep}\n"
-                f"  🏛️ INSTITUTIONAL TERMINAL 🏛️"
+                f"  🏛️ Глитч Ин Матрикс 🏛️"
             )
         else:  # Markdown
             footer = (
@@ -63,7 +63,7 @@ class TelegramNotifier:
                 f"  {sep}\n"
                 f"  🔱 AUTHORED BY *ФорексГод* 🔱\n"
                 f"  {sep}\n"
-                f"  🏛️ INSTITUTIONAL TERMINAL 🏛️"
+                f"  🏛️ Глитч Ин Матрикс 🏛️"
             )
         
         # FOOTER ONLY — message stays clean, stamp at the end

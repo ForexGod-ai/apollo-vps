@@ -1,7 +1,7 @@
 """
 ⛔ DEPRECATED — V10.4 NEWS SOURCE UNIFICATION
 ────────────────
-🔱 ФорексГод — ФорексГод INSTITUTIONAL TERMINAL 🔱
+🔱 ФорексГод — ФорексГод — Глитч Ин Матрикс 🔱
 
 This module is DISABLED as of V10.4.
 All news notifications now flow EXCLUSIVELY through:

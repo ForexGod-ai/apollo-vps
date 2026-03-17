@@ -2,11 +2,11 @@
   "Status": "Running",
   "OpenPositionsCount": 4,
   "TotalPositions": 6,
-  "Balance": 5890.06,
-  "Equity": 4310.9,
-  "FreeMargin": 3338.97,
-  "MarginLevel": 444.8591976788452,
-  "UnrealizedPnL": -1579.16,
-  "Timestamp": "2026-03-11T12:35:54Z",
-  "LastUpdate": "14:35:54"
+  "Balance": 6679.29,
+  "Equity": 5187.8,
+  "FreeMargin": 3660.57,
+  "MarginLevel": 341.0671608074749,
+  "UnrealizedPnL": -1491.49,
+  "Timestamp": "2026-03-17T13:53:45Z",
+  "LastUpdate": "15:53:45"
 }
