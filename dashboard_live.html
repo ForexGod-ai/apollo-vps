@@ -156,7 +156,8 @@
             <div class="subtitle">
                 <span class="live-indicator"></span>
                 <span id="liveStatus">LIVE 24/7</span> | 
-                <span id="lastUpdate">Loading...</span>
+                <span id="lastUpdate">Loading...</span> |
+                🛰️ <b>LIVE SINCE:</b> 17 March 2026
             </div>
         </div>
 
@@ -234,6 +235,16 @@
                 const openPL = data.account?.open_pl || 0;
                 const equity = data.account?.equity || (balance + openPL);
 
+                // V11.0: Fetch withdrawals from account_stats.json
+                let totalWithdrawals = 0;
+                try {
+                    const statsResp = await fetch('data/account_stats.json?t=' + Date.now());
+                    if (statsResp.ok) {
+                        const accountStats = await statsResp.json();
+                        totalWithdrawals = accountStats.total_withdrawals || 0;
+                    }
+                } catch (e) { /* optional */ }
+
                 // Update stats grid
                 updateStatsGrid({
                     balance,
@@ -245,7 +256,8 @@
                     losing: losingTrades.length,
                     profitFactor,
                     openPositions: openTrades.length,
-                    openPL
+                    openPL,
+                    totalWithdrawals
                 });
 
                 // Update open positions
@@ -317,6 +329,11 @@
                     <div class="stat-label">🔓 Open Positions</div>
                     <div class="stat-value">${stats.openPositions}</div>
                     <div class="stat-subvalue">Total: ${stats.totalTrades} trades</div>
+                </div>
+                <div class="stat-card" style="border: 1px solid rgba(250,204,21,0.4); background: rgba(250,204,21,0.06);">
+                    <div class="stat-label">💰 Total Withdrawals</div>
+                    <div class="stat-value" style="color: #facc15;">$${(stats.totalWithdrawals||0).toFixed(2)}</div>
+                    <div class="stat-subvalue">Profit secured 🔒</div>
                 </div>
             `;
         }

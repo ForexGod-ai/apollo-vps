@@ -83,6 +83,14 @@
         }
         .positive { color: #4ade80; }
         .negative { color: #f87171; }
+        .withdrawal-card {
+            border: 1px solid rgba(250, 204, 21, 0.4) !important;
+            background: rgba(250, 204, 21, 0.06) !important;
+        }
+        .withdrawal-card:hover {
+            box-shadow: 0 5px 20px rgba(250, 204, 21, 0.25) !important;
+        }
+        .withdrawal-value { color: #facc15; }
         
         /* Charts Section */
         .charts-section {
@@ -230,6 +238,8 @@
             <div class="subtitle">
                 <span class="live-indicator"></span>
                 <span id="lastUpdate">Loading...</span>
+                &nbsp;&nbsp;|&nbsp;&nbsp;
+                🛰️ <b>LIVE SINCE:</b> 17 March 2026
             </div>
         </div>
 
@@ -331,6 +341,15 @@
                 const openTrades = dashboardData.open_positions || [];
                 const closedTrades = dashboardData.closed_trades || [];
 
+                // V11.0: Merge account_stats.json for total_withdrawals
+                try {
+                    const statsResp = await fetch('data/account_stats.json?t=' + Date.now());
+                    if (statsResp.ok) {
+                        const accountStats = await statsResp.json();
+                        account.total_withdrawals = accountStats.total_withdrawals || 0;
+                    }
+                } catch (e) { /* account_stats.json optional */ }
+
                 // Calculate statistics
                 const stats = calculateStatistics(account, openTrades, closedTrades);
                 
@@ -382,7 +401,8 @@
                 profitFactor,
                 avgRR,
                 openPositions: openTrades.length,
-                totalTrades: totalClosed
+                totalTrades: totalClosed,
+                totalWithdrawals: account.total_withdrawals || 0
             };
         }
 
@@ -431,6 +451,11 @@
                     <div class="stat-label">🔓 Open Positions</div>
                     <div class="stat-value">${stats.openPositions}</div>
                     <div class="stat-subvalue">Total: ${stats.totalTrades} trades</div>
+                </div>
+                <div class="stat-card withdrawal-card">
+                    <div class="stat-label">💰 Total Withdrawals</div>
+                    <div class="stat-value withdrawal-value">$${stats.totalWithdrawals.toFixed(2)}</div>
+                    <div class="stat-subvalue">Profit secured 🔒</div>
                 </div>
             `;
         }

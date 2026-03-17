@@ -1,0 +1,6 @@
+{
+  "total_withdrawals": 0.00,
+  "withdrawals_history": [],
+  "last_updated": "2026-03-17T00:00:00",
+  "note": "Update total_withdrawals manually after each withdrawal from cTrader"
+}
