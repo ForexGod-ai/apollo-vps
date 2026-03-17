@@ -1116,7 +1116,7 @@ Consecutive cycles: {consecutive_count}
                 f"  {sep}\n"
                 f"  🔱 AUTHORED BY <b>ФорексГод</b> 🔱\n"
                 f"  {sep}\n"
-                f"   🏛️ <b>Глитч Ин Матрикс</b> 🏛️"
+                f"&#8195;&#8195;🏛️ <b>Глитч Ин Матрикс</b> 🏛️"
             )
             
             url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"

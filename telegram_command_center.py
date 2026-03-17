@@ -181,7 +181,7 @@ class TelegramCommandCenter:
                 f"  {sep}\n"
                 f"  🔱 AUTHORED BY <b>ФорексГод</b> 🔱\n"
                 f"  {sep}\n"
-                f"   🏛️ <b>Глитч Ин Матрикс</b> 🏛️"
+                f"&#8195;&#8195;🏛️ <b>Глитч Ин Матрикс</b> 🏛️"
             )
             
             payload = {
