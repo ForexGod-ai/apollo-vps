@@ -37,6 +37,11 @@ import logging
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import List, Dict, Optional
+try:
+    import pytz
+    _RO_TZ = pytz.timezone('Europe/Bucharest')
+except ImportError:
+    _RO_TZ = None
 
 # Setup logging
 logging.basicConfig(
@@ -195,9 +200,26 @@ class NewsReminderEngine:
         impact = event.get('impact', 'High')
         impact_dot = IMPACT_EMOJI.get(impact, '⚪')
         event_name = event.get('event', 'Unknown')
-        event_time = event.get('time', '??:??')
+        event_time_utc = event.get('time', '??:??')  # raw UTC string from JSON
         forecast = event.get('forecast', '')
         previous = event.get('previous', '')
+
+        # Convert UTC time → Romania time for display
+        try:
+            dt_str = event.get('datetime_utc', '')
+            if dt_str and _RO_TZ:
+                event_dt = datetime.fromisoformat(dt_str)
+                if event_dt.tzinfo is None:
+                    event_dt = event_dt.replace(tzinfo=timezone.utc)
+                event_dt_ro = event_dt.astimezone(_RO_TZ)
+                event_time = event_dt_ro.strftime('%H:%M')
+                time_label = 'RO'
+            else:
+                event_time = event_time_utc
+                time_label = 'UTC'
+        except Exception:
+            event_time = event_time_utc
+            time_label = 'UTC'
         
         # Affected pairs
         pairs = CURRENCY_PAIRS.get(currency, [])
@@ -217,7 +239,7 @@ class NewsReminderEngine:
             f"🔔 <b>NEWS IN 15 MINUTES</b>\n"
             f"{UNIVERSAL_SEPARATOR}\n\n"
             f"{flag} <b>{currency}</b> | {impact_dot} {impact.upper()} IMPACT\n"
-            f"⏰ <code>{event_time} UTC</code>\n"
+            f"⏰ <code>{event_time} {time_label}</code>\n"
             f"📰 {event_name}\n"
             f"{data_line}\n"
             f"⚠️ <b>Affected pairs:</b>\n"
@@ -226,7 +248,7 @@ class NewsReminderEngine:
             f"  {UNIVERSAL_SEPARATOR}\n"
             f"  🔱 AUTHORED BY <b>ФорексГод</b> 🔱\n"
             f"  {UNIVERSAL_SEPARATOR}\n"
-            f"  🏛️ Глитч Ин Матрикс 🏛️"
+            f"  🏛️  <b>Глитч Ин Матрикс</b>  🏛️"
         )
         
         return message

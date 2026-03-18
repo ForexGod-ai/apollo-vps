@@ -35,6 +35,18 @@ from datetime import datetime, timedelta
 from loguru import logger
 from dotenv import load_dotenv
 import requests
+try:
+    import pytz
+    _RO_TZ = pytz.timezone('Europe/Bucharest')
+except ImportError:
+    _RO_TZ = None
+
+def now_ro() -> datetime:
+    """Return current datetime in Romania timezone (UTC+2/UTC+3 DST)."""
+    if _RO_TZ:
+        return datetime.now(pytz.utc).astimezone(_RO_TZ)
+    from datetime import timezone, timedelta
+    return datetime.now(timezone.utc).astimezone(timezone(timedelta(hours=2)))
 
 load_dotenv()
 
@@ -291,7 +303,7 @@ class WatchdogMonitor:
 ⚠️ Process: <code>{process_info['name']}</code>
 🔄 Status: <b>RESTARTED</b>
 📊 Restart count: <code>{restart_count}</code>
-⏰ Time: <code>{datetime.now().strftime('%H:%M:%S')}</code>
+⏰ Time: <code>{now_ro().strftime('%H:%M:%S')} RO</code>
 
 ✅ System protection active"""
                         
@@ -306,7 +318,7 @@ class WatchdogMonitor:
 
 ❌ Process: <code>{process_info['name']}</code>
 🔴 Status: <b>FAILED TO RESTART</b>
-⏰ Time: <code>{datetime.now().strftime('%H:%M:%S')}</code>
+⏰ Time: <code>{now_ro().strftime('%H:%M:%S')} RO</code>
 
 ⚠️ Manual intervention required!"""
                     

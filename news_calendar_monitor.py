@@ -553,8 +553,8 @@ class NewsCalendarMonitor:
         critical_count = sum(1 for e in events if any(keyword.lower() in e.event.lower() for keyword in ['NFP', 'FOMC', 'CPI', 'Interest Rate', 'GDP']))
         
         # Header - COMPACT
-        now = datetime.now()
-        message = f"⚡ *NEWS* • {now.strftime('%H:%M')}\n"
+        now = datetime.now(self.local_tz) if self.local_tz else datetime.now()
+        message = f"⚡ *NEWS* • {now.strftime('%H:%M')} RO\n"
         message += f"📅 {now.strftime('%a %b %d')}\n"
         if critical_count > 0:
             message += f"🔥 *{critical_count} CRITICAL*\n"
