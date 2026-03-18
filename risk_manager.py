@@ -200,9 +200,9 @@ class RiskManager:
 📈 Open Trades: {open_trades_count}/{self.max_open_trades}
 
   ────────────────
-  🔱 AUTHORED BY ФорексГод 🔱
+  🔱 AUTHORED BY <b>ФорексГод</b> 🔱
   ────────────────
-  🏛️ Глитч Ин Матрикс 🏛️
+  🏛️  <b>Глитч Ин Матрикс</b>  🏛️
 """
         
         self._send_telegram(message)
@@ -235,13 +235,10 @@ class RiskManager:
 📈 Open Trades: {open_trades}
 
   ────────────────
-  🔱 AUTHORED BY ФорексГод 🔱
+  🔱 AUTHORED BY <b>ФорексГод</b> 🔱
   ────────────────
-  🏛️ Глитч Ин Матрикс 🏛️
-"""
-        
-        self._send_telegram(message)
-        print(f"⚠️ {level} alert sent!")
+  🏛️  <b>Глитч Ин Матрикс</b>  🏛️
+""")
     
     def _send_telegram(self, message):
         """Send message to Telegram"""

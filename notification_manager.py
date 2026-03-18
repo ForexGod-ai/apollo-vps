@@ -201,9 +201,9 @@ class NotificationManager:
             branded_message = (
                 f"{message}\n\n"
                 f"  {sep}\n"
-                f"  🔱 <b>AUTHORED BY ФорексГод</b> 🔱\n"
+                f"  🔱 AUTHORED BY <b>ФорексГод</b> 🔱\n"
                 f"  {sep}\n"
-                f"  🏛️ Глитч Ин Матрикс 🏛️"
+                f"  🏛️  <b>Глитч Ин Матрикс</b>  🏛️"
             )
             
             payload = {

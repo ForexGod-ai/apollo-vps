@@ -405,7 +405,7 @@ def send_sync_summary(events: List[Dict]):
             f"  {sep}\n"
             f"  🔱 <b>AUTHORED BY ФорексГод</b> 🔱\n"
             f"  {sep}\n"
-            f"  🏛️ Глитч Ин Матрикс 🏛️"
+            f"  🏛️  <b>Глитч Ин Матрикс</b>  🏛️"
         )
 
         url = f"https://api.telegram.org/bot{bot_token}/sendMessage"

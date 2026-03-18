@@ -241,9 +241,9 @@ class CTraderAccountStats:
         
         message += f"\n⏰ <i>Updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</i>"
         message += f"\n\n  {sep}"
-        message += f"\n  🔱 AUTHORED BY ФорексГод 🔱"
+        message += f"\n  🔱 AUTHORED BY <b>ФорексГод</b> 🔱"
         message += f"\n  {sep}"
-        message += f"\n  🏛️ Глитч Ин Матрикс 🏛️"
+        message += f"\n  🏛️  <b>Глитч Ин Матрикс</b>  🏛️"
         
         try:
             url = f"https://api.telegram.org/bot{self.telegram_token}/sendMessage"
