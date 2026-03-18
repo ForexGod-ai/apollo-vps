@@ -1,20 +1,9 @@
 {
-  "last_updated": "2026-03-17T06:08:10.754042+00:00",
-  "event_count": 33,
-  "high_count": 27,
+  "last_updated": "2026-03-18T06:05:14.524517+00:00",
+  "event_count": 32,
+  "high_count": 26,
   "medium_count": 6,
   "events": [
-    {
-      "date": "2026-03-17",
-      "time": "14:00",
-      "datetime_utc": "2026-03-17T14:00:00+00:00",
-      "currency": "USD",
-      "event": "Pending Home Sales m/m",
-      "impact": "Medium",
-      "forecast": "-0.6%",
-      "previous": "-0.8%",
-      "source": "forexfactory_mirror"
-    },
     {
       "date": "2026-03-18",
       "time": "12:30",
@@ -121,7 +110,7 @@
       "currency": "NZD",
       "event": "GDP q/q",
       "impact": "High",
-      "forecast": "0.4%",
+      "forecast": "0.5%",
       "previous": "1.1%",
       "source": "forexfactory_mirror"
     },
@@ -286,7 +275,7 @@
       "currency": "USD",
       "event": "Philly Fed Manufacturing Index",
       "impact": "Medium",
-      "forecast": "8.5",
+      "forecast": "8.3",
       "previous": "16.3",
       "source": "forexfactory_mirror"
     },
@@ -362,7 +351,7 @@
       "datetime_utc": "2026-03-21T17:30:00+00:00",
       "currency": "USD",
       "event": "Fed Chair Powell Speaks",
-      "impact": "High",
+      "impact": "Medium",
       "forecast": "",
       "previous": "",
       "source": "forexfactory_mirror"

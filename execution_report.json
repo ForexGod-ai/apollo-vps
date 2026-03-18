@@ -1,17 +1,17 @@
 {
-  "SignalId": "GBPJPY_buy_1773744268",
+  "SignalId": "AUDUSD_buy_1773827728",
   "Status": "EXECUTED",
-  "OrderId": "592601807",
-  "Volume": 0.85,
-  "VolumeInUnits": 85000,
-  "EntryPrice": 212.016,
-  "StopLoss": 211.621,
-  "TakeProfit": 220.939,
+  "OrderId": "593223875",
+  "Volume": 0.63,
+  "VolumeInUnits": 63000,
+  "EntryPrice": 0.71115,
+  "StopLoss": 0.70587,
+  "TakeProfit": 0.7318,
   "Reason": "",
-  "Timestamp": "2026-03-17T10:44:37.349473Z",
-  "Symbol": "GBPJPY",
+  "Timestamp": "2026-03-18T09:55:29.602733Z",
+  "Symbol": "AUDUSD",
   "Direction": "buy",
   "Account": 9709773,
   "Balance": 6679.29,
-  "Message": "Filled at 212,01600 | Volume: 0,85 lots"
+  "Message": "Filled at 0,71115 | Volume: 0,63 lots"
 }

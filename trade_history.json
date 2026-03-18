@@ -1,11 +1,11 @@
 {
   "account": {
     "number": "9709773",
-    "balance": 6679.29,
-    "equity": 5199.26,
-    "open_pl": -1480.03,
+    "balance": 6009.88,
+    "equity": 2965.28,
+    "open_pl": -3044.6,
     "currency": "USD",
-    "last_update": "2026-03-17 15:53:47"
+    "last_update": "2026-03-18 16:25:19"
   },
   "open_positions": [
     {
@@ -13,12 +13,12 @@
       "symbol": "USDJPY",
       "direction": "SELL",
       "entry_price": 157.613,
-      "current_price": 158.945,
+      "current_price": 159.486,
       "lot_size": 2.0,
       "volume": 200000,
       "open_time": "2026-03-06T15:02:49",
-      "profit": -1874.4,
-      "pips": -133.2,
+      "profit": -2567.9,
+      "pips": -187.3,
       "comment": ""
     },
     {
@@ -26,29 +26,14 @@
       "symbol": "USDCAD",
       "direction": "SELL",
       "entry_price": 1.37364,
-      "current_price": 1.36943,
+      "current_price": 1.37086,
       "lot_size": 1.03,
       "volume": 103000,
       "open_time": "2026-03-13T17:12:06",
-      "profit": 296.65,
-      "pips": 42.1,
+      "profit": 182.03,
+      "pips": 27.8,
       "stop_loss": 1.37683,
       "take_profit": 1.33373,
-      "comment": ""
-    },
-    {
-      "ticket": 591327423,
-      "symbol": "EURGBP",
-      "direction": "SELL",
-      "entry_price": 0.86381,
-      "current_price": 0.86393,
-      "lot_size": 2.0,
-      "volume": 200000,
-      "open_time": "2026-03-13T17:12:26",
-      "profit": -37.0,
-      "pips": -1.2,
-      "stop_loss": 0.86505,
-      "take_profit": 0.85023,
       "comment": ""
     },
     {
@@ -56,12 +41,12 @@
       "symbol": "BTCUSD",
       "direction": "BUY",
       "entry_price": 73243.21,
-      "current_price": 73500.9,
+      "current_price": 72001.07,
       "lot_size": 0.5,
       "volume": 0.5,
       "open_time": "2026-03-16T16:00:52",
-      "profit": 108.46,
-      "pips": 25769.0,
+      "profit": -661.92,
+      "pips": -124214.0,
       "stop_loss": 66069,
       "take_profit": 80439.35,
       "comment": ""
@@ -71,12 +56,12 @@
       "symbol": "EURJPY",
       "direction": "SELL",
       "entry_price": 183.205,
-      "current_price": 183.247,
+      "current_price": 183.566,
       "lot_size": 0.5,
       "volume": 50000,
       "open_time": "2026-03-17T09:51:47",
-      "profit": -16.67,
-      "pips": -4.2,
+      "profit": -119.44,
+      "pips": -36.1,
       "stop_loss": 183.873,
       "take_profit": 178.158,
       "comment": ""
@@ -86,12 +71,12 @@
       "symbol": "GBPJPY",
       "direction": "BUY",
       "entry_price": 212.016,
-      "current_price": 212.109,
+      "current_price": 212.245,
       "lot_size": 0.85,
       "volume": 85000,
       "open_time": "2026-03-17T10:44:37",
-      "profit": 42.93,
-      "pips": 9.3,
+      "profit": 122.63,
+      "pips": 22.9,
       "stop_loss": 211.621,
       "take_profit": 220.939,
       "comment": ""
@@ -2980,6 +2965,34 @@
       "close_time": "2026-03-16T16:50:29",
       "profit": -226.34,
       "pips": -66.9,
+      "comment": ""
+    },
+    {
+      "ticket": 593223875,
+      "symbol": "AUDUSD",
+      "direction": "BUY",
+      "entry_price": 0.71115,
+      "closing_price": 0.70586,
+      "lot_size": 0.63,
+      "volume": 63000,
+      "open_time": "2026-03-18T09:55:29",
+      "close_time": "2026-03-18T12:58:42",
+      "profit": -335.94,
+      "pips": -52.9,
+      "comment": ""
+    },
+    {
+      "ticket": 591327423,
+      "symbol": "EURGBP",
+      "direction": "SELL",
+      "entry_price": 0.86381,
+      "closing_price": 0.86506,
+      "lot_size": 2.0,
+      "volume": 200000,
+      "open_time": "2026-03-13T17:12:26",
+      "close_time": "2026-03-18T14:15:23",
+      "profit": -333.47,
+      "pips": -12.5,
       "comment": ""
     }
   ]
