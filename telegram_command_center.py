@@ -766,44 +766,80 @@ class TelegramCommandCenter:
     def handle_btcusd_command(self):
         """Handle /btcusd command - Quick BTCUSD analysis"""
         try:
-            # Check if BTCUSD is in monitoring
-            if self.monitoring_file.exists():
-                with open(self.monitoring_file, 'r') as f:
-                    data = json.load(f)
-                
-                setups = data.get('setups', [])
-                btc_setup = next((s for s in setups if s.get('symbol') == 'BTCUSD' and s.get('status') == 'MONITORING'), None)
-                
-                if btc_setup:
-                    direction = btc_setup.get('direction', 'UNKNOWN')
-                    entry = btc_setup.get('entry_price', 0)
-                    sl = btc_setup.get('stop_loss', 0)
-                    tp = btc_setup.get('take_profit', 0)
-                    ml_score = btc_setup.get('ml_score', 0)
-                    
-                    dir_emoji = "🔴" if direction == "SHORT" else "🟢"
-                    
-                    message = f"""<b>₿ BTCUSD QUICK ANALYSIS</b>
-──────────────────
+            if not self.monitoring_file.exists():
+                return "⚪ <b>BTCUSD — No Setup</b>\n\n<code>monitoring_setups.json</code> not found."
 
-<b>🎯 Active Setup:</b> {dir_emoji} <b>{direction}</b>
+            with open(self.monitoring_file, 'r') as f:
+                data = json.load(f)
 
-📊 ML Score: <code>{ml_score}/100</code>
-💰 Entry: <code>${entry:,.2f}</code>
-⛔ Stop Loss: <code>${sl:,.2f}</code>
-🎯 Take Profit: <code>${tp:,.2f}</code>
+            setups = data.get('setups', [])
 
-<b>📦 Key Levels:</b>
-• 1H OB: <code>$70,023-$70,596</code>
-• 4H OB: <code>$68,905-$69,328</code>
-• Daily FVG: <code>$89,972-$97,442</code> (8.3% gap)
+            # Caută BTCUSD cu orice status activ (ACTIVE, MONITORING, WATCHING, PENDING)
+            ACTIVE_STATUSES = {'ACTIVE', 'MONITORING', 'WATCHING', 'PENDING'}
+            btc_setup = next(
+                (s for s in setups
+                 if s.get('symbol', '').upper() == 'BTCUSD'
+                 and s.get('status', '').upper() in ACTIVE_STATUSES),
+                None
+            )
 
-⚠️ <b>Status:</b> MONITORING - Wait for confirmation"""
-                    
-                    return message
-            
-            return "⚪ <b>BTCUSD - No Active Setup</b>\n\nNot currently in monitoring list."
-            
+            if not btc_setup:
+                # Verifică dacă există dar e EXPIRED
+                btc_any = next((s for s in setups if s.get('symbol', '').upper() == 'BTCUSD'), None)
+                if btc_any:
+                    st = btc_any.get('status', '?').upper()
+                    return (
+                        f"⚪ <b>BTCUSD — Setup {st}</b>\n\n"
+                        f"Setup există dar statusul este <code>{st}</code>.\n"
+                        f"Nu mai este activ."
+                    )
+                return "⚪ <b>BTCUSD — No Setup</b>\n\nNu există setup BTCUSD în monitoring list."
+
+            direction = btc_setup.get('direction', 'UNKNOWN').upper()
+            status    = btc_setup.get('status', '?').upper()
+            entry     = btc_setup.get('entry_price', 0)
+            sl        = btc_setup.get('stop_loss', 0)
+            tp        = btc_setup.get('take_profit', 0)
+            rr        = btc_setup.get('risk_reward', 0)
+            lot       = btc_setup.get('lot_size', 0)
+            strategy  = btc_setup.get('strategy_type', '—').upper()
+            ml_score  = btc_setup.get('ml_score', '—')
+            fvg_top   = btc_setup.get('fvg_top', 0)
+            fvg_bot   = btc_setup.get('fvg_bottom', 0)
+            setup_time = btc_setup.get('setup_time', '')
+            entry1_filled = btc_setup.get('entry1_filled', False)
+
+            dir_emoji = "🔴" if direction == "SELL" or direction == "SHORT" else "🟢"
+            entry_status = "✅ FILLED" if entry1_filled else "⏳ PENDING"
+
+            # Risk/Reward display
+            rr_display = f"{rr:.1f}R" if isinstance(rr, (int, float)) and rr > 0 else "—"
+
+            # Setup date
+            date_display = setup_time[:10] if setup_time else "—"
+
+            fvg_line = ""
+            if fvg_top and fvg_bot:
+                fvg_line = f"\n📐 FVG Zone: <code>${fvg_bot:,.0f} — ${fvg_top:,.0f}</code>"
+
+            ml_line = f"\n📊 ML Score: <code>{ml_score}/100</code>" if ml_score != '—' else ""
+
+            message = (
+                f"₿ <b>BTCUSD QUICK ANALYSIS</b>\n"
+                f"──────────────────\n\n"
+                f"{dir_emoji} <b>{direction}</b> | {status} | {strategy}\n"
+                f"📅 Setup: <code>{date_display}</code>\n\n"
+                f"💰 Entry: <code>${entry:,.2f}</code> — {entry_status}\n"
+                f"⛔ Stop Loss: <code>${sl:,.2f}</code>\n"
+                f"🎯 Take Profit: <code>${tp:,.2f}</code>\n"
+                f"⚖️ Risk/Reward: <code>{rr_display}</code>\n"
+                f"📦 Lot Size: <code>{lot}</code>"
+                f"{fvg_line}"
+                f"{ml_line}"
+            )
+
+            return message
+
         except Exception as e:
             logger.error(f"❌ BTCUSD command error: {e}")
             return f"❌ <b>Error:</b> {str(e)}"
