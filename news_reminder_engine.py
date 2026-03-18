@@ -221,10 +221,15 @@ class NewsReminderEngine:
             event_time = event_time_utc
             time_label = 'UTC'
         
-        # Affected pairs
-        pairs = CURRENCY_PAIRS.get(currency, [])
-        pairs_str = ' '.join(pairs[:6])  # Max 6 pairs shown
-        
+        # Affected pairs — 3-column grid layout
+        pairs = CURRENCY_PAIRS.get(currency, [])[:6]  # Max 6 pairs
+        # Build rows of 3, each cell padded to 8 chars for alignment
+        grid_rows = []
+        for i in range(0, len(pairs), 3):
+            row = pairs[i:i+3]
+            grid_rows.append('  '.join(f"{p:<8}" for p in row).rstrip())
+        pairs_grid = '\n'.join(grid_rows)
+
         # Forecast/Previous line
         data_line = ""
         if forecast or previous:
@@ -234,7 +239,7 @@ class NewsReminderEngine:
             if previous:
                 parts.append(f"Previous: <code>{previous}</code>")
             data_line = f"📊 {' | '.join(parts)}\n"
-        
+
         message = (
             f"🔔 <b>NEWS IN 15 MINUTES</b>\n"
             f"{UNIVERSAL_SEPARATOR}\n\n"
@@ -243,7 +248,7 @@ class NewsReminderEngine:
             f"📰 {event_name}\n"
             f"{data_line}\n"
             f"⚠️ <b>Affected pairs:</b>\n"
-            f"<code>{pairs_str}</code>\n\n"
+            f"<code>{pairs_grid}</code>\n\n"
             f"💡 <i>Information only — trading continues normally</i>\n\n"
             f"  {UNIVERSAL_SEPARATOR}\n"
             f"  🔱 AUTHORED BY <b>ФорексГод</b> 🔱\n"
