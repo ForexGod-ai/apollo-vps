@@ -770,5 +770,178 @@
       "forecast": "",
       "previous": "4.0%"
     }
+  ],
+  "custom_events_march_2026": [
+    {
+      "date": "2026-03-24",
+      "time": "15:45",
+      "currency": "USD",
+      "event": "Flash Manufacturing PMI",
+      "impact": "High",
+      "forecast": "52.0",
+      "previous": "51.6"
+    },
+    {
+      "date": "2026-03-24",
+      "time": "15:45",
+      "currency": "USD",
+      "event": "Flash Services PMI",
+      "impact": "High",
+      "forecast": "50.6",
+      "previous": "51.0"
+    },
+    {
+      "date": "2026-03-25",
+      "time": "14:00",
+      "currency": "USD",
+      "event": "CB Consumer Confidence",
+      "impact": "High",
+      "forecast": "93.3",
+      "previous": "98.3"
+    },
+    {
+      "date": "2026-03-25",
+      "time": "14:00",
+      "currency": "USD",
+      "event": "New Home Sales",
+      "impact": "High",
+      "forecast": "675K",
+      "previous": "657K"
+    },
+    {
+      "date": "2026-03-26",
+      "time": "12:30",
+      "currency": "USD",
+      "event": "Core Durable Goods Orders m/m",
+      "impact": "High",
+      "forecast": "0.2%",
+      "previous": "0.1%"
+    },
+    {
+      "date": "2026-03-26",
+      "time": "14:30",
+      "currency": "USD",
+      "event": "Crude Oil Inventories",
+      "impact": "High",
+      "forecast": "-1.2M",
+      "previous": "-1.3M"
+    },
+    {
+      "date": "2026-03-27",
+      "time": "12:30",
+      "currency": "USD",
+      "event": "Final GDP q/q",
+      "impact": "High",
+      "forecast": "2.3%",
+      "previous": "2.3%"
+    },
+    {
+      "date": "2026-03-27",
+      "time": "12:30",
+      "currency": "USD",
+      "event": "Unemployment Claims",
+      "impact": "High",
+      "forecast": "225K",
+      "previous": "223K"
+    },
+    {
+      "date": "2026-03-27",
+      "time": "14:00",
+      "currency": "USD",
+      "event": "Pending Home Sales m/m",
+      "impact": "High",
+      "forecast": "1.4%",
+      "previous": "-4.6%"
+    },
+    {
+      "date": "2026-03-28",
+      "time": "12:30",
+      "currency": "USD",
+      "event": "Core PCE Price Index m/m",
+      "impact": "High",
+      "forecast": "0.3%",
+      "previous": "0.3%"
+    },
+    {
+      "date": "2026-03-28",
+      "time": "12:30",
+      "currency": "USD",
+      "event": "Personal Spending m/m",
+      "impact": "High",
+      "forecast": "0.5%",
+      "previous": "-0.2%"
+    },
+    {
+      "date": "2026-03-28",
+      "time": "14:00",
+      "currency": "USD",
+      "event": "Revised UoM Consumer Sentiment",
+      "impact": "High",
+      "forecast": "57.9",
+      "previous": "64.7"
+    },
+    {
+      "date": "2026-03-24",
+      "time": "09:15",
+      "currency": "EUR",
+      "event": "Flash Manufacturing PMI",
+      "impact": "High",
+      "forecast": "48.0",
+      "previous": "47.6"
+    },
+    {
+      "date": "2026-03-24",
+      "time": "09:15",
+      "currency": "EUR",
+      "event": "Flash Services PMI",
+      "impact": "High",
+      "forecast": "51.0",
+      "previous": "50.6"
+    },
+    {
+      "date": "2026-03-24",
+      "time": "08:30",
+      "currency": "GBP",
+      "event": "Flash Manufacturing PMI",
+      "impact": "High",
+      "forecast": "46.9",
+      "previous": "46.9"
+    },
+    {
+      "date": "2026-03-24",
+      "time": "08:30",
+      "currency": "GBP",
+      "event": "Flash Services PMI",
+      "impact": "High",
+      "forecast": "51.1",
+      "previous": "51.0"
+    },
+    {
+      "date": "2026-03-26",
+      "time": "12:00",
+      "currency": "GBP",
+      "event": "MPC Official Bank Rate Votes",
+      "impact": "High",
+      "forecast": "0-0-9",
+      "previous": "0-0-9"
+    },
+    {
+      "date": "2026-03-26",
+      "time": "12:00",
+      "currency": "GBP",
+      "event": "Official Bank Rate",
+      "impact": "High",
+      "forecast": "4.50%",
+      "previous": "4.50%"
+    },
+    {
+      "date": "2026-03-26",
+      "time": "12:00",
+      "currency": "GBP",
+      "event": "Monetary Policy Summary",
+      "impact": "High",
+      "forecast": "",
+      "previous": ""
+    }
   ]
 }

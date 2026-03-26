@@ -232,6 +232,43 @@ class PositionMonitor:
         ticket = trade.get('ticket', 'N/A')
         stop_loss = trade.get('stop_loss')
         take_profit = trade.get('take_profit')
+
+        # ✅ V11.0 CARRY: fetch live swap from cTrader, fallback to monitoring_setups.json
+        swap_long = None
+        swap_short = None
+        swap_triple_day = None
+        try:
+            import requests as _req
+            swap_resp = _req.get(
+                f"http://localhost:8767/swap_info",
+                params={'symbol': symbol},
+                timeout=5
+            )
+            if swap_resp.status_code == 200:
+                sd = swap_resp.json()
+                if sd.get('success'):
+                    swap_long = float(sd['swap_long'])
+                    swap_short = float(sd['swap_short'])
+                    swap_triple_day = str(sd.get('swap_triple_day', ''))
+        except Exception:
+            pass
+
+        # Fallback: read from monitoring_setups.json if cTrader offline
+        if swap_long is None:
+            try:
+                import json as _json
+                from pathlib import Path as _Path
+                ms_file = _Path(__file__).parent / 'monitoring_setups.json'
+                if ms_file.exists():
+                    ms_data = _json.loads(ms_file.read_text())
+                    for s in ms_data.get('setups', []):
+                        if s.get('symbol', '').upper() == symbol.upper():
+                            swap_long = s.get('swap_long')
+                            swap_short = s.get('swap_short')
+                            swap_triple_day = s.get('swap_triple_day')
+                            break
+            except Exception:
+                pass
         
         direction_emoji = "📈" if direction == 'BUY' else "📉"
         
@@ -289,7 +326,30 @@ class PositionMonitor:
         
         # Add risk metrics
         message += risk_pips + reward_pips + rr_ratio
-        
+
+        # ✅ V11.0 CARRY MATRIX block
+        if swap_long is not None and swap_short is not None:
+            from datetime import datetime as _dt
+            dir_lower = direction.lower()
+            relevant_swap = swap_long if dir_lower in ('buy', 'long') else swap_short
+            if relevant_swap > 0:
+                carry_status = "✅ CREDIT"
+                carry_val = f"+{relevant_swap:.4f} pips/zi"
+            else:
+                carry_status = "⚠️ COST"
+                carry_val = f"{relevant_swap:.4f} pips/zi"
+            message += f"\n\n──────────────────"
+            message += f"\n💱 <b>CARRY MATRIX:</b> {carry_status}"
+            message += f"\n   Long: <code>{swap_long:+.4f}</code> | Short: <code>{swap_short:+.4f}</code>"
+            message += f"\n   Direcția ta: <code>{carry_val}</code>"
+            if swap_triple_day:
+                today_name = _dt.now().strftime('%A')
+                if today_name.lower() == swap_triple_day.lower():
+                    mult = relevant_swap * 3
+                    message += f"\n   🔥 <b>TRIPLE SWAP DISEARĂ!</b> x3 = <code>{mult:+.4f} pips</code>"
+                else:
+                    message += f"\n   📅 Triple swap: <b>{swap_triple_day}</b>"
+
         message += """
 
 ──────────────────
@@ -417,9 +477,21 @@ class PositionMonitor:
 
 if __name__ == "__main__":
     import sys
-    
-    # 🔒 PID LOCK - Prevent duplicate instances
-    lock_file = Path("process_position_monitor.lock")
+    import fcntl
+
+    # 🔒 PID LOCK - Prevent duplicate instances (absolute path — works from any cwd)
+    lock_file = Path(__file__).parent / "process_position_monitor.lock"
+
+    # Extra safety: fcntl exclusive lock so two processes can never both "win"
+    _lock_fd = open(lock_file, 'w')
+    try:
+        fcntl.flock(_lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        _lock_fd.write(str(os.getpid()))
+        _lock_fd.flush()
+    except BlockingIOError:
+        logger.error("🚫 DUPLICATE INSTANCE DETECTED (fcntl) — another position_monitor is running. Exiting.")
+        sys.exit(1)
+
     if not acquire_pid_lock(lock_file):
         logger.error("🚫 DUPLICATE INSTANCE DETECTED - Exiting to prevent double notifications")
         sys.exit(1)

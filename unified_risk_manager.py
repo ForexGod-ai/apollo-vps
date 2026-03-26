@@ -254,51 +254,52 @@ class UnifiedRiskManager:
     
     def get_daily_pnl(self):
         """
-        Calculate P&L for today using starting_balance_today as baseline
-        
-        ✅ FIX: Uses starting balance from today (not historical balance)
-        - Closed trades: SUM(profit) WHERE DATE(close_time) = today
-        - Open P&L: current_equity - starting_balance_today
+        Calculate P&L for today.
+
+        ✅ V10.9 FIX: Only count:
+        1. Trades CLOSED today (realized P&L)
+        2. Floating P&L of positions OPENED today (not multi-day carries)
+
+        Positions opened on PREVIOUS days (e.g. USDJPY from March 6)
+        are NOT counted — their floating P&L should not block new trades.
         """
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
-            
+
             today = datetime.now().date().isoformat()
-            
-            # Closed trades today
+
+            # 1. Closed trades today (realized)
             cursor.execute("""
-                SELECT SUM(profit) 
-                FROM closed_trades 
+                SELECT SUM(profit)
+                FROM closed_trades
                 WHERE DATE(close_time) = ?
             """, (today,))
-            
             closed_pnl = cursor.fetchone()[0] or 0.0
-            
-            # ✅ FIX: Open P&L = current equity - TODAY'S starting balance
-            # (NOT balance from snapshot which includes yesterday's P&L!)
-            cursor.execute("""
-                SELECT equity, balance 
-                FROM account_snapshots 
-                ORDER BY timestamp DESC 
-                LIMIT 1
-            """)
-            
-            snapshot = cursor.fetchone()
-            if snapshot:
-                equity, _ = snapshot  # Ignore balance from snapshot
-                # Use starting_balance_today set at midnight
-                open_pnl = float(equity) - float(self.starting_balance_today)
-            else:
-                open_pnl = 0.0
-            
+
             conn.close()
-            
-            total_pnl = float(closed_pnl) + float(open_pnl)
-            
+
+            # 2. Floating P&L of positions opened TODAY only
+            open_pnl_today = 0.0
+            try:
+                import json as _json
+                active_file = Path(self.db_path).parent / 'active_positions.json'
+                if active_file.exists():
+                    with open(active_file) as _f:
+                        active = _json.load(_f)
+                    for pos in active:
+                        opened_at = pos.get('opened_at', '')
+                        # Only count if opened today
+                        if opened_at and opened_at[:10] == today:
+                            open_pnl_today += float(pos.get('net_profit', 0))
+            except Exception:
+                pass
+
+            total_pnl = float(closed_pnl) + float(open_pnl_today)
+
             return {
                 'closed_pnl': float(closed_pnl),
-                'open_pnl': float(open_pnl),
+                'open_pnl': float(open_pnl_today),
                 'total_pnl': total_pnl
             }
             
@@ -494,13 +495,14 @@ class UnifiedRiskManager:
         pnl = self.get_daily_pnl()
         equity, balance = self.get_account_balance()
         
-        # ✅ V10.5 FIX: Use EQUITY (not balance) as denominator for daily loss %
-        # Equity reflects floating P&L — balance stays fixed until position closed.
-        # Using balance would under-report losses on open positions.
-        # Example: balance=$1000, open loss=$80 → equity=$920
-        # Correct:  daily_loss_pct = -80/920 = -8.7%
-        # Wrong:    daily_loss_pct = -80/1000 = -8.0%  ← masks real exposure
-        daily_loss_pct = (pnl['total_pnl'] / equity) * 100 if equity > 0 else 0
+        # ✅ V10.9 FIX: Use BALANCE (not equity) as denominator for daily loss %
+        # get_daily_pnl() already EXCLUDES floating losses from positions opened before today.
+        # So total_pnl = only today's closed P&L + today's open floating.
+        # equity is distorted by OLD positions (e.g. USDJPY -$1124 opened weeks ago).
+        # Using equity would make -$310 loss look like -34% when equity=$909 (dragged down by old positions).
+        # Using balance gives the TRUE picture: -$310 / $4519 = -6.86% (only today's actual activity).
+        # V10.5 logic was correct for a NORMAL account — but breaks when old losing positions exist.
+        daily_loss_pct = (pnl['total_pnl'] / balance) * 100 if balance > 0 else 0
         
         # Kill switch auto-activation - DISABLED (will redesign later)
         # if self.kill_switch_enabled and daily_loss_pct <= -self.kill_switch_trigger:
@@ -517,9 +519,9 @@ class UnifiedRiskManager:
             self._send_rejection_alert(symbol, direction, result['reason'])
             return result
         
-        # Send warning if approaching limit (use equity denominator consistently)
+        # Send warning if approaching limit (consistent with balance denominator)
         if daily_loss_pct <= -self.daily_warning_pct:
-            self._send_warning_alert(daily_loss_pct, equity)
+            self._send_warning_alert(daily_loss_pct, balance)
         
         # 4. Calculate lot size - CASH RISK ALIGNMENT (The $200 Rule)
         if entry_price > 0 and stop_loss > 0:

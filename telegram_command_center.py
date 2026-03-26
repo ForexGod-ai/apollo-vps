@@ -412,11 +412,36 @@ class TelegramCommandCenter:
                         sl_text = f"{sl:.5f}" if sl else "NONE ⚠️"
                         tp_text = f"{tp:.5f}" if tp else "NONE ⚠️"
                         
+                        # ✅ V10.9 CARRY MATRIX: find swap data for this live position from setups
+                        live_carry_line = ""
+                        live_triple_line = ""
+                        matching_setup = next(
+                            (s for s in setups if s.get('symbol', '').upper() == sym.upper()),
+                            None
+                        )
+                        if matching_setup:
+                            swap_long  = matching_setup.get('swap_long')
+                            swap_short = matching_setup.get('swap_short')
+                            swap_triple_day = matching_setup.get('swap_triple_day')
+                            if swap_long is not None and swap_short is not None:
+                                relevant_swap = swap_long if direction.lower() in ('buy', 'long') else swap_short
+                                swap_status = "✅ CREDIT" if relevant_swap > 0 else "⚠️ COST"
+                                swap_str = f"+{relevant_swap:.4f}" if relevant_swap > 0 else f"{relevant_swap:.4f}"
+                                live_carry_line = f"   💱 <b>CARRY:</b> {swap_status} <code>{swap_str} pips/zi</code>\n"
+                                if swap_triple_day:
+                                    from datetime import datetime as _dt
+                                    if _dt.now().strftime('%A').lower() == swap_triple_day.lower():
+                                        t3 = relevant_swap * 3
+                                        live_triple_line = f"   🔥 <b>TRIPLE SWAP DISEARĂ!</b> <code>{'%+.4f' % t3} pips</code>\n"
+                        
                         message += (
                             f"<b>{idx}.</b> <code>{sym}</code> {dir_emoji} <b>{dir_label}</b>\n"
                             f"   📍 Entry: <code>{entry:.5f}</code>\n"
                             f"   🛡️ SL: <code>{sl_text}</code> | 🎯 TP: <code>{tp_text}</code>\n"
-                            f"   {pl_emoji} P/L: <code>{pl_text}</code> ({pips:+.1f} pips)\n\n"
+                            f"   {pl_emoji} P/L: <code>{pl_text}</code> ({pips:+.1f} pips)\n"
+                            f"{live_carry_line}"
+                            f"{live_triple_line}"
+                            f"\n"
                         )
             
             # ═══ SECTION 2: 👁️ PÂNDĂ ACTIVĂ (waiting for confirmation) ═══
@@ -444,10 +469,40 @@ class TelegramCommandCenter:
                     else:
                         stars = "⭐"
                     
+                    # ✅ V10.9 CARRY MATRIX: Build swap analysis line
+                    swap_long  = setup.get('swap_long')
+                    swap_short = setup.get('swap_short')
+                    swap_triple_day = setup.get('swap_triple_day')
+                    carry_line = ""
+                    triple_line = ""
+                    
+                    if swap_long is not None and swap_short is not None:
+                        dir_lower = direction.lower()
+                        relevant_swap = swap_long if dir_lower in ('buy', 'long') else swap_short
+                        if relevant_swap > 0:
+                            swap_status = f"✅ POZITIV"
+                            swap_value  = f"+{relevant_swap:.4f} pips/zi"
+                        else:
+                            swap_status = f"⚠️ NEGATIV"
+                            swap_value  = f"{relevant_swap:.4f} pips/zi"
+                        carry_line = f"   💱 <b>CARRY:</b> {swap_status} | <code>{swap_value}</code>\n"
+                        
+                        # Triple swap alert
+                        if swap_triple_day:
+                            from datetime import datetime as _dt
+                            today_name = _dt.now().strftime('%A')  # e.g. "Wednesday"
+                            if today_name.lower() == swap_triple_day.lower():
+                                triple_mult = relevant_swap * 3
+                                triple_sign = f"+{triple_mult:.4f}" if triple_mult > 0 else f"{triple_mult:.4f}"
+                                triple_line = f"   🔥 <b>TRIPLE SWAP DISEARĂ!</b> Profit/Cost x3 = <code>{triple_sign} pips</code>\n"
+                    
                     message += (
                         f"<b>{idx}.</b> <code>{symbol}</code> {dir_emoji} <b>{dir_label}</b>\n"
                         f"   📊 ML: <code>{ml_score}/100</code> {stars} | 🧠 AI: <code>{ai_prob}%</code>\n"
-                        f"   💰 Entry: <code>{entry:.5f}</code> | ⚖️ RR: <code>1:{risk_reward:.1f}</code>\n\n"
+                        f"   💰 Entry: <code>{entry:.5f}</code> | ⚖️ RR: <code>1:{risk_reward:.1f}</code>\n"
+                        f"{carry_line}"
+                        f"{triple_line}"
+                        f"\n"
                     )
                 
                 if len(monitoring_setups) > 10:

@@ -315,15 +315,24 @@ class TelegramNotifier:
         risk_amount = account_balance * risk_percent
         
         pip_value = 10
-        stop_distance = abs(setup.entry_price - setup.stop_loss)
-        lot_size = risk_amount / (stop_distance * pip_value * 100000)
-        
-        # CRITICAL FIX by ФорексГод: Enforce minimum lot size of 0.01
-        # Broker minimum = 0.01 lots (micro lot)
-        if lot_size < 0.01:
-            lot_size = 0.01
-        
-        trade_section = f"""\n\n──────────────────
+        # GUARD V11.2: dacă entry_price/stop_loss/take_profit sunt None, nu calculăm lot size
+        if setup.entry_price is None or setup.stop_loss is None or setup.take_profit is None:
+            trade_section = """\n\n──────────────────
+💰 <b>TRADE</b>
+
+⚠️ Entry/SL/TP în calcul (MONITORING)
+⏳ Așteptăm confirmare 4H CHoCH + FVG"""
+        else:
+            stop_distance = abs(setup.entry_price - setup.stop_loss)
+            lot_size = risk_amount / (stop_distance * pip_value * 100000) if stop_distance > 0 else 0.01
+            
+            # CRITICAL FIX by ФорексГод: Enforce minimum lot size of 0.01
+            # Broker minimum = 0.01 lots (micro lot)
+            if lot_size < 0.01:
+                lot_size = 0.01
+            
+            rr_str = f"1:{setup.risk_reward:.2f}" if setup.risk_reward else "N/A"
+            trade_section = f"""\n\n──────────────────
 💰 <b>TRADE</b>
 
 🔹 Entry
@@ -335,7 +344,7 @@ class TelegramNotifier:
 
 💵 ${risk_amount:.2f}
 📦 {lot_size:.2f} lots
-⚖️ 1:{setup.risk_reward:.2f}"""
+⚖️ {rr_str}"""
         
         # --- ASSEMBLE: Bloomberg Column ---
         message = f"{header}{ai_fusion}{factors_badge}{daily_section}{trade_section}"
@@ -523,7 +532,7 @@ class TelegramNotifier:
 🔍 Pairs Scanned: <code>{scanned_pairs}</code>
 🎯 New Setups Found: <code>{setups_found}</code>
 📋 Monitoring: <code>{len(monitoring_setups)}</code> | Active Trades: <code>{len(executed_positions)}</code>
-⏰ Scan Time: <code>{datetime.now().strftime('%Y-%m-%d %H:%M UTC')}</code>
+⏰ Scan Time: <code>{datetime.now().strftime('%Y-%m-%d %H:%M EET')}</code>
 """
         
         # Add monitoring setups with clean formatting
@@ -604,7 +613,7 @@ class TelegramNotifier:
         report += f"📋 Total Active Tracking:\n"
         report += f"    └─ Saved in Monitoring: <code>{monitoring_count}</code>\n"
         report += f"    └─ Open Positions: <code>{open_positions}</code>\n"
-        report += f"\n⏰ <code>{datetime.now().strftime('%Y-%m-%d %H:%M UTC')}</code>"
+        report += f"\n⏰ <code>{datetime.now().strftime('%Y-%m-%d %H:%M EET')}</code>"
         
         # V10.1: List setup symbols if available
         if setup_symbols:
@@ -701,7 +710,7 @@ class TelegramNotifier:
 
 <code>{error_msg}</code>
 
-⏰ Time: <code>{datetime.now().strftime('%Y-%m-%d %H:%M UTC')}</code>
+⏰ Time: <code>{datetime.now().strftime('%Y-%m-%d %H:%M EET')}</code>
 """
         return self.send_message(message.strip(), parse_mode="HTML")
     

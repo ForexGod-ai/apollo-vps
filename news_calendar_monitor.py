@@ -25,6 +25,7 @@ Usage:
 import os
 import sys
 import time
+import fcntl
 import argparse
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional
@@ -76,8 +77,10 @@ logger.add(
     format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{message}</cyan>",
     level="INFO"
 )
+_LOG_DIR = Path(__file__).parent / "logs"
+_LOG_DIR.mkdir(exist_ok=True)
 logger.add(
-    "news_calendar.log",
+    str(_LOG_DIR / "news_calendar.log"),
     format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {message}",
     level="DEBUG",
     rotation="10 MB",
@@ -102,6 +105,48 @@ class NewsEvent:
         return f"NewsEvent({self.currency} - {self.event} at {self.time})"
 
 
+# ═══════════════════════════════════════════════════════════════════
+# 🏦 V11.0 MACRO WEEKLY TABLE — Central Bank Rates (hardcoded 2026)
+# ═══════════════════════════════════════════════════════════════════
+
+CENTRAL_BANK_RATES: Dict[str, float] = {
+    "NZD": 5.25,
+    "GBP": 5.00,
+    "USD": 4.75,
+    "AUD": 4.35,
+    "CAD": 3.75,
+    "EUR": 3.50,
+    "CHF": 1.50,
+    "JPY": 0.25,
+}
+
+# Watched pairs for top-carry calculation
+_CARRY_PAIRS = [
+    ("GBP", "JPY"), ("NZD", "JPY"), ("AUD", "JPY"), ("USD", "JPY"),
+    ("GBP", "CHF"), ("NZD", "CHF"), ("AUD", "CHF"), ("USD", "CHF"),
+    ("GBP", "EUR"), ("NZD", "EUR"), ("AUD", "EUR"), ("USD", "EUR"),
+    ("GBP", "CAD"), ("NZD", "CAD"), ("AUD", "CAD"), ("USD", "CAD"),
+]
+
+# Central bank names (for live scraping)
+_CB_NAMES = {
+    "USD": "Federal Reserve (Fed)",
+    "EUR": "European Central Bank (ECB)",
+    "GBP": "Bank of England (BOE)",
+    "JPY": "Bank of Japan (BOJ)",
+    "AUD": "Reserve Bank of Australia (RBA)",
+    "NZD": "Reserve Bank of New Zealand (RBNZ)",
+    "CAD": "Bank of Canada (BOC)",
+    "CHF": "Swiss National Bank (SNB)",
+}
+
+# Currency flags
+_FLAGS = {
+    "USD": "🇺🇸", "EUR": "🇪🇺", "GBP": "🇬🇧", "JPY": "🇯🇵",
+    "AUD": "🇦🇺", "NZD": "🇳🇿", "CAD": "🇨🇦", "CHF": "🇨🇭",
+}
+
+
 class NewsCalendarMonitor:
     """Monitors forex economic calendar and sends alerts - Always-On Daemon"""
     
@@ -115,6 +160,11 @@ class NewsCalendarMonitor:
         # 🔥 NEW: Check interval for daemon loop
         self.check_interval_hours = check_interval_hours
         self.check_interval_seconds = check_interval_hours * 3600
+
+        # 🏦 V11.0 MACRO: last sent date tracker (avoid double-send on same Monday)
+        self._macro_last_sent_date: Optional[str] = None
+        # Live rates override (populated by fetch_live_cb_rates)
+        self._live_rates: Dict[str, float] = {}
         
         # Timezone for Romania (GMT+2 / EET)
         if HAS_PYTZ:
@@ -181,18 +231,23 @@ class NewsCalendarMonitor:
             with open(calendar_file, 'r') as f:
                 data = json.load(f)
             
-            # Try current month first, then fallback to other sections
-            current_month = now.strftime("%B_%Y").lower()  # e.g., "january_2026"
+            # Try current month first, then scan backwards up to 6 months
+            current_month = now.strftime("%B_%Y").lower()  # e.g., "march_2026"
             section_name = f'custom_events_{current_month}'
             
             custom_events = data.get(section_name, [])
             
-            # Fallback to December 2025 if current month not found
             if not custom_events:
-                custom_events = data.get('custom_events_december_2025', [])
-                logger.warning(f"⚠️ Section '{section_name}' not found, using December 2025 events")
+                # Scan available sections for the most recent one
+                available = sorted([k for k in data.keys() if k.startswith('custom_events_')], reverse=True)
+                fallback_section = available[0] if available else None
+                if fallback_section:
+                    custom_events = data.get(fallback_section, [])
+                    logger.warning(f"⚠️ Section '{section_name}' not found — using fallback: '{fallback_section}'")
+                else:
+                    logger.error(f"❌ No event sections found in economic_calendar.json!")
             else:
-                logger.info(f"✅ Using events from '{section_name}'")
+                logger.info(f"✅ Using events from '{section_name}' ({len(custom_events)} total events)")
             
             # Use timezone-aware now
             now = datetime.now(self.local_tz)
@@ -687,6 +742,201 @@ class NewsCalendarMonitor:
             logger.error(f"❌ Error sending Telegram: {e}")
             return False
     
+    # ═══════════════════════════════════════════════════════════════════
+    # 🏦 V11.0 MACRO WEEKLY TABLE
+    # ═══════════════════════════════════════════════════════════════════
+
+    def fetch_live_cb_rates(self) -> Dict[str, float]:
+        """
+        Tentative scraping of live central bank rates from investing.com.
+        Returns a dict {currency: rate}.
+        Falls back to CENTRAL_BANK_RATES hardcoded values if scraping fails.
+        """
+        if not HAS_REQUESTS:
+            return {}
+
+        live: Dict[str, float] = {}
+        # investing.com central-bank-rates page (public, no JS needed)
+        url = "https://www.investing.com/central-banks/"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                          "AppleWebKit/537.36 (KHTML, like Gecko) "
+                          "Chrome/122.0.0.0 Safari/537.36",
+            "Accept-Language": "en-US,en;q=0.9",
+        }
+        try:
+            import requests as _req
+            resp = _req.get(url, headers=headers, timeout=12)
+            if resp.status_code != 200:
+                logger.warning(f"⚠️ Live CB rates fetch returned HTTP {resp.status_code} — using hardcoded")
+                return {}
+
+            if not HAS_BS4:
+                logger.warning("⚠️ BeautifulSoup not available — using hardcoded rates")
+                return {}
+
+            soup = BeautifulSoup(resp.text, "html.parser")
+
+            # investing.com table: rows contain flag img + currency name + rate
+            # Pattern: <td class="...flagCur...">USD</td>  <td>4.75%</td>
+            currency_map = {
+                "united states": "USD", "euro zone": "EUR", "eurozone": "EUR",
+                "united kingdom": "GBP", "japan": "JPY", "australia": "AUD",
+                "new zealand": "NZD", "canada": "CAD", "switzerland": "CHF",
+            }
+            rows = soup.select("table tr")
+            for row in rows:
+                cols = row.find_all("td")
+                if len(cols) < 3:
+                    continue
+                country_text = cols[0].get_text(" ", strip=True).lower()
+                rate_text = ""
+                # rate is usually in the 3rd or 4th column — find first % sign
+                for col in cols[1:]:
+                    txt = col.get_text(strip=True).replace("%", "").replace(",", ".")
+                    try:
+                        val = float(txt)
+                        rate_text = txt
+                        break
+                    except ValueError:
+                        continue
+
+                if not rate_text:
+                    continue
+
+                for key, ccy in currency_map.items():
+                    if key in country_text and ccy not in live:
+                        try:
+                            live[ccy] = float(rate_text)
+                        except ValueError:
+                            pass
+                        break
+
+            if len(live) >= 5:
+                logger.success(f"✅ Live CB rates fetched: {live}")
+            else:
+                logger.warning(f"⚠️ Only {len(live)} live rates parsed — partial result")
+
+        except Exception as e:
+            logger.warning(f"⚠️ Live CB rate scrape failed: {e} — using hardcoded")
+
+        return live
+
+    def _get_effective_rates(self) -> Dict[str, float]:
+        """
+        Returns merged rate dict: live rates override hardcoded where available.
+        Detects changes vs hardcoded baseline and logs them.
+        """
+        effective = dict(CENTRAL_BANK_RATES)  # start with hardcoded
+        live = self.fetch_live_cb_rates()
+
+        changes: list = []
+        for ccy, live_rate in live.items():
+            hardcoded = CENTRAL_BANK_RATES.get(ccy)
+            if hardcoded is not None and abs(live_rate - hardcoded) >= 0.01:
+                changes.append((ccy, hardcoded, live_rate))
+                logger.warning(f"🚨 RATE CHANGE DETECTED: {ccy} {hardcoded}% → {live_rate}%")
+            effective[ccy] = live_rate
+
+        # Store for re-use
+        self._live_rates = effective
+        return effective, changes
+
+    def generate_weekly_macro_report(self) -> str:
+        """
+        🏦 V11.0 MACRO WEEKLY TABLE
+        Generates Telegram-ready macro report with:
+         - Central bank rates table (sorted highest→lowest)
+         - Strong / Weak classification
+         - Top 3 carry opportunities from _CARRY_PAIRS
+         - Rate change alerts (vs hardcoded baseline)
+        """
+        rates, changes = self._get_effective_rates()
+
+        # ── Sort currencies by rate (desc)
+        sorted_rates = sorted(rates.items(), key=lambda x: x[1], reverse=True)
+
+        # ── Median for Strong/Weak threshold
+        all_vals = [v for _, v in sorted_rates]
+        median_rate = sorted(all_vals)[len(all_vals) // 2]
+
+        now_ro = datetime.now(self.local_tz) if self.local_tz else datetime.now()
+        week_str = now_ro.strftime("W%W • %d %b %Y")
+
+        msg = "🏦 <b>MACRO WEEKLY TABLE</b>\n"
+        msg += f"📅 <b>{week_str}</b>\n"
+        msg += f"🕐 <i>Report ora {now_ro.strftime('%H:%M')} RO</i>\n"
+        msg += "━━━━━━━━━━━━━━━━━━━\n"
+
+        # ── Rate change alerts (if any)
+        if changes:
+            msg += "🚨 <b>RATE CHANGES DETECTED!</b>\n"
+            for ccy, old, new in changes:
+                arrow = "🔺" if new > old else "🔻"
+                flag = _FLAGS.get(ccy, "")
+                msg += f"  {arrow} {flag} <b>{ccy}</b>: {old:.2f}% → <b>{new:.2f}%</b>\n"
+            msg += "━━━━━━━━━━━━━━━━━━━\n"
+
+        # ── Rates table
+        msg += "\n📊 <b>DOBÂNZI BĂNCI CENTRALE</b>\n"
+        msg += "<code>"
+        msg += f"{'CCY':<5} {'RATĂ':>6}  STATUS\n"
+        msg += f"{'─'*5} {'─'*6}  {'─'*10}\n"
+        for ccy, rate in sorted_rates:
+            flag = _FLAGS.get(ccy, " ")
+            status = "🟢 STRONG" if rate >= median_rate else "🔴 WEAK  "
+            source = "*" if ccy in self._live_rates and abs(self._live_rates.get(ccy, 0) - CENTRAL_BANK_RATES.get(ccy, 0)) >= 0.01 else " "
+            msg += f"{flag}{ccy:<3} {rate:>5.2f}%  {status}{source}\n"
+        msg += "</code>"
+        msg += "<i>* = live update</i>\n"
+        msg += "━━━━━━━━━━━━━━━━━━━\n"
+
+        # ── Top 3 carry pairs
+        pair_spreads = []
+        for base, quote in _CARRY_PAIRS:
+            b_rate = rates.get(base, 0)
+            q_rate = rates.get(quote, 0)
+            spread = round(b_rate - q_rate, 2)
+            pair_spreads.append((f"{base}/{quote}", base, quote, spread, b_rate, q_rate))
+
+        top3 = sorted(pair_spreads, key=lambda x: x[3], reverse=True)[:3]
+
+        msg += "\n🚀 <b>TOP 3 CARRY OPPORTUNITIES</b>\n"
+        for rank, (pair, base, quote, spread, b_rate, q_rate) in enumerate(top3, 1):
+            b_flag = _FLAGS.get(base, "")
+            q_flag = _FLAGS.get(quote, "")
+            medal = ["🥇", "🥈", "🥉"][rank - 1]
+            msg += (
+                f"{medal} <b>{b_flag}{base}/{q_flag}{quote}</b>\n"
+                f"   📈 {b_rate:.2f}% - {q_rate:.2f}% = "
+                f"<code>+{spread:.2f}%</code> spread\n"
+            )
+
+        msg += "━━━━━━━━━━━━━━━━━━━\n"
+
+        # ── Strongest vs weakest
+        strongest_ccy, strongest_rate = sorted_rates[0]
+        weakest_ccy, weakest_rate = sorted_rates[-1]
+        msg += (
+            f"💪 <b>STRONGEST:</b> {_FLAGS.get(strongest_ccy,'')} {strongest_ccy} @ {strongest_rate:.2f}%\n"
+            f"😴 <b>WEAKEST:</b>   {_FLAGS.get(weakest_ccy,'')} {weakest_ccy} @ {weakest_rate:.2f}%\n"
+        )
+        msg += "━━━━━━━━━━━━━━━━━━━\n"
+        msg += "✨ <i>Glitch in Matrix • ФорексГод</i>"
+
+        return msg
+
+    def _should_send_macro_report(self) -> bool:
+        """
+        Returns True if today is Monday AND we haven't already sent the report today.
+        """
+        now = datetime.now(self.local_tz) if self.local_tz else datetime.now()
+        is_monday = (now.weekday() == 0)          # 0 = Monday
+        is_after_9am = (now.hour >= 9)
+        today_str = now.strftime("%Y-%m-%d")
+        already_sent = (self._macro_last_sent_date == today_str)
+        return is_monday and is_after_9am and not already_sent
+
     def run_daily_check(self):
         """Main function to run daily news check"""
         logger.info("🚀 Starting Daily News Check...")
@@ -716,11 +966,10 @@ class NewsCalendarMonitor:
         logger.info(f"🚨 High impact: {len(high_impact)}")
         
         if not high_impact:
-            logger.warning("⚠️ No high impact events found!")
-            return
-        
-        # Format and send alert
-        message = self.format_telegram_message(high_impact)
+            logger.warning("⚠️ No high impact events in next 7 days — sending ALL CLEAR")
+            message = self.format_telegram_message([])  # sends "ALL CLEAR" message
+        else:
+            message = self.format_telegram_message(high_impact)
         self.send_telegram_alert(message)
         
         logger.info("✅ Daily news check complete!")
@@ -749,11 +998,36 @@ class NewsCalendarMonitor:
                 # Run daily news check
                 self.run_daily_check()
                 logger.success(f"✅ Check #{iteration} complete!")
-                
+
+                # 🏦 V11.0 MACRO: Send weekly macro table every Monday ≥ 09:00 RO
+                if self._should_send_macro_report():
+                    logger.info("🏦 Monday 09:00+ detected — sending Macro Weekly Table...")
+                    try:
+                        macro_msg = self.generate_weekly_macro_report()
+                        import requests as _req
+                        _req.post(
+                            f"{self.base_url}/sendMessage",
+                            data={
+                                'chat_id': self.chat_id,
+                                'text': macro_msg,
+                                'parse_mode': 'HTML',
+                            },
+                            timeout=10,
+                        )
+                        now_ro = datetime.now(self.local_tz) if self.local_tz else datetime.now()
+                        self._macro_last_sent_date = now_ro.strftime("%Y-%m-%d")
+                        logger.success("✅ Macro Weekly Table sent to Telegram!")
+                    except Exception as me:
+                        logger.error(f"❌ Macro report send failed: {me}")
+
             except Exception as e:
                 logger.error(f"❌ Check #{iteration} failed: {e}")
                 logger.debug("Stack trace:", exc_info=True)
                 # Don't crash - continue daemon loop
+            
+            # ✅ V10.9 HEARTBEAT: Log alive status (visible in console + watchdog)
+            now_ts = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            logger.info(f"💓 NEWS HEARTBEAT | check=#{iteration} | alerts={'ON' if self.alerts_enabled else 'OFF'} | interval={self.check_interval_hours}h | ts={now_ts}")
             
             # Calculate next check time
             next_check = datetime.now() + timedelta(hours=self.check_interval_hours)
@@ -788,6 +1062,15 @@ def main():
     
     args = parser.parse_args()
     
+    # ✅ V10.9 SINGLE-INSTANCE LOCK: Prevent duplicate processes (duplicate Telegram messages)
+    _lock_path = Path(__file__).parent / "process_news_calendar_monitor.lock"
+    try:
+        _lock_fd = open(_lock_path, 'w')
+        fcntl.flock(_lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        logger.error("🔒 Another news_calendar_monitor.py instance is already running. Exiting.")
+        sys.exit(0)
+
     try:
         logger.info("🚀 Starting News Calendar Monitor V2.0...")
         monitor = NewsCalendarMonitor(check_interval_hours=args.interval)

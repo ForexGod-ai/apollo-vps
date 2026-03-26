@@ -74,6 +74,14 @@
     "max_retries": 3,
     "comment": "Trade execution parameters"
   },
+
+  "spread_guard": {
+    "max_spread_pips": 2.5,
+    "block_execution": true,
+    "rollover_window_utc_start": 0,
+    "rollover_window_utc_end_minutes": 15,
+    "comment": "Block executions when spread > 2.5 pips or during 00:00-00:15 UTC rollover"
+  },
   
   "validation": {
     "check_balance_before_trade": true,

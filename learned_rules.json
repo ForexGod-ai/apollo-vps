@@ -1,7 +1,7 @@
 {
   "version": "1.0",
-  "last_updated": "2026-03-18T13:25:10.788168",
-  "total_trades_analyzed": 205,
+  "last_updated": "2026-03-23T17:35:07.972039",
+  "total_trades_analyzed": 210,
   "profit_factor_by_pair": {
     "AUDCAD": {
       "profit_factor": 0.0,
@@ -30,16 +30,16 @@
       "recommendation": "AVOID"
     },
     "AUDUSD": {
-      "profit_factor": 9.95,
-      "total_trades": 23,
+      "profit_factor": 6.47,
+      "total_trades": 24,
       "wins": 7,
-      "losses": 16,
-      "win_rate": 30.43,
+      "losses": 17,
+      "win_rate": 29.17,
       "total_profit": 6206.04,
-      "total_loss": 623.92,
+      "total_loss": 959.86,
       "avg_win": 886.58,
-      "avg_loss": 38.99,
-      "net_profit": 5582.12,
+      "avg_loss": 56.46,
+      "net_profit": 5246.18,
       "recommendation": "STRONG"
     },
     "BTCUSD": {
@@ -56,29 +56,29 @@
       "recommendation": "STRONG"
     },
     "EURGBP": {
-      "profit_factor": 2.44,
-      "total_trades": 9,
+      "profit_factor": 1.29,
+      "total_trades": 10,
       "wins": 2,
-      "losses": 7,
-      "win_rate": 22.22,
+      "losses": 8,
+      "win_rate": 20.0,
       "total_profit": 914.21,
-      "total_loss": 374.75,
+      "total_loss": 708.22,
       "avg_win": 457.11,
-      "avg_loss": 53.54,
-      "net_profit": 539.46,
-      "recommendation": "STRONG"
+      "avg_loss": 88.53,
+      "net_profit": 205.99,
+      "recommendation": "GOOD"
     },
     "EURJPY": {
-      "profit_factor": 1.54,
-      "total_trades": 9,
-      "wins": 4,
+      "profit_factor": 1.85,
+      "total_trades": 10,
+      "wins": 5,
       "losses": 5,
-      "win_rate": 44.44,
-      "total_profit": 1568.95,
+      "win_rate": 50.0,
+      "total_profit": 1877.3,
       "total_loss": 1016.1,
-      "avg_win": 392.24,
+      "avg_win": 375.46,
       "avg_loss": 203.22,
-      "net_profit": 552.85,
+      "net_profit": 861.2,
       "recommendation": "STRONG"
     },
     "EURUSD": {
@@ -95,16 +95,16 @@
       "recommendation": "STRONG"
     },
     "GBPJPY": {
-      "profit_factor": 1.81,
-      "total_trades": 24,
+      "profit_factor": 1.56,
+      "total_trades": 25,
       "wins": 11,
-      "losses": 13,
-      "win_rate": 45.83,
+      "losses": 14,
+      "win_rate": 44.0,
       "total_profit": 2102.45,
-      "total_loss": 1163.47,
+      "total_loss": 1351.72,
       "avg_win": 191.13,
-      "avg_loss": 89.5,
-      "net_profit": 938.98,
+      "avg_loss": 96.55,
+      "net_profit": 750.73,
       "recommendation": "STRONG"
     },
     "GBPNZD": {
@@ -174,15 +174,15 @@
     },
     "USDJPY": {
       "profit_factor": 0.0,
-      "total_trades": 7,
+      "total_trades": 8,
       "wins": 0,
-      "losses": 7,
+      "losses": 8,
       "win_rate": 0.0,
       "total_profit": 0,
-      "total_loss": 831.76,
+      "total_loss": 846.0,
       "avg_win": 0,
-      "avg_loss": 118.82,
-      "net_profit": -831.76,
+      "avg_loss": 105.75,
+      "net_profit": -846.0,
       "recommendation": "AVOID"
     },
     "XAUUSD": {
@@ -214,14 +214,14 @@
   },
   "profit_factor_by_timeframe": {
     "UNKNOWN": {
-      "profit_factor": 1.29,
-      "total_trades": 205,
-      "wins": 81,
-      "losses": 124,
-      "win_rate": 39.51,
-      "total_profit": 25610.27,
-      "total_loss": 19926.16,
-      "net_profit": 5684.11,
+      "profit_factor": 1.25,
+      "total_trades": 210,
+      "wins": 82,
+      "losses": 128,
+      "win_rate": 39.05,
+      "total_profit": 25918.62,
+      "total_loss": 20798.06,
+      "net_profit": 5120.56,
       "recommendation": "GOOD"
     }
   },
@@ -247,10 +247,10 @@
     {
       "hour_start": 10,
       "hour_end": 11,
-      "total_trades": 18,
-      "win_rate": 5.56,
-      "net_profit": -386.3,
-      "reason": "Low win rate (5.6%)",
+      "total_trades": 19,
+      "win_rate": 5.26,
+      "net_profit": -574.55,
+      "reason": "Low win rate (5.3%)",
       "severity": "HIGH"
     },
     {
@@ -260,6 +260,15 @@
       "win_rate": 28.57,
       "net_profit": 3427.27,
       "reason": "Low win rate (28.6%)",
+      "severity": "MEDIUM"
+    },
+    {
+      "hour_start": 17,
+      "hour_end": 18,
+      "total_trades": 24,
+      "win_rate": 29.17,
+      "net_profit": 86.77,
+      "reason": "Low win rate (29.2%)",
       "severity": "MEDIUM"
     },
     {
@@ -311,29 +320,28 @@
   "optimal_sl_tp": {},
   "pattern_success_rate": {
     "UNKNOWN": {
-      "total_trades": 205,
-      "wins": 81,
-      "losses": 124,
-      "win_rate": 39.51,
-      "avg_profit_per_win": 316.18,
+      "total_trades": 210,
+      "wins": 82,
+      "losses": 128,
+      "win_rate": 39.05,
+      "avg_profit_per_win": 316.08,
       "confidence": "MEDIUM"
     }
   },
   "metadata": {
-    "total_profit": 25610.27,
-    "total_loss": 19926.16,
-    "win_rate": 39.51,
-    "total_wins": 81,
-    "total_losses": 124,
-    "avg_win": 316.18,
-    "avg_loss": 160.69,
-    "profit_factor": 1.29
+    "total_profit": 25918.62,
+    "total_loss": 20798.06,
+    "win_rate": 39.05,
+    "total_wins": 82,
+    "total_losses": 128,
+    "avg_win": 316.08,
+    "avg_loss": 162.48,
+    "profit_factor": 1.25
   },
   "recommendations": {
     "best_pairs": [
       "AUDUSD",
       "BTCUSD",
-      "EURGBP",
       "EURJPY",
       "EURUSD",
       "GBPJPY",
@@ -356,6 +364,7 @@
       7,
       10,
       11,
+      17,
       19,
       20,
       21,

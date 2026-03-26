@@ -24,7 +24,7 @@ class CTraderCBotClient:
         except:
             return False
     
-    def get_historical_data(self, symbol: str, timeframe: str = 'Daily', bars: int = 100) -> Optional[pd.DataFrame]:
+    def get_historical_data(self, symbol: str, timeframe: str = 'Daily', bars: int = 200) -> Optional[pd.DataFrame]:
         """
         Get historical OHLCV data from cBot
         
@@ -45,7 +45,8 @@ class CTraderCBotClient:
                 'bars': bars
             }
             
-            response = requests.get(f"{self.base_url}/data", params=params, timeout=10)
+            # V10.1: timeout 30s — cTrader GetAccountCalculatedValues poate dura >10s la conexiuni lente
+            response = requests.get(f"{self.base_url}/data", params=params, timeout=30)
             
             # DETAILED LOGGING FOR DEBUGGING
             logger.debug(f"🔍 Request URL: {response.url}")
@@ -106,9 +107,62 @@ class CTraderCBotClient:
         except requests.exceptions.ConnectionError:
             logger.error("❌ Cannot connect to cBot server. Is cTrader running with MarketDataProvider cBot?")
             return None
+        except requests.exceptions.Timeout:
+            # V10.1: cTrader timeout (GetAccountCalculatedValuesResMessage) — nu blocăm scannerul
+            logger.warning(f"⏱️  cTrader TIMEOUT pentru {symbol} {timeframe} — date indisponibile temporar (cTrader ocupat)")
+            logger.warning(f"   Setup-ul va fi salvat oricum dacă structura există. Retry la scan-ul următor.")
+            return None
         except Exception as e:
             logger.error(f"❌ Error fetching data: {e}")
             return None
+
+    def get_swap_info(self, symbol: str) -> dict:
+        """
+        V10.9 CARRY MATRIX — Fetch live swap rates for a symbol from cTrader.
+
+        Returns dict with keys:
+            swap_long       (float)  — pips/day charged/credited for BUY positions
+            swap_short      (float)  — pips/day charged/credited for SELL positions
+            swap_triple_day (str)    — day of the week when triple swap is applied (e.g. "Wednesday")
+            success         (bool)
+            error           (str)    — only present on failure
+
+        Logic for callers:
+            direction == 'buy'  → check swap_long  > 0 ✅ positive (credit) | < 0 ⚠️ cost
+            direction == 'sell' → check swap_short > 0 ✅ positive (credit) | < 0 ⚠️ cost
+        """
+        try:
+            response = requests.get(
+                f"{self.base_url}/swap_info",
+                params={'symbol': symbol},
+                timeout=10
+            )
+            if response.status_code != 200:
+                logger.warning(f"⚠️ swap_info HTTP {response.status_code} for {symbol}")
+                return {'success': False, 'error': f"HTTP {response.status_code}"}
+
+            data = response.json()
+            if not data.get('success'):
+                logger.warning(f"⚠️ swap_info error for {symbol}: {data.get('error')}")
+                return {'success': False, 'error': data.get('error', 'Unknown')}
+
+            logger.debug(
+                f"💱 SWAP {symbol}: long={data['swap_long']:+.2f} "
+                f"short={data['swap_short']:+.2f} triple={data['swap_triple_day']}"
+            )
+            return {
+                'success': True,
+                'swap_long': float(data['swap_long']),
+                'swap_short': float(data['swap_short']),
+                'swap_triple_day': str(data['swap_triple_day']),
+            }
+
+        except requests.exceptions.ConnectionError:
+            logger.debug(f"⚠️ swap_info: cBot not available for {symbol}")
+            return {'success': False, 'error': 'Connection refused'}
+        except Exception as e:
+            logger.debug(f"⚠️ swap_info exception for {symbol}: {e}")
+            return {'success': False, 'error': str(e)}
 
 
 def get_cbot_client() -> CTraderCBotClient:

@@ -779,7 +779,7 @@ class CTraderExecutor:
                 self._send_telegram_notification(
                     symbol=symbol,
                     direction=direction,
-                    status='DEPLOYED',
+                    status='CLOSE_DEPLOYED',
                     reason=f'CLOSE POSITION: {reason}'
                 )
             else:

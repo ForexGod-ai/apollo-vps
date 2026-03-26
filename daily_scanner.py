@@ -22,12 +22,12 @@ from ai_probability_analyzer import AIProbabilityAnalyzer
 
 load_dotenv()
 
-# ━━━ V8.0 VPS-READY: Force UTC timezone ━━━
-os.environ['TZ'] = 'UTC'
-try:
-    time.tzset()
-except AttributeError:
-    pass
+# ━━━ V11.2: Folosim ora sistemului (EET/Romania) — macOS setat corect ━━━
+# os.environ['TZ'] = 'UTC'  # DEZACTIVAT V11.2 — era pentru VPS, pe Mac e EET
+# try:
+#     time.tzset()
+# except AttributeError:
+#     pass
 
 # Global flag for testing/audit - ignore open positions check
 IGNORE_OPEN_POSITIONS = False
@@ -105,14 +105,19 @@ class DailyScanner:
             self.data_provider = MT5DataProvider()
             print("📊 Using MT5 for market data")
             
-        # V8.0: Initialize SMCDetector with ATR Prominence + Premium/Discount filters
+        # V10.1: Initialize SMCDetector — pure structural, no arbitrary ATR floors
         self.smc_detector = SMCDetector(
             swing_lookback=5,      # Standard swing validation (5 bars each side)
-            atr_multiplier=1.5     # V7.0: ATR Prominence Filter (1.5x ATR threshold)
+            atr_multiplier=1.2     # V10.1: Relaxed ATR (1.2x) — nu blochează swing-uri structurale
         )
-        print("✅ SMC Detector V8.0 initialized:")
-        print("   🔥 ATR Prominence Filter: 1.5x ATR (eliminates micro-swings)")
-        print("   🎯 Premium/Discount Zone: 50% Fibonacci (only deep retracements)")
+        print("✅ SMC Detector V10.2 initialized (ГЛИТЧ ИН МАТРИКС — VERSIUNEA FINALĂ):")
+        print("   🎯 Entry: Marginea FVG în zona 70-80% Fibonacci pe impulsul 4H")
+        print("   🛑 SL: Body close structural pur — ZERO floor, ZERO ATR buffer")
+        print("   🏆 TP: Max/Min HH/LL din TOATĂ structura D1 — fără limită 60 zile")
+        print("   📊 RR: Minim 1:4 structural — sub 1:4 = trade RESPINS")
+        print("   👁️ MONITORING vizibil pe Telegram — chart trimis la orice setup (PÂNDĂ + READY)")
+        print("   ❌ Method 2 Large Imbalance ELIMINAT — FVG pur 3 lumânări EXCLUSIV")
+        print("   ⏱️ 4H CHoCH max 48 candle (8 zile) — setup-uri masive incluse")
         
         self.telegram = TelegramNotifier()
         
@@ -289,7 +294,8 @@ class DailyScanner:
                         df_daily=df_daily,
                         df_4h=df_4h,
                         priority=priority,
-                        df_1h=df_1h  # V3.0: Pass 1H data for GBP pairs
+                        df_1h=df_1h,  # V3.0: Pass 1H data for GBP pairs
+                        debug=True    # ✅ V10.6: verbose reject messages
                     )
                 except Exception as scan_error:
                     print(f"⚠️  Error scanning {symbol}: {scan_error}")
@@ -302,7 +308,7 @@ class DailyScanner:
                     setup = None
                 
                 if setup:
-                    # V8.4: Display strategy type immediately
+                    # V10.1: Display strategy type immediately
                     strategy = setup.strategy_type.upper() if hasattr(setup, 'strategy_type') else "UNKNOWN"
                     strategy_emoji = "🔄" if strategy == "REVERSAL" else "➡️"
                     print(f"🎯 SETUP FOUND on {symbol}! {strategy_emoji} {strategy}")
@@ -341,17 +347,49 @@ class DailyScanner:
                     
                     setups_found.append(setup)
                     
-                    # V8.0: Log filter validation status
-                    print(f"   ✅ V8.0 Filters PASSED:")
-                    print(f"      • ATR Prominence: Swing validated (1.5x ATR)")
-                    print(f"      • Premium/Discount: FVG in correct zone (>50% retracement)")
+                    # ✅ V10.9 CARRY MATRIX: Fetch live swap rates and attach to setup
+                    try:
+                        swap_info = self.data_provider.client.get_swap_info(symbol)
+                        if swap_info.get('success'):
+                            setup.swap_long        = swap_info['swap_long']
+                            setup.swap_short       = swap_info['swap_short']
+                            setup.swap_triple_day  = swap_info['swap_triple_day']
+                            direction_str_swap = "buy" if setup.daily_choch.direction == 'bullish' else "sell"
+                            relevant_swap = setup.swap_long if direction_str_swap == 'buy' else setup.swap_short
+                            swap_label = "✅ POZITIV (credit)" if relevant_swap > 0 else "⚠️ NEGATIV (cost)"
+                            print(f"   💱 CARRY: long={setup.swap_long:+.4f} short={setup.swap_short:+.4f} triple={setup.swap_triple_day} → {swap_label}")
+                        else:
+                            setup.swap_long = setup.swap_short = setup.swap_triple_day = None
+                            print(f"   💱 CARRY: N/A (cTrader offline)")
+                    except Exception as swap_ex:
+                        setup.swap_long = setup.swap_short = setup.swap_triple_day = None
+                        print(f"   💱 CARRY: eroare fetch swap — {swap_ex}")
                     
-                    # V3.3: ALWAYS send chart alert when setup is found
-                    # User expects automatic Telegram notifications with 3 charts for EVERY scan
+                    # V10.2: Log structural validation status
+                    direction_str = "LONG" if setup.daily_choch.direction == 'bullish' else "SHORT"
+                    setup_status = getattr(setup, 'status', 'MONITORING')
+                    entry_str = f"{setup.entry_price:.5f}" if setup.entry_price else "N/A"
+                    sl_str = f"{setup.stop_loss:.5f}" if setup.stop_loss else "N/A"
+                    tp_str = f"{setup.take_profit:.5f}" if setup.take_profit else "N/A"
+                    rr_str = f"1:{setup.risk_reward:.2f}" if setup.risk_reward else "N/A"
+                    status_emoji = "🔥 READY" if setup_status == "READY" else "👁️ PÂNDĂ"
+                    print(f"   ✅ [V10.2 STRUCTURAL PASS] {symbol} {direction_str}:")
+                    print(f"      • Status: {status_emoji}")
+                    print(f"      • Entry (FVG Edge 70-80% Fib): {entry_str}")
+                    print(f"      • SL (4H Body Close): {sl_str}")
+                    print(f"      • TP (D1 Structural Max): {tp_str}")
+                    print(f"      • RR: {rr_str}")
+                    
+                    # V10.2: RAPORTARE FORȜATĂ MONITORING
+                    # Trimite chart pe Telegram pentru ORICE setup — MONITORING sau READY.
+                    # Vrem să vedem "pânda" vizual, nu doar execuțiile!
                     if self.scanner_settings.get('telegram_alerts', True):
                         is_reevaluation = symbol in monitoring_symbols
-                        status = "Re-evaluating" if is_reevaluation else "New setup"
-                        print(f"   📸 {status} - Generating and sending charts for {symbol}...")
+                        if setup_status == 'READY':
+                            tg_prefix = "🔥 READY TO EXECUTE"
+                        else:
+                            tg_prefix = "👁️ MONITORING (PÂNDĂ)"
+                        print(f"   📸 {tg_prefix} — Generez chart pentru {symbol}...")
                         try:
                             self.telegram.send_setup_alert(
                                 setup=setup,
@@ -359,21 +397,20 @@ class DailyScanner:
                                 df_4h=df_4h,
                                 df_1h=df_1h
                             )
-                            print(f"   ✅ Charts sent to Telegram for {symbol}")
+                            print(f"   ✅ Chart trimis pe Telegram: {symbol} [{tg_prefix}]")
                         except Exception as e:
                             print(f"   ⚠️ Failed to send charts: {e}")
                     
-                    print(f"✓ {symbol} added to morning scan report")
+                    print(f"✓ {symbol} adăugat în raportul de dimineață [{setup_status}]")
                 else:
-                    # V8.0: Setup rejected by one or more filters
-                    # Could be:
-                    # - No CHoCH/BOS detected
-                    # - No FVG found
-                    # - ATR Filter: Swing not prominent enough
-                    # - Premium/Discount: FVG in wrong zone (shallow retracement)
-                    # - FVG quality check failed
-                    # - 4H confirmation missing
-                    print(f"✓ {symbol} - No valid setup (rejected by V8.0 filters or no signal)")
+                    # V10.2: Setup respins — motivul exact a fost printat de smc_detector
+                    # Exemple de output care vei vedea mai sus:
+                    # [V10.2 REJECT: BUY REVERSAL din zona EQUILIBRIUM (48.3%) — necesită DISCOUNT <38.2%]
+                    # [V10.2 REJECT: RR=1:3.5 < 1:4.0 structural]
+                    # [V10.2 REJECT: SHORT CONTINUATION în macro BULLISH]
+                    # [V10.2 MONITORING: niciun 4H CHoCH (max 48 candle = 8 zile)]
+                    # [V10.2 REJECT: Nu s-a găsit FVG Daily pur de 3 lumânări]
+                    print(f"⛔ {symbol} — NO SETUP [V10.2 REJECT: vezi log-ul ↑]")
         
         finally:
             # Disconnect cTrader unless keep_connection=True
@@ -475,7 +512,7 @@ class DailyScanner:
                         wake_time = datetime.fromisoformat(wake_str)
                         if wake_time > datetime.now(timezone.utc):
                             deep_sleep_active = True
-                            deep_sleep_until_str = wake_time.strftime('%Y-%m-%d %H:%M UTC')
+                            deep_sleep_until_str = wake_time.strftime('%Y-%m-%d %H:%M UTC')  # UTC intentionat (stored as UTC)
             except Exception as e:
                 logger.debug(f"Could not check Deep Sleep state: {e}")
             
@@ -491,17 +528,30 @@ class DailyScanner:
                 })
             
             # Send the OFFICIAL scan report (mirrors console exactly)
-            self.telegram.send_scan_report(
-                total_pairs=len(self.pairs),
-                new_setups_found=len(setups_found),
-                truly_new=len(truly_new_setups),
-                re_detected=len(active_with_position),
-                monitoring_count=final_monitoring_count,
-                open_positions=len(all_open_positions),
-                deep_sleep_active=deep_sleep_active,
-                deep_sleep_until=deep_sleep_until_str,
-                setup_symbols=setup_symbols
-            )
+            try:
+                self.telegram.send_scan_report(
+                    total_pairs=len(self.pairs),
+                    new_setups_found=len(setups_found),
+                    truly_new=len(truly_new_setups),
+                    re_detected=len(active_with_position),
+                    monitoring_count=final_monitoring_count,
+                    open_positions=len(all_open_positions),
+                    deep_sleep_active=deep_sleep_active,
+                    deep_sleep_until=deep_sleep_until_str,
+                    setup_symbols=setup_symbols
+                )
+            except Exception as e:
+                print(f"[ERROR] send_scan_report failed: {e} — trimite versiune simpla")
+                try:
+                    self.telegram.send_message(
+                        f"✅ <b>Scan Complete!</b>\n"
+                        f"📊 Pairs: <code>{len(self.pairs)}</code> | Setups: <code>{len(setups_found)}</code>\n"
+                        f"📋 Monitoring: <code>{final_monitoring_count}</code> | Pozitii: <code>{len(all_open_positions)}</code>\n"
+                        f"⏰ <code>{datetime.now().strftime('%Y-%m-%d %H:%M EET')}</code>",
+                        parse_mode='HTML'
+                    )
+                except Exception as e2:
+                    print(f"[ERROR] Fallback scan report failed: {e2}")
             
         # DEBUG: Print status for each setup found
         print('\n--- DEBUG: Status setup-uri returnate de run_daily_scan ---')
@@ -528,9 +578,13 @@ class DailyScanner:
                 return None
             
             # Download data (add 1H for SCALE_IN strategy)
-            df_daily = self.data_provider.get_historical_data(symbol, "D1", 100)
-            df_4h = self.data_provider.get_historical_data(symbol, "H4", 200)
-            df_1h = self.data_provider.get_historical_data(symbol, "H1", 225)  # NEW: 1H data
+            # V11.2: citim din pairs_config.json — NU mai hardcodăm 100
+            d1_bars = self.scanner_settings.get('lookback_candles', {}).get('daily', 200)
+            h4_bars = self.scanner_settings.get('lookback_candles', {}).get('h4', 200)
+            h1_bars = self.scanner_settings.get('lookback_candles', {}).get('h1', 300)
+            df_daily = self.data_provider.get_historical_data(symbol, "D1", d1_bars)
+            df_4h = self.data_provider.get_historical_data(symbol, "H4", h4_bars)
+            df_1h = self.data_provider.get_historical_data(symbol, "H1", h1_bars)  # NEW: 1H data
             
             if df_daily is None or df_4h is None:
                 print(f"❌ Failed to download data for {symbol}")
@@ -545,7 +599,8 @@ class DailyScanner:
                 df_daily=df_daily,
                 df_4h=df_4h,
                 df_1h=df_1h,  # NEW: pass 1H data
-                priority=pair_config['priority']
+                priority=pair_config['priority'],
+                debug=True    # ✅ V10.6: verbose reject messages
             )
             
             if setup:
@@ -649,7 +704,11 @@ def save_monitoring_setups(setups: List[TradeSetup]):
                     "fvg_bottom": float(fvg_bottom) if fvg_bottom is not None else float(setup.entry_price),
                     "h4_sync_fvg_top":    h4_sync_fvg_top,     # 4H confirmation move FVG (optimal entry zone)
                     "h4_sync_fvg_bottom": h4_sync_fvg_bottom,  # 0.0 if no 4H sync yet
-                    "lot_size": 0.01  # Default lot size — recalculated by Risk Manager at execution
+                    "lot_size": 0.01,  # Default lot size — recalculated by Risk Manager at execution
+                    # ✅ V10.9 CARRY MATRIX: Live swap rates from cTrader
+                    "swap_long":        getattr(setup, 'swap_long', None),
+                    "swap_short":       getattr(setup, 'swap_short', None),
+                    "swap_triple_day":  getattr(setup, 'swap_triple_day', None),
                 }
                 existing_setups[setup.symbol] = monitoring_setup  # Update/add
         

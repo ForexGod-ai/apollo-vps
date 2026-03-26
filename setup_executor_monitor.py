@@ -110,7 +110,8 @@ from smc_detector import (
     validate_pullback_entry,
     TradeSetup,
     CHoCH,
-    FVG
+    FVG,
+    get_4h_body_close_confirmation,  # ✅ V10.6 FUNCȚIE UNIFICATĂ — același creier ca scanner-ul
 )
 
 # 🛡️ V3.8 ANTI-SPAM SYSTEM by ФорексГод
@@ -512,6 +513,55 @@ class SetupExecutorMonitor:
     
     # ━━━ V10.3 PILLAR 4: NEWS GUARD ENGINE (Information Only) ━━━
     
+    def _check_spread_guard(self, symbol: str) -> str:
+        """
+        V11.2 SPREAD GUARD: Blochează execuția dacă spread > max_spread_pips
+        sau dacă suntem în fereastra de rollover 00:00 UTC.
+
+        Returnează string cu eroarea dacă trebuie blocat, '' dacă e OK.
+        """
+        try:
+            # ── 1. Rollover check (00:00-00:15 UTC) ─────────────────────
+            now_utc = datetime.now(timezone.utc)
+            if now_utc.hour == 0 and now_utc.minute < 15:
+                return (f"ROLLOVER 00:{now_utc.minute:02d} UTC — spread periculos "
+                        f"(IC Markets rollover). Execuție blocată 15 min.")
+
+            # ── 2. Live spread check via cTrader bridge ─────────────────
+            try:
+                super_cfg_path = Path("SUPER_CONFIG.json")
+                with open(super_cfg_path) as f:
+                    scfg = json.load(f)
+                max_spread = scfg.get('spread_guard', {}).get('max_spread_pips', 2.5)
+                block = scfg.get('spread_guard', {}).get('block_execution', True)
+            except Exception:
+                max_spread, block = 2.5, True
+
+            if not block:
+                return ""
+
+            ctrader_port = int(os.environ.get('CTRADER_PORT', '8767'))
+            try:
+                r = requests.get(
+                    f"http://localhost:{ctrader_port}/spread?symbol={symbol}",
+                    timeout=3
+                )
+                if r.status_code == 200:
+                    data = r.json()
+                    spread_pips = data.get('spread_pips') or data.get('spread')
+                    if spread_pips is not None and float(spread_pips) > max_spread:
+                        return (f"{symbol} spread={spread_pips:.1f} pips > max {max_spread} pips "
+                                f"— execuție blocată")
+            except requests.exceptions.ConnectionError:
+                pass  # Bridge offline — nu blocăm dacă nu putem verifica
+            except Exception:
+                pass
+
+        except Exception:
+            pass
+
+        return ""
+
     def _check_news_guard(self, symbol: str) -> str:
         """
         V10.3 NEWS GUARD: Check if HIGH impact news is within 30 minutes.
@@ -844,55 +894,46 @@ class SetupExecutorMonitor:
         # ━━━ V10.4: 4H STRUCTURE LOCK (Body Closure Confirmation) ━━━
         # "Generalii (D1+4H) dau ordinul de atac — 1H doar execută!"
         # D1 sets bias → 4H CHoCH with body closure confirms → then 1H can execute.
-        # No 4H body closure = bot stays SILENT.
+        # EXCEPȚIE V10.9: CONTINUATION setups nu necesită CHoCH 4H!
+        # → CONTINUATION = structura 4H e deja confirmată prin BOS-uri active.
+        # → A aștepta CHoCH pe CONTINUATION = a aștepta inversarea trade-ului!
+        # → CONTINUATION: lock imediat, execuție 1H normală.
         h4_locked = setup.get('h4_structure_locked', False)
+        strategy_type = setup.get('strategy_type', 'continuation')
+        
+        # ✅ V10.9 CONTINUATION BYPASS: 4H lock imediat pentru setup-uri de continuitate
+        if not h4_locked and strategy_type == 'continuation':
+            setup['h4_structure_locked'] = True
+            h4_locked = True
+            logger.info(f"   ✅ V10.9 CONTINUATION BYPASS: {symbol} — structura 4H confirmată prin BOS activ (no CHoCH needed)")
         
         if not h4_locked:
             try:
                 df_4h_lock = self._get_cached_data(symbol, "H4", 225)
                 if df_4h_lock is not None and not df_4h_lock.empty:
-                    h4_chochs_lock, _ = self.smc_detector.detect_choch_and_bos(df_4h_lock)
-                    
                     expected_direction = 'bullish' if direction == 'buy' else 'bearish'
                     
-                    # Find recent 4H CHoCH (max 12 candles = 48h) matching Daily bias
-                    # Body closure is validated by detect_choch_and_bos() internally (V8.1).
-                    # ✅ V10.5 EXPLICIT BODY CLOSURE GUARD — belt-and-suspenders:
-                    # Even if detect_choch_and_bos() passed it, we verify here that the
-                    # confirming candle's BODY (not wick) closed through the break_price.
-                    # Wick-only breaks are noise — body closure = institutional conviction.
-                    valid_4h_lock = None
-                    for h4ch in reversed(h4_chochs_lock):
-                        choch_age = len(df_4h_lock) - 1 - h4ch.index
-                        if choch_age > 12:
-                            continue
-                        if h4ch.direction != expected_direction:
-                            continue
-                        # ── V10.5 EXPLICIT BODY CHECK ──
-                        candle_open  = df_4h_lock['open'].iloc[h4ch.index]
-                        candle_close = df_4h_lock['close'].iloc[h4ch.index]
-                        body_high = max(candle_open, candle_close)
-                        body_low  = min(candle_open, candle_close)
-                        if expected_direction == 'bullish' and body_high <= h4ch.break_price:
-                            logger.debug(f"   ⚠️ V10.5 4H CHoCH WICK ONLY (bullish): body_high={body_high:.5f} <= break={h4ch.break_price:.5f} — REJECTED")
-                            continue  # wick-only break — skip
-                        if expected_direction == 'bearish' and body_low >= h4ch.break_price:
-                            logger.debug(f"   ⚠️ V10.5 4H CHoCH WICK ONLY (bearish): body_low={body_low:.5f} >= break={h4ch.break_price:.5f} — REJECTED")
-                            continue  # wick-only break — skip
-                        # ── BODY CLOSURE CONFIRMED ──
-                        valid_4h_lock = h4ch
-                        break
+                    # ✅ V10.6 FUNCȚIE UNIFICATĂ: get_4h_body_close_confirmation
+                    # Înlocuiește re-implementarea proprie (V10.5) — acum ACELAȘI creier ca scanner-ul.
+                    # Zero divergență de interpretare între daily_scanner și setup_executor_monitor.
+                    # NOTĂ: Blocul acesta rămâne activ DOAR pentru REVERSAL setups.
+                    confirmed_4h, valid_4h_lock, lock_reason = get_4h_body_close_confirmation(
+                        df_4h=df_4h_lock,
+                        daily_trend=expected_direction,
+                        max_age_candles=48,
+                        debug=False
+                    )
                     
-                    if valid_4h_lock:
-                        # ✅ 4H CHoCH with body closure confirmed — lock it
+                    if confirmed_4h and valid_4h_lock:
+                        # ✅ 4H CHoCH cu body closure confirmat — lock it
                         setup['h4_structure_locked'] = True
                         setup['h4_lock_direction'] = valid_4h_lock.direction
                         setup['h4_lock_price'] = valid_4h_lock.break_price
                         setup['h4_lock_time'] = datetime.now().isoformat()
                         h4_locked = True
-                        logger.success(f"   🔒 V10.4 4H SYNC LOCK: {symbol} {valid_4h_lock.direction.upper()} CHoCH @ {valid_4h_lock.break_price:.5f} (body closure)")
+                        logger.success(f"   🔒 V10.6 4H SYNC LOCK: {symbol} {valid_4h_lock.direction.upper()} CHoCH @ {valid_4h_lock.break_price:.5f} — {lock_reason}")
                         
-                        # V10.4: Detect 4H sync FVG from confirmation move (entry zone)
+                        # V10.4: Detectăm 4H sync FVG din mișcarea de confirmare (entry zone)
                         if not setup.get('h4_sync_fvg_top'):
                             try:
                                 current_price_4h = df_4h_lock['close'].iloc[-1]
@@ -902,21 +943,21 @@ class SetupExecutorMonitor:
                                     setup['h4_sync_fvg_bottom'] = float(sync_fvg.bottom)
                                     fvg_top = float(sync_fvg.top)
                                     fvg_bottom = float(sync_fvg.bottom)
-                                    logger.success(f"   🎯 V10.4 4H SYNC FVG: {sync_fvg.bottom:.5f} - {sync_fvg.top:.5f} (entry zone)")
+                                    logger.success(f"   🎯 V10.6 4H SYNC FVG: {sync_fvg.bottom:.5f} - {sync_fvg.top:.5f} (entry zone)")
                                 else:
-                                    logger.info(f"   ⚠️ V10.4: No 4H sync FVG after CHoCH — using Daily FVG for entry")
+                                    logger.info(f"   ⚠️ V10.6: No 4H sync FVG after CHoCH — using Daily FVG for entry")
                             except Exception as fvg_err:
-                                logger.warning(f"   ⚠️ V10.4 sync FVG detection error: {fvg_err}")
+                                logger.warning(f"   ⚠️ V10.6 sync FVG detection error: {fvg_err}")
                     else:
                         d1_bias = setup.get('strategy_type', 'unknown').upper()
-                        logger.info(f"   ⏳ V10.4 4H LOCK: {symbol} D1_{d1_bias} — no recent 4H CHoCH {expected_direction.upper()} (bot stays silent)")
+                        logger.info(f"   ⏳ V10.6 4H UNIFIED: {symbol} D1_{d1_bias} — {lock_reason}")
                         return {
                             'action': 'KEEP_MONITORING',
-                            'reason': f'V10.4 4H SYNC: Waiting for 4H CHoCH {expected_direction.upper()} body closure (D1 bias: {d1_bias})'
+                            'reason': f'V10.6 4H UNIFIED: {lock_reason}'
                         }
             except Exception as e:
-                logger.warning(f"   ⚠️ V10.4 4H Lock check failed for {symbol}: {e}")
-        # ━━━ END V10.4 4H STRUCTURE LOCK ━━━
+                logger.warning(f"   ⚠️ V10.6 4H check failed for {symbol}: {e}")
+        # ━━━ END V10.6 4H STRUCTURE LOCK ━━━
         
         # Check if CHoCH already detected
         choch_detected = setup.get('choch_1h_detected', False)
@@ -1129,10 +1170,8 @@ class SetupExecutorMonitor:
                 else:
                     pips_display = price_diff * 10000
                 
-                # 🔥 AGGRESSIVE LOGGING
-                logger.critical(f"🔥 TRIGGER: {symbol} confirmed CHoCH + Pullback. Pushing to Executor NOW!")
+                # 🎯 Pullback confirmed — return result, caller will handle dedup + execution
                 logger.success(f"   🎯 {symbol}: Pullback reached! Entry @ {entry_execution_price:.5f} (Fibo 50%: {fibo_50:.5f}, Touch: {touch_price:.5f})")
-                logger.warning(f"   ⚡ INSTANT WRITE TO signals.json - NO DELAY!")
                 
                 return {
                     'action': 'EXECUTE_ENTRY1',
@@ -1416,8 +1455,41 @@ class SetupExecutorMonitor:
                 status = setup.get('status', 'MONITORING')
                 
                 # Skip expired or closed setups, but ALLOW READY for immediate execution
-                if status not in ['MONITORING', 'READY']:
+                if status not in ['MONITORING', 'READY', 'WAITING_POSITION_CLOSE']:
                     continue
+                
+                # ✅ V10.9 SMART POSITION GUARD: Pause setup if same symbol+direction already open
+                # TEMPORARY — auto-resumes when broker position closes (not permanent block)
+                try:
+                    import json as _json
+                    active_pos_file = Path(__file__).parent / "active_positions.json"
+                    if active_pos_file.exists():
+                        with open(active_pos_file) as _f:
+                            _active = _json.load(_f)
+                        direction = setup.get('direction', '')
+                        _existing = [p for p in _active if p.get('symbol', '').upper() == symbol.upper() and p.get('direction', '').lower() == direction.lower()]
+                        if _existing:
+                            if status != 'WAITING_POSITION_CLOSE':
+                                logger.warning(f"⏸️  V10.9 POSITION GUARD: {symbol} {direction.upper()} already open at broker — pausing setup until position closes")
+                                setups[i]['status'] = 'WAITING_POSITION_CLOSE'
+                                setups[i]['block_reason'] = f'{symbol} position already open — will auto-resume when closed'
+                                updated = True
+                            else:
+                                logger.debug(f"⏸️  {symbol}: Waiting for existing position to close...")
+                            continue
+                        else:
+                            # Position closed — resume monitoring
+                            if status == 'WAITING_POSITION_CLOSE':
+                                logger.success(f"▶️  V10.9 POSITION GUARD: {symbol} position closed — resuming setup monitoring!")
+                                setups[i]['status'] = 'MONITORING'
+                                setups[i].pop('block_reason', None)
+                                # Reset execution cache so it can re-execute
+                                old_exec_id = f"{symbol}_execute_{setup.get('entry_price', 0):.5f}"
+                                self.signal_cache.cache.pop(old_exec_id, None)
+                                updated = True
+                                status = 'MONITORING'
+                except Exception:
+                    pass
                 
                 # 🔥 IN-ZONE INDICATOR
                 # V3.2: choch_1h_detected (Fibo 50% logic)
@@ -1457,7 +1529,7 @@ class SetupExecutorMonitor:
                         # READY setups loaded from disk may have a stale h4_structure_locked=True
                         # from a prior scan session. Re-check body closure now to ensure the
                         # 4H CHoCH that originally triggered READY is still recent and valid.
-                        # (max 12 candles = 48h staleness guard)
+                        # V10.8: Extins de la 12 → 48 bare (era prea strict — bloca CHoCH de 35 bare = 5 zile, valide structural)
                         try:
                             df_4h_recheck = self._get_cached_data(symbol, "H4", 225)
                             if df_4h_recheck is not None and not df_4h_recheck.empty:
@@ -1465,7 +1537,7 @@ class SetupExecutorMonitor:
                                 h4_chochs_rc, _ = self.smc_detector.detect_choch_and_bos(df_4h_recheck)
                                 h4_still_valid = False
                                 for h4rc in reversed(h4_chochs_rc):
-                                    if (len(df_4h_recheck) - 1 - h4rc.index) > 12:
+                                    if (len(df_4h_recheck) - 1 - h4rc.index) > 48:  # V10.8: 12→48 bare (era prea strict)
                                         continue
                                     if h4rc.direction != expected_dir_rc:
                                         continue
@@ -1637,6 +1709,17 @@ class SetupExecutorMonitor:
                                 logger.warning(f"🚫 SKIP EXECUTION: {symbol} already executed (cache hit)")
                                 continue
                             
+                            # ✅ V10.9 ANTI-DOUBLE: Also check rejection cooldown (timestamp in setup)
+                            rejection_ts = setup.get('last_rejection_ts', 0)
+                            if rejection_ts and (time.time() - rejection_ts) < 300:  # 5 min cooldown
+                                remaining = int(300 - (time.time() - rejection_ts))
+                                logger.warning(f"🔕 V10.9 COOLDOWN: {symbol} rejected recently — {remaining}s remaining")
+                                continue
+                            
+                            # ✅ V10.9 PRE-LOCK: Mark execution_id BEFORE calling _execute_entry
+                            # Prevents same-cycle double execution (race condition fix)
+                            self.signal_cache.mark_processed(execution_id)
+                            
                             # 🔥🔥🔥 AGGRESSIVE EXECUTION - INSTANT SIGNALS.JSON WRITE!
                             logger.critical(f"🔥 TRIGGER: {symbol} confirmed CHoCH + Pullback. Pushing to Executor NOW!")
                             logger.success(f"🚀 EXECUTING {symbol} Entry 1: {setup['direction'].upper()} @ {result['entry_price']:.5f}")
@@ -1653,6 +1736,12 @@ class SetupExecutorMonitor:
                                 take_profit=setup['take_profit'],
                                 position_size=self.execution_strategy.get('entry1_position_size', 0.5)
                             )
+                            
+                            if not success:
+                                # ✅ V10.9 ANTI-LOOP: Persist rejection timestamp to setups[i]
+                                setups[i]['last_rejection_ts'] = time.time()
+                                updated = True
+                                continue
                             
                             if success:
                                 logger.critical(f"✅ {symbol} SIGNAL WRITTEN TO signals.json - cTrader will execute in <10s!")
@@ -1891,6 +1980,15 @@ class SetupExecutorMonitor:
             logger.info(f"   📌 D1 Bias: {strategy_type} | 4H Sync: CONFIRMED | Entry: E{entry_number} | Mode: {mode_tag}")
             # ━━━ END V10.4 TAGGING ━━━
             
+            # ━━━ V11.2: SPREAD GUARD (Block Execution if spread > max) ━━━
+            spread_block = self._check_spread_guard(symbol)
+            if spread_block:
+                logger.warning(f"   🛡️ V11.2 SPREAD GUARD: {spread_block}")
+                logger.warning(f"   ⏸️ Execuție BLOCATĂ pentru {symbol} — retry la următorul ciclu")
+                setup['last_rejection_ts'] = time.time()
+                return False
+            # ━━━ END SPREAD GUARD ━━━
+
             # ━━━ V10.4: NEWS GUARD (15-min Warning, No Execution Block) ━━━
             news_warning = self._check_news_guard(symbol)
             if news_warning:
@@ -1925,6 +2023,10 @@ class SetupExecutorMonitor:
                     logger.warning(f"⚠️ {symbol} Entry {entry_number} rejected by Risk Manager — continuing monitoring")
                 
                 logger.error(f"❌ Failed to write signal for Entry {entry_number}")
+                # ✅ V10.9 ANTI-LOOP FIX: Store rejection timestamp so we don't spam-retry every 5s
+                # Caller (_process_monitoring_setups) will use setup['last_rejection_ts'] to enforce cooldown
+                setup['last_rejection_ts'] = time.time()
+                logger.warning(f"   🔕 V10.9: {symbol} rejection timestamped — 5 min cooldown active")
                 return False
             
             if success:

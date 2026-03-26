@@ -150,10 +150,10 @@
     "min_rr": 3.0,
     "max_setups_per_scan": 5,
     "lookback_candles": {
-      "daily": 100,
+      "daily": 200,
       "h4": 200,
       "h1": 300,
-      "note": "V3.5 SWING TRADING: 100D=5mo extremes, 200x4H=33 days structure, 300x1H=12.5 days precision (RR 1:5+ setups)"
+      "note": "V11.2 EXTREME VISION: 200D=10mo extremes (USDCHF fix), 200x4H=33 days structure, 300x1H=12.5 days precision (RR 1:5+ setups)"
     },
     "choch_validation": {
       "h1": {

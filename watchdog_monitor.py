@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-🛡️ WATCHDOG MONITOR V4.0 - 6 MONITORS (COMPLETE PROTECTION)
+🛡️ WATCHDOG MONITOR V4.1 - 7 MONITORS (COMPLETE PROTECTION)
 ────────────────
 🔱 AUTHORED BY ФорексГод 🔱
 🏛️ Глитч Ин Матрикс 🏛️
@@ -9,9 +9,10 @@ System Guardian - Monitors and auto-restarts ALL critical processes:
 - setup_executor_monitor.py (Setup Scanner & Executor)
 - position_monitor.py (Position & Profit Tracker)
 - telegram_command_center.py (Command Center V3.7)
-- realtime_monitor.py (4H Candle Analysis)
 - ctrader_sync_daemon.py (Broker Sync with --loop)
-- news_calendar_monitor.py (Economic Calendar - V2.0 Always-On) 🆕
+- news_calendar_monitor.py (Economic Calendar - V2.0 Always-On)
+- news_reminder_engine.py (News Alert Engine)
+[V4.1] REMOVED: realtime_monitor.py (ZOMBIE — superseded, no live callers)
 
 🆕 V4.0 Features:
 ✅ 6 Monitors Protected (was 5 in V3.9)
@@ -103,14 +104,7 @@ class WatchdogMonitor:
                 'state': 'unknown',  # 🔥 NEW: Track state
                 'last_notification': 0  # 🔥 NEW: Rate limiter
             },
-            'realtime_monitor.py': {
-                'name': 'Realtime Monitor',
-                'command': [self.python_path, 'realtime_monitor.py'],
-                'restart_count': 0,
-                'last_restart': None,
-                'state': 'unknown',  # 🔥 NEW: Track state
-                'last_notification': 0  # 🔥 NEW: Rate limiter
-            },
+            # [V4.1] realtime_monitor.py REMOVED — zombie process, superseded
             'ctrader_sync_daemon.py': {
                 'name': 'cTrader Sync',
                 'command': [self.python_path, 'ctrader_sync_daemon.py', '--loop'],
@@ -494,6 +488,24 @@ class WatchdogMonitor:
 
                 # V10.6: Midnight auto-resume at 00:05 UTC
                 self._check_midnight_auto_resume()
+
+                # ✅ V10.9 NEWS HEARTBEAT: Log news monitor status every 5 checks
+                if iteration % 5 == 0:
+                    news_running = self.is_process_running('news_calendar_monitor.py')
+                    news_status = "✅ ONLINE" if news_running else "❌ OFFLINE"
+                    news_log = self.base_path / "logs" / "news_calendar.log"
+                    last_activity = "N/A"
+                    if news_log.exists():
+                        import os as _os
+                        age_sec = time.time() - _os.path.getmtime(str(news_log))
+                        age_h = age_sec / 3600
+                        last_activity = f"{age_h:.1f}h ago"
+                    logger.info(
+                        f"📰 NEWS HEARTBEAT | status={news_status} | "
+                        f"last_log={last_activity} | "
+                        f"restarts={self.processes['news_calendar_monitor.py']['restart_count']} | "
+                        f"check=#{iteration}"
+                    )
 
                 # Log status every 10 checks
                 if iteration % 10 == 0:

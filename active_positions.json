@@ -1,57 +1,24 @@
 [
   {
-    "symbol": "USDJPY",
-    "direction": "sell",
-    "entry_price": 157.613,
-    "volume": 200000,
-    "opened_at": "2026-03-06T15:02:49.978Z",
-    "stop_loss": null,
-    "take_profit": null,
-    "net_profit": -2567.9,
-    "pips": -187.3
-  },
-  {
-    "symbol": "USDCAD",
-    "direction": "sell",
-    "entry_price": 1.37364,
-    "volume": 103000,
-    "opened_at": "2026-03-13T17:12:06.753Z",
-    "stop_loss": 1.37683,
-    "take_profit": 1.33373,
-    "net_profit": 180.52,
-    "pips": 27.6
-  },
-  {
-    "symbol": "BTCUSD",
-    "direction": "buy",
-    "entry_price": 73243.21,
-    "volume": 0.5,
-    "opened_at": "2026-03-16T16:00:52.858Z",
-    "stop_loss": 66069,
-    "take_profit": 80439.35,
-    "net_profit": -662.39,
-    "pips": -124307
-  },
-  {
-    "symbol": "EURJPY",
-    "direction": "sell",
-    "entry_price": 183.205,
-    "volume": 50000,
-    "opened_at": "2026-03-17T09:51:47.206Z",
-    "stop_loss": 183.873,
-    "take_profit": 178.158,
-    "net_profit": -118.5,
-    "pips": -35.8
-  },
-  {
     "symbol": "GBPJPY",
     "direction": "buy",
-    "entry_price": 212.016,
-    "volume": 85000,
-    "opened_at": "2026-03-17T10:44:37.236Z",
-    "stop_loss": 211.621,
-    "take_profit": 220.939,
-    "net_profit": 121.56,
-    "pips": 22.7
+    "entry_price": 212.733,
+    "volume": 15000,
+    "opened_at": "2026-03-24T18:11:13.595Z",
+    "stop_loss": 211.267,
+    "take_profit": 215.17,
+    "net_profit": 13.45,
+    "pips": 10
+  },
+  {
+    "symbol": "USDCHF",
+    "direction": "sell",
+    "entry_price": 0.78793,
+    "volume": 28000,
+    "opened_at": "2026-03-24T21:16:25.756Z",
+    "stop_loss": 0.79609,
+    "take_profit": 0.75,
+    "net_profit": -198.19,
+    "pips": -52.3
   }
 ]

@@ -363,6 +363,19 @@ def sync_loop(interval=SYNC_INTERVAL):
 
 def main():
     """Main entry point"""
+    import fcntl as _fcntl
+    from pathlib import Path as _Path
+
+    # 🔒 SINGLE INSTANCE LOCK — prevent 2 sync daemons writing trade_history.json simultaneously
+    _lock_path = _Path(__file__).parent / "process_ctrader_sync_daemon.lock"
+    _lock_fd = open(_lock_path, 'w')
+    try:
+        _fcntl.flock(_lock_fd, _fcntl.LOCK_EX | _fcntl.LOCK_NB)
+        _lock_fd.write(str(__import__('os').getpid()))
+        _lock_fd.flush()
+    except BlockingIOError:
+        print(f"🚫 ctrader_sync_daemon already running — exiting duplicate instance")
+        sys.exit(1)
     parser = argparse.ArgumentParser(
         description="cTrader Sync Daemon - Automatic cTrader → trade_history.json + SQLite synchronization"
     )
