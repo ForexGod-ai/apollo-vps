@@ -262,6 +262,11 @@ class UnifiedRiskManager:
 
         Positions opened on PREVIOUS days (e.g. USDJPY from March 6)
         are NOT counted — their floating P&L should not block new trades.
+
+        ✅ V11.8 FIX: Use reset_timestamp from daily_state.json as cutoff.
+        Manual resets (e.g. after intentional position closure) set a new
+        reset_timestamp — trades closed BEFORE that timestamp are excluded,
+        preventing ghost losses from triggering daily loss limit.
         """
         try:
             conn = sqlite3.connect(self.db_path)
@@ -269,12 +274,33 @@ class UnifiedRiskManager:
 
             today = datetime.now().date().isoformat()
 
-            # 1. Closed trades today (realized)
-            cursor.execute("""
-                SELECT SUM(profit)
-                FROM closed_trades
-                WHERE DATE(close_time) = ?
-            """, (today,))
+            # V11.8: Read reset_timestamp from daily_state.json (cutoff for closed trades)
+            reset_cutoff = None
+            try:
+                if self.daily_state_file.exists():
+                    with open(self.daily_state_file, 'r') as _f:
+                        _state = json.load(_f)
+                    _ts = _state.get('reset_timestamp')
+                    if _ts:
+                        reset_cutoff = _ts  # ISO string e.g. "2026-03-26T15:07:09"
+            except Exception:
+                pass
+
+            # 1. Closed trades today (realized) — only AFTER reset_timestamp
+            if reset_cutoff:
+                cursor.execute("""
+                    SELECT SUM(profit)
+                    FROM closed_trades
+                    WHERE DATE(close_time) = ?
+                      AND close_time >= ?
+                """, (today, reset_cutoff))
+                print(f"📊 Daily PnL cutoff: {reset_cutoff} (V11.8 reset-aware)")
+            else:
+                cursor.execute("""
+                    SELECT SUM(profit)
+                    FROM closed_trades
+                    WHERE DATE(close_time) = ?
+                """, (today,))
             closed_pnl = cursor.fetchone()[0] or 0.0
 
             conn.close()
