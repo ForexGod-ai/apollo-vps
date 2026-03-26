@@ -1,16 +1,19 @@
 #!/usr/bin/env python3
 """
-🎮 TELEGRAM COMMAND CENTER V10.4
+🎮 TELEGRAM COMMAND CENTER V11.5
 ────────────────
 🔱 AUTHORED BY ФорексГод 🔱
 🏛️ Глитч Ин Матрикс 🏛️
 
 Interactive Command Interface:
-- /stats - Daily trading statistics
+- /stats    - Daily trading statistics
 - /monitoring - Active setup list
-- /status - System monitors health check
-- /btcusd - Quick BTCUSD analysis
+- /status  - System monitors health check
+- /btcusd  - Quick BTCUSD analysis
+- /news    - Next 3 High Impact events this week
+- /rates   - Central Bank rates + carry pairs
 ────────────────
+[V11.5] PID Lock singleton, /news, /rates
 """
 
 import os
@@ -545,12 +548,12 @@ class TelegramCommandCenter:
             message += "<b>📊 MONITORS:</b>\n"
             
             processes = {
-                'realtime_monitor.py': '🔄 Realtime',
                 'setup_executor_monitor.py': '🎯 Executor',
                 'position_monitor.py': '📊 Positions',
                 'telegram_command_center.py': '🎮 Telegram',
                 'watchdog_monitor.py': '🛡️ Watchdog',
                 'ctrader_sync_daemon.py': '📡 Sync',
+                'news_calendar_monitor.py': '📅 News Calendar',
                 'news_reminder_engine.py': '🔔 News Alerts',
             }
             
@@ -1107,6 +1110,141 @@ class TelegramCommandCenter:
             logger.error(f"❌ Resume error: {e}")
             return f"❌ <b>RESUME ERROR:</b> {str(e)}"
 
+    def handle_news_command(self) -> str:
+        """/news — Next 3 High Impact events remaining this week (V11.5)"""
+        try:
+            script_dir = Path(__file__).parent.resolve()
+            cal_file = script_dir / 'economic_calendar.json'
+            if not cal_file.exists():
+                return "❌ <b>economic_calendar.json not found</b>"
+
+            with open(cal_file, 'r') as f:
+                data = json.load(f)
+
+            # Colectăm toate evenimentele din toate cheile
+            all_events = []
+            if isinstance(data, list):
+                all_events = data
+            else:
+                for v in data.values():
+                    if isinstance(v, list):
+                        all_events.extend(v)
+
+            # Filtrăm: High Impact + viitoare săptămâna curentă
+            now = datetime.now(timezone.utc)
+            week_end = now + timedelta(days=(6 - now.weekday()))  # duminică
+            week_end = week_end.replace(hour=23, minute=59, second=59)
+
+            upcoming = []
+            for e in all_events:
+                if str(e.get('impact', '')).lower() not in ('high', 'red'):
+                    continue
+                try:
+                    dt_str = f"{e['date']} {e.get('time', '00:00')}"
+                    dt = datetime.strptime(dt_str, '%Y-%m-%d %H:%M').replace(tzinfo=timezone.utc)
+                    if now <= dt <= week_end:
+                        upcoming.append((dt, e))
+                except Exception:
+                    continue
+
+            upcoming.sort(key=lambda x: x[0])
+            top3 = upcoming[:3]
+
+            if not top3:
+                return (
+                    f"<b>🗓️ HIGH IMPACT NEWS — This Week</b>\n"
+                    f"{UNIVERSAL_SEPARATOR}\n\n"
+                    f"✅ No High Impact events remaining this week."
+                )
+
+            FLAG_MAP = {
+                'USD': '🇺🇸', 'EUR': '🇪🇺', 'GBP': '🇬🇧', 'JPY': '🇯🇵',
+                'AUD': '🇦🇺', 'NZD': '🇳🇿', 'CAD': '🇨🇦', 'CHF': '🇨🇭',
+            }
+
+            msg = (
+                f"<b>🚨 HIGH IMPACT NEWS — Next Events</b>\n"
+                f"{UNIVERSAL_SEPARATOR}\n\n"
+            )
+            for dt, e in top3:
+                flag = FLAG_MAP.get(e.get('currency', ''), '🌐')
+                currency = e.get('currency', 'N/A')
+                event_name = e.get('event', 'N/A')
+                forecast = e.get('forecast', 'N/A')
+                previous = e.get('previous', 'N/A')
+                time_str = dt.strftime('%a %d %b, %H:%M UTC')
+                msg += (
+                    f"🚨 <b>{flag} {currency} — {event_name}</b>\n"
+                    f"   ⏰ {time_str}\n"
+                    f"   📊 Forecast: <b>{forecast}</b> | Prev: {previous}\n\n"
+                )
+
+            return msg
+
+        except Exception as e:
+            logger.error(f"❌ /news error: {e}")
+            return f"❌ <b>NEWS ERROR:</b> {str(e)}"
+
+    def handle_rates_command(self) -> str:
+        """/rates — Central Bank rates + top carry pairs (V11.5)"""
+        try:
+            # Rates hardcoded 2026
+            RATES = {
+                'NZD': ('🇳🇿', 5.25),
+                'GBP': ('🇬🇧', 5.00),
+                'USD': ('🇺🇸', 4.75),
+                'AUD': ('🇦🇺', 4.35),
+                'CAD': ('🇨🇦', 3.75),
+                'EUR': ('🇪🇺', 3.50),
+                'CHF': ('🇨🇭', 1.50),
+                'JPY': ('🇯🇵', 0.25),
+            }
+
+            # Status: >= 3.5% = Strong, altfel Weak
+            def status(rate):
+                return '🟢 Strong' if rate >= 3.50 else '🔴 Weak'
+
+            msg = (
+                f"<b>🏦 CENTRAL BANK RATES — 2026</b>\n"
+                f"{UNIVERSAL_SEPARATOR}\n\n"
+            )
+            sorted_rates = sorted(RATES.items(), key=lambda x: x[1][1], reverse=True)
+            for ccy, (flag, rate) in sorted_rates:
+                filled = round(rate / 1.0)
+                bar = '▰' * filled + '▱' * (6 - filled)
+                msg += f"{flag} <b>{ccy}</b>  {rate:.2f}%  {bar}  {status(rate)}\n"
+
+            # Top 3 carry pairs
+            pairs = []
+            currencies = list(RATES.keys())
+            for i in range(len(currencies)):
+                for j in range(len(currencies)):
+                    if i == j:
+                        continue
+                    c1, c2 = currencies[i], currencies[j]
+                    diff = RATES[c1][1] - RATES[c2][1]
+                    if diff > 0:
+                        pairs.append((diff, c1, c2, RATES[c1][0], RATES[c2][0]))
+
+            pairs.sort(reverse=True)
+            top3 = pairs[:3]
+
+            msg += f"\n{UNIVERSAL_SEPARATOR}\n"
+            msg += f"<b>🎯 TOP CARRY PAIRS (Buy High / Sell Low)</b>\n\n"
+            medals = ['🥇', '🥈', '🥉']
+            for idx, (diff, c1, c2, f1, f2) in enumerate(top3):
+                msg += (
+                    f"{medals[idx]} <b>{f1}{c1}/{f2}{c2}</b>\n"
+                    f"   📈 Diff: <b>+{diff:.2f}%</b>  "
+                    f"({RATES[c1][1]:.2f}% vs {RATES[c2][1]:.2f}%)\n\n"
+                )
+
+            return msg
+
+        except Exception as e:
+            logger.error(f"❌ /rates error: {e}")
+            return f"❌ <b>RATES ERROR:</b> {str(e)}"
+
     def process_command(self, message_obj):
         """Process incoming command"""
         try:
@@ -1142,16 +1280,24 @@ class TelegramCommandCenter:
                 response = self.handle_killall_command()
             elif command == '/resume':
                 response = self.handle_resume_command()
+            elif command == '/news':
+                response = self.handle_news_command()
+            elif command == '/rates':
+                response = self.handle_rates_command()
             elif command == '/help':
                 response = (
-                    f"<b>🎮 COMMAND CENTER V10.6</b>\n"
+                    f"<b>🎮 COMMAND CENTER V11.5</b>\n"
                     f"{UNIVERSAL_SEPARATOR}\n\n"
-                    f"<b>Available Commands:</b>\n\n"
+                    f"<b>📊 Trading:</b>\n"
                     f"<code>/stats</code> — Daily trading statistics\n"
-                    f"<code>/monitoring</code> — Active setup list\n"
-                    f"<code>/status</code> — System health check\n"
                     f"<code>/active</code> — Live open positions\n"
-                    f"<code>/btcusd</code> — Quick BTCUSD analysis\n"
+                    f"<code>/monitoring</code> — Active setup watchlist\n"
+                    f"<code>/btcusd</code> — Quick BTCUSD analysis\n\n"
+                    f"<b>📰 Market Intel:</b>\n"
+                    f"<code>/news</code> — 🚨 Next 3 High Impact events this week\n"
+                    f"<code>/rates</code> — 🏦 Central bank rates + carry pairs\n\n"
+                    f"<b>⚙️ System:</b>\n"
+                    f"<code>/status</code> — System health check\n"
                     f"<code>/killall</code> — 🚨 Close ALL positions + 24h lockdown\n"
                     f"<code>/resume</code> — 🔱 Wake from deep sleep + restart trading\n"
                     f"<code>/help</code> — Show this message"

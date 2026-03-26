@@ -205,19 +205,22 @@ class TelegramNotifier:
         return True
     
     def format_setup_alert(self, setup) -> str:
-        """Format trade setup for Telegram message - BLOOMBERG COLUMN v35.0 (Vertical Stack)"""
+        """Format trade setup for Telegram message - COMPACT CARD v11.7"""
+        SEP = "───────────"
+
         # Direction from Daily CHoCH
-        direction = "🟢 LONG" if setup.daily_choch.direction == 'bullish' else "🔴 SHORT"
-        emoji = "📈" if setup.daily_choch.direction == 'bullish' else "📉"
-        
+        raw_dir = setup.daily_choch.direction  # 'bullish' or 'bearish'
+        direction = "🟢 LONG" if raw_dir == 'bullish' else "🔴 SHORT"
+        emoji = "📈" if raw_dir == 'bullish' else "📉"
+
         # Load pair stats
         pair_stats = self._load_pair_statistics(setup.symbol)
-        
+
         # Status
         status_emoji = "✅" if setup.status == 'READY' else "👀"
         status = "READY" if setup.status == 'READY' else "MONITORING"
-        
-        # V8.2: Strategy type with clear labels
+
+        # Strategy type
         strategy_type = getattr(setup, 'strategy_type', 'reversal').upper()
         if strategy_type == 'REVERSAL':
             strategy_emoji = "🔄"
@@ -225,73 +228,59 @@ class TelegramNotifier:
         else:
             strategy_emoji = "➡️"
             strategy_label = "CONTINUITY (BOS)"
-        
-        # --- HEADER SECTION ---
+
+        # --- HEADER ---
         header = f"{strategy_emoji} <b>{setup.symbol}</b> {direction} {emoji}\n"
         header += f"{status_emoji} <b>{status}</b>\n"
         header += f"🎯 <b>Strategy: {strategy_label}</b>"
-        
-        # --- AI FUSION: Compact vertical layout ---
+
+        # --- SWAP ROW (V11.7) ---
+        swap_line = ""
+        swap_val = getattr(setup, 'swap_long', None) if raw_dir == 'bullish' \
+                   else getattr(setup, 'swap_short', None)
+        swap_triple = getattr(setup, 'swap_triple_day', 'Wed')
+        if swap_val is not None:
+            swap_status = "✅ CREDIT" if swap_val >= 0 else "⚠️ DEBIT"
+            swap_line = f"\n💱 SWAP: {swap_status} | {swap_val:+.2f} pips/day (3x {swap_triple})"
+
+        # --- AI FUSION: Single compact line ---
         ai_fusion = ""
         if hasattr(setup, 'ml_score') and setup.ml_score is not None and \
            hasattr(setup, 'ai_probability_score') and setup.ai_probability_score is not None:
-            
-            # Fuse scores: ML 60%, AI Prob 40%
+
             ml_score = setup.ml_score
             ai_prob = setup.ai_probability_score * 10
             fused_score = int((ml_score * 0.6) + (ai_prob * 0.4))
-            
-            # Confidence level
             confidence = "HIGH" if fused_score >= 75 else "MED" if fused_score >= 60 else "LOW"
-            
-            # Visual bar
-            bar = "🟩" * int(fused_score / 10) + "⬜" * (10 - int(fused_score / 10))
-            
-            # Recommendation
+
             rec = getattr(setup, 'ml_recommendation', 'REVIEW')
             rec_badge = "EXECUTE" if rec == 'TAKE' else "REVIEW" if rec == 'REVIEW' else "SKIP"
-            
-            ai_fusion = f"\n\n──────────────────\n🧠 <b>AI: {fused_score}% ({confidence})</b>\n[{bar}]\n🤖 {rec_badge}"
-        
-        # --- VERTICAL BADGES: The Stack Look ---
-        factors_badge = ""
-        if pair_stats or hasattr(setup, 'ai_probability_factors'):
-            # Quality badge
-            if pair_stats:
-                wr = pair_stats.get('win_rate', 0)
-                trades = pair_stats.get('total_trades', 0)
-                quality = "Exc" if wr >= 60 else "Good" if wr >= 45 else "Avg"
-                factors_badge += f"\n✨ Quality: {quality}"
-            
-            # Timing badge
-            if hasattr(setup, 'ai_probability_factors'):
-                factors = setup.ai_probability_factors
-                timing = factors.get('timing', '')
-                if 'London' in timing or 'NY' in timing:
-                    factors_badge += f"\n🕒 {timing.split()[0]} ✅"
-                else:
-                    factors_badge += f"\n🕒 {timing}"
-            
-            # Context badge
-            if pair_stats:
-                trades = pair_stats.get('total_trades', 0)
-                factors_badge += f"\n📊 {trades} Trades"
-        
-        # --- DAILY SECTION (Compact) ---
+
+            ai_fusion = f"\n{SEP}\n🧠 <b>AI: {fused_score}% ({confidence})</b> | {rec_badge}"
+
+        # --- QUALITY BADGE (compact inline) ---
+        quality_line = ""
+        if pair_stats:
+            wr = pair_stats.get('win_rate', 0)
+            trades = pair_stats.get('total_trades', 0)
+            quality = "Exc" if wr >= 60 else "Good" if wr >= 45 else "Avg"
+            quality_line = f"\n✨ {quality} | 📊 {trades} trades"
+
+        # --- DAILY SECTION (compact) ---
         h1_choch = getattr(setup, 'h1_choch', None)
         choch_detected = getattr(setup, 'choch_1h_detected', False)
-        
+
         if h1_choch or choch_detected:
             price = h1_choch.break_price if h1_choch else getattr(setup, 'choch_1h_price', 0)
             h1_line = f"⚡ 1H: <code>{price:.5f}</code>"
         else:
             h1_line = "⏳ 1H: Waiting"
-        
+
         if setup.h4_choch:
             h4_line = f"🔄 4H: <code>{setup.h4_choch.break_price:.5f}</code>"
         else:
             h4_line = "⏳ 4H: Waiting"
-        
+
         # Liquidity (compact)
         liquidity_line = ""
         if hasattr(setup, 'liquidity_sweep') and setup.liquidity_sweep:
@@ -299,56 +288,55 @@ class TelegramNotifier:
             sweep_type = sweep['sweep_type']
             conf_boost = getattr(setup, 'confidence_boost', 0)
             liquidity_line = f"\n💧 {sweep_type} +{conf_boost}"
-        
-        daily_section = f"""\n\n──────────────────
-📊 <b>DAILY</b>
-{setup.daily_choch.direction.upper()} CHoCH
-🎯 <code>{setup.fvg.bottom:.5f}</code>
-   <code>{setup.fvg.top:.5f}</code>{liquidity_line}
 
-{h1_line}
-{h4_line}"""
-        
-        # --- PRICE BLOCK: Vertical Stack ---
+        daily_section = (
+            f"\n{SEP}\n"
+            f"📊 <b>DAILY:</b> {setup.daily_choch.direction.upper()} CHoCH\n"
+            f"🎯 FVG: <code>{setup.fvg.bottom:.5f}</code> – <code>{setup.fvg.top:.5f}</code>"
+            f"{liquidity_line}\n"
+            f"{h1_line} | {h4_line}"
+        )
+
+        # --- TRADE SECTION (compact) ---
         account_balance = float(os.getenv('ACCOUNT_BALANCE', '10000'))
         risk_percent = float(os.getenv('RISK_PER_TRADE', '0.02'))
         risk_amount = account_balance * risk_percent
-        
         pip_value = 10
-        # GUARD V11.2: dacă entry_price/stop_loss/take_profit sunt None, nu calculăm lot size
-        if setup.entry_price is None or setup.stop_loss is None or setup.take_profit is None:
-            trade_section = """\n\n──────────────────
-💰 <b>TRADE</b>
 
-⚠️ Entry/SL/TP în calcul (MONITORING)
-⏳ Așteptăm confirmare 4H CHoCH + FVG"""
+        # GUARD V11.2: dacă entry_price/stop_loss/take_profit sunt None
+        if setup.entry_price is None or setup.stop_loss is None or setup.take_profit is None:
+            trade_section = (
+                f"\n{SEP}\n"
+                f"💰 <b>TRADE</b>\n"
+                f"⚠️ Entry/SL/TP în calcul (MONITORING)\n"
+                f"⏳ Așteptăm confirmare 4H CHoCH + FVG"
+            )
         else:
             stop_distance = abs(setup.entry_price - setup.stop_loss)
             lot_size = risk_amount / (stop_distance * pip_value * 100000) if stop_distance > 0 else 0.01
-            
-            # CRITICAL FIX by ФорексГод: Enforce minimum lot size of 0.01
-            # Broker minimum = 0.01 lots (micro lot)
             if lot_size < 0.01:
                 lot_size = 0.01
-            
+
             rr_str = f"1:{setup.risk_reward:.2f}" if setup.risk_reward else "N/A"
-            trade_section = f"""\n\n──────────────────
-💰 <b>TRADE</b>
+            trade_section = (
+                f"\n{SEP}\n"
+                f"💰 <b>TRADE</b>\n"
+                f"🔹 Entry  <code>{setup.entry_price:.5f}</code>\n"
+                f"🔸 SL     <code>{setup.stop_loss:.5f}</code>\n"
+                f"🎯 TP     <code>{setup.take_profit:.5f}</code>\n"
+                f"💵 ${risk_amount:.2f} | 📦 {lot_size:.2f} lots | ⚖️ {rr_str}"
+            )
 
-🔹 Entry
-   <code>{setup.entry_price:.5f}</code>
-🔸 SL
-   <code>{setup.stop_loss:.5f}</code>
-🎯 TP
-   <code>{setup.take_profit:.5f}</code>
+        # --- ASSEMBLE: Compact Card V11.7 ---
+        message = (
+            f"{header}"
+            f"{swap_line}"
+            f"{ai_fusion}"
+            f"{quality_line}"
+            f"{daily_section}"
+            f"{trade_section}"
+        )
 
-💵 ${risk_amount:.2f}
-📦 {lot_size:.2f} lots
-⚖️ {rr_str}"""
-        
-        # --- ASSEMBLE: Bloomberg Column ---
-        message = f"{header}{ai_fusion}{factors_badge}{daily_section}{trade_section}"
-        
         return message.strip()
     
     def _load_pair_statistics(self, symbol: str) -> dict:
