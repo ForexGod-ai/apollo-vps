@@ -205,7 +205,7 @@ class TelegramNotifier:
         return True
     
     def format_setup_alert(self, setup) -> str:
-        """Format trade setup for Telegram message - COMPACT CARD v11.7"""
+        """Format trade setup for Telegram message - COMPACT CARD v11.8 (Radar & Sniper)"""
         SEP = "───────────"
 
         # Direction from Daily CHoCH
@@ -266,20 +266,22 @@ class TelegramNotifier:
             quality = "Exc" if wr >= 60 else "Good" if wr >= 45 else "Avg"
             quality_line = f"\n✨ {quality} | 📊 {trades} trades"
 
-        # --- DAILY SECTION (compact) ---
+        # --- RADAR & SNIPER STATUS (V11.8) ---
+        # 4H = 📡 Radar (structural scan) → ✅ when CHoCH confirmed
+        # 1H = 🔭 Sniper (entry watch)    → ✅ when CHoCH confirmed
         h1_choch = getattr(setup, 'h1_choch', None)
-        choch_detected = getattr(setup, 'choch_1h_detected', False)
+        choch_1h_detected = getattr(setup, 'choch_1h_detected', False)
 
-        if h1_choch or choch_detected:
-            price = h1_choch.break_price if h1_choch else getattr(setup, 'choch_1h_price', 0)
-            h1_line = f"⚡ 1H: <code>{price:.5f}</code>"
+        if h1_choch or choch_1h_detected:
+            price_1h = h1_choch.break_price if h1_choch else getattr(setup, 'choch_1h_price', 0)
+            h1_line = f"🔭✅ 1H: <code>{price_1h:.5f}</code> READY"
         else:
-            h1_line = "⏳ 1H: Waiting"
+            h1_line = "🔭 1H: Scanning..."
 
         if setup.h4_choch:
-            h4_line = f"🔄 4H: <code>{setup.h4_choch.break_price:.5f}</code>"
+            h4_line = f"📡✅ 4H: <code>{setup.h4_choch.break_price:.5f}</code>"
         else:
-            h4_line = "⏳ 4H: Waiting"
+            h4_line = "📡 4H: Waiting..."
 
         # Liquidity (compact)
         liquidity_line = ""
@@ -294,7 +296,8 @@ class TelegramNotifier:
             f"📊 <b>DAILY:</b> {setup.daily_choch.direction.upper()} CHoCH\n"
             f"🎯 FVG: <code>{setup.fvg.bottom:.5f}</code> – <code>{setup.fvg.top:.5f}</code>"
             f"{liquidity_line}\n"
-            f"{h1_line} | {h4_line}"
+            f"{h4_line}\n"
+            f"{h1_line}"
         )
 
         # --- TRADE SECTION (compact) ---
@@ -327,7 +330,7 @@ class TelegramNotifier:
                 f"💵 ${risk_amount:.2f} | 📦 {lot_size:.2f} lots | ⚖️ {rr_str}"
             )
 
-        # --- ASSEMBLE: Compact Card V11.7 ---
+        # --- ASSEMBLE: Compact Card V11.8 ---
         message = (
             f"{header}"
             f"{swap_line}"
