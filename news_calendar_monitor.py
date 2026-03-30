@@ -150,7 +150,7 @@ _FLAGS = {
 class NewsCalendarMonitor:
     """Monitors forex economic calendar and sends alerts - Always-On Daemon"""
     
-    def __init__(self, check_interval_hours: int = 24):
+    def __init__(self, check_interval_hours: int = 6):
         self.bot_token = os.getenv('TELEGRAM_BOT_TOKEN')
         self.chat_id = os.getenv('TELEGRAM_CHAT_ID')
         
@@ -231,11 +231,23 @@ class NewsCalendarMonitor:
             with open(calendar_file, 'r') as f:
                 data = json.load(f)
             
-            # Try current month first, then scan backwards up to 6 months
+            # Try current month + next month (needed when days_ahead spans month boundary)
             current_month = now.strftime("%B_%Y").lower()  # e.g., "march_2026"
             section_name = f'custom_events_{current_month}'
             
+            # Calculate next month key
+            from calendar import monthrange
+            next_month_dt = now.replace(day=1) + timedelta(days=32)
+            next_month_key = f'custom_events_{next_month_dt.strftime("%B_%Y").lower()}'
+            
             custom_events = data.get(section_name, [])
+            next_events = data.get(next_month_key, [])
+            
+            if custom_events:
+                logger.info(f"✅ Using events from '{section_name}' ({len(custom_events)} total events)")
+            if next_events:
+                logger.info(f"✅ Also loading next month '{next_month_key}' ({len(next_events)} total events)")
+                custom_events = custom_events + next_events
             
             if not custom_events:
                 # Scan available sections for the most recent one
@@ -246,8 +258,8 @@ class NewsCalendarMonitor:
                     logger.warning(f"⚠️ Section '{section_name}' not found — using fallback: '{fallback_section}'")
                 else:
                     logger.error(f"❌ No event sections found in economic_calendar.json!")
-            else:
-                logger.info(f"✅ Using events from '{section_name}' ({len(custom_events)} total events)")
+            elif not data.get(section_name):
+                logger.warning(f"⚠️ Section '{section_name}' empty — using '{next_month_key}'")
             
             # Use timezone-aware now
             now = datetime.now(self.local_tz)
@@ -259,7 +271,7 @@ class NewsCalendarMonitor:
                     event_date = datetime.strptime(e['date'], '%Y-%m-%d')
                     
                     # Add time if specified
-                    if 'time' in e:
+                    if 'time' in e and e['time'] not in ('All Day', '', None):
                         time_parts = e['time'].split(':')
                         event_date = event_date.replace(
                             hour=int(time_parts[0]),
@@ -268,7 +280,7 @@ class NewsCalendarMonitor:
                         # Assume time in economic_calendar.json is UTC, convert to local
                         event_date = self.utc_tz.localize(event_date).astimezone(self.local_tz)
                     else:
-                        event_date = event_date.replace(hour=12, minute=0)
+                        event_date = event_date.replace(hour=9, minute=0)
                         event_date = self.local_tz.localize(event_date)
                     
                     # Check if within date range
@@ -998,32 +1010,31 @@ class NewsCalendarMonitor:
                 # Run daily news check
                 self.run_daily_check()
                 logger.success(f"✅ Check #{iteration} complete!")
+            except Exception as e:
+                logger.error(f"❌ Daily check #{iteration} failed: {e}")
+                logger.debug("Stack trace:", exc_info=True)
 
+            try:
                 # 🏦 V11.0 MACRO: Send weekly macro table every Monday ≥ 09:00 RO
+                # NOTE: runs independently — even if daily_check had no events
                 if self._should_send_macro_report():
                     logger.info("🏦 Monday 09:00+ detected — sending Macro Weekly Table...")
-                    try:
-                        macro_msg = self.generate_weekly_macro_report()
-                        import requests as _req
-                        _req.post(
-                            f"{self.base_url}/sendMessage",
-                            data={
-                                'chat_id': self.chat_id,
-                                'text': macro_msg,
-                                'parse_mode': 'HTML',
-                            },
-                            timeout=10,
-                        )
-                        now_ro = datetime.now(self.local_tz) if self.local_tz else datetime.now()
-                        self._macro_last_sent_date = now_ro.strftime("%Y-%m-%d")
-                        logger.success("✅ Macro Weekly Table sent to Telegram!")
-                    except Exception as me:
-                        logger.error(f"❌ Macro report send failed: {me}")
-
-            except Exception as e:
-                logger.error(f"❌ Check #{iteration} failed: {e}")
-                logger.debug("Stack trace:", exc_info=True)
-                # Don't crash - continue daemon loop
+                    macro_msg = self.generate_weekly_macro_report()
+                    import requests as _req
+                    _req.post(
+                        f"{self.base_url}/sendMessage",
+                        data={
+                            'chat_id': self.chat_id,
+                            'text': macro_msg,
+                            'parse_mode': 'HTML',
+                        },
+                        timeout=10,
+                    )
+                    now_ro = datetime.now(self.local_tz) if self.local_tz else datetime.now()
+                    self._macro_last_sent_date = now_ro.strftime("%Y-%m-%d")
+                    logger.success("✅ Macro Weekly Table sent to Telegram!")
+            except Exception as me:
+                logger.error(f"❌ Macro report send failed: {me}")
             
             # ✅ V10.9 HEARTBEAT: Log alive status (visible in console + watchdog)
             now_ts = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -1056,8 +1067,8 @@ def main():
     parser.add_argument(
         '--interval',
         type=int,
-        default=24,
-        help='Hours between calendar checks (default: 24)'
+        default=6,
+        help='Hours between calendar checks (default: 6)'
     )
     
     args = parser.parse_args()
