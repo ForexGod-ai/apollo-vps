@@ -727,10 +727,9 @@ class NewsCalendarMonitor:
         # Footer - COMPACT STAMP
         message += "╼╼╼╼╼╼╼╼\n"
         message += "💡 Updates: 8am,2pm,8pm,2am\n"
-        message += "╼╼╼╼╼╼╼╼\n"
-        message += "✨ *Glitch in Matrix*\n"
-        message += "👑 ФорексГод\n"
-        message += "╼╼╼╼╼╼╼╼"
+        message += "─────────────────\n"
+        message += "🔱 *AUTHORED BY ФорексГод* 🔱\n"
+        message += "🏛️ *Глитч Ин Матрикс* 🏛️"
         
         return message
     
