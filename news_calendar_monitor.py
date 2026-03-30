@@ -163,6 +163,9 @@ class NewsCalendarMonitor:
 
         # 🏦 V11.0 MACRO: last sent date tracker (avoid double-send on same Monday)
         self._macro_last_sent_date: Optional[str] = None
+        # Persistent fail-safe: survives restarts — stores last sent date on disk
+        self._macro_sent_file = Path(__file__).parent / 'data' / 'macro_report_last_sent.txt'
+        self._load_macro_sent_date()  # restore from disk on startup
         # Live rates override (populated by fetch_live_cb_rates)
         self._live_rates: Dict[str, float] = {}
         
@@ -875,33 +878,35 @@ class NewsCalendarMonitor:
         now_ro = datetime.now(self.local_tz) if self.local_tz else datetime.now()
         week_str = now_ro.strftime("W%W • %d %b %Y")
 
+        SEP = "━━━━━━━━━━━━━━━━"   # 16 chars (scurtat cu 3 față de 19)
+
         msg = "🏦 <b>MACRO WEEKLY TABLE</b>\n"
         msg += f"📅 <b>{week_str}</b>\n"
-        msg += f"🕐 <i>Report ora {now_ro.strftime('%H:%M')} RO</i>\n"
-        msg += "━━━━━━━━━━━━━━━━━━━\n"
+        msg += f"🕐 <i>Transmis {now_ro.strftime('%H:%M')} EET</i>\n"
+        msg += SEP + "\n"
 
         # ── Rate change alerts (if any)
         if changes:
-            msg += "🚨 <b>RATE CHANGES DETECTED!</b>\n"
+            msg += "🚨 <b>RATE CHANGES!</b>\n"
             for ccy, old, new in changes:
                 arrow = "🔺" if new > old else "🔻"
                 flag = _FLAGS.get(ccy, "")
                 msg += f"  {arrow} {flag} <b>{ccy}</b>: {old:.2f}% → <b>{new:.2f}%</b>\n"
-            msg += "━━━━━━━━━━━━━━━━━━━\n"
+            msg += SEP + "\n"
 
         # ── Rates table
-        msg += "\n📊 <b>DOBÂNZI BĂNCI CENTRALE</b>\n"
+        msg += "📊 <b>DOBÂNZI BĂNCI CENTRALE</b>\n"
         msg += "<code>"
         msg += f"{'CCY':<5} {'RATĂ':>6}  STATUS\n"
-        msg += f"{'─'*5} {'─'*6}  {'─'*10}\n"
+        msg += f"{'─'*5} {'─'*6}  {'─'*8}\n"
         for ccy, rate in sorted_rates:
             flag = _FLAGS.get(ccy, " ")
-            status = "🟢 STRONG" if rate >= median_rate else "🔴 WEAK  "
+            status = "🟢 STRONG" if rate >= median_rate else "🔴 WEAK"
             source = "*" if ccy in self._live_rates and abs(self._live_rates.get(ccy, 0) - CENTRAL_BANK_RATES.get(ccy, 0)) >= 0.01 else " "
             msg += f"{flag}{ccy:<3} {rate:>5.2f}%  {status}{source}\n"
         msg += "</code>"
         msg += "<i>* = live update</i>\n"
-        msg += "━━━━━━━━━━━━━━━━━━━\n"
+        msg += SEP + "\n"
 
         # ── Top 3 carry pairs
         pair_spreads = []
@@ -913,40 +918,65 @@ class NewsCalendarMonitor:
 
         top3 = sorted(pair_spreads, key=lambda x: x[3], reverse=True)[:3]
 
-        msg += "\n🚀 <b>TOP 3 CARRY OPPORTUNITIES</b>\n"
+        msg += "🚀 <b>TOP 3 CARRY OPPORTUNITIES</b>\n"
         for rank, (pair, base, quote, spread, b_rate, q_rate) in enumerate(top3, 1):
             b_flag = _FLAGS.get(base, "")
             q_flag = _FLAGS.get(quote, "")
             medal = ["🥇", "🥈", "🥉"][rank - 1]
             msg += (
-                f"{medal} <b>{b_flag}{base}/{q_flag}{quote}</b>\n"
-                f"   📈 {b_rate:.2f}% - {q_rate:.2f}% = "
-                f"<code>+{spread:.2f}%</code> spread\n"
+                f"{medal} <b>{b_flag}{base}/{q_flag}{quote}</b>  "
+                f"<code>+{spread:.2f}%</code>\n"
+                f"   {b_rate:.2f}% − {q_rate:.2f}% spread\n"
             )
 
-        msg += "━━━━━━━━━━━━━━━━━━━\n"
+        msg += SEP + "\n"
 
         # ── Strongest vs weakest
         strongest_ccy, strongest_rate = sorted_rates[0]
         weakest_ccy, weakest_rate = sorted_rates[-1]
         msg += (
-            f"💪 <b>STRONGEST:</b> {_FLAGS.get(strongest_ccy,'')} {strongest_ccy} @ {strongest_rate:.2f}%\n"
-            f"😴 <b>WEAKEST:</b>   {_FLAGS.get(weakest_ccy,'')} {weakest_ccy} @ {weakest_rate:.2f}%\n"
+            f"💪 {_FLAGS.get(strongest_ccy,'')} <b>{strongest_ccy}</b> {strongest_rate:.2f}% · "
+            f"😴 {_FLAGS.get(weakest_ccy,'')} <b>{weakest_ccy}</b> {weakest_rate:.2f}%\n"
         )
-        msg += "━━━━━━━━━━━━━━━━━━━\n"
-        msg += "✨ <i>Glitch in Matrix • ФорексГод</i>"
+        msg += SEP + "\n"
+
+        # ── Semnătură oficială V11.8
+        msg += "─────────────────\n"
+        msg += "🔱 <b>AUTHORED BY ФорексГод</b> 🔱\n"
+        msg += "🏛️ <b>Глитч Ин Матрикс</b> 🏛️"
 
         return msg
 
+    def _load_macro_sent_date(self):
+        """Load last sent date from disk (fail-safe: survives process restarts)."""
+        try:
+            if self._macro_sent_file.exists():
+                stored = self._macro_sent_file.read_text().strip()
+                self._macro_last_sent_date = stored if stored else None
+                logger.debug(f"📂 Macro last sent: {stored}")
+        except Exception:
+            pass
+
+    def _save_macro_sent_date(self, date_str: str):
+        """Persist last sent date to disk so fail-safe works after restarts."""
+        try:
+            self._macro_sent_file.parent.mkdir(parents=True, exist_ok=True)
+            self._macro_sent_file.write_text(date_str)
+        except Exception as e:
+            logger.warning(f"⚠️ Could not save macro sent date: {e}")
+
     def _should_send_macro_report(self) -> bool:
         """
-        Returns True if today is Monday AND we haven't already sent the report today.
+        V11.8 STRICT SCHEDULER — Europe/Bucharest (EET/EEST)
+        Sends EVERY Monday at 09:00 EET sharp.
+        FAIL-SAFE: if missed 09:00 (restart/crash), sends immediately on next wake.
         """
         now = datetime.now(self.local_tz) if self.local_tz else datetime.now()
         is_monday = (now.weekday() == 0)          # 0 = Monday
-        is_after_9am = (now.hour >= 9)
+        is_after_9am = (now.hour >= 9)            # EET — already local tz
         today_str = now.strftime("%Y-%m-%d")
         already_sent = (self._macro_last_sent_date == today_str)
+        # Fail-safe: fire if Monday + ≥09:00 and NOT yet sent today
         return is_monday and is_after_9am and not already_sent
 
     def run_daily_check(self):
@@ -1031,7 +1061,9 @@ class NewsCalendarMonitor:
                         timeout=10,
                     )
                     now_ro = datetime.now(self.local_tz) if self.local_tz else datetime.now()
-                    self._macro_last_sent_date = now_ro.strftime("%Y-%m-%d")
+                    date_str = now_ro.strftime("%Y-%m-%d")
+                    self._macro_last_sent_date = date_str
+                    self._save_macro_sent_date(date_str)  # persist — fail-safe survives restarts
                     logger.success("✅ Macro Weekly Table sent to Telegram!")
             except Exception as me:
                 logger.error(f"❌ Macro report send failed: {me}")
