@@ -1051,9 +1051,22 @@ class SetupExecutorMonitor:
             
             fibo_tf = fibo_data.get('fibo_timeframe', '1H')
             logger.info(f"   📊 {symbol}: Fibo 50%: {fibo_data['fibo_50']:.5f}, Range: {fibo_data['swing_range']:.1f} pips (from {fibo_tf} swing)")
-            
-            # Save structure break detection and continue monitoring for pullback
-            setup['choch_1h_detected'] = True
+
+            # V11.8 FIX: Reject micro-swings — Fibo from tiny swings produces false pullbacks
+            min_swing_pips = self.pullback_config.get('min_swing_pips', 30)
+            swing_range_pips = fibo_data.get('swing_range', 0)
+            if swing_range_pips < min_swing_pips:
+                logger.warning(f"   ⚠️ {symbol}: Micro-swing REJECTED — swing_range {swing_range_pips:.1f} pips < min {min_swing_pips} pips. Waiting for real pullback to FVG daily.")
+                setup['choch_1h_detected'] = True
+                if hasattr(break_timestamp, 'isoformat'):
+                    setup['choch_1h_timestamp'] = break_timestamp.isoformat()
+                elif isinstance(break_timestamp, str) and break_timestamp.startswith('20'):
+                    setup['choch_1h_timestamp'] = break_timestamp
+                else:
+                    setup['choch_1h_timestamp'] = datetime.now().isoformat()
+                setup['fibo_data'] = fibo_data
+                setup['pullback_status'] = 'WAITING_REAL_PULLBACK'
+                return {'action': 'KEEP_MONITORING', 'reason': f'⚠️ Micro-swing {swing_range_pips:.1f}p < {min_swing_pips}p min — waiting FVG daily pullback'}
             # V4.3 FIX: Ensure timestamp is always valid ISO format
             if hasattr(break_timestamp, 'isoformat'):
                 setup['choch_1h_timestamp'] = break_timestamp.isoformat()
@@ -1063,6 +1076,7 @@ class SetupExecutorMonitor:
                 # Fallback: use current time if timestamp invalid
                 setup['choch_1h_timestamp'] = datetime.now().isoformat()
                 logger.warning(f"⚠️  {symbol}: Invalid break_timestamp type ({type(break_timestamp)}), using current time")
+            setup['choch_1h_detected'] = True
             setup['fibo_data'] = fibo_data
             
             logger.info(f"   ⏳ {symbol}: Waiting for pullback to Fibo 50% @ {fibo_data['fibo_50']:.5f}")
