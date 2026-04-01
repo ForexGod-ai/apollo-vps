@@ -902,10 +902,23 @@ class SetupExecutorMonitor:
         strategy_type = setup.get('strategy_type', 'continuation')
         
         # ✅ V10.9 CONTINUATION BYPASS: 4H lock imediat pentru setup-uri de continuitate
+        # ━━━ V11.9 GUARD: verificăm că direcția trade-ului e aliniată cu d1_bias_direction ━━━
+        # Dacă setup-ul a scăpat din smc_detector cu direcție greșită (BOS din pullback),
+        # executorul nu trebuie să-l execute — cerem confirmare 4H CHoCH ca safety net.
         if not h4_locked and strategy_type == 'continuation':
-            setup['h4_structure_locked'] = True
-            h4_locked = True
-            logger.info(f"   ✅ V10.9 CONTINUATION BYPASS: {symbol} — structura 4H confirmată prin BOS activ (no CHoCH needed)")
+            d1_bias = setup.get('d1_bias_direction', '').lower()  # 'bullish' sau 'bearish'
+            trade_dir = direction  # 'buy' sau 'sell'
+            # Mapăm bias → direcție așteptată
+            expected_dir = 'buy' if d1_bias == 'bullish' else ('sell' if d1_bias == 'bearish' else trade_dir)
+            
+            if d1_bias and trade_dir != expected_dir:
+                # Direcție trade != bias D1 → setup suspect (posibil BOS din pullback scăpat)
+                # NU facem bypass — cerem confirmare 4H CHoCH ca safety net
+                logger.warning(f"   ⚠️ V11.9 BYPASS BLOCAT: {symbol} trade={trade_dir.upper()} opus d1_bias={d1_bias.upper()} — cerem confirmare 4H CHoCH")
+            else:
+                setup['h4_structure_locked'] = True
+                h4_locked = True
+                logger.info(f"   ✅ V10.9 CONTINUATION BYPASS: {symbol} — structura 4H confirmată prin BOS activ (no CHoCH needed)")
         
         if not h4_locked:
             try:

@@ -2787,6 +2787,46 @@ class SMCDetector:
                 for i, bos in enumerate(daily_bos_list[-3:]):  # Last 3
                     print(f"   BOS [{i}] {bos.direction.upper()} @ {bos.break_price:.5f} (index {bos.index})")
         
+        # ━━━ V11.9 UNCONFIRMED CHOCH DETECTION ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # Fractal Window 10 necesită 10 bare bilaterale confirmate — CHoCH recent (±15 bare)
+        # poate să nu fie prins. Verificăm price action: dacă prețul a scăzut față de
+        # ultimul swing high cu ≥1.5% (bearish) sau urcat față de ultimul swing low (bullish),
+        # există o schimbare de caracter neconfirmată — blocăm MOMENTUM READY pentru acea direcție.
+        _swing_highs_unconf = self.detect_swing_highs(df_daily)
+        _swing_lows_unconf  = self.detect_swing_lows(df_daily)
+        current_price_unconf = df_daily['close'].iloc[-1]
+        _unconfirmed_bearish_choch = False
+        _unconfirmed_bullish_choch = False
+
+        if _swing_highs_unconf:
+            last_sh_price = _swing_highs_unconf[-1].price
+            last_sh_idx   = _swing_highs_unconf[-1].index
+            # Swing high recent (ultimele 30 bare) + preț actual a scăzut față de el
+            # Folosim WICK HIGH pentru a capta retracerile reale (body poate fi mai mic)
+            _wick_high_recent = df_daily['high'].iloc[last_sh_idx] if last_sh_idx < len(df_daily) else last_sh_price
+            _ref_high = max(last_sh_price, _wick_high_recent)
+            if (len(df_daily) - last_sh_idx) <= 30 and _ref_high > 0:
+                drop_pct = (_ref_high - current_price_unconf) / _ref_high * 100.0
+                if drop_pct >= 1.0:  # 1.0% față de swing high recent = retracere semnificativă
+                    _unconfirmed_bearish_choch = True
+                    if debug:
+                        print(f"   ⚠️ V11.9: Posibil CHoCH bearish neconfirmat — prețul a scăzut {drop_pct:.1f}% față de swing high @ {_ref_high:.5f}")
+
+        if _swing_lows_unconf:
+            last_sl_price = _swing_lows_unconf[-1].price
+            last_sl_idx   = _swing_lows_unconf[-1].index
+            # Swing low recent (ultimele 30 bare) + preț actual a urcat față de el
+            # Folosim WICK LOW pentru a capta retracerile reale
+            _wick_low_recent = df_daily['low'].iloc[last_sl_idx] if last_sl_idx < len(df_daily) else last_sl_price
+            _ref_low = min(last_sl_price, _wick_low_recent)
+            if (len(df_daily) - last_sl_idx) <= 30 and _ref_low > 0:
+                rise_pct = (current_price_unconf - _ref_low) / _ref_low * 100.0
+                if rise_pct >= 1.0:  # 1.0% față de swing low recent = retracere semnificativă
+                    _unconfirmed_bullish_choch = True
+                    if debug:
+                        print(f"   ⚠️ V11.9: Posibil CHoCH bullish neconfirmat — prețul a urcat {rise_pct:.1f}% față de swing low @ {_ref_low:.5f}")
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
         # 🆕 V7.1 LOGIC: BOS HIERARCHY - 3+ consecutive BOS = DOMINANT TREND
         # PHILOSOPHY by ФорексГод: "One CHoCH cannot overturn 3+ BOS army."
         
@@ -2798,8 +2838,15 @@ class SMCDetector:
         dominant_bos_direction = None
         
         if len(daily_bos_list) >= 3:
-            # Check last 5 BOS (or all if less than 5)
-            recent_bos = daily_bos_list[-5:]
+            # ━━━ V11.9 FIX: Excludem BOS-urile formate DUPĂ ultimul CHoCH ━━━
+            # BOS-urile post-CHoCH sunt din pullback — nu reprezintă trend dominant.
+            # Numărăm NUMAI BOS-uri ANTERIOARE ultimului CHoCH (pre-CHoCH trend).
+            # Exemplu: CHoCH bearish (idx 50) → BOS bullish (idx 55,58,61) din pullback
+            # → consecutive_bos_count rămâne 0, nu triggerăm CONTINUATION bullish.
+            choch_cutoff_idx = latest_choch.index if latest_choch else float('inf')
+            pre_choch_bos = [b for b in daily_bos_list if b.index < choch_cutoff_idx]
+            # Check last 5 pre-CHoCH BOS (or all if less than 5)
+            recent_bos = pre_choch_bos[-5:] if pre_choch_bos else []
             
             # Count consecutive same-direction BOS from end
             for bos in reversed(recent_bos):
@@ -2835,25 +2882,47 @@ class SMCDetector:
                 strategy_type = 'reversal'
                 current_trend = latest_choch.direction
             else:
-                # BOS is latest OR no CHoCH → CONTINUATION
-                if debug and latest_bos:
-                    print(f"✅ BOS IS LATEST SIGNAL: CONTINUATION {dominant_bos_direction.upper()}\n")
-                
-                latest_signal = latest_bos
-                strategy_type = 'continuation'
-                current_trend = dominant_bos_direction
+                # BOS is latest — verificăm dacă e în direcție opusă CHoCH-ului (= pullback)
+                # ━━━ V11.9 FIX: BOS opus CHoCH-ului = pullback, CHoCH rămâne bias master ━━━
+                if latest_choch and latest_bos and latest_bos.direction != latest_choch.direction:
+                    # BOS bullish după CHoCH bearish (sau invers) = mișcare corectivă, IGNORAT
+                    if debug:
+                        print(f"✅ V11.9 PULLBACK BOS IGNORED: BOS {latest_bos.direction.upper()} opus CHoCH {latest_choch.direction.upper()} — CHoCH rămâne BIAS MASTER")
+                    latest_signal = latest_choch
+                    strategy_type = 'reversal'
+                    current_trend = latest_choch.direction
+                else:
+                    # BOS în aceeași direcție cu CHoCH sau fără CHoCH → CONTINUATION validă
+                    if debug and latest_bos:
+                        print(f"✅ BOS IS LATEST SIGNAL: CONTINUATION {dominant_bos_direction.upper()}\n")
+                    latest_signal = latest_bos
+                    strategy_type = 'continuation'
+                    current_trend = dominant_bos_direction
         
         # Standard logic if no BOS dominance
         elif latest_choch and latest_bos:
             # Both exist - use the more recent one
             if latest_choch.index > latest_bos.index:
+                # CHoCH mai recent → REVERSAL
                 latest_signal = latest_choch
                 strategy_type = 'reversal'
                 current_trend = latest_choch.direction
             else:
-                latest_signal = latest_bos
-                strategy_type = 'continuation'
-                current_trend = latest_bos.direction
+                # BOS mai recent — verificăm dacă e în direcție opusă CHoCH-ului (= pullback)
+                # ━━━ V11.9 FIX: BOS opus CHoCH = pullback corectiv, CHoCH rămâne bias master ━━━
+                if latest_bos.direction != latest_choch.direction:
+                    # BOS bullish după CHoCH bearish (sau invers) = mișcare corectivă
+                    # CHoCH rămâne semnalul principal — setăm REVERSAL în direcția CHoCH
+                    if debug:
+                        print(f"✅ V11.9 PULLBACK BOS IGNORED (std): BOS {latest_bos.direction.upper()} opus CHoCH {latest_choch.direction.upper()} — CHoCH rămâne BIAS MASTER")
+                    latest_signal = latest_choch
+                    strategy_type = 'reversal'
+                    current_trend = latest_choch.direction
+                else:
+                    # BOS în aceeași direcție cu CHoCH → CONTINUATION validă
+                    latest_signal = latest_bos
+                    strategy_type = 'continuation'
+                    current_trend = latest_bos.direction
         elif latest_choch:
             latest_signal = latest_choch
             strategy_type = 'reversal'
@@ -3529,13 +3598,29 @@ class SMCDetector:
 
         # STATUS LOGIC: V2.1 vs V3.0
         # 🔥 V8.0: MOMENTUM entries always READY (breakout strategy, no pullback confirmation needed)
+        # ━━━ V11.9 GUARD: MOMENTUM READY blocat dacă macro trend e opus direcției ━━━
+        # Cazul GBPJPY: 4 BOS bullish consecutive → MOMENTUM LONG, DAR macro trend bearish
+        # (prețul a făcut CHoCH bearish vizibil pe chart dar Fractal Window 10 nu l-a prins încă)
+        # → Verificăm overall_daily_trend: dacă e opus BOS-ului dominant, trimitem la MONITORING
         if hasattr(fvg, 'is_momentum_entry') and fvg.is_momentum_entry:
-            status = 'READY'
-            if debug:
-                print(f"\n✅ STATUS: READY TO EXECUTE (MOMENTUM breakout - no wait)")
-                print(f"   ⚡ MOMENTUM ENTRY: Direct entry at last swing break")
-                print(f"   📊 Current Price: {current_price:.5f}")
-                print(f"   🎯 Entry Zone: {fvg.bottom:.5f} - {fvg.top:.5f}")
+            # Verificare extra: price action recenta nu contrazice direcția MOMENTUM
+            _momentum_dir = dominant_bos_direction if dominant_bos_direction else current_trend
+            # Dacă există un CHoCH neconfirmat opus direcției MOMENTUM → MONITORING, nu READY
+            _unconf_choch_blocks = (
+                (_momentum_dir == 'bullish' and _unconfirmed_bearish_choch) or
+                (_momentum_dir == 'bearish' and _unconfirmed_bullish_choch)
+            )
+            if _unconf_choch_blocks:
+                # Posibil pullback major neconfirmat → nu executăm breakout, așteptăm 4H
+                status = 'MONITORING'
+                print(f"⏳ [V11.9 MOMENTUM GUARD] {symbol}: MOMENTUM {_momentum_dir.upper()} blocat — CHoCH opus neconfirmat detectat prin price action (-/+1.5% vs swing). Așteptăm 4H CHoCH.")
+            else:
+                status = 'READY'
+                if debug:
+                    print(f"\n✅ STATUS: READY TO EXECUTE (MOMENTUM breakout - no wait)")
+                    print(f"   ⚡ MOMENTUM ENTRY: Direct entry at last swing break")
+                    print(f"   📊 Current Price: {current_price:.5f}")
+                    print(f"   🎯 Entry Zone: {fvg.bottom:.5f} - {fvg.top:.5f}")
         elif not require_4h_choch:
             # V2.1 MODE: Daily CHoCH + FVG + price in FVG = READY
             if price_in_fvg:
