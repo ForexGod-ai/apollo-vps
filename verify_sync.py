@@ -20,7 +20,7 @@ def verify_signal_structure():
         return True
     
     try:
-        with open(signals_file, 'r') as f:
+        with open(signals_file, 'r', encoding='utf-8') as f:
             signal = json.load(f)
         
         if not signal:
@@ -96,7 +96,7 @@ def check_executor_availability():
         print(f"✅ {executor_file.name} found")
         
         # Check for V4.0 field definitions
-        with open(executor_file, 'r') as f:
+        with open(executor_file, 'r', encoding='utf-8') as f:
             content = f.read()
         
         if 'LiquiditySweep' in content:
@@ -123,7 +123,7 @@ def check_monitoring_setups():
         return True
     
     try:
-        with open(monitoring_file, 'r') as f:
+        with open(monitoring_file, 'r', encoding='utf-8') as f:
             data = json.load(f)
         
         setups = data.get('setups', [])

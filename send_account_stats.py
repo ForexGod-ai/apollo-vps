@@ -14,7 +14,7 @@ token = os.getenv('TELEGRAM_BOT_TOKEN')
 chat_id = os.getenv('TELEGRAM_CHAT_ID')
 
 # Citește trade history
-with open('trade_history.json', 'r') as f:
+with open('trade_history.json', 'r', encoding='utf-8') as f:
     trades = json.load(f)
 
 # Calculează stats

@@ -75,7 +75,7 @@ def load_monitoring_setups() -> Dict:
         return {"setups": []}
     
     try:
-        with open(monitoring_file, 'r') as f:
+        with open(monitoring_file, 'r', encoding='utf-8') as f:
             data = json.load(f)
             return data
     except Exception as e:

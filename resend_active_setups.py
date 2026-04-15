@@ -18,7 +18,7 @@ if not setups_file.exists():
     print("❌ No monitoring_setups.json found")
     exit(1)
 
-with open(setups_file, 'r') as f:
+with open(setups_file, 'r', encoding='utf-8') as f:
     data = json.load(f)
     active_setups = data.get('setups', []) if isinstance(data, dict) else data
 

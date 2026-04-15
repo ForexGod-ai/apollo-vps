@@ -43,7 +43,7 @@ class RejectedTradeRecovery:
             r'(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}).*?Max positions reached.*?\((\d+)/(\d+)\)',
         ]
         
-        with open(self.log_file, 'r') as f:
+        with open(self.log_file, 'r', encoding='utf-8') as f:
             for line in f:
                 # Check if line is from target date
                 if self.target_date not in line:
@@ -108,7 +108,7 @@ class RejectedTradeRecovery:
         cached_symbols = set()
         if self.cache_file.exists():
             try:
-                with open(self.cache_file, 'r') as f:
+                with open(self.cache_file, 'r', encoding='utf-8') as f:
                     cache_data = json.load(f)
                 
                 if isinstance(cache_data, dict) and 'setups' in cache_data:
@@ -125,7 +125,7 @@ class RejectedTradeRecovery:
         processed_signals = set()
         if self.processed_signals_file.exists():
             try:
-                with open(self.processed_signals_file, 'r') as f:
+                with open(self.processed_signals_file, 'r', encoding='utf-8') as f:
                     processed_signals = set(line.strip() for line in f if line.strip())
             except Exception as e:
                 print(f"⚠️  Error reading processed signals: {e}")
@@ -212,7 +212,7 @@ class RejectedTradeRecovery:
             return
         
         try:
-            with open(self.cache_file, 'r') as f:
+            with open(self.cache_file, 'r', encoding='utf-8') as f:
                 cache_data = json.load(f)
             
             symbols_to_remove = {t['symbol'] for t in trades}
@@ -235,7 +235,7 @@ class RejectedTradeRecovery:
                 print("⚠️  Unknown cache format")
                 return
             
-            with open(self.cache_file, 'w') as f:
+            with open(self.cache_file, 'w', encoding='utf-8') as f:
                 json.dump(cache_data, f, indent=2)
             
             print(f"\n✅ Removed {removed} setups from monitoring cache")
@@ -250,7 +250,7 @@ class RejectedTradeRecovery:
             return
         
         try:
-            with open(self.processed_signals_file, 'r') as f:
+            with open(self.processed_signals_file, 'r', encoding='utf-8') as f:
                 signals = [line.strip() for line in f if line.strip()]
             
             symbols_to_remove = {t['symbol'] for t in trades}
@@ -264,7 +264,7 @@ class RejectedTradeRecovery:
             
             removed = original_count - len(filtered_signals)
             
-            with open(self.processed_signals_file, 'w') as f:
+            with open(self.processed_signals_file, 'w', encoding='utf-8') as f:
                 f.write('\n'.join(filtered_signals))
                 if filtered_signals:
                     f.write('\n')

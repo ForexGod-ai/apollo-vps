@@ -28,7 +28,7 @@ def load_monitoring_setups() -> tuple[List[Dict], Dict]:
         (setups_list, metadata_dict)
     """
     try:
-        with open('monitoring_setups.json', 'r') as f:
+        with open('monitoring_setups.json', 'r', encoding='utf-8') as f:
             data = json.load(f)
         
         if isinstance(data, dict):
@@ -142,7 +142,7 @@ def cleanup_setups(dry_run: bool = True) -> tuple[int, int, List[Dict]]:
         metadata['last_cleanup'] = datetime.now().isoformat()
         metadata['setups'] = valid_setups
         
-        with open('monitoring_setups.json', 'w') as f:
+        with open('monitoring_setups.json', 'w', encoding='utf-8') as f:
             json.dump(metadata, f, indent=2)
         
         print(f"✅ Cleaned monitoring_setups.json")

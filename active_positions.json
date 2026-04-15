@@ -1,24 +1,13 @@
 [
   {
-    "symbol": "GBPJPY",
-    "direction": "buy",
-    "entry_price": 212.733,
-    "volume": 15000,
-    "opened_at": "2026-03-24T18:11:13.595Z",
-    "stop_loss": 211.267,
-    "take_profit": 215.17,
-    "net_profit": 13.45,
-    "pips": 10
-  },
-  {
     "symbol": "USDCHF",
     "direction": "sell",
-    "entry_price": 0.78793,
-    "volume": 28000,
-    "opened_at": "2026-03-24T21:16:25.756Z",
-    "stop_loss": 0.79609,
-    "take_profit": 0.75,
-    "net_profit": -198.19,
-    "pips": -52.3
+    "entry_price": 0.78008,
+    "volume": 19000,
+    "opened_at": "2026-04-14T12:19:18.638Z",
+    "stop_loss": 0.79063,
+    "take_profit": 0.77541,
+    "net_profit": -59.35,
+    "pips": -22.9
   }
 ]

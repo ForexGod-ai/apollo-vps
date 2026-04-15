@@ -22,7 +22,7 @@ def scan_all_pairs():
         return
     
     # Load pairs
-    with open('pairs_config.json', 'r') as f:
+    with open('pairs_config.json', 'r', encoding='utf-8') as f:
         config = json.load(f)
     
     pairs = config['pairs']

@@ -59,7 +59,7 @@ def acquire_pid_lock(lock_file: Path) -> bool:
     try:
         if lock_file.exists():
             # Read existing PID
-            with open(lock_file, 'r') as f:
+            with open(lock_file, 'r', encoding='utf-8') as f:
                 old_pid = int(f.read().strip())
             
             # Check if process is still running
@@ -79,7 +79,7 @@ def acquire_pid_lock(lock_file: Path) -> bool:
             lock_file.unlink()
         
         # Acquire lock
-        with open(lock_file, 'w') as f:
+        with open(lock_file, 'w', encoding='utf-8') as f:
             f.write(str(os.getpid()))
         
         logger.success(f"🔒 PID lock acquired: {lock_file} (PID {os.getpid()})")
@@ -215,7 +215,7 @@ class SetupExecutorMonitor:
         """Load pairs_config.json"""
         if self.config_file.exists():
             try:
-                with open(self.config_file, 'r') as f:
+                with open(self.config_file, 'r', encoding='utf-8') as f:
                     return json.load(f)
             except Exception as e:
                 logger.error(f"Failed to load config: {e}")
@@ -233,7 +233,7 @@ class SetupExecutorMonitor:
         """Load previously executed setups — V9.1: Auto-cleanup entries >30 days (ФорексГод)"""
         if self.executed_file.exists():
             try:
-                with open(self.executed_file, 'r') as f:
+                with open(self.executed_file, 'r', encoding='utf-8') as f:
                     data = json.load(f)
                 
                 # V9.1 R1 FIX: Cleanup entries older than 30 days
@@ -255,7 +255,7 @@ class SetupExecutorMonitor:
                         for k in keys_to_remove:
                             timestamps.pop(k, None)
                         # Save cleaned data
-                        with open(self.executed_file, 'w') as f:
+                        with open(self.executed_file, 'w', encoding='utf-8') as f:
                             json.dump({
                                 'executed_keys': list(executed_keys),
                                 'timestamps': timestamps,
@@ -277,7 +277,7 @@ class SetupExecutorMonitor:
             existing_timestamps = {}
             if self.executed_file.exists():
                 try:
-                    with open(self.executed_file, 'r') as f:
+                    with open(self.executed_file, 'r', encoding='utf-8') as f:
                         old_data = json.load(f)
                         existing_timestamps = old_data.get('timestamps', {})
                 except Exception:
@@ -286,7 +286,7 @@ class SetupExecutorMonitor:
             # Add timestamp for new entry
             existing_timestamps[setup_key] = datetime.now().isoformat()
             
-            with open(self.executed_file, 'w') as f:
+            with open(self.executed_file, 'w', encoding='utf-8') as f:
                 json.dump({
                     'executed_keys': list(self.executed_setups),
                     'timestamps': existing_timestamps,
@@ -301,7 +301,7 @@ class SetupExecutorMonitor:
         """Load Deep Sleep state from disk (survives restarts)"""
         try:
             if self.deep_sleep_state_file.exists():
-                with open(self.deep_sleep_state_file, 'r') as f:
+                with open(self.deep_sleep_state_file, 'r', encoding='utf-8') as f:
                     state = json.load(f)
                 wake_time_str = state.get('wake_time')
                 if wake_time_str:
@@ -339,7 +339,7 @@ class SetupExecutorMonitor:
         # Persist to disk (survives process restarts)
         try:
             self.deep_sleep_state_file.parent.mkdir(parents=True, exist_ok=True)
-            with open(self.deep_sleep_state_file, 'w') as f:
+            with open(self.deep_sleep_state_file, 'w', encoding='utf-8') as f:
                 json.dump({
                     'wake_time': tomorrow_0005.isoformat(),
                     'reason': reason,
@@ -457,7 +457,7 @@ class SetupExecutorMonitor:
         try:
             rejection_file = Path("data/daily_rejections.json")
             rejection_file.parent.mkdir(parents=True, exist_ok=True)
-            with open(rejection_file, 'w') as f:
+            with open(rejection_file, 'w', encoding='utf-8') as f:
                 json.dump({
                     'date': self.daily_rejections_date,
                     'total': self.daily_rejections,
@@ -530,7 +530,7 @@ class SetupExecutorMonitor:
             # ── 2. Live spread check via cTrader bridge ─────────────────
             try:
                 super_cfg_path = Path("SUPER_CONFIG.json")
-                with open(super_cfg_path) as f:
+                with open(super_cfg_path, encoding='utf-8') as f:
                     scfg = json.load(f)
                 max_spread = scfg.get('spread_guard', {}).get('max_spread_pips', 2.5)
                 block = scfg.get('spread_guard', {}).get('block_execution', True)
@@ -577,7 +577,7 @@ class SetupExecutorMonitor:
             if not news_file.exists():
                 return ""
             
-            with open(news_file, 'r') as f:
+            with open(news_file, 'r', encoding='utf-8') as f:
                 events = json.load(f)
             
             if not events or not isinstance(events, list):
@@ -764,26 +764,29 @@ class SetupExecutorMonitor:
             
             # 🎯 EXECUTE SNIPER ENTRY (1H FVG)
             logger.success(f"🎯 {symbol}: SNIPER ENTRY! Price in 1H FVG @ {radar_1h_fvg_entry:.5f}")
-            
-            # Calculate SNIPER SL (10 pips from 1H CHoCH swing)
+
+            # ━━━ V13.2 SL PRIORITY: GENERALUL din smc_detector.py ━━━
+            # setup['stop_loss'] = SL structural calculat de calculate_entry_sl_tp() V13.2
+            # = max wick HIGH (SHORT) / min wick LOW (LONG) din TOATE swing-urile pre-CHoCH
+            # NU recalcula 10 pips fix — aceea e logica care a cauzat USDCHF stop-out 16 pips!
+            pip_size_exec = 0.01 if 'JPY' in symbol.upper() else 0.0001
+            structural_sl = setup.get('stop_loss')  # Generalul din setup JSON
+
+            # Fallback: 10-pip SL din marginea FVG (doar dacă structural SL lipsește)
             if direction == 'buy':
-                # For LONG: SL below 1H CHoCH low
                 radar_1h_fvg_bottom = setup.get('radar_1h_fvg_bottom', radar_1h_fvg_entry)
-                sniper_sl = radar_1h_fvg_bottom - (10 * 0.0001)  # 10 pips below FVG
+                fallback_sl = radar_1h_fvg_bottom - (10 * pip_size_exec)
             else:
-                # For SHORT: SL above 1H CHoCH high
                 radar_1h_fvg_top = setup.get('radar_1h_fvg_top', radar_1h_fvg_entry)
-                sniper_sl = radar_1h_fvg_top + (10 * 0.0001)  # 10 pips above FVG
-            
-            # Use config option for SL (default: use sniper SL)
-            use_sniper_sl = self.pullback_config.get('use_1h_sl', True)
-            
-            if use_sniper_sl:
-                stop_loss = sniper_sl
-                logger.info(f"   🎯 Using SNIPER SL: {stop_loss:.5f} (1H CHoCH + 10 pips)")
+                fallback_sl = radar_1h_fvg_top + (10 * pip_size_exec)
+
+            if structural_sl and structural_sl != 0.0:
+                stop_loss = structural_sl
+                sl_pips = abs(radar_1h_fvg_entry - stop_loss) / pip_size_exec
+                logger.info(f"   🛡️ [V13.2 GENERALUL] Using structural SL: {stop_loss:.5f} ({sl_pips:.1f} pips)")
             else:
-                stop_loss = setup.get('stop_loss')
-                logger.info(f"   📊 Using DAILY SL: {stop_loss:.5f}")
+                stop_loss = fallback_sl
+                logger.warning(f"   ⚠️ [V13.2 FALLBACK] Structural SL missing — using FVG 10-pip: {stop_loss:.5f}")
             
             return {
                 'action': 'EXECUTE_ENTRY1',
@@ -813,23 +816,26 @@ class SetupExecutorMonitor:
             
             # 💎 EXECUTE HIGH CONFIDENCE ENTRY (4H FVG)
             logger.success(f"💎 {symbol}: HIGH CONFIDENCE ENTRY! Price in 4H FVG @ {radar_4h_fvg_entry:.5f}")
-            
-            # Calculate 4H SL (10 pips from 4H CHoCH swing)
+
+            # ━━━ V13.2 SL PRIORITY: GENERALUL din smc_detector.py ━━━
+            pip_size_exec = 0.01 if 'JPY' in symbol.upper() else 0.0001
+            structural_sl = setup.get('stop_loss')  # Generalul din setup JSON
+
+            # Fallback: 10-pip SL din marginea FVG 4H (doar dacă structural SL lipsește)
             if direction == 'buy':
                 radar_4h_fvg_bottom = setup.get('radar_4h_fvg_bottom', radar_4h_fvg_entry)
-                sniper_sl = radar_4h_fvg_bottom - (10 * 0.0001)
+                fallback_sl = radar_4h_fvg_bottom - (10 * pip_size_exec)
             else:
                 radar_4h_fvg_top = setup.get('radar_4h_fvg_top', radar_4h_fvg_entry)
-                sniper_sl = radar_4h_fvg_top + (10 * 0.0001)
-            
-            use_sniper_sl = self.pullback_config.get('use_4h_sl', True)
-            
-            if use_sniper_sl:
-                stop_loss = sniper_sl
-                logger.info(f"   💎 Using 4H SL: {stop_loss:.5f} (4H CHoCH + 10 pips)")
+                fallback_sl = radar_4h_fvg_top + (10 * pip_size_exec)
+
+            if structural_sl and structural_sl != 0.0:
+                stop_loss = structural_sl
+                sl_pips = abs(radar_4h_fvg_entry - stop_loss) / pip_size_exec
+                logger.info(f"   🛡️ [V13.2 GENERALUL] Using structural SL: {stop_loss:.5f} ({sl_pips:.1f} pips)")
             else:
-                stop_loss = setup.get('stop_loss')
-                logger.info(f"   📊 Using DAILY SL: {stop_loss:.5f}")
+                stop_loss = fallback_sl
+                logger.warning(f"   ⚠️ [V13.2 FALLBACK] Structural SL missing — using FVG 10-pip: {stop_loss:.5f}")
             
             return {
                 'action': 'EXECUTE_ENTRY1',  # Or EXECUTE_ENTRY2 if Entry1 already filled
@@ -1371,7 +1377,7 @@ class SetupExecutorMonitor:
                 logger.error(f"🚨 R7 SAFETY: active_positions.json is {file_age_seconds:.0f}s old (>{300}s) — BLOCKING {symbol} execution until fresh sync!")
                 return True  # Conservative: block execution when data is stale
             
-            with open(active_pos_file, 'r') as f:
+            with open(active_pos_file, 'r', encoding='utf-8') as f:
                 positions = json.load(f)
             
             if not isinstance(positions, list):
@@ -1400,7 +1406,7 @@ class SetupExecutorMonitor:
             return
         
         try:
-            with open(self.monitoring_file, 'r') as f:
+            with open(self.monitoring_file, 'r', encoding='utf-8') as f:
                 data = json.load(f)
             
             if isinstance(data, dict):
@@ -1422,7 +1428,7 @@ class SetupExecutorMonitor:
                 else:
                     write_data = active_setups
                 
-                with open(self.monitoring_file, 'w') as f:
+                with open(self.monitoring_file, 'w', encoding='utf-8') as f:
                     json.dump(write_data, f, indent=2, default=str)
                 
                 logger.success(f"🧹 R6 CLEANUP: Removed {removed_count} dead setups from monitoring_setups.json ({len(setups)}→{len(active_setups)})")
@@ -1451,7 +1457,7 @@ class SetupExecutorMonitor:
             return
         
         try:
-            with open(self.monitoring_file, 'r') as f:
+            with open(self.monitoring_file, 'r', encoding='utf-8') as f:
                 data = json.load(f)
                 setups = data.get('setups', [])
             
@@ -1491,7 +1497,7 @@ class SetupExecutorMonitor:
                     import json as _json
                     active_pos_file = Path(__file__).parent / "active_positions.json"
                     if active_pos_file.exists():
-                        with open(active_pos_file) as _f:
+                        with open(active_pos_file, encoding='utf-8') as _f:
                             _active = _json.load(_f)
                         direction = setup.get('direction', '')
                         _existing = [p for p in _active if p.get('symbol', '').upper() == symbol.upper() and p.get('direction', '').lower() == direction.lower()]
@@ -1650,80 +1656,10 @@ class SetupExecutorMonitor:
                             setups[i]['choch_1h_price'] = result.get('choch_price')
                             updated = True
                             
-                            # 📱 RESEND setup notification with 1H CHoCH status
-                            try:
-                                # Recreate TradeSetup with h1_choch
-                                h1_choch_obj = CHoCH(
-                                    index=0,  # Not critical for notification
-                                    direction='bullish' if setup['direction'] == 'buy' else 'bearish',
-                                    break_price=result.get('choch_price'),
-                                    previous_trend='bearish' if setup['direction'] == 'buy' else 'bullish',
-                                    candle_time=result.get('choch_timestamp'),
-                                    swing_broken=None
-                                )
-                                
-                                # Create minimal TradeSetup for notification
-                                notification_setup = TradeSetup(
-                                    symbol=symbol,
-                                    daily_choch=CHoCH(
-                                        index=0,
-                                        direction='bullish' if setup['direction'] == 'buy' else 'bearish',
-                                        break_price=setup.get('entry_price', 0),
-                                        previous_trend='',
-                                        candle_time=datetime.now(),
-                                        swing_broken=None
-                                    ),
-                                    fvg=FVG(
-                                        index=0,
-                                        direction='bullish' if setup['direction'] == 'buy' else 'bearish',
-                                        # ✅ V10.5 FIX: daily_scanner.py saves fvg_top/fvg_bottom (NOT fvg_zone_top/bottom)
-                                        # Fallback chain: fvg_zone_top > fvg_top > entry_price (prevents FVG showing as 0.0-0.0)
-                                        top=setup.get('fvg_zone_top', setup.get('fvg_top', setup.get('entry_price', 0))),
-                                        bottom=setup.get('fvg_zone_bottom', setup.get('fvg_bottom', setup.get('entry_price', 0))),
-                                        middle=(
-                                            setup.get('fvg_zone_top', setup.get('fvg_top', setup.get('entry_price', 0))) +
-                                            setup.get('fvg_zone_bottom', setup.get('fvg_bottom', setup.get('entry_price', 0)))
-                                        ) / 2,
-                                        candle_time=datetime.now()
-                                    ),
-                                    h4_choch=None,
-                                    h1_choch=h1_choch_obj,  # ← 1H CHoCH detected!
-                                    entry_price=setup.get('entry_price', 0),
-                                    stop_loss=setup.get('stop_loss', 0),
-                                    take_profit=setup.get('take_profit', 0),
-                                    risk_reward=setup.get('risk_reward', 0),
-                                    setup_time=datetime.now(),
-                                    priority=1,
-                                    strategy_type=setup.get('strategy_type', 'reversal'),
-                                    status='MONITORING'
-                                )
-                                
-                                # 🛡️ V3.8 ANTI-SPAM: Check debouncer before sending
-                                signal_id = f"{symbol}_{setup['direction']}_{setup.get('entry_price', 0)}"
-                                
-                                # Skip if duplicate signal already processed
-                                if self.signal_cache.is_processed(signal_id):
-                                    logger.warning(f"🚫 SKIP: {symbol} signal already processed (cache hit)")
-                                    continue
-                                
-                                # Check Telegram debouncer (5 min cooldown)
-                                if not self.telegram_debouncer.should_send(
-                                    symbol, 
-                                    "setup_alert_1h_choch", 
-                                    str(setup.get('entry_price', 0))
-                                ):
-                                    logger.warning(f"🔕 DEBOUNCED: {symbol} setup alert (sent recently)")
-                                    continue
-                                
-                                # Send updated setup notification (need df_daily and df_4h for charts)
-                                self.telegram.send_setup_alert(notification_setup, df_daily, df_4h)
-                                logger.success(f"📱 Resent setup notification for {symbol} with 1H CHoCH status ✅")
-                                
-                                # 🛡️ Mark signal as processed in persistent cache
-                                self.signal_cache.mark_processed(signal_id)
-                                logger.debug(f"💾 Signal cached: {signal_id}")
-                            except Exception as tel_error:
-                                logger.warning(f"⚠️ Failed to resend setup notification: {tel_error}")
+                            # 🔕 1H CHoCH Telegram notification disabled — ARMAGEDDON from
+                            # position_monitor.py fires when trade appears in cTrader (~30s later).
+                            # Building a TradeSetup object here just to send a duplicate is removed.
+                            logger.info(f"📱 {symbol} 1H CHoCH @ {result.get('choch_price', 'N/A')} — ARMAGEDDON pending via position_monitor")
                             
                             continue  # Skip to next iteration to wait for pullback
                         
@@ -1838,6 +1774,12 @@ class SetupExecutorMonitor:
                     
                     else:
                         # ========== ENTRY 1 FILLED - CHECK FOR ENTRY 2 (V3.1 LOGIC) ==========
+                        
+                        # ✅ V14.1: Skip if Entry 2 already filled — prevent duplicate scale-in
+                        if setup.get('entry2_filled', False):
+                            logger.debug(f"   ✅ {symbol}: Entry 2 already filled — monitoring position")
+                            continue
+                        
                         from types import SimpleNamespace
                         setup_obj = SimpleNamespace(**setup)
                         
@@ -1876,14 +1818,18 @@ class SetupExecutorMonitor:
                         logger.info(f"   📝 Reason: {reason}")
                         
                         if action == 'EXECUTE_ENTRY2':
-                            # Execute Entry 2 (50% position)
+                            # Execute Entry 2 (scale-in, slightly larger lot via 7.5% risk override)
+                            scale_in_risk = self.config.get('scale_in', {}).get('entry2_risk_percent', 7.5)
+                            e1_risk = self.config.get('risk_management', {}).get('risk_per_trade_percent', 5.0)
+                            logger.info(f"   📈 V14.1 SCALE-IN: Entry 2 risk = {scale_in_risk}% (vs Entry 1 = {e1_risk:.1f}%)")
                             success = self._execute_entry(
                                 setup=setup,
                                 entry_number=2,
                                 entry_price=result['entry_price'],
                                 stop_loss=result['stop_loss'],
                                 take_profit=result['take_profit'],
-                                position_size=result['position_size']
+                                position_size=result['position_size'],
+                                risk_override_percent=scale_in_risk
                             )
                             
                             if success:
@@ -1948,7 +1894,7 @@ class SetupExecutorMonitor:
                 data['setups'] = setups
                 data['last_update'] = datetime.now().isoformat()
                 
-                with open(self.monitoring_file, 'w') as f:
+                with open(self.monitoring_file, 'w', encoding='utf-8') as f:
                     json.dump(data, f, indent=2)
                 
                 logger.debug(f"💾 Updated monitoring_setups.json")
@@ -1959,7 +1905,8 @@ class SetupExecutorMonitor:
             traceback.print_exc()
     
     def _execute_entry(self, setup: dict, entry_number: int, entry_price: float, 
-                       stop_loss: float, take_profit: float, position_size: float) -> bool:
+                       stop_loss: float, take_profit: float, position_size: float,
+                       risk_override_percent: float = None) -> bool:
         """
         Execute Entry 1 or Entry 2 via cTrader.
         
@@ -1969,7 +1916,10 @@ class SetupExecutorMonitor:
             entry_price: Entry price
             stop_loss: SL price
             take_profit: TP price
-            position_size: Lot size (0.5 for scale in)
+            position_size: Lot size (overridden by risk manager dynamic calc)
+            risk_override_percent: V14.1 — optional risk % override for scale-in Entry 2.
+                                   None = use SUPER_CONFIG default (5%).
+                                   Entry 2 passes 7.5% for slightly larger lot.
         
         Returns:
             bool: True if successful
@@ -2021,7 +1971,26 @@ class SetupExecutorMonitor:
             if news_warning:
                 logger.warning(f"   ⚠️ V10.4 NEWS GUARD: {news_warning}")
             # ━━━ END NEWS GUARD ━━━
-            
+
+            # ━━━ V12.0: LIVE SWAP FETCH — Transparență financiară la execuție ━━━
+            swap_info = {}
+            try:
+                swap_raw = self.ctrader_client.get_swap_info(symbol)
+                if swap_raw.get('success'):
+                    swap_val = swap_raw['swap_short'] if direction == 'sell' else swap_raw['swap_long']
+                    swap_label = "✅ CREDIT" if swap_val > 0 else "⚠️ DEBIT"
+                    swap_info = {
+                        'value': swap_val,
+                        'label': swap_label,
+                        'triple_day': swap_raw.get('swap_triple_day', '?'),
+                    }
+                    logger.info(f"   💱 SWAP {symbol} ({'SHORT' if direction == 'sell' else 'LONG'}): {swap_label} {swap_val:+.2f} pips/day")
+                else:
+                    logger.debug(f"   💱 Swap data unavailable for {symbol}: {swap_raw.get('error')}")
+            except Exception as sw_err:
+                logger.debug(f"   💱 Swap fetch skipped: {sw_err}")
+            # ━━━ END LIVE SWAP FETCH ━━━
+
             logger.info(f"\n🚀 EXECUTING ENTRY {entry_number}: {symbol} {direction.upper()}")
             logger.info(f"   Entry: {entry_price}")
             logger.info(f"   SL: {stop_loss}")
@@ -2038,7 +2007,8 @@ class SetupExecutorMonitor:
                 take_profit=take_profit,
                 lot_size=position_size,
                 comment=strategy_comment,
-                status='READY'  # Always READY when executing
+                status='READY',  # Always READY when executing
+                risk_override_percent=risk_override_percent  # V14.1: None for E1, 7.5% for E2
             )
             
             if not success:
@@ -2060,49 +2030,10 @@ class SetupExecutorMonitor:
                 logger.success(f"✅ Entry {entry_number} signal written to signals.json!")
                 logger.info(f"   cBot will execute automatically")
                 
-                # 🔥 Send execution notification (simplified - no TradeSetup object needed)
-                try:
-                    # 🛡️ V3.8 ANTI-SPAM: Check debouncer before sending execution notification
-                    if not self.telegram_debouncer.should_send(
-                        symbol, 
-                        f"execution_entry{entry_number}", 
-                        str(entry_price)
-                    ):
-                        logger.warning(f"🔕 DEBOUNCED: {symbol} execution notification (sent recently)")
-                        return True  # Still return success, just skip notification
-                    
-                    direction_emoji = "🟢 LONG 📈" if direction == 'buy' else "🔴 SHORT 📉"
-                    rr = abs((take_profit - entry_price) / (entry_price - stop_loss)) if abs(entry_price - stop_loss) > 0 else 0
-                    
-                    # V10.4: D1 Bias + 4H Sync tag for Telegram
-                    strategy_display = "🔄 D1 REVERSAL" if 'REVERSAL' in strategy_comment else "➡️ D1 CONTINUITY"
-                    d1_bias = setup.get('strategy_type', 'unknown').upper()
-                    news_line = f"\n⚠️ <b>NEWS WARNING:</b> {news_warning}" if news_warning else ""
-                    
-                    sep = "────────────────"
-                    message = f"""
-🔥 <b>TRADE EXECUTED — Entry {entry_number}</b>
-
-{symbol} {direction_emoji}
-{sep}
-
-🏷️ <b>{strategy_comment}</b>
-{strategy_display} + 🔒 4H SYNC
-
-📍 Entry: <code>{entry_price:.5f}</code>
-🛡️ Stop Loss: <code>{stop_loss:.5f}</code>
-🎯 Take Profit: <code>{take_profit:.5f}</code>
-📊 RR: <code>1:{rr:.1f}</code>
-📦 Lot Size: <code>{position_size}</code>{news_line}
-"""
-                    # V10.4: Signature added automatically by send_message()
-                    self.telegram.send_message(message.strip(), parse_mode="HTML")
-                    logger.success(f"📱 Telegram execution notification sent")
-                except Exception as tel_error:
-                    import traceback
-                    logger.error(f"❌ Telegram notification failed: {tel_error}")
-                    logger.error(f"   Exception type: {type(tel_error).__name__}")
-                    logger.error(f"   Traceback: {traceback.format_exc()}")
+                # 🔕 Telegram notification intentionally disabled here — ARMAGEDDON from
+                # position_monitor.py handles the notification when trade appears in cTrader.
+                # Avoids duplicate messages on Telegram.
+                logger.success(f"📱 Trade written to signals.json — ARMAGEDDON via position_monitor")
                 
                 return True
         

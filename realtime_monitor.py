@@ -172,7 +172,7 @@ class RealtimeMonitor:
     def _load_pairs_config(self):
         """Load pairs_config.json for priorities and scanner settings"""
         try:
-            with open('pairs_config.json', 'r') as f:
+            with open('pairs_config.json', 'r', encoding='utf-8') as f:
                 config = json.load(f)
                 for pair in config.get('pairs', []):
                     sym = pair.get('symbol', '')
@@ -1150,7 +1150,7 @@ def main():
     try:
         # Load ALL symbols from pairs_config.json
         import json
-        with open('pairs_config.json', 'r') as f:
+        with open('pairs_config.json', 'r', encoding='utf-8') as f:
             config = json.load(f)
             symbols = [pair['symbol'] for pair in config['pairs']]
         

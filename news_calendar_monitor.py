@@ -9,9 +9,11 @@ Forex News Calendar Monitor - Continuous Background Daemon
 Monitors high-impact economic events and sends Telegram alerts
 Uses ForexFactory calendar with Selenium to bypass Cloudflare
 
-🆕 V2.0 Features:
-✅ Always-On Daemon (infinite loop, never exits)
-✅ Daily calendar check (configurable interval)
+🆕 V13.2 Features:
+✅ Always-On Daemon (infinite loop, never exits) — 24/7, fără excepții
+✅ Știrile = combustibil, NU obstacol — ZERO trade blocking
+✅ Sniper Alert minimalist: ⚡ VOLATILITY RADAR format
+✅ Timezone chirurgical: Europe/Bucharest strict (EET/EEST)
 ✅ Auto-retry on errors (graceful degradation)
 ✅ Watchdog-compatible (always shows RUNNING status)
 
@@ -148,18 +150,21 @@ _FLAGS = {
 
 
 class NewsCalendarMonitor:
-    """Monitors forex economic calendar and sends alerts - Always-On Daemon"""
+    """
+    Monitors forex economic calendar and sends alerts — V12.2 Intelligence Preemptiv
     
-    def __init__(self, check_interval_hours: int = 6):
+    Scheduler:
+      • Sunday 23:00 EET  → 📋 WAR MAP (weekly High Impact grouped by day)
+      • Every minute       → ⚠️ 15-MIN SNIPER ALERT before any High Impact event
+      • Monday 09:00 EET  → 🏦 MACRO WEEKLY TABLE (central bank rates)
+    """
+
+    def __init__(self):
         self.bot_token = os.getenv('TELEGRAM_BOT_TOKEN')
         self.chat_id = os.getenv('TELEGRAM_CHAT_ID')
-        
+
         if HAS_REQUESTS:
             self.base_url = f"https://api.telegram.org/bot{self.bot_token}"
-        
-        # 🔥 NEW: Check interval for daemon loop
-        self.check_interval_hours = check_interval_hours
-        self.check_interval_seconds = check_interval_hours * 3600
 
         # 🏦 V11.0 MACRO: last sent date tracker (avoid double-send on same Monday)
         self._macro_last_sent_date: Optional[str] = None
@@ -168,6 +173,14 @@ class NewsCalendarMonitor:
         self._load_macro_sent_date()  # restore from disk on startup
         # Live rates override (populated by fetch_live_cb_rates)
         self._live_rates: Dict[str, float] = {}
+
+        # ━━━ V12.2: SNIPER ALERT state ━━━
+        # Set of (event_date_str, currency, event_name) already alerted — prevents duplicate fires
+        self._sniper_alerted: set = set()
+        # War Map: ISO-date of Monday already sent (Sunday night report covers upcoming Mon-Fri)
+        self._war_map_sent_week: Optional[str] = None
+        self._war_map_sent_file = Path(__file__).parent / 'data' / 'war_map_last_sent.txt'
+        self._load_war_map_sent_week()  # restore from disk
         
         # Timezone for Romania (GMT+2 / EET)
         if HAS_PYTZ:
@@ -176,7 +189,7 @@ class NewsCalendarMonitor:
         else:
             self.local_tz = None
             self.utc_tz = None
-        
+
         if not self.bot_token or not self.chat_id:
             logger.warning("⚠️ TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not set - alerts disabled")
             self.alerts_enabled = False
@@ -231,7 +244,7 @@ class NewsCalendarMonitor:
             
             now = datetime.now()  # Define now BEFORE using it
             
-            with open(calendar_file, 'r') as f:
+            with open(calendar_file, 'r', encoding='utf-8') as f:
                 data = json.load(f)
             
             # Try current month + next month (needed when days_ahead spans month boundary)
@@ -280,8 +293,15 @@ class NewsCalendarMonitor:
                             hour=int(time_parts[0]),
                             minute=int(time_parts[1])
                         )
-                        # Assume time in economic_calendar.json is UTC, convert to local
-                        event_date = self.utc_tz.localize(event_date).astimezone(self.local_tz)
+                        # V13.2 FIX: timpii din economic_calendar.json sunt EET (Europe/Bucharest)
+                        # NU UTC! FOMC azi 21:00 EET = 21:00 în JSON, nu conversie UTC+2=23:00.
+                        # Dacă vrei UTC în JSON, adaugă câmpul 'tz': 'UTC' explicit.
+                        tz_field = e.get('tz', 'EET').upper()
+                        if tz_field == 'UTC':
+                            event_date = self.utc_tz.localize(event_date).astimezone(self.local_tz)
+                        else:
+                            # Default: EET — ora din JSON = ora română directă
+                            event_date = self.local_tz.localize(event_date)
                     else:
                         event_date = event_date.replace(hour=9, minute=0)
                         event_date = self.local_tz.localize(event_date)
@@ -460,11 +480,13 @@ class NewsCalendarMonitor:
                             date_str = date_cell.text.strip()
                             try:
                                 # ForexFactory format: "Sun Dec 14" or "Mon Dec 15"
-                                # Try with day name first
+                                # FIX V13.2: use fetch_date.year NOT datetime.now().year
+                                # Motivul: dacă scrape-ul e pe 31 Dec la 23:59 și
+                                # evenimentul e pe 1 Ian — .now().year ar da anul greșit.
                                 if len(date_str.split()) == 3:  # e.g., "Sun Dec 14"
-                                    current_date = datetime.strptime(f"{date_str} {datetime.now().year}", "%a %b %d %Y")
+                                    current_date = datetime.strptime(f"{date_str} {fetch_date.year}", "%a %b %d %Y")
                                 else:  # e.g., "Dec 14"
-                                    current_date = datetime.strptime(f"{date_str} {datetime.now().year}", "%b %d %Y")
+                                    current_date = datetime.strptime(f"{date_str} {fetch_date.year}", "%b %d %Y")
                             except Exception as e:
                                 logger.debug(f"Error parsing date '{date_str}': {e}")
                         
@@ -624,12 +646,11 @@ class NewsCalendarMonitor:
         
         # Header - COMPACT
         now = datetime.now(self.local_tz) if self.local_tz else datetime.now()
-        message = f"⚡ *NEWS* • {now.strftime('%H:%M')} RO\n"
+        message = f"⚡ *NEWS* • {now.strftime('%H:%M')} EET\n"
         message += f"📅 {now.strftime('%a %b %d')}\n"
         if critical_count > 0:
             message += f"🔥 *{critical_count} CRITICAL*\n"
         message += f"📊 {len(events)} HIGH impact (48h)\n"
-        message += "⚠️ Avoid 30min before\n"
         message += "╼╼╼╼╼╼╼╼\n"
         
         # Group by date
@@ -715,18 +736,11 @@ class NewsCalendarMonitor:
             crit = f"⚠️{counts['critical']}" if counts['critical'] > 0 else ""
             message += f"{flag}{currency}:{counts['total']} {crit}\n"
         
-        # Trading protocol - COMPACT
-        message += "╼╼╼╼╼╼╼╼\n"
-        message += "🎯 *PROTOCOL:*\n"
-        if critical_count > 2:
-            message += "🔴 HIGH VOL\n• Reduce size 50%\n• Close 30m before\n"
-        elif critical_count > 0:
-            message += "🟠 MODERATE\n• Watch news times\n• SL to BE before\n"
-        else:
-            message += "🟢 NORMAL\n• Avoid 30m before\n"
         # Footer - COMPACT STAMP
         message += "╼╼╼╼╼╼╼╼\n"
-        message += "💡 Updates: 8am,2pm,8pm,2am\n"
+        message += "🏛️ Matrix Hunting 24/7\n"
+        message += "╼╼╼╼╼╼╼╼\n"
+        message += "💡 Updates: 8am,2pm,8pm,2am EET\n"
         message += "─────────────────\n"
         message += "🔱 *AUTHORED BY ФорексГод* 🔱\n"
         message += "🏛️ *Глитч Ин Матрикс* 🏛️"
@@ -978,8 +992,204 @@ class NewsCalendarMonitor:
         # Fail-safe: fire if Monday + ≥09:00 and NOT yet sent today
         return is_monday and is_after_9am and not already_sent
 
+    # ═══════════════════════════════════════════════════════════════════
+    # 📋 V12.2 WAR MAP — Sunday 23:00 EET Weekly High Impact Report
+    # ═══════════════════════════════════════════════════════════════════
+
+    def _load_war_map_sent_week(self):
+        """Restore last war-map ISO week string from disk (survives restarts)."""
+        try:
+            if self._war_map_sent_file.exists():
+                stored = self._war_map_sent_file.read_text().strip()
+                self._war_map_sent_week = stored if stored else None
+                logger.debug(f"📂 War Map last sent week: {stored}")
+        except Exception:
+            pass
+
+    def _save_war_map_sent_week(self, week_str: str):
+        """Persist war-map week string to disk."""
+        try:
+            self._war_map_sent_file.parent.mkdir(parents=True, exist_ok=True)
+            self._war_map_sent_file.write_text(week_str)
+        except Exception as e:
+            logger.warning(f"⚠️ Could not save war map sent week: {e}")
+
+    def _should_send_war_map(self) -> bool:
+        """
+        V12.3 TRIGGER cu FAIL-SAFE — Sunday 23:00 EET SAU Monday oricând dacă
+        săptămâna curentă nu a fost trimisă (laptop suspendat / restart ratat).
+        Uses the ISO week number of the *current* Monday as dedup key.
+        """
+        if not self.local_tz:
+            return False
+        now = datetime.now(self.local_tz)
+        is_sunday = (now.weekday() == 6)       # 6 = Sunday
+        is_23h    = (now.hour == 23 and now.minute < 2)  # 23:00 – 23:01
+
+        # Key = ISO week de luni (dacă e duminică, coming Monday = mâine;
+        # dacă e luni, această săptămână = azi)
+        if is_sunday:
+            coming_monday = now + timedelta(days=1)
+        else:
+            # Calculează luni-ul curent (ziua 0 a săptămânii)
+            days_since_monday = now.weekday()
+            coming_monday = now - timedelta(days=days_since_monday)
+        week_key = coming_monday.strftime("%Y-W%W")
+        already_sent = (self._war_map_sent_week == week_key)
+
+        # Trigger primar: Duminică 23:00 EET
+        primary_trigger = is_sunday and is_23h and not already_sent
+
+        # FAIL-SAFE: Luni dimineața (00:00–11:59) — dacă war map nu a fost trimis
+        is_monday = (now.weekday() == 0)
+        failsafe_trigger = is_monday and (now.hour < 12) and not already_sent
+
+        return primary_trigger or failsafe_trigger
+
+    def format_war_map(self, events: List['NewsEvent']) -> str:
+        """
+        📋 WAR MAP — High Impact events for the coming week, grouped by day.
+        Only days with at least one High Impact event are shown.
+        """
+        SEP  = "────────────────"
+        now  = datetime.now(self.local_tz) if self.local_tz else datetime.now()
+
+        # Filter: HIGH impact only, within next 7 days, ignore "All Day" (no exact time)
+        cutoff_start = now
+        cutoff_end   = now + timedelta(days=7)
+
+        hi_events = []
+        for e in events:
+            if e.impact not in ("High Impact Expected", "High"):
+                continue
+            et = e.time
+            if et.tzinfo is None and self.local_tz:
+                et = self.local_tz.localize(et)
+            elif et.tzinfo and self.local_tz:
+                et = et.astimezone(self.local_tz)
+            if et < cutoff_start or et > cutoff_end:
+                continue
+            hi_events.append((et, e))
+
+        hi_events.sort(key=lambda x: x[0])
+
+        # Group by day
+        days: Dict[str, list] = {}
+        day_labels: Dict[str, str] = {}
+        for et, e in hi_events:
+            dk = et.strftime("%Y-%m-%d")
+            label = et.strftime("%A, %d %b").upper()   # e.g. MONDAY, 07 APR
+            days.setdefault(dk, [])
+            day_labels[dk] = label
+            days[dk].append((et, e))
+
+        coming_monday = (now + timedelta(days=1))
+        week_str = f"W{coming_monday.strftime('%W')} • {coming_monday.strftime('%d %b')} – {(coming_monday + timedelta(days=4)).strftime('%d %b %Y')}"
+
+        msg  = f"📋 <b>WAR MAP — {week_str}</b>\n"
+        msg += f"🕐 <i>Emis Duminică {now.strftime('%H:%M')} EET</i>\n"
+        msg += SEP + "\n"
+
+        if not days:
+            msg += "\n✅ <b>ALL CLEAR</b> — Nicio știre High Impact săptămâna viitoare.\n"
+            msg += "🟢 Condiții optime de tranzacționare.\n"
+        else:
+            for dk in sorted(days.keys()):
+                label  = day_labels[dk]
+                devts  = days[dk]
+                msg   += f"\n📅 <b>{label}</b>\n"
+                msg   += SEP + "\n"
+                for et, e in devts:
+                    flag = _FLAGS.get(e.currency, "🏴")
+                    tstr = et.strftime("%H:%M")
+                    # Critical badge
+                    is_critical = any(
+                        kw.lower() in e.event.lower()
+                        for kw in ['NFP','Non-Farm','Payroll','FOMC','CPI','GDP',
+                                   'Interest Rate','Bank Rate','Official Bank Rate']
+                    )
+                    badge = "🔥 " if is_critical else "⚠️ "
+                    fc_str = f" · F:<code>{e.forecast}</code>" if e.forecast else ""
+                    msg += f"{badge}{flag} <b>{e.currency}</b> — {e.event}\n"
+                    msg += f"   🕐 <code>{tstr} EET</code>{fc_str}\n"
+                msg += "\n"
+
+        msg += SEP + "\n"
+        msg += "⚡ <b>Matrix Hunting 24/7 — Știrile sunt combustibil.</b>\n"
+        msg += SEP + "\n"
+        msg += "─────────────────\n"
+        msg += "🔱 <b>AUTHORED BY ФорексГод</b> 🔱\n"
+        msg += "🏛️ <b>Глитч Ин Матрикс</b> 🏛️"
+        return msg
+
+    # ═══════════════════════════════════════════════════════════════════
+    # ⚠️ V12.2 SNIPER ALERTS — 15-Min Blackout Trigger
+    # ═══════════════════════════════════════════════════════════════════
+
+    def _send_sniper_alerts(self, events: List['NewsEvent']):
+        """
+        V13.2 VOLATILITY RADAR — format minimalist ultra-compact.
+        Fires a Telegram alert for every upcoming High Impact event that is
+        exactly 15 minutes away (window: 14:00 – 15:59 minutes before start).
+        Each (date, currency, event) fires only ONCE per session.
+        Știrile = combustibil. Matrix execută 24/7, fără blocare.
+        """
+        if not self.alerts_enabled:
+            return
+
+        now = datetime.now(self.local_tz) if self.local_tz else datetime.now()
+
+        for e in events:
+            if e.impact not in ("High Impact Expected", "High"):
+                continue
+
+            et = e.time
+            if et.tzinfo is None and self.local_tz:
+                et = self.local_tz.localize(et)
+            elif et.tzinfo and self.local_tz:
+                et = et.astimezone(self.local_tz)
+
+            delta_s = (et - now).total_seconds()
+            # Window: 14 min 00 s  ≤  delta  <  16 min 00 s
+            if not (840 <= delta_s < 960):
+                continue
+
+            dedup_key = (et.strftime("%Y-%m-%d %H:%M"), e.currency, e.event[:30])
+            if dedup_key in self._sniper_alerted:
+                continue
+
+            flag = _FLAGS.get(e.currency, "🏴")
+            tstr = et.strftime("%H:%M")
+
+            # ── V13.2 FORMAT MINIMALIST VOLATILITY RADAR ──────────────────
+            msg  = "⚡ <b>VOLATILITY RADAR</b>\n"
+            msg += "━━━━━━━━━━━━━━\n"
+            msg += f"📅 <b>Event:</b> {e.event}\n"
+            msg += f"🌍 <b>Impact:</b> {flag} {e.currency}\n"
+            msg += "⏳ <b>Timer:</b> 15 Minutes\n"
+            msg += f"🏛️ <b>Status:</b> Matrix Hunting\n"
+            msg += "━━━━━━━━━━━━━━\n"
+            msg += "🔱 <b>AUTHORED BY ФорексГод</b> 🔱\n"
+            msg += "🏛️ <b>Глитч Ин Матрикс</b> 🏛️"
+
+            try:
+                import requests as _req
+                resp = _req.post(
+                    f"{self.base_url}/sendMessage",
+                    data={'chat_id': self.chat_id, 'text': msg, 'parse_mode': 'HTML'},
+                    timeout=10,
+                )
+                if resp.status_code == 200:
+                    logger.success(f"⚡ VOLATILITY RADAR sent: {e.currency} {e.event} @ {tstr} EET")
+                    self._sniper_alerted.add(dedup_key)
+                else:
+                    logger.warning(f"⚠️ Sniper alert HTTP {resp.status_code}: {resp.text[:80]}")
+            except Exception as ex:
+                logger.error(f"❌ Sniper alert failed: {ex}")
+
     def run_daily_check(self):
         """Main function to run daily news check"""
+
         logger.info("🚀 Starting Daily News Check...")
         logger.info(f"⏰ Current time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         
@@ -1017,94 +1227,133 @@ class NewsCalendarMonitor:
     
     def run_daemon(self):
         """
-        🔥 ALWAYS-ON DAEMON MODE
-        Infinite loop - checks calendar at regular intervals
-        Never exits (watchdog-compatible)
+        🔥 V12.2 INTELLIGENCE PREEMPTIV — Minute-by-Minute Daemon
+
+        Scheduler (Europe/Bucharest):
+          • Every minute      → ⚠️ 15-MIN SNIPER ALERT check (High Impact events)
+          • Sunday 23:00 EET  → 📋 WAR MAP — weekly High Impact battle plan
+          • Monday  09:00 EET → 🏦 MACRO WEEKLY TABLE — CB rates & carry
+
+        The 6-hour periodic report has been REMOVED (redundant with targeted alerts).
         """
         logger.info("\n" + "="*60)
-        logger.info("🗞️ NEWS CALENDAR MONITOR V2.0 - DAEMON MODE")
-        logger.info(f"⏱️  Check interval: {self.check_interval_hours} hours")
+        logger.info("🗞️ NEWS CALENDAR MONITOR V13.2 — VOLATILITY RADAR")
+        logger.info("⏱️  Minute-by-minute scheduler active | 24/7 NO BLOCK")
         logger.info(f"📊 Alerts enabled: {self.alerts_enabled}")
+        logger.info("📋 Sunday  23:00 EET → WAR MAP (weekly battle plan)")
+        logger.info("⚡ Every minute     → VOLATILITY RADAR (15 min before High Impact)")
+        logger.info("🏦 Monday  09:00 EET → MACRO WEEKLY TABLE")
+        logger.info("🔥 Știrile = combustibil. Matrix Hunting 24/7.")
         logger.info("="*60 + "\n")
-        
+
+        # Pre-load event cache at startup and refresh every 4 hours
+        cached_events: List['NewsEvent'] = []
+        last_cache_refresh: Optional[datetime] = None
+        CACHE_TTL_SECONDS = 4 * 3600  # 4 hours
+
         iteration = 0
-        
+
         while True:
             iteration += 1
-            logger.info(f"\n{'='*60}")
-            logger.info(f"📰 Calendar Check #{iteration} - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-            logger.info(f"{'='*60}\n")
-            
-            try:
-                # Run daily news check
-                self.run_daily_check()
-                logger.success(f"✅ Check #{iteration} complete!")
-            except Exception as e:
-                logger.error(f"❌ Daily check #{iteration} failed: {e}")
-                logger.debug("Stack trace:", exc_info=True)
+            now = datetime.now(self.local_tz) if self.local_tz else datetime.now()
 
+            # ━━━ Refresh event cache every 4 hours ━━━
+            needs_refresh = (
+                last_cache_refresh is None
+                or (now - last_cache_refresh).total_seconds() >= CACHE_TTL_SECONDS
+            )
+            if needs_refresh:
+                logger.info(f"🔄 Refreshing event cache (iteration #{iteration})...")
+                try:
+                    raw = self.fetch_manual_calendar(days_ahead=8)
+                    if not raw:
+                        raw = self.fetch_ctrader_calendar(days_ahead=8)
+                    cached_events = self.filter_high_impact_events(raw)
+                    last_cache_refresh = now
+                    logger.success(f"✅ Cache refreshed: {len(cached_events)} High Impact events")
+                except Exception as ce:
+                    logger.error(f"❌ Cache refresh failed: {ce}")
+
+            # ━━━ ⚠️ SNIPER ALERTS — 15-min blackout trigger ━━━
             try:
-                # 🏦 V11.0 MACRO: Send weekly macro table every Monday ≥ 09:00 RO
-                # NOTE: runs independently — even if daily_check had no events
+                self._send_sniper_alerts(cached_events)
+            except Exception as se:
+                logger.error(f"❌ Sniper alert check failed: {se}")
+
+            # ━━━ 📋 WAR MAP — Sunday 23:00 EET ━━━
+            try:
+                if self._should_send_war_map():
+                    logger.info("📋 Sunday 23:00 detected — sending WAR MAP...")
+                    # Fetch full next-week events (not just cached 8 days)
+                    raw_wm = self.fetch_manual_calendar(days_ahead=7)
+                    if not raw_wm:
+                        raw_wm = self.fetch_ctrader_calendar(days_ahead=7)
+                    war_msg = self.format_war_map(raw_wm)
+                    import requests as _req
+                    resp = _req.post(
+                        f"{self.base_url}/sendMessage",
+                        data={'chat_id': self.chat_id, 'text': war_msg, 'parse_mode': 'HTML'},
+                        timeout=15,
+                    )
+                    if resp.status_code == 200:
+                        coming_monday = now + timedelta(days=1)
+                        week_key = coming_monday.strftime("%Y-W%W")
+                        self._war_map_sent_week = week_key
+                        self._save_war_map_sent_week(week_key)
+                        logger.success(f"✅ WAR MAP sent for week {week_key}")
+                    else:
+                        logger.error(f"❌ WAR MAP Telegram error: {resp.status_code} {resp.text[:80]}")
+            except Exception as we:
+                logger.error(f"❌ WAR MAP send failed: {we}")
+
+            # ━━━ 🏦 MACRO WEEKLY TABLE — Monday 09:00 EET ━━━
+            try:
                 if self._should_send_macro_report():
                     logger.info("🏦 Monday 09:00+ detected — sending Macro Weekly Table...")
                     macro_msg = self.generate_weekly_macro_report()
                     import requests as _req
                     _req.post(
                         f"{self.base_url}/sendMessage",
-                        data={
-                            'chat_id': self.chat_id,
-                            'text': macro_msg,
-                            'parse_mode': 'HTML',
-                        },
+                        data={'chat_id': self.chat_id, 'text': macro_msg, 'parse_mode': 'HTML'},
                         timeout=10,
                     )
-                    now_ro = datetime.now(self.local_tz) if self.local_tz else datetime.now()
-                    date_str = now_ro.strftime("%Y-%m-%d")
+                    date_str = now.strftime("%Y-%m-%d")
                     self._macro_last_sent_date = date_str
-                    self._save_macro_sent_date(date_str)  # persist — fail-safe survives restarts
+                    self._save_macro_sent_date(date_str)
                     logger.success("✅ Macro Weekly Table sent to Telegram!")
             except Exception as me:
                 logger.error(f"❌ Macro report send failed: {me}")
-            
-            # ✅ V10.9 HEARTBEAT: Log alive status (visible in console + watchdog)
-            now_ts = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            logger.info(f"💓 NEWS HEARTBEAT | check=#{iteration} | alerts={'ON' if self.alerts_enabled else 'OFF'} | interval={self.check_interval_hours}h | ts={now_ts}")
-            
-            # Calculate next check time
-            next_check = datetime.now() + timedelta(hours=self.check_interval_hours)
-            logger.info(f"\n⏰ Next check at: {next_check.strftime('%Y-%m-%d %H:%M:%S')}")
-            logger.info(f"💤 Sleeping {self.check_interval_hours} hours ({self.check_interval_seconds}s)...")
-            
-            # Sleep until next check (daemon stays alive)
+
+            # ━━━ Heartbeat (every 60 iterations = ~1 hour) ━━━
+            if iteration % 60 == 0:
+                logger.info(
+                    f"💓 HEARTBEAT | iter=#{iteration} "
+                    f"| alerts={'ON' if self.alerts_enabled else 'OFF'} "
+                    f"| cached_events={len(cached_events)} "
+                    f"| ts={now.strftime('%Y-%m-%d %H:%M:%S')}"
+                )
+
+            # ━━━ Sleep 60 seconds (minute-by-minute granularity) ━━━
             try:
-                time.sleep(self.check_interval_seconds)
+                time.sleep(60)
             except KeyboardInterrupt:
                 logger.warning("\n⚠️ Daemon interrupted by user (Ctrl+C)")
                 logger.info("🛑 Shutting down gracefully...")
                 break
             except Exception as e:
-                logger.error(f"❌ Sleep interrupted: {e}")
-                # Wait 60s before retry
-                logger.info("⏳ Retrying in 60 seconds...")
+                logger.error(f"❌ Sleep error: {e}")
                 time.sleep(60)
 
 
 def main():
-    """Entry point for daemon"""
+    """Entry point for V12.2 Intelligence Preemptiv Daemon"""
     parser = argparse.ArgumentParser(
-        description='News Calendar Monitor V2.0 - Always-On Daemon'
+        description='News Calendar Monitor V12.2 — Intelligence Preemptiv'
     )
-    parser.add_argument(
-        '--interval',
-        type=int,
-        default=6,
-        help='Hours between calendar checks (default: 6)'
-    )
-    
-    args = parser.parse_args()
-    
-    # ✅ V10.9 SINGLE-INSTANCE LOCK: Prevent duplicate processes (duplicate Telegram messages)
+    # No --interval argument: V12.2 runs minute-by-minute with targeted schedulers
+    parser.parse_args()
+
+    # ✅ V10.9 SINGLE-INSTANCE LOCK: Prevent duplicate processes
     _lock_path = Path(__file__).parent / "process_news_calendar_monitor.lock"
     try:
         _lock_fd = open(_lock_path, 'w')
@@ -1114,14 +1363,14 @@ def main():
         sys.exit(0)
 
     try:
-        logger.info("🚀 Starting News Calendar Monitor V2.0...")
-        monitor = NewsCalendarMonitor(check_interval_hours=args.interval)
+        logger.info("🚀 Starting News Calendar Monitor V12.2 — Intelligence Preemptiv...")
+        monitor = NewsCalendarMonitor()
         monitor.run_daemon()
-        
+
     except KeyboardInterrupt:
         logger.warning("\n⚠️ Daemon stopped by user")
         sys.exit(0)
-        
+
     except Exception as e:
         logger.error(f"❌ Fatal error: {e}")
         logger.debug("Stack trace:", exc_info=True)

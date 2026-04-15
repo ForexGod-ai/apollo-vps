@@ -15,7 +15,7 @@ logger.info("📊 RAPORT COMPLET CONT cTRADER")
 logger.info("="*80)
 
 # Read trade history
-with open('trade_history.json', 'r') as f:
+with open('trade_history.json', 'r', encoding='utf-8') as f:
     trades = json.load(f)
 
 # Account info
@@ -205,7 +205,7 @@ report_data = {
     }
 }
 
-with open('account_report.json', 'w') as f:
+with open('account_report.json', 'w', encoding='utf-8') as f:
     json.dump(report_data, f, indent=2)
 
 logger.success("\n✅ Raport salvat în account_report.json")

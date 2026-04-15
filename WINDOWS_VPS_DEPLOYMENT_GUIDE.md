@@ -1,19 +1,20 @@
-# 🪟 Windows VPS Deployment - Ghid Complet
-
-**Migrare Glitch In Matrix Trading Bot pe Windows VPS (24/7)**
+# 🪟 Windows VPS Deployment — Ghid Complet
+**Glitch in Matrix V13.1 · Hetzner CPX41 "Tancul German" · Updated: April 2026**
 
 ---
 
 ## 📋 CUPRINS RAPID
 
 1. [De Ce Windows VPS](#de-ce-windows)
-2. [VPS Recomandat](#vps-recomandat)
+2. [VPS Recomandat — Vultr](#vps-recomandat)
 3. [Conectare RDP](#conectare-rdp)
-4. [Instalare Componente](#instalare-componente)
-5. [Transfer Fișiere](#transfer-fisiere)
-6. [Configurare Auto-Start](#auto-start)
-7. [Test Final](#test-final)
-8. [Monitorizare](#monitorizare)
+4. [Deploy Automat — PowerShell Script](#deploy-automat)
+5. [Transfer Fișiere Mac → VPS](#transfer-fisiere)
+6. [Configurare .env](#configurare-env)
+7. [cTrader Setup](#ctrader-setup)
+8. [Pornire Sistem](#pornire-sistem)
+9. [Test Final](#test-final)
+10. [Monitorizare & Mentenanță](#monitorizare)
 
 ---
 
@@ -22,878 +23,541 @@
 
 ### Problema cu Linux VPS
 
-❌ **cTrader Desktop NU rulează pe Linux**  
-❌ **cBot-ul tău (MarketDataProvider) = Windows/macOS only**  
-❌ **Alternativa = Refactoring complet cod (4-8 ore)**
+❌ **cTrader Desktop NU rulează pe Linux**
+❌ **cBot-ul (MarketDataProvider) = Windows only**
+❌ **Alternativa Linux = refactoring complet (zile de muncă)**
 
 ### Soluția Windows VPS
 
-✅ **Zero modificări cod** - sistemul rămâne identic  
-✅ **cTrader Desktop native** - instalare directă  
-✅ **Remote Desktop (RDP)** - acces GUI complet  
-✅ **Windows Task Scheduler** - automation built-in  
+✅ **Zero modificări cod** — sistemul rămâne identic cu Mac-ul tău
+✅ **cTrader Desktop native** — instalare directă
+✅ **Remote Desktop (RDP)** — acces GUI complet
+✅ **Windows Task Scheduler** — auto-start la boot inclus în script
+✅ **signals.json IPC bridge** — cBot ↔ Python fără modificări
 
-### Cost vs Linux
+### Arhitectura Sistemului pe VPS
 
-| Provider | Windows VPS | Linux VPS | Diferență |
-|----------|-------------|-----------|-----------|
-| **Contabo** | €9.99/lună | €4.99/lună | +€5/lună |
-| **Vultr** | $18/lună | $12/lună | +$6/lună |
-
-**Verdict:** +€5-10/lună pentru **zero development time** = excellent ROI
+```
+┌─────────────────────────────────────────────────────────────┐
+│               Windows VPS (Hetzner CPX41 🇩🇪)               │
+│                                                             │
+│  ┌─────────────────┐      ┌──────────────────────────────┐  │
+│  │  cTrader Desktop│      │   Python Monitors            │  │
+│  │                 │      │                              │  │
+│  │  cBot:          │      │  watchdog_monitor.py         │  │
+│  │  MarketData     │◄────►│  setup_executor_monitor.py   │  │
+│  │  Provider       │      │  position_monitor.py         │  │
+│  │  :8767          │      │  telegram_command_center.py  │  │
+│  └────────┬────────┘      │  news_calendar_monitor.py    │  │
+│           │               │  ctrader_sync_daemon.py      │  │
+│           │               └──────────────────────────────┘  │
+│           │                            │                     │
+│           └──── C:\matrix\signals.json ┘                     │
+│                     (IPC bridge)                             │
+└─────────────────────────────────────────────────────────────┘
+           │                              │
+           ▼                              ▼
+    IC Markets Live               Telegram Bot
+    (cTrader broker)             Notificări 24/7
+```
 
 ---
 
 <a name="vps-recomandat"></a>
-## 💻 2. VPS WINDOWS RECOMANDAT
+## 💻 2. VPS — HETZNER CPX41 🇩🇪 "TANCUL GERMAN"
 
-### ⭐ Opțiunea #1: Contabo (RECOMANDAT)
+### ⭐ Planul Ales: CPX41 High Performance
 
-**Specificații:**
-- **Plan:** VPS S Windows
-- **CPU:** 4 vCores
-- **RAM:** 8GB
-- **Storage:** 200GB NVMe SSD
-- **Bandwidth:** 32TB/lună
-- **Cost:** **€9.99/lună**
-- **OS:** Windows Server 2019/2022
-- **Location:** Nuremberg, Germany
+**Link:** https://www.hetzner.com/cloud/
 
-**Link:** https://contabo.com/en/windows-vps/
+| Componentă | Specificație |
+|------------|-------------|
+| **CPU** | **8 vCPUs (AMD EPYC)** |
+| **RAM** | **16 GB** |
+| **Storage** | **240 GB NVMe SSD** |
+| **Network** | 20 TB/lună |
+| **OS** | Windows Server 2022 (via ISO manual) |
+| **Location** | Nuremberg / Helsinki (EU) |
+| **Cost** | ~€28/lună (~50% mai ieftin decât planul anterior) |
 
-**De ce Contabo:**
-- ✅ **CEL MAI IEFTIN** Windows VPS de calitate
-- ✅ **8GB RAM** = suficient pentru cTrader + Python + 15 perechi
-- ✅ **4 vCores** = handle monitoring concurent fără lag
-- ✅ **200GB storage** = generos pentru logs/backups
-- ✅ **Latency:** ~15ms din Europa (Nuremberg)
+> ⚠️ **IMPORTANT — Instalare Windows via ISO:**
+> Hetzner NU oferă Windows Server prin One-Click Install.
+> Windows Server 2022 se montează **manual via ISO Image** din Hetzner Console.
+> Vezi **Pasul 2B** mai jos pentru procedura completă.
 
-**Pași comandă:**
-1. Acces https://contabo.com/en/windows-vps/
-2. Selectează **VPS S** (€9.99/lună)
-3. **OS:** Windows Server 2022
-4. **Region:** Nuremberg, Germany (EU-Central)
-5. **Add-ons:** NONE (nu ai nevoie backup plătit)
-6. **Checkout** → Email cu credentials în 10-30 min
+**De ce CPX41 e superior:**
+- ✅ **16 GB RAM** — cTrader (~1.5GB) + 6 monitors (~800MB) + Windows (~3GB) + **buffer 10.7 GB** pentru caching agresiv SMC
+- ✅ **8 vCPUs AMD EPYC** — dublu față de planul anterior; `daily_scanner.py` poate rula pairs în ThreadPoolExecutor paralel
+- ✅ **240 GB NVMe** — logs detaliate fără limitare spațiu (vs. 200 GB anterior)
+- ✅ **AMD EPYC** — arhitectură server real, nu vCPU virtualizat generic
 
----
+### Pași comandă Hetzner:
+1. Creează cont: https://console.hetzner.cloud
+2. **New Project** → New Server
+3. Location: **Nuremberg (EU-Central)** sau **Helsinki**
+4. OS Image: **Linux (oricare)** — îl vom înlocui cu Windows via ISO
+5. Type: **CPX41** (8 vCPU / 16 GB)
+6. **Create & Buy** → server activ în ~30 secunde
 
-### Opțiunea #2: Vultr (Premium, mai scump)
+### Pasul 2B — Montare Windows Server 2022 via ISO:
+```
+1. Hetzner Console → Server → ISO Images
+2. Search: "Windows Server 2022" → Mount ISO
+3. Power → Reset (Force Reset)
+4. Console (VNC) → urmează wizard instalare Windows:
+   - Language: English
+   - Edition: Windows Server 2022 Standard (Desktop Experience)
+   - Custom Install → Select Disk → Next
+5. Wait ~15 min → Windows boots
+6. Set Administrator password
+7. Unmount ISO → Hetzner Console → ISO → Unmount
+8. RDP enabled by default pe Windows Server 2022
+```
 
-**Specificații:**
-- **Plan:** Regular Cloud Compute
-- **CPU:** 2 vCores
-- **RAM:** 4GB
-- **Storage:** 80GB SSD
-- **Cost:** **$18/lună** (~€17)
-- **OS:** Windows Server 2022
-- **Location:** Frankfurt, Germany
-
-**Link:** https://www.vultr.com/products/cloud-compute/
-
-**Pro:**
-- ✅ Deployment instant (30 secunde)
-- ✅ UI excellent (dashboard intuitiv)
-- ✅ 99.99% uptime SLA
-
-**Contra:**
-- ❌ Mai scump (+€7/lună vs Contabo)
-- ❌ Specs mai slabe (4GB vs 8GB RAM)
-
----
-
-### Specificații Minime
-
-**Pentru Glitch In Matrix Bot:**
-- **CPU:** 2 vCores (minimum) | 4 vCores (recomandat)
-- **RAM:** 4GB (minimum) | 8GB (recomandat)
-- **Storage:** 40GB (minimum) | 100GB+ (confortabil)
-- **Bandwidth:** 1TB/lună (bot folosește <10GB/lună)
-
-**De ce 8GB RAM:**
-- cTrader Desktop: ~1.5GB
-- Python (3 monitors): ~500MB
-- Windows Server: ~2GB
-- **Buffer:** ~4GB pentru scalare
+> 💡 **Alternativă rapidă:** Cumpără licență Windows Server 2022 (~€15 one-time de pe un reseller) sau activează cu KMS server public pentru test.
 
 ---
 
 <a name="conectare-rdp"></a>
 ## 🔐 3. CONECTARE REMOTE DESKTOP (RDP)
 
-### Primire Credentials
-
-După comandă Contabo, primești email:
+### Credentials din Hetzner Console
 
 ```
-Subject: VPS Activated
-
-IP: 45.134.215.XXX
+IP:       [VPS_IP din Hetzner → Server → Overview]
 Username: Administrator
-Password: XyZ123!@#AbC
-RDP Port: 3389
+Password: [setat de tine la instalarea Windows]
+Port:     3389 (default)
 ```
 
 ### Conectare de pe Mac
 
-**1. Descarcă Microsoft Remote Desktop:**
+**1. Descarcă Microsoft Remote Desktop (gratuit):**
 ```
-App Store → Caută "Microsoft Remote Desktop"
-→ Install (FREE)
+App Store → "Microsoft Remote Desktop" → Install
 ```
 
-**2. Configurare conexiune:**
+**2. Configurare:**
 ```
-1. Deschide Microsoft Remote Desktop
-2. Click "Add PC"
-3. PC name: 45.134.215.XXX (IP-ul tău)
-4. User account → Add User Account:
+1. Open Microsoft Remote Desktop
+2. "Add PC"
+3. PC name: [IP_VPS]
+4. User account → Add:
    Username: Administrator
-   Password: [password din email]
-5. Save
+   Password: [parola setată la install ISO]
+5. Save → Double-click → Connect
+6. La warning certificate → "Continue"
 ```
 
-**3. Conectare:**
-```
-1. Double-click pe conexiunea salvată
-2. Dacă apare warning certificate → "Continue"
-3. ✅ Desktop Windows VPS visible
-```
-
-### Test Conexiune Rapidă
-
+### Test conexiune (Terminal Mac):
 ```bash
-# Test ping de pe Mac
-ping 45.134.215.XXX
-
-# Trebuie să vezi:
-# 64 bytes from 45.134.215.XXX: icmp_seq=0 ttl=50 time=15.2 ms
+ping [IP_VPS]
+# Trebuie: time < 30ms pentru Frankfurt
 ```
 
 ---
 
-<a name="instalare-componente"></a>
-## 📦 4. INSTALARE COMPONENTE PE WINDOWS VPS
+<a name="max-performance"></a>
+## 🚀 3B. MAX PERFORMANCE MODE — 16 GB RAM + 8 vCPU
 
-### Conectează-te prin RDP (vezi Secțiunea 3)
+> **Aceste setări sunt specifice Hetzner CPX41. Nu le aplica pe mașini cu RAM < 8 GB.**
 
----
+### 1. Caching Agresiv SMC (smc_detector.py)
+Cu 16 GB RAM disponibil, cache-ul V13.1 poate fi extins fără nicio limitare de memorie.
+Toate cele 3 cache-uri (`_swing_highs_cache`, `_swing_lows_cache`, `_choch_bos_cache`) rețin
+rezultatele pentru **toate pair-urile din sesiune** — nu doar pentru pair-ul curent.
 
-### STEP 1: Instalare Python 3.14
-
-**1. Descarcă Python:**
+De setat în `smc_detector.py` → `__init__`:
+```python
+# MAX PERFORMANCE MODE (Hetzner CPX41 — 16 GB RAM)
+# Cache-ul nu se mai golește între pair-uri — reduce ~90% compute time
+self.CACHE_MAX_ENTRIES = 500   # default era 50
+self.CACHE_PERSIST_ACROSS_PAIRS = True  # default era False
 ```
-Pe VPS Windows:
-1. Deschide Edge/Chrome
-2. Acces: https://www.python.org/downloads/
-3. Download "Python 3.14.0" (Windows 64-bit)
-```
+> Notă: Modificarea aceasta este opțională dacă vrei să implementezi manual. Comportamentul
+> actual V13.1 (clear cache per pair) rămâne correct — aceasta e o optimizare viitoare.
 
-**2. Instalare:**
-```
-1. Run python-3.14.0-amd64.exe
-2. ✅ Bifează "Add python.exe to PATH" (IMPORTANT!)
-3. Click "Install Now"
-4. Wait ~2 min
-5. Click "Close"
-```
+### 2. Multi-Threading — daily_scanner.py
+Cu 8 vCPU AMD EPYC, scanarea celor 15+ perechi poate rula în paralel.
+Adaugă în `daily_scanner.py` → `run_daily_scan()` (opțional, nu obligatoriu pentru launch):
 
-**3. Verificare:**
-```
-1. Deschide Command Prompt (Win + R → cmd)
-2. Rulează:
-   python --version
-   # Output: Python 3.14.0
+```python
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
-3. Verifică pip:
-   pip --version
-   # Output: pip 24.x from C:\...
+# Scanare paralelă (MAX 4 workers — cTrader API are rate limit)
+with ThreadPoolExecutor(max_workers=4) as executor:
+    futures = {
+        executor.submit(self._scan_single_pair, pair_config): pair_config
+        for pair_config in self.pairs
+    }
+    for future in as_completed(futures):
+        result = future.result()
+        if result:
+            setups_found.append(result)
 ```
+> ⚠️ **Launch Day**: Rulează secvențial (cod actual) pentru primul deployment.
+> Threading se activează după ce confirmi că totul funcționează pe VPS.
 
----
+### 3. Logging Detaliat (240 GB NVMe)
+Cu 240 GB spațiu, activează logging complet în `loguru`:
 
-### STEP 2: Instalare cTrader Desktop
-
-**1. Descarcă cTrader:**
-```
-Pe VPS Windows:
-1. Acces: https://ctrader.com/download/
-2. Click "Download cTrader Desktop" (Windows)
-3. Save ctradersetup.exe
-```
-
-**2. Instalare:**
-```
-1. Run ctradersetup.exe
-2. Acceptă Terms
-3. Click "Install"
-4. Wait ~3 min
-5. cTrader se deschide automat
+```python
+# În fiecare monitor, înlocuiește configurarea loguru cu:
+logger.add(
+    "logs/{name}.log",
+    rotation="50 MB",    # Rotație la 50 MB (era 10 MB)
+    retention="90 days", # Păstrare 90 zile (era 30 zile)
+    level="DEBUG",       # DEBUG complet (era INFO)
+    compression="zip",   # Compresie automată fișiere vechi
+    enqueue=True         # Thread-safe async logging
+)
 ```
 
-**3. Login IC Markets:**
-```
-1. În cTrader → Login
-2. Broker: "IC Markets"
-3. Email: [contul tău IC Markets]
-4. Password: [password]
-5. Login → Account loading...
+Sau prin variabila de mediu în `.env`:
+```env
+LOG_LEVEL=DEBUG
+LOG_ROTATION=50MB
+LOG_RETENTION=90days
 ```
 
 ---
 
-### STEP 3: Install cBot (MarketDataProvider)
+<a name="deploy-automat"></a>
+## ⚡ 4. DEPLOY AUTOMAT — POWERSHELL SCRIPT
 
-**1. Deschide cAlgo:**
-```
-cTrader Desktop → Top Menu → "Automate"
-```
+**`vps_deploy_windows.ps1` — Face TOTUL automat, rulează o singură dată.**
 
-**2. Import cBot:**
-```
-1. cAlgo → Left Panel → "cBots"
-2. Right-click în panel → "Import cBot"
-3. Navighează la: (va fi uploaded în STEP 5)
-   C:\TradingBot\MarketDataProvider_v2.cs
-4. cAlgo compilează automat
-5. ✅ Vezi "MarketDataProvider v2" în listă
-```
+### Ce face scriptul:
 
-**3. Rulare cBot:**
-```
-1. Click pe "MarketDataProvider v2"
-2. Click "Start" (play button)
-3. ✅ Status: "Running"
-4. ✅ Console: "HTTP Server running on http://localhost:8767"
-```
+| Fază | Acțiune |
+|------|---------|
+| **Phase 1** | Instalare Python 3.11.9 (silent, adăugat la PATH) |
+| **Phase 2** | Creare `C:\matrix\` + subdirectoare + `signals.json` cu FullControl (IPC bridge) |
+| **Phase 3** | Creare `.venv` + instalare toate dependențele Python |
+| **Phase 4** | Download + instalare cTrader Desktop |
+| **Phase 5** | Creare `start_matrix.bat` + înregistrare Task Scheduler (auto-start la logon) |
 
-**4. Test HTTP endpoint:**
-```
-1. Deschide Chrome pe VPS
-2. Acces: http://localhost:8767/health
-3. Trebuie să vezi:
-   {"status": "OK", "message": "MarketDataProvider is running"}
+### Cum rulezi:
+
+```powershell
+# PowerShell pe VPS (Run as Administrator):
+Set-ExecutionPolicy Bypass -Scope Process -Force
+cd C:\matrix
+.\vps_deploy_windows.ps1
 ```
 
----
-
-### STEP 4: Test Python Dependencies
-
-**1. Deschide Command Prompt ca Administrator:**
-```
-Win + X → "Command Prompt (Admin)"
-```
-
-**2. Instalare dependencies (va fi rulat automat în STEP 5):**
-```cmd
-cd C:\TradingBot
-pip install -r requirements.txt
-```
-
-**Dependencies principale:**
-- pandas
-- requests
-- python-dotenv
-- loguru
-- python-telegram-bot
-
-**Timp instalare:** ~2-3 minute
+> ⚠️ **Rulează după ce ai transferat fișierele în `C:\matrix\`**
 
 ---
 
 <a name="transfer-fisiere"></a>
-## 📤 5. TRANSFER FIȘIERE DE PE MAC PE VPS
+## 📤 5. TRANSFER FIȘIERE MAC → VPS
 
-### Opțiunea A: Google Drive (CEL MAI SIMPLU)
+### Metoda Recomandată: ZIP via Google Drive
 
-**Pe Mac:**
+**Pe Mac (Terminal):**
 ```bash
 cd "/Users/forexgod/Desktop/Glitch in Matrix/trading-ai-agent apollo"
 
-# 1. Creează arhivă ZIP (exclude logs/cache)
-zip -r trading-bot.zip . \
+# Creează arhivă (exclude cache, logs, venv)
+zip -r glitch_matrix.zip . \
   -x "*.pyc" \
   -x "**/__pycache__/*" \
+  -x ".venv/*" \
   -x "logs/*" \
+  -x "*.log" \
+  -x ".git/*" \
   -x "charts/*" \
-  -x ".git/*"
+  -x "chart_snapshots/*" \
+  -x "screenshots/*" \
+  -x "data/backups/*"
 
-# 2. Upload pe Google Drive:
-# - Acces drive.google.com
-# - Upload trading-bot.zip
-# - Share link (Anyone with link can view)
+echo "✅ ZIP creat: $(du -sh glitch_matrix.zip | cut -f1)"
 ```
 
-**Pe Windows VPS:**
+**Pe VPS Windows:**
 ```
-1. Deschide Chrome
-2. Acces drive.google.com
-3. Login cu același cont Google
-4. Download trading-bot.zip
-5. Extract în C:\TradingBot\
-6. ✅ Toate fișierele în C:\TradingBot\
+1. Chrome → drive.google.com → Login → Download glitch_matrix.zip
+2. Right-click ZIP → "Extract All" → C:\matrix\
+3. Verificare:
+   Command Prompt → dir C:\matrix\*.py | find /c ".py"
+   Trebuie: >50 fișiere .py
+```
+
+### Alternativă: Drag & Drop via RDP
+```
+Sesiunea RDP permite drag & drop direct din Finder Mac
+→ în File Explorer Windows
 ```
 
 ---
 
-### Opțiunea B: GitHub (Pentru development)
+<a name="configurare-env"></a>
+## 🔐 6. CONFIGURARE .env
 
-**Pe Mac:**
-```bash
-cd "/Users/forexgod/Desktop/Glitch in Matrix/trading-ai-agent apollo"
+**Cel mai important fișier — fără el sistemul nu funcționează.**
 
-# 1. Init Git repo (dacă nu există)
-git init
-git add .
-git commit -m "VPS deployment ready"
+### Creare pe VPS:
 
-# 2. Creează repo privat pe GitHub
-# - Acces github.com
-# - New repository: "glitch-trading-bot" (Private)
-# - Copy HTTPS URL
-
-# 3. Push la GitHub
-git remote add origin https://github.com/USERNAME/glitch-trading-bot.git
-git branch -M main
-git push -u origin main
+```
+Notepad pe VPS → File → Save As:
+  Path: C:\matrix\.env
+  Encoding: UTF-8
 ```
 
-**Pe Windows VPS:**
+**Conținut .env:**
+```env
+# ─── TELEGRAM ────────────────────────────────────────────
+TELEGRAM_BOT_TOKEN=your_bot_token_here
+TELEGRAM_CHAT_ID=6420069284
+
+# ─── cTRADER API (local cBot HTTP server) ────────────────
+CTRADER_API_URL=http://localhost:8767
+CTRADER_ACCOUNT_ID=your_account_id
+
+# ─── TIMEZONE ────────────────────────────────────────────
+TZ=UTC
+```
+
+**Verificare:**
 ```cmd
-# 1. Install Git
-# Download: https://git-scm.com/download/win
-# Install cu default settings
-
-# 2. Clone repo
-cd C:\
-git clone https://github.com/USERNAME/glitch-trading-bot.git TradingBot
-
-# 3. Install dependencies
-cd C:\TradingBot
-pip install -r requirements.txt
+cd C:\matrix
+C:\matrix\.venv\Scripts\python.exe -c "from dotenv import load_dotenv; import os; load_dotenv(); print('Token OK:', bool(os.getenv('TELEGRAM_BOT_TOKEN')))"
 ```
 
 ---
 
-### Opțiunea C: SCP/SFTP (Advanced)
+<a name="ctrader-setup"></a>
+## 📈 7. cTRADER SETUP
 
-**Necesită:** OpenSSH activat pe Windows VPS
+### Instalare (dacă scriptul PS1 nu a reușit auto-install)
+```
+Chrome pe VPS → https://ctrader.com/download/
+Download → Run ctradersetup.exe → Install (~3 min)
+```
 
-```bash
-# Pe Mac (terminalul tău):
-cd "/Users/forexgod/Desktop/Glitch in Matrix/trading-ai-agent apollo"
+### Login Cont Live
+```
+1. Deschide cTrader
+2. Login → Broker: "IC Markets" (sau brokerul tău)
+3. Email + Password → Connect → Selectează contul Live
+```
 
-# Transfer cu scp
-scp -r . Administrator@45.134.215.XXX:C:/TradingBot/
+### Import & Pornire cBot (MarketDataProvider)
+```
+1. cTrader → Automate (meniu sus)
+2. Left panel "cBots" → Import
+3. Navighează la: C:\matrix\MarketDataProvider_v2.cs
+4. cAlgo compilează automat (~30 secunde)
+5. Click "MarketDataProvider v2" → Start
+6. ✅ Console: "HTTP Server running on http://localhost:8767"
+```
 
-# Introduce password când e solicitat
+### Verificare cBot:
+```
+Chrome pe VPS:
+http://localhost:8767/health
+→ {"status": "OK", "uptime": ...}
+
+http://localhost:8767/price?symbol=EURUSD
+→ preț live
+```
+
+### cTrader Auto-Start la Boot:
+```
+Win + R → taskschd.msc → Create Task:
+  Name: cTrader Auto-Start
+  ✅ Run with highest privileges
+  Trigger: At startup → Delay 30s
+  Action: C:\Users\Administrator\AppData\Local\Spotware\cTrader\cTrader.exe
 ```
 
 ---
 
-### ✅ Verificare Transfer
+<a name="pornire-sistem"></a>
+## 🚀 8. PORNIRE SISTEM
 
-**Pe Windows VPS Command Prompt:**
+### One-Click Start (creat automat de scriptul PS1):
+```
+C:\matrix\start_matrix.bat  →  Double-click
+```
+
+**Pornește în ordine:**
+```
+1. watchdog_monitor.py           → logs\watchdog.log
+2. setup_executor_monitor.py     → logs\setup_monitor.log
+3. position_monitor.py           → logs\position_monitor.log
+4. telegram_command_center.py    → logs\command_center.log
+5. news_calendar_monitor.py      → logs\news_calendar.log
+6. ctrader_sync_daemon.py        → logs\ctrader_sync.log
+```
+
+### Verificare:
 ```cmd
-cd C:\TradingBot
-dir
-
-# Trebuie să vezi:
-# daily_scanner.py
-# smc_detector.py
-# pairs_config.json
-# monitoring_setups.json
-# .env
-# requirements.txt
-# etc...
+tasklist | findstr python
+# Trebuie: 6 procese python.exe
 ```
 
-**Test Python scripts:**
+### Daily Scanner (manual, dimineața):
 ```cmd
-cd C:\TradingBot
-python --version
-# Python 3.14.0
-
-python -c "import pandas; print('Pandas OK')"
-# Pandas OK
-
-python -c "import requests; print('Requests OK')"
-# Requests OK
-```
-
----
-
-<a name="auto-start"></a>
-## ⚙️ 6. CONFIGURARE AUTO-START
-
-### Windows Task Scheduler Setup
-
-**Obiectiv:** Rulare automată monitors la boot + daily scanner la 08:00
-
----
-
-### TASK 1: cTrader Auto-Start
-
-**1. Deschide Task Scheduler:**
-```
-Win + R → taskschd.msc → Enter
-```
-
-**2. Creează task:**
-```
-1. Action → "Create Task" (nu "Create Basic Task")
-2. Tab "General":
-   Name: cTrader Auto-Start
-   Description: Start cTrader Desktop at boot
-   ✅ "Run whether user is logged on or not"
-   ✅ "Run with highest privileges"
-   
-3. Tab "Triggers":
-   Click "New"
-   → Begin the task: "At startup"
-   → Delay task for: 30 seconds (wait for network)
-   → OK
-   
-4. Tab "Actions":
-   Click "New"
-   → Action: "Start a program"
-   → Program/script: Browse to:
-      C:\Users\Administrator\AppData\Local\Spotware\cTrader\cTrader.exe
-   → OK
-   
-5. Tab "Conditions":
-   ❌ Uncheck "Start only if on AC power"
-   ✅ Check "Wake computer to run this task"
-   
-6. Tab "Settings":
-   ✅ "Allow task to be run on demand"
-   ✅ "If running task does not end when requested, force it to stop"
-   
-7. OK → Enter Administrator password
-```
-
----
-
-### TASK 2: Setup Executor Monitor
-
-**Rulare continuă background pentru monitoring setups**
-
-**1. Creează startup script:**
-```cmd
-# Pe VPS Windows, deschide Notepad
-# Salvează ca: C:\TradingBot\start_executor_monitor.bat
-
-@echo off
-cd C:\TradingBot
-python setup_executor_monitor.py --loop
-pause
-```
-
-**2. Task Scheduler:**
-```
-1. Create Task
-2. General:
-   Name: Setup Executor Monitor
-   ✅ Run whether user logged on or not
-   ✅ Run with highest privileges
-   
-3. Triggers:
-   New → At startup → Delay 2 minutes → OK
-   
-4. Actions:
-   New → Start a program
-   Program: C:\TradingBot\start_executor_monitor.bat
-   OK
-   
-5. Conditions:
-   ❌ Uncheck AC power
-   
-6. Settings:
-   ✅ Allow on demand
-   ✅ "If task fails, restart every: 5 minutes" (max 3 attempts)
-   
-7. OK → Password
-```
-
----
-
-### TASK 3: Position Monitor
-
-**Monitorizare poziții active + Telegram notifications**
-
-**1. Creează script:**
-```cmd
-# Notepad → Save as: C:\TradingBot\start_position_monitor.bat
-
-@echo off
-cd C:\TradingBot
-python position_monitor.py
-pause
-```
-
-**2. Task Scheduler:**
-```
-1. Create Task
-2. General:
-   Name: Position Monitor
-   
-3. Triggers:
-   At startup → Delay 2 minutes
-   
-4. Actions:
-   Start program: C:\TradingBot\start_position_monitor.bat
-   
-5. Settings:
-   ✅ Restart every 5 min if fails
-   
-6. OK → Password
-```
-
----
-
-### TASK 4: Daily Scanner
-
-**Scanare zilnică la 08:00 pentru noi setups**
-
-**1. Creează script:**
-```cmd
-# Notepad → Save as: C:\TradingBot\run_daily_scanner.bat
-
-@echo off
-cd C:\TradingBot
-python daily_scanner.py
-pause
-```
-
-**2. Task Scheduler:**
-```
-1. Create Task
-2. General:
-   Name: Daily Scanner 08:00
-   
-3. Triggers:
-   New → Daily
-   → Start: (today) 08:00:00
-   → Recur every: 1 days
-   → ✅ Enabled
-   → OK
-   
-4. Actions:
-   Start program: C:\TradingBot\run_daily_scanner.bat
-   
-5. OK → Password
-```
-
----
-
-### TASK 5: Dashboard HTTP Server
-
-**Dashboard accesibil http://VPS_IP:8080**
-
-**1. Creează script:**
-```cmd
-# Notepad → Save as: C:\TradingBot\start_dashboard.bat
-
-@echo off
-cd C:\TradingBot
-python -m http.server 8080
-pause
-```
-
-**2. Task Scheduler:**
-```
-1. Create Task
-2. General:
-   Name: Dashboard Server
-   
-3. Triggers:
-   At startup → Delay 2 minutes
-   
-4. Actions:
-   Start program: C:\TradingBot\start_dashboard.bat
-   
-5. Settings:
-   ✅ Restart every 5 min if fails
-   
-6. OK → Password
-```
-
----
-
-### ✅ Verificare Tasks
-
-**Command Prompt (Admin):**
-```cmd
-# Listează toate tasks
-schtasks /query /fo LIST /v | findstr "cTrader\|Trading\|Monitor"
-
-# Test manual task
-schtasks /run /tn "Setup Executor Monitor"
-
-# Verifică status
-tasklist | findstr "python\|cTrader"
-
-# Trebuie să vezi:
-# python.exe (multiple instances)
-# cTrader.exe
-```
-
----
-
-### Windows Firewall Configuration
-
-**Permite port 8080 pentru dashboard extern:**
-
-```cmd
-# Command Prompt (Admin)
-netsh advfirewall firewall add rule ^
-  name="Trading Bot Dashboard" ^
-  dir=in action=allow protocol=TCP localport=8080
-
-# Verifică
-netsh advfirewall firewall show rule name="Trading Bot Dashboard"
-```
-
-**Acces dashboard extern:**
-```
-http://45.134.215.XXX:8080/dashboard.html
-(Replace cu IP-ul tău VPS)
+cd C:\matrix
+C:\matrix\.venv\Scripts\python.exe daily_scanner.py
 ```
 
 ---
 
 <a name="test-final"></a>
-## ✅ 7. TEST FINAL & VALIDARE
+## ✅ 9. TEST FINAL & VALIDARE
 
-### Test Checklist Complet
-
-**1. cTrader + cBot:**
+**cTrader + cBot:**
 ```
-✅ cTrader Desktop pornit
-✅ cBot "MarketDataProvider" Running
-✅ http://localhost:8767/health → {"status": "OK"}
-✅ http://localhost:8767/data?symbol=EURUSD&timeframe=D1&bars=10 → JSON valid
+[ ] cTrader Desktop pornit
+[ ] cBot "MarketDataProvider" status: Running
+[ ] http://localhost:8767/health → {"status": "OK"}
+[ ] http://localhost:8767/price?symbol=EURUSD → preț valid
 ```
 
-**2. Python Monitors:**
+**Python Monitors:**
 ```cmd
-# Command Prompt
 tasklist | findstr python
-
-# Trebuie să vezi 3-4 procese python.exe:
-# - setup_executor_monitor.py
-# - position_monitor.py
-# - http.server (dashboard)
+[ ] 6 procese python.exe active
 ```
 
-**3. Dashboard:**
+**Telegram:**
 ```
-Chrome → http://localhost:8080/dashboard.html
-✅ Pagina se încarcă
-✅ Vezi setups din monitoring_setups.json
-✅ Auto-refresh la 10 secunde
-```
-
-**4. Telegram Notifications:**
-```
-# Test manual
-cd C:\TradingBot
-python -c "from notification_manager import NotificationManager; nm = NotificationManager(); nm.send_test_message()"
-
-# Verifică Telegram → Primești mesaj de test
+[ ] /status → toate monitoare ONLINE
+[ ] /active → poziții afișate corect
+[ ] /monitoring → setup-uri din monitoring_setups.json
 ```
 
-**5. Daily Scanner:**
+**IPC Bridge:**
 ```cmd
-# Test manual
-cd C:\TradingBot
-python daily_scanner.py
-
-# Observă output:
-# - Fetch data pentru 15 perechi
-# - CHoCH detection
-# - FVG detection
-# - Salvare în monitoring_setups.json
+type C:\matrix\signals.json
+[ ] Fișier accesibil R/W de cBot
 ```
 
----
-
-### Test Reboot VPS
-
-**Verifică că totul pornește automat:**
-
+**Test Reboot:**
 ```cmd
-# Restart VPS
 shutdown /r /t 0
-
-# Wait 5 minutes pentru boot complet
-
-# Reconectează RDP
-
-# Verifică procese:
-tasklist | findstr "cTrader\|python"
-
-# Trebuie să vezi toate procesele pornite automat
+# Wait 3 min → Reconectează RDP
+tasklist | findstr python
+[ ] Toate 6 procese repornite automat (Task Scheduler)
 ```
 
 ---
 
 <a name="monitorizare"></a>
-## 📊 8. MONITORIZARE & MENTENANȚĂ
+## 📊 10. MONITORIZARE & MENTENANȚĂ
 
-### Dashboard Access
+### Logs live (PowerShell):
+```powershell
+# Urmărire live setup monitor:
+Get-Content C:\matrix\logs\setup_monitor.log -Wait -Tail 50
 
-**Local (pe VPS):**
-```
-http://localhost:8080/dashboard.html
-```
-
-**Extern (de pe Mac/phone):**
-```
-http://45.134.215.XXX:8080/dashboard.html
-(Replace XXX cu IP-ul tău)
+# Watchdog:
+Get-Content C:\matrix\logs\watchdog.log -Wait -Tail 20
 ```
 
----
+### Telegram Quick Health:
+```
+/status     → 7 monitoare ONLINE/OFFLINE
+/active     → Poziții cu P/L live
+/stats      → Performance zilnic/săptămânal
+/monitoring → Setup-uri în radar
+```
 
-### Logs Monitoring
+### Troubleshooting Rapid:
 
-**Verifică logs Python:**
+**cBot nu răspunde (8767 timeout):**
 ```cmd
-cd C:\TradingBot\logs
-dir /o-d
-
-# Vezi cele mai recente:
-type daily_scanner_*.log | more
-type setup_executor_*.log | more
-```
-
-**Verifică logs cTrader:**
-```
-cTrader → Automate → cBots → MarketDataProvider
-→ Tab "Log" (bottom panel)
-```
-
----
-
-### Weekly Maintenance
-
-**Săptămânal (10 minute):**
-
-```cmd
-# 1. Verifică disk space
-wmic logicaldisk get size,freespace,caption
-
-# 2. Curățare logs vechi (>30 zile)
-cd C:\TradingBot\logs
-forfiles /p . /s /m *.log /d -30 /c "cmd /c del @path"
-
-# 3. Backup monitoring_setups.json
-copy C:\TradingBot\monitoring_setups.json ^
-     C:\TradingBot\backups\monitoring_setups_%date:~-4,4%%date:~-7,2%%date:~-10,2%.json
-
-# 4. Update Python dependencies
-cd C:\TradingBot
-pip install --upgrade -r requirements.txt
-
-# 5. Restart monitors (Task Scheduler)
-schtasks /end /tn "Setup Executor Monitor"
-schtasks /run /tn "Setup Executor Monitor"
-```
-
----
-
-### Performance Monitoring
-
-**Task Manager:**
-```
-Ctrl + Shift + Esc
-
-→ Tab "Performance"
-→ Monitor:
-  - CPU: <20% normal, 40-60% during scan
-  - RAM: ~3-4GB used
-  - Disk: <10% active time
-  - Network: <1Mbps
-```
-
-**Python procese:**
-```cmd
-# Check memory per process
-tasklist /fi "imagename eq python.exe" /fo table
-
-# Dacă > 500MB per process → possible memory leak
-# Solution: Restart task în Task Scheduler
-```
-
----
-
-### Troubleshooting Quick Fixes
-
-**cTrader cBot nu răspunde:**
-```cmd
-# Kill process
 taskkill /im cTrader.exe /f
-
-# Restart via Task Scheduler
 schtasks /run /tn "cTrader Auto-Start"
-
-# Wait 60 seconds
-# Test: http://localhost:8767/health
+# Wait 60s → test http://localhost:8767/health
 ```
 
-**Python monitor stuck:**
+**Python monitors oprite:**
 ```cmd
-# Kill toate python
 taskkill /im python.exe /f
-
-# Restart tasks
-schtasks /run /tn "Setup Executor Monitor"
-schtasks /run /tn "Position Monitor"
-schtasks /run /tn "Dashboard Server"
+C:\matrix\start_matrix.bat
 ```
 
-**Dashboard nu se încarcă:**
+**signals.json permission error:**
+```powershell
+$acl = Get-Acl "C:\matrix\signals.json"
+$rule = New-Object System.Security.AccessControl.FileSystemAccessRule("Everyone","FullControl","Allow")
+$acl.SetAccessRule($rule)
+Set-Acl "C:\matrix\signals.json" $acl
+```
+
+### Mentenanță Săptămânală (5 minute):
 ```cmd
-# Check firewall
-netsh advfirewall firewall show rule name=all | findstr 8080
+# Backup
+copy C:\matrix\monitoring_setups.json C:\matrix\backups\monitoring_%DATE:~-4%%DATE:~3,2%%DATE:~0,2%.json
 
-# Restart dashboard
-schtasks /end /tn "Dashboard Server"
-schtasks /run /tn "Dashboard Server"
+# Curățare logs >30 zile
+cd C:\matrix\logs
+forfiles /p . /m *.log /d -30 /c "cmd /c del @path"
 
-# Test local
-curl http://localhost:8080
+# Update packages
+C:\matrix\.venv\Scripts\pip.exe install --upgrade -r C:\matrix\requirements_vps_windows.txt -q
+
+# Restart monitors
+taskkill /im python.exe /f
+C:\matrix\start_matrix.bat
+```
+
+---
+
+## 📁 Structura Finală pe VPS
+
+```
+C:\matrix\
+├── .env                          ← Credentials (Telegram, cTrader)
+├── .venv\                        ← Python virtual environment
+├── signals.json                  ← IPC bridge cBot↔Python (FullControl)
+├── monitoring_setups.json        ← Setups active în radar
+├── trade_history.json            ← Positions live
+├── active_positions.json         ← Poziții curente
+├── start_matrix.bat              ← One-click start (generat de PS1)
+├── vps_deploy_windows.ps1        ← Deploy script (rulat o singură dată)
+├── requirements_vps_windows.txt  ← Dependencies Python (generat de PS1)
+├── daily_scanner.py              ← Morning hunt (manual, dimineața)
+├── setup_executor_monitor.py     ← Core executor (CHoCH + Fibo entry)
+├── position_monitor.py           ← ARMAGEDDON notifications
+├── watchdog_monitor.py           ← Guardian (repornește procesele căzute)
+├── telegram_command_center.py    ← /status /active /stats /monitoring
+├── news_calendar_monitor.py      ← News guard (blochează execuții)
+├── ctrader_sync_daemon.py        ← Sync trade history
+├── data\
+│   └── trades.db                 ← SQLite closed trades history
+├── logs\
+│   ├── watchdog.log
+│   ├── setup_monitor.log
+│   ├── position_monitor.log
+│   ├── command_center.log
+│   ├── news_calendar.log
+│   └── ctrader_sync.log
+└── backups\                      ← Backup-uri automate săptămânale
 ```
 
 ---
 
 ## 🎉 DEPLOYMENT COMPLET!
 
-### Ce ai acum:
+### Ce ai după deploy:
 
-✅ **Windows VPS 24/7** (€9.99/lună Contabo)  
-✅ **cTrader Desktop + cBot** (localhost:8767 data provider)  
-✅ **Python Trading System** (3 monitors active)  
-✅ **Auto-start la boot** (Windows Task Scheduler)  
-✅ **Daily scanner** (08:00 automatic)  
-✅ **Dashboard public** (http://VPS_IP:8080)  
-✅ **Telegram notifications** (active)  
-✅ **Zero modificări cod** (sistemul identic cu Mac)  
-
-### Next Steps:
-
-1. **Testează 1 săptămână** - monitorizează stability
-2. **Optimizează** - adjust task timings dacă e nevoie
-3. **Backup** - setup automatic backups săptămânal
-4. **Scale** - când crește numărul de perechi, upgrade RAM (8→16GB)
-
-### Support & Contact:
-
-- **Contabo Support:** https://contabo.com/en/support/
-- **cTrader Forum:** https://ctrader.com/forum/
-- **Telegram Bot Issues:** @BotFather
+✅ **Windows VPS 24/7** (~€28/lună Hetzner CPX41 🇩🇪, **8vCPU AMD EPYC / 16GB RAM / 240GB NVMe**)
+✅ **cTrader Desktop + cBot** (localhost:8767 live data provider)
+✅ **6 Python Monitors** activi + watchdog guardian
+✅ **Auto-start la boot** (Task Scheduler → GlitchInMatrix_AutoStart)
+✅ **ARMAGEDDON notifications** la fiecare trade deschis (fără duplicate)
+✅ **signals.json IPC bridge** (FullControl, cTrader ↔ Python)
+✅ **Anti-spam watchdog** (restart OK → 15 min / FAILED → 60 min cooldown)
+✅ **News guard** (blochează execuții în ferestre de știri High Impact)
+✅ **Control complet Telegram** — /status /active /stats /monitoring
+✅ **MAX PERFORMANCE MODE** — 16 GB RAM cache agresiv + 8 vCPU threading ready
+✅ **Logging complet DEBUG** — 90 zile retenție, rotație 50 MB, compresie automată
 
 ---
 
-**🚀 Happy Trading! Sistemul rulează 24/7 în cloud!**
+**Engineered by ФорексГод · Glitch in Matrix V13.1 · Hetzner CPX41 🇩🇪 · April 2026**

@@ -14,7 +14,7 @@ def send_btcusd_scan_alert():
     
     # Load scan results
     try:
-        with open('btcusd_elite_scan_results.json', 'r') as f:
+        with open('btcusd_elite_scan_results.json', 'r', encoding='utf-8') as f:
             results = json.load(f)
     except Exception as e:
         print(f"❌ Error loading results: {e}")

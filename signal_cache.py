@@ -42,7 +42,7 @@ class SignalCache:
         """Load cache from disk"""
         try:
             if self.cache_file.exists():
-                with open(self.cache_file, 'r') as f:
+                with open(self.cache_file, 'r', encoding='utf-8') as f:
                     data = json.load(f)
                     self.cache = {k: float(v) for k, v in data.items()}
                 logger.info(f"📂 Loaded {len(self.cache)} cached signals from {self.cache_file}")
@@ -56,7 +56,7 @@ class SignalCache:
     def _save_cache(self):
         """Save cache to disk (persistent)"""
         try:
-            with open(self.cache_file, 'w') as f:
+            with open(self.cache_file, 'w', encoding='utf-8') as f:
                 json.dump(self.cache, f, indent=2)
             logger.debug(f"💾 Cache saved: {len(self.cache)} entries")
         except Exception as e:
@@ -200,7 +200,7 @@ def cleanup_old_signals_file(signals_file: Path, max_age_hours: int = 1):
             logger.info(f"📂 No signals file to clean: {signals_file}")
             return
         
-        with open(signals_file, 'r') as f:
+        with open(signals_file, 'r', encoding='utf-8') as f:
             content = f.read().strip()
         
         # Handle empty file or []
@@ -257,7 +257,7 @@ def cleanup_old_signals_file(signals_file: Path, max_age_hours: int = 1):
         
         # Write back only fresh signals (always array format for V7.0)
         if removed_count > 0:
-            with open(signals_file, 'w') as f:
+            with open(signals_file, 'w', encoding='utf-8') as f:
                 json.dump(fresh_signals, f, indent=2)
             logger.success(f"✅ Removed {removed_count} old signal(s), kept {len(fresh_signals)} fresh")
     

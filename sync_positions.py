@@ -21,7 +21,7 @@ def sync_positions():
     
     # Load current monitoring setups
     try:
-        with open('monitoring_setups.json', 'r') as f:
+        with open('monitoring_setups.json', 'r', encoding='utf-8') as f:
             data = json.load(f)
         setups = data.get('setups', [])
         print(f"📋 Found {len(setups)} setups in monitoring file")
@@ -74,7 +74,7 @@ def sync_positions():
     
     # Save updated file
     data = {"setups": updated_setups}
-    with open('monitoring_setups.json', 'w') as f:
+    with open('monitoring_setups.json', 'w', encoding='utf-8') as f:
         json.dump(data, f, indent=2)
     
     print()

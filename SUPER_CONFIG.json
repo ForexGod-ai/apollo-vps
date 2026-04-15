@@ -2,9 +2,24 @@
   "system_info": {
     "name": "Glitch in Matrix Trading System",
     "owner": "ФорексГод",
-    "version": "3.1",
-    "last_updated": "2026-02-04",
+    "version": "3.2",
+    "last_updated": "2026-04-15",
+    "environment": "Windows VPS Helsinki",
     "comment": "SINGLE SOURCE OF TRUTH - Used by both Python and cBot"
+  },
+
+  "account": {
+    "account_id": "6139026",
+    "broker": "IC Markets",
+    "comment": "Veteran live account - IC Markets cTrader"
+  },
+
+  "paths": {
+    "base_dir": "C:\\Users\\Administrator\\Desktop\\Glitch in Matrix\\trading-ai-agent apollo\\",
+    "signals_path": "C:\\Users\\Administrator\\Desktop\\Glitch in Matrix\\trading-ai-agent apollo\\signals.json",
+    "history_path": "C:\\Users\\Administrator\\Desktop\\Glitch in Matrix\\trading-ai-agent apollo\\trade_history.json",
+    "active_positions_path": "C:\\Users\\Administrator\\Desktop\\Glitch in Matrix\\trading-ai-agent apollo\\active_positions.json",
+    "comment": "Windows VPS Helsinki paths — double backslashes required by JSON"
   },
   
   "risk_management": {
@@ -16,9 +31,15 @@
   
   "position_limits": {
     "max_open_positions": 5,
-    "max_positions_per_symbol": 1,
+    "max_positions_per_symbol": 2,
     "max_trades_per_day": 8,
-    "comment": "Live $1000 account — 5 positions x 5% risk = $250 max simultaneous exposure (25% of capital)"
+    "comment": "Live $1000 account — max 2 per symbol (Entry 1 + scale-in Entry 2)"
+  },
+
+  "scale_in": {
+    "entry2_risk_percent": 7.5,
+    "entry2_risk_multiplier": 1.5,
+    "comment": "Entry 2 (4H CHoCH scale-in) uses 7.5% risk = 1.5x Entry 1 (5%). Slightly larger lot to maximise winner."
   },
   
   "daily_limits": {
@@ -78,9 +99,9 @@
   "spread_guard": {
     "max_spread_pips": 2.5,
     "block_execution": true,
-    "rollover_window_utc_start": 0,
-    "rollover_window_utc_end_minutes": 15,
-    "comment": "Block executions when spread > 2.5 pips or during 00:00-00:15 UTC rollover"
+    "rollover_window_eet_start": "00:00",
+    "rollover_window_eet_end": "01:05",
+    "comment": "V14.0: Block executions when spread > 2.5 pips or during 00:00-01:05 EET rollover (Europe/Bucharest)"
   },
   
   "validation": {

@@ -1,6 +1,6 @@
 import json
 
-with open('trade_history.json', 'r') as f:
+with open('trade_history.json', 'r', encoding='utf-8') as f:
     trades = json.load(f)
 
 active = [t for t in trades if t['status'] == 'OPEN']

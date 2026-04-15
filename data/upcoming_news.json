@@ -1,360 +1,98 @@
-{
-  "last_updated": "2026-03-18T06:05:14.524517+00:00",
-  "event_count": 32,
-  "high_count": 26,
-  "medium_count": 6,
-  "events": [
-    {
-      "date": "2026-03-18",
-      "time": "12:30",
-      "datetime_utc": "2026-03-18T12:30:00+00:00",
-      "currency": "USD",
-      "event": "Core PPI m/m",
-      "impact": "High",
-      "forecast": "0.3%",
-      "previous": "0.8%",
-      "source": "forexfactory_mirror"
-    },
-    {
-      "date": "2026-03-18",
-      "time": "12:30",
-      "datetime_utc": "2026-03-18T12:30:00+00:00",
-      "currency": "USD",
-      "event": "PPI m/m",
-      "impact": "High",
-      "forecast": "0.3%",
-      "previous": "0.5%",
-      "source": "forexfactory_mirror"
-    },
-    {
-      "date": "2026-03-18",
-      "time": "13:45",
-      "datetime_utc": "2026-03-18T13:45:00+00:00",
-      "currency": "CAD",
-      "event": "BOC Rate Statement",
-      "impact": "High",
-      "forecast": "",
-      "previous": "",
-      "source": "forexfactory_mirror"
-    },
-    {
-      "date": "2026-03-18",
-      "time": "13:45",
-      "datetime_utc": "2026-03-18T13:45:00+00:00",
-      "currency": "CAD",
-      "event": "Overnight Rate",
-      "impact": "High",
-      "forecast": "2.25%",
-      "previous": "2.25%",
-      "source": "forexfactory_mirror"
-    },
-    {
-      "date": "2026-03-18",
-      "time": "14:30",
-      "datetime_utc": "2026-03-18T14:30:00+00:00",
-      "currency": "CAD",
-      "event": "BOC Press Conference",
-      "impact": "High",
-      "forecast": "",
-      "previous": "",
-      "source": "forexfactory_mirror"
-    },
-    {
-      "date": "2026-03-18",
-      "time": "18:00",
-      "datetime_utc": "2026-03-18T18:00:00+00:00",
-      "currency": "USD",
-      "event": "Federal Funds Rate",
-      "impact": "High",
-      "forecast": "3.75%",
-      "previous": "3.75%",
-      "source": "forexfactory_mirror"
-    },
-    {
-      "date": "2026-03-18",
-      "time": "18:00",
-      "datetime_utc": "2026-03-18T18:00:00+00:00",
-      "currency": "USD",
-      "event": "FOMC Economic Projections",
-      "impact": "High",
-      "forecast": "",
-      "previous": "",
-      "source": "forexfactory_mirror"
-    },
-    {
-      "date": "2026-03-18",
-      "time": "18:00",
-      "datetime_utc": "2026-03-18T18:00:00+00:00",
-      "currency": "USD",
-      "event": "FOMC Statement",
-      "impact": "High",
-      "forecast": "",
-      "previous": "",
-      "source": "forexfactory_mirror"
-    },
-    {
-      "date": "2026-03-18",
-      "time": "18:30",
-      "datetime_utc": "2026-03-18T18:30:00+00:00",
-      "currency": "USD",
-      "event": "FOMC Press Conference",
-      "impact": "High",
-      "forecast": "",
-      "previous": "",
-      "source": "forexfactory_mirror"
-    },
-    {
-      "date": "2026-03-18",
-      "time": "21:45",
-      "datetime_utc": "2026-03-18T21:45:00+00:00",
-      "currency": "NZD",
-      "event": "GDP q/q",
-      "impact": "High",
-      "forecast": "0.5%",
-      "previous": "1.1%",
-      "source": "forexfactory_mirror"
-    },
-    {
-      "date": "2026-03-19",
-      "time": "00:30",
-      "datetime_utc": "2026-03-19T00:30:00+00:00",
-      "currency": "AUD",
-      "event": "Employment Change",
-      "impact": "High",
-      "forecast": "20.8K",
-      "previous": "17.8K",
-      "source": "forexfactory_mirror"
-    },
-    {
-      "date": "2026-03-19",
-      "time": "00:30",
-      "datetime_utc": "2026-03-19T00:30:00+00:00",
-      "currency": "AUD",
-      "event": "Unemployment Rate",
-      "impact": "High",
-      "forecast": "4.1%",
-      "previous": "4.1%",
-      "source": "forexfactory_mirror"
-    },
-    {
-      "date": "2026-03-19",
-      "time": "02:30",
-      "datetime_utc": "2026-03-19T02:30:00+00:00",
-      "currency": "JPY",
-      "event": "BOJ Policy Rate",
-      "impact": "High",
-      "forecast": "<0.75%",
-      "previous": "<0.75%",
-      "source": "forexfactory_mirror"
-    },
-    {
-      "date": "2026-03-19",
-      "time": "02:30",
-      "datetime_utc": "2026-03-19T02:30:00+00:00",
-      "currency": "JPY",
-      "event": "Monetary Policy Statement",
-      "impact": "High",
-      "forecast": "",
-      "previous": "",
-      "source": "forexfactory_mirror"
-    },
-    {
-      "date": "2026-03-19",
-      "time": "05:30",
-      "datetime_utc": "2026-03-19T05:30:00+00:00",
-      "currency": "JPY",
-      "event": "BOJ Press Conference",
-      "impact": "High",
-      "forecast": "",
-      "previous": "",
-      "source": "forexfactory_mirror"
-    },
-    {
-      "date": "2026-03-19",
-      "time": "07:00",
-      "datetime_utc": "2026-03-19T07:00:00+00:00",
-      "currency": "GBP",
-      "event": "Claimant Count Change",
-      "impact": "High",
-      "forecast": "25.8K",
-      "previous": "28.6K",
-      "source": "forexfactory_mirror"
-    },
-    {
-      "date": "2026-03-19",
-      "time": "07:00",
-      "datetime_utc": "2026-03-19T07:00:00+00:00",
-      "currency": "GBP",
-      "event": "Average Earnings Index 3m/y",
-      "impact": "Medium",
-      "forecast": "3.9%",
-      "previous": "4.2%",
-      "source": "forexfactory_mirror"
-    },
-    {
-      "date": "2026-03-19",
-      "time": "08:30",
-      "datetime_utc": "2026-03-19T08:30:00+00:00",
-      "currency": "CHF",
-      "event": "SNB Monetary Policy Assessment",
-      "impact": "High",
-      "forecast": "",
-      "previous": "",
-      "source": "forexfactory_mirror"
-    },
-    {
-      "date": "2026-03-19",
-      "time": "08:30",
-      "datetime_utc": "2026-03-19T08:30:00+00:00",
-      "currency": "CHF",
-      "event": "SNB Policy Rate",
-      "impact": "High",
-      "forecast": "0.00%",
-      "previous": "0.00%",
-      "source": "forexfactory_mirror"
-    },
-    {
-      "date": "2026-03-19",
-      "time": "09:00",
-      "datetime_utc": "2026-03-19T09:00:00+00:00",
-      "currency": "CHF",
-      "event": "SNB Press Conference",
-      "impact": "High",
-      "forecast": "",
-      "previous": "",
-      "source": "forexfactory_mirror"
-    },
-    {
-      "date": "2026-03-19",
-      "time": "12:00",
-      "datetime_utc": "2026-03-19T12:00:00+00:00",
-      "currency": "GBP",
-      "event": "Monetary Policy Summary",
-      "impact": "High",
-      "forecast": "",
-      "previous": "",
-      "source": "forexfactory_mirror"
-    },
-    {
-      "date": "2026-03-19",
-      "time": "12:00",
-      "datetime_utc": "2026-03-19T12:00:00+00:00",
-      "currency": "GBP",
-      "event": "MPC Official Bank Rate Votes",
-      "impact": "High",
-      "forecast": "0-2-7",
-      "previous": "0-4-5",
-      "source": "forexfactory_mirror"
-    },
-    {
-      "date": "2026-03-19",
-      "time": "12:00",
-      "datetime_utc": "2026-03-19T12:00:00+00:00",
-      "currency": "GBP",
-      "event": "Official Bank Rate",
-      "impact": "High",
-      "forecast": "3.75%",
-      "previous": "3.75%",
-      "source": "forexfactory_mirror"
-    },
-    {
-      "date": "2026-03-19",
-      "time": "12:30",
-      "datetime_utc": "2026-03-19T12:30:00+00:00",
-      "currency": "USD",
-      "event": "Unemployment Claims",
-      "impact": "High",
-      "forecast": "215K",
-      "previous": "213K",
-      "source": "forexfactory_mirror"
-    },
-    {
-      "date": "2026-03-19",
-      "time": "12:30",
-      "datetime_utc": "2026-03-19T12:30:00+00:00",
-      "currency": "USD",
-      "event": "Philly Fed Manufacturing Index",
-      "impact": "Medium",
-      "forecast": "8.3",
-      "previous": "16.3",
-      "source": "forexfactory_mirror"
-    },
-    {
-      "date": "2026-03-19",
-      "time": "13:15",
-      "datetime_utc": "2026-03-19T13:15:00+00:00",
-      "currency": "EUR",
-      "event": "Main Refinancing Rate",
-      "impact": "High",
-      "forecast": "2.15%",
-      "previous": "2.15%",
-      "source": "forexfactory_mirror"
-    },
-    {
-      "date": "2026-03-19",
-      "time": "13:15",
-      "datetime_utc": "2026-03-19T13:15:00+00:00",
-      "currency": "EUR",
-      "event": "Monetary Policy Statement",
-      "impact": "High",
-      "forecast": "",
-      "previous": "",
-      "source": "forexfactory_mirror"
-    },
-    {
-      "date": "2026-03-19",
-      "time": "13:45",
-      "datetime_utc": "2026-03-19T13:45:00+00:00",
-      "currency": "EUR",
-      "event": "ECB Press Conference",
-      "impact": "High",
-      "forecast": "",
-      "previous": "",
-      "source": "forexfactory_mirror"
-    },
-    {
-      "date": "2026-03-19",
-      "time": "14:00",
-      "datetime_utc": "2026-03-19T14:00:00+00:00",
-      "currency": "USD",
-      "event": "New Home Sales",
-      "impact": "Medium",
-      "forecast": "722K",
-      "previous": "745K",
-      "source": "forexfactory_mirror"
-    },
-    {
-      "date": "2026-03-20",
-      "time": "12:30",
-      "datetime_utc": "2026-03-20T12:30:00+00:00",
-      "currency": "CAD",
-      "event": "Core Retail Sales m/m",
-      "impact": "Medium",
-      "forecast": "1.2%",
-      "previous": "0.1%",
-      "source": "forexfactory_mirror"
-    },
-    {
-      "date": "2026-03-20",
-      "time": "12:30",
-      "datetime_utc": "2026-03-20T12:30:00+00:00",
-      "currency": "CAD",
-      "event": "Retail Sales m/m",
-      "impact": "Medium",
-      "forecast": "1.4%",
-      "previous": "-0.4%",
-      "source": "forexfactory_mirror"
-    },
-    {
-      "date": "2026-03-21",
-      "time": "17:30",
-      "datetime_utc": "2026-03-21T17:30:00+00:00",
-      "currency": "USD",
-      "event": "Fed Chair Powell Speaks",
-      "impact": "Medium",
-      "forecast": "",
-      "previous": "",
-      "source": "forexfactory_mirror"
-    }
-  ]
-}
+[
+  {
+    "datetime": "2026-04-06 20:00",
+    "currency": "USD",
+    "event": "ISM Services PMI (Mar)",
+    "impact": "HIGH",
+    "forecast": "54.8",
+    "previous": "56.1"
+  },
+  {
+    "datetime": "2026-04-09 08:00",
+    "currency": "NZD",
+    "event": "Official Cash Rate (RBNZ)",
+    "impact": "HIGH",
+    "forecast": "2.25%",
+    "previous": "2.25%"
+  },
+  {
+    "datetime": "2026-04-09 08:00",
+    "currency": "NZD",
+    "event": "RBNZ Rate Statement",
+    "impact": "HIGH",
+    "forecast": "",
+    "previous": ""
+  },
+  {
+    "datetime": "2026-04-09 09:00",
+    "currency": "NZD",
+    "event": "RBNZ Press Conference",
+    "impact": "HIGH",
+    "forecast": "",
+    "previous": ""
+  },
+  {
+    "datetime": "2026-04-10 04:00",
+    "currency": "USD",
+    "event": "FOMC Meeting Minutes",
+    "impact": "HIGH",
+    "forecast": "",
+    "previous": ""
+  },
+  {
+    "datetime": "2026-04-10 10:30",
+    "currency": "USD",
+    "event": "Core PCE Price Index m/m (Feb)",
+    "impact": "HIGH",
+    "forecast": "0.4%",
+    "previous": "0.4%"
+  },
+  {
+    "datetime": "2026-04-10 10:30",
+    "currency": "USD",
+    "event": "Final GDP q/q (Q4)",
+    "impact": "HIGH",
+    "forecast": "0.7%",
+    "previous": "0.7%"
+  },
+  {
+    "datetime": "2026-04-11 10:30",
+    "currency": "CAD",
+    "event": "Employment Change (Mar)",
+    "impact": "HIGH",
+    "forecast": "12.6K",
+    "previous": "-83.9K"
+  },
+  {
+    "datetime": "2026-04-11 10:30",
+    "currency": "CAD",
+    "event": "Unemployment Rate (Mar)",
+    "impact": "HIGH",
+    "forecast": "6.8%",
+    "previous": "6.7%"
+  },
+  {
+    "datetime": "2026-04-11 10:30",
+    "currency": "USD",
+    "event": "Core CPI m/m (Mar)",
+    "impact": "HIGH",
+    "forecast": "0.3%",
+    "previous": "0.2%"
+  },
+  {
+    "datetime": "2026-04-11 10:30",
+    "currency": "USD",
+    "event": "CPI m/m (Mar)",
+    "impact": "HIGH",
+    "forecast": "1.0%",
+    "previous": "0.3%"
+  },
+  {
+    "datetime": "2026-04-11 10:30",
+    "currency": "USD",
+    "event": "CPI y/y (Mar)",
+    "impact": "HIGH",
+    "forecast": "3.4%",
+    "previous": "2.4%"
+  }
+]

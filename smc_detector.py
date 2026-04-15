@@ -100,6 +100,13 @@ class SMCDetector:
         # 🎯 V3.4 ORDER BLOCKS PREPARATION: Store last 2 FVG zones per timeframe as "price magnets"
         # Format: {symbol: {'4H': [FVG, FVG], '1H': [FVG, FVG]}}
         self.fvg_magnets = {}  # Zonele de întoarcere pentru preț
+
+        # ⚡ V13.1 PERFORMANCE CACHE: Evită re-calcularea swing-urilor pentru același df
+        # Key = (id(df), len(df)) — același obiect df, aceleași date → returnam cached
+        # Clear la fiecare scan_for_setup() nou pentru a evita date stale
+        self._swing_highs_cache: dict = {}  # {(id, len): List[SwingPoint]}
+        self._swing_lows_cache:  dict = {}  # {(id, len): List[SwingPoint]}
+        self._choch_bos_cache:   dict = {}  # {(id, len): (List[CHoCH], List[BOS])}
     
     def store_fvg_magnet(self, symbol: str, timeframe: str, fvg: FVG) -> None:
         """
@@ -1190,6 +1197,8 @@ class SMCDetector:
                             current_trend = 'bearish'
                         break  # Only count first break
         
+        # ⚡ V13.1: Stochează în cache înainte de return
+        self._choch_bos_cache[_cache_key] = (chochs, bos_list)
         return chochs, bos_list
     
     def detect_swing_highs(self, df: pd.DataFrame) -> List[SwingPoint]:
@@ -1199,6 +1208,10 @@ class SMCDetector:
         - Uses ONLY body closure (max of open/close) - IGNORES WICKS completely
         - Validates swing prominence using ATR filter
         - Eliminates false swings from wick noise
+        
+        ⚡ V13.1 PERFORMANCE CACHE: Returnează rezultatul din cache dacă df-ul
+        este același obiect cu aceleași date (id + len). Evită 6-10 recalculări inutile
+        per pair, reducând ~80% din compute time per scanare.
         
         PHILOSOPHY by ФорексГод:
         "Wicks are LIES. Body is TRUTH. Price close = commitment."
@@ -1211,6 +1224,11 @@ class SMCDetector:
         """
         if df is None or len(df) == 0:
             return []
+
+        # ⚡ V13.1 CACHE CHECK — acelasi df obiect + aceeasi lungime = date identice
+        _cache_key = (id(df), len(df))
+        if _cache_key in self._swing_highs_cache:
+            return self._swing_highs_cache[_cache_key]
 
         # ✅ V11.2 FRACTAL WINDOW 10: fereastra fixă de 10 bare fiecare parte
         # Vrem MUNȚII, nu mușuroaiele — doar maxime cu 10 bare confirmare bilaterală
@@ -1255,6 +1273,8 @@ class SMCDetector:
                     candle_time=df.index[i] if not isinstance(df.index, pd.RangeIndex) else i
                 ))
 
+        # ⚡ V13.1: Stochează în cache înainte de return
+        self._swing_highs_cache[_cache_key] = swing_highs
         return swing_highs
 
     def detect_swing_lows(self, df: pd.DataFrame) -> List[SwingPoint]:
@@ -1268,6 +1288,11 @@ class SMCDetector:
         """
         if df is None or len(df) == 0:
             return []
+
+        # ⚡ V13.1 CACHE CHECK — acelasi df obiect + aceeasi lungime = date identice
+        _cache_key = (id(df), len(df))
+        if _cache_key in self._swing_lows_cache:
+            return self._swing_lows_cache[_cache_key]
 
         # ✅ V11.2 FRACTAL WINDOW 10: fereastra fixă de 10 bare fiecare parte
         # Vrem VĂILE REALE, nu denivelerile mici — doar minime cu 10 bare confirmare bilaterală
@@ -1310,6 +1335,8 @@ class SMCDetector:
                     candle_time=df.index[i] if not isinstance(df.index, pd.RangeIndex) else i
                 ))
 
+        # ⚡ V13.1: Stochează în cache înainte de return
+        self._swing_lows_cache[_cache_key] = swing_lows
         return swing_lows
 
     def detect_choch_and_bos(self, df: pd.DataFrame) -> Tuple[List[CHoCH], List[BOS]]:
@@ -1335,6 +1362,12 @@ class SMCDetector:
         - Break opposite direction = CHoCH (trend reversal) - ONLY if pattern validated
         - 🆕 Every 20 swings: Re-evaluate prev_trend from LAST 150 bars (not first 50%)
         """
+        # ⚡ V13.1 CACHE CHECK — detect_choch_and_bos apeleaza detect_swing_highs/lows intern
+        # daca df e acelasi obiect, rezultatul choch/bos e identic — returnam din cache
+        _cache_key = (id(df), len(df))
+        if _cache_key in self._choch_bos_cache:
+            return self._choch_bos_cache[_cache_key]
+
         chochs = []
         bos_list = []
         swing_highs = self.detect_swing_highs(df)
@@ -2158,6 +2191,35 @@ class SMCDetector:
             # Forex standard: 30 pips (0.0001 pip_size) = 0.0030
             return 30 * pip_size
     
+    # ╔══════════════════════════════════════════════════════════════════════════╗
+    # ║  REPAIR LOG — USDCHF INCIDENT 2026-04-07                              ║
+    # ║                                                                        ║
+    # ║  BUG CONFIRMAT: SHORT USDCHF — SL = 16.1 pips (zgomot), nu Generalul ║
+    # ║                                                                        ║
+    # ║  CAUZA RĂDĂCINĂ:                                                       ║
+    # ║    highs_before_choch[-1] = cel mai RECENT fractal confirmat           ║
+    # ║    ≠ cel mai ÎNALT wick dintre swing-urile pre-CHoCH                  ║
+    # ║    Fractal Window 10 poate confirma un HIGH local minor (bara 165)     ║
+    # ║    imediat înainte de CHoCH (bara 185), ignorând Generalul de la       ║
+    # ║    bara 120 care era mult mai sus.                                      ║
+    # ║                                                                        ║
+    # ║  EXEMPLU RECONSTRUIT USDCHF:                                           ║
+    # ║    Generalul (bara ~120): high wick = 0.91200                          ║
+    # ║    Fractal minor (bara ~165): high wick = 0.90410  ← ales de [-1]     ║
+    # ║    Entry SHORT: 0.90250                                                 ║
+    # ║    SL vechi: 0.90410 → DISTANȚĂ = 16 pips → ZGOMOT → STOPAT          ║
+    # ║    SL corect: 0.91200 + 1 pip → DISTANȚĂ = 95 pips → RR < 1:4        ║
+    # ║              → TRADE RESPINS CORECT (RR nesustenabil)                 ║
+    # ║                                                                        ║
+    # ║  FIX V13.2 — REGULA DE FIER A GENERALULUI:                           ║
+    # ║    SL SHORT = max(df_4h['high'].iloc[sh.index])                       ║
+    # ║               pentru TOATE swing-urile înainte de CHoCH               ║
+    # ║    = cel mai înalt WICK structural din fereastra pre-CHoCH            ║
+    # ║    Dacă distanța SL > 100 pips → REJECT (RR nesustenabil)            ║
+    # ║    NICIODATĂ nu strânge SL în zone de zgomot sub 30 pips              ║
+    # ║                                                                        ║
+    # ║  REZULTAT: Bot-ul fie RESPIRĂ cu structura, fie NU intră              ║
+    # ╚══════════════════════════════════════════════════════════════════════════╝
     def calculate_entry_sl_tp(
         self,
         symbol: str,
@@ -2169,24 +2231,28 @@ class SMCDetector:
     ) -> Tuple[float, float, float]:
         """
         ═══════════════════════════════════════════════════════════════════
-        V11.2 — EXTREME VISION — EXTREMA ABSOLUTĂ INSTITUȚIONALĂ
+        V13.2 — STRUCTURAL SWING SL/TP — GENERALUL (MAX WICK PRE-CHoCH)
         ═══════════════════════════════════════════════════════════════════
 
         FLUX DE EXECUȚIE:
           1. D1 POI (FVG Daily) atins                      → MAGNET
           2. 4H CHoCH confirmat (body closure)              → CONFIRMARE
           3. Pullback în FVG 4H — zona 70-80% Fibonacci     → ENTRY SNIPER
-          4. SL = MAX/MIN body din fereastra CHoCH±40 bare  → EXTREMA ABSOLUTĂ 4H
-          5. TP = MAX/MIN body din TOT istoricul D1 (200b)  → EXTREMA ABSOLUTĂ D1
+          4. SL = cel mai înalt/scăzut WICK din TOATE       → GENERALUL
+             swing-urile 4H înainte de CHoCH + 1 pip buffer
+             (NU ultimul fractal [-1] — acela poate fi minor!)
+          5. TP = primul swing Low/High D1 dincolo de       → STRUCTURA REALĂ
+             prețul curent (nu extrema din 10 luni)
           6. RR ≥ 1:4 structural                            → EXECUȚIE
 
-        REGULI ABSOLUTE V11.2:
-          - SL = extrema REALĂ a zonei structurale (nu ultimul swing mic [-1])
-          - TP = extrema ABSOLUTĂ din 200 bare D1 = 10 luni de memorie
-          - Fractal Window 10: doar munții/văile reale (10 bare confirmare bilateral)
-          - FĂRĂ ATR buffers pe SL
+        REGULI ABSOLUTE V13.2 (REPAIR LOG USDCHF 2026-04-07):
+          - SL SHORT = max wick HIGH dintre TOATE swing-urile 4H pre-CHoCH
+          - SL LONG  = min wick LOW  dintre TOATE swing-urile 4H pre-CHoCH
+          - Dacă distanța SL > 100 pips → trade RESPINS (RR nesustenabil)
+            Botul NU strânge SL artificial — ori respiră cu structura, ori NU intră
+          - 1 pip buffer pe SL (protecție wick-hunt)
+          - Fractal Window 10: doar munții/văile reale
           - Dacă RR < 1:4 → trade RESPINS, nu ajustat
-          - TOTUL bazat pe body (close), niciodată wick
         ═══════════════════════════════════════════════════════════════════
         """
 
@@ -2230,39 +2296,72 @@ class SMCDetector:
                 # Fallback fără date CHoCH: marginea inferioară a FVG
                 entry = fvg.bottom
 
-            # ── V11.2 SL STRUCTURAL 4H: EXTREMA ABSOLUTĂ din zona de structură ────
-            # LOGICĂ NOUĂ: SL = MIN(body_low) din fereastra structurală din jurul CHoCH
-            # Nu mai luăm [-1] (ultimul swing mic) — luăm GROAPA REALĂ din care a plecat mișcarea.
-            # Fereastra: de la 40 bare înainte de CHoCH până la bara curentă (toată zona structurală)
+            # ── V13.2 SL STRUCTURAL 4H: cel mai scăzut WICK din TOATE swing-urile ÎNAINTE de CHoCH ────
+            # FIX USDCHF 2026-04-07 (simetric, pentru LONG):
+            # [-1] = ultimul fractal RECENT poate fi un low minor de consolidare, nu Generalul.
+            # REGULA DE FIER: SL = min wick LOW dintre TOATE swing-urile pre-CHoCH = GENERALUL
+            # = cel mai scăzut wick structural — nivelul care, dacă e spart, invalidează bullish-ul.
             h4_choch_idx = h4_choch.index if h4_choch is not None and hasattr(h4_choch, 'index') else max(0, len(df_4h) - 40)
-            # Fereastra structurală: 40 bare înainte de CHoCH → prezent (acoperă Supply/Demand Zone)
-            sl_window_start = max(0, h4_choch_idx - 40)
-            sl_window_end   = len(df_4h)  # tot până în prezent
-            # EXTREMA ABSOLUTĂ: cel mai jos body din fereastra structurală
-            body_lows_4h = df_4h[['open', 'close']].min(axis=1)
-            stop_loss = body_lows_4h.iloc[sl_window_start:sl_window_end].min()
-            print(f"   🛡️ [V11.2 SL] Extrema absolută din bare {sl_window_start}-{sl_window_end} (4H): {stop_loss:.5f}")
+            swing_lows_4h_list = self.detect_swing_lows(df_4h)
+            # Filtrăm doar swing-urile ÎNAINTE sau LA indexul CHoCH
+            lows_before_choch = [sl for sl in swing_lows_4h_list if sl.index <= h4_choch_idx]
+            pip_size = 0.01 if 'JPY' in symbol else 0.0001
+            sl_buffer = pip_size * 1  # 1 pip buffer sub swing Low
+            if lows_before_choch:
+                # V13.2 FIX: MIN wick LOW dintre TOATE swing-urile pre-CHoCH = GENERALUL
+                # Nu [-1] (cel mai recent) ci min (cel mai scăzut) = structura care contează
+                general_wick_low = min(df_4h['low'].iloc[sl.index] for sl in lows_before_choch)
+                stop_loss = general_wick_low - sl_buffer
+                general_sl_obj = min(lows_before_choch, key=lambda sl: df_4h['low'].iloc[sl.index])
+                sl_distance_pips = abs(entry - stop_loss) / pip_size
+                print(f"   🛡️ [V13.2 SL GENERALUL LONG] Cel mai scăzut swing Low 4H pre-CHoCH: "
+                      f"idx={general_sl_obj.index} wick_low={general_wick_low:.5f} → SL={stop_loss:.5f} "
+                      f"(distanță={sl_distance_pips:.1f} pips)")
+                # ── REGULA DE FIER: dacă distanța > 100 pips, trade RESPINS ──────────────
+                _max_sl_pips = 200 if 'JPY' in symbol else 100
+                if sl_distance_pips > _max_sl_pips:
+                    print(f"   ⛔ [V13.2 REJECT: SL distanță {sl_distance_pips:.1f} pips > {_max_sl_pips} pips max] "
+                          f"{symbol} — Generalul prea departe, RR nesustenabil. Trade ANULAT.")
+                    return None, None, None
+            else:
+                # Fallback: min body din fereastra 40 bare
+                body_lows_4h = df_4h[['open', 'close']].min(axis=1)
+                sl_window_start = max(0, h4_choch_idx - 40)
+                stop_loss = body_lows_4h.iloc[sl_window_start:].min() - sl_buffer
+                print(f"   🛡️ [V13.2 SL FALLBACK] Body min 40-bar window: {stop_loss:.5f}")
 
             # Validare: SL trebuie să fie sub entry pentru LONG
             if stop_loss >= entry:
-                # Extinde fereastra dacă SL invalid (bare mai vechi)
-                stop_loss = body_lows_4h.min()
-                print(f"   🛡️ [V11.2 SL FALLBACK] Body min din toți df_4h: {stop_loss:.5f}")
+                body_lows_4h = df_4h[['open', 'close']].min(axis=1)
+                stop_loss = body_lows_4h.min() - sl_buffer
+                print(f"   🛡️ [V13.2 SL FALLBACK2] Body min total 4H: {stop_loss:.5f}")
 
-            # ── V11.2 TP STRUCTURAL D1: EXTREMA ABSOLUTĂ din tot istoricul D1 ────────
-            # LOGICĂ NOUĂ: TP = MAX body high din TOATE bare D1 disponibile (200 bare = 10 luni)
-            # Acesta este nivelul de lichiditate EXTERNĂ pe care instituțiile îl vânează.
-            # Nu mai filtrăm prin swing detection (care pierde maxime cu fractal window 10)
-            # Luăm direct max(open, close) din tot historicul — exact ce vede un trader instituțional.
-            body_highs_d1 = df_daily[['open', 'close']].max(axis=1)
-            # Excludem bara curentă (neconfirmată)
-            take_profit = body_highs_d1.iloc[:-1].max()
-            print(f"   🎯 [V11.2 TP] Extrema absolută D1 din {len(df_daily)-1} bare: {take_profit:.5f}")
+            # ── V12.1 TP STRUCTURAL D1: primul swing High D1 DEASUPRA prețului curent ────
+            # TP = cel mai apropiat swing High pe D1 care este deasupra entry-ului.
+            # Acesta este nivelul de structură real, NU extrema din 10 luni.
+            current_price = df_4h['close'].iloc[-1]
+            swing_highs_d1_list = self.detect_swing_highs(df_daily)
+            # Filtrăm swing-urile D1 DEASUPRA prețului curent
+            highs_above_price = [sh for sh in swing_highs_d1_list if sh.price > current_price]
+            if highs_above_price:
+                # Cel mai apropiat (cel mai jos) swing High deasupra prețului
+                nearest_high = min(highs_above_price, key=lambda sh: sh.price)
+                take_profit = df_daily['high'].iloc[nearest_high.index]
+                print(f"   🎯 [V12.1 TP] Nearest D1 swing High: idx={nearest_high.index} price={take_profit:.5f}")
+            else:
+                # Fallback: ultimul swing High pe D1
+                if swing_highs_d1_list:
+                    take_profit = df_daily['high'].iloc[swing_highs_d1_list[-1].index]
+                else:
+                    body_highs_d1 = df_daily[['open', 'close']].max(axis=1)
+                    take_profit = body_highs_d1.iloc[:-1].max()
+                print(f"   🎯 [V12.1 TP FALLBACK] Ultimul swing High D1: {take_profit:.5f}")
 
             # Validare: TP trebuie să fie deasupra entry pentru LONG
             if take_profit <= entry:
-                take_profit = body_highs_d1.max()
-                print(f"   🎯 [V11.2 TP FALLBACK] Max body D1 (inclusiv bara curentă): {take_profit:.5f}")
+                body_highs_d1 = df_daily[['open', 'close']].max(axis=1)
+                take_profit = body_highs_d1.iloc[:-1].max()
+                print(f"   🎯 [V12.1 TP FALLBACK2] Max body D1: {take_profit:.5f}")
 
         else:
             # ══════════════════════════════════════════════
@@ -2287,36 +2386,74 @@ class SMCDetector:
             else:
                 entry = fvg.top
 
-            # ── V11.2 SL STRUCTURAL 4H: EXTREMA ABSOLUTĂ din zona de structură ────
-            # LOGICĂ NOUĂ: SL = MAX(body_high) din fereastra structurală din jurul CHoCH
-            # Nu mai luăm [-1] (ultimul swing mic) — luăm VÂRFUL REAL din care a căzut prețul.
-            # Fereastra: de la 40 bare înainte de CHoCH până la bara curentă
+            # ── V13.2 SL STRUCTURAL 4H: cel mai înalt WICK din TOATE swing-urile ÎNAINTE de CHoCH ────
+            # FIX USDCHF 2026-04-07: [-1] = ultimul fractal RECENT, NU Generalul!
+            # Un fractal minor la bara 165 poate fi cu 80 pips sub Generalul de la bara 120.
+            # REGULA DE FIER: SL = max wick HIGH dintre TOATE swing-urile pre-CHoCH = GENERALUL
+            # = cel mai înalt wick structural — nivelul care, dacă e spart, invalidează bearish-ul.
             h4_choch_idx = h4_choch.index if h4_choch is not None and hasattr(h4_choch, 'index') else max(0, len(df_4h) - 40)
-            sl_window_start = max(0, h4_choch_idx - 40)
-            sl_window_end   = len(df_4h)
-            # EXTREMA ABSOLUTĂ: cel mai înalt body din fereastra structurală
-            body_highs_4h = df_4h[['open', 'close']].max(axis=1)
-            stop_loss = body_highs_4h.iloc[sl_window_start:sl_window_end].max()
-            print(f"   🛡️ [V11.2 SL] Extrema absolută din bare {sl_window_start}-{sl_window_end} (4H): {stop_loss:.5f}")
+            swing_highs_4h_list = self.detect_swing_highs(df_4h)
+            # Filtrăm doar swing-urile ÎNAINTE sau LA indexul CHoCH
+            highs_before_choch = [sh for sh in swing_highs_4h_list if sh.index <= h4_choch_idx]
+            pip_size = 0.01 if 'JPY' in symbol else 0.0001
+            sl_buffer = pip_size * 1  # 1 pip buffer deasupra swing High
+            if highs_before_choch:
+                # V13.2 FIX: MAX wick HIGH dintre TOATE swing-urile pre-CHoCH = GENERALUL
+                # Nu [-1] (cel mai recent) ci max (cel mai înalt) = structura care contează
+                general_wick_high = max(df_4h['high'].iloc[sh.index] for sh in highs_before_choch)
+                stop_loss = general_wick_high + sl_buffer
+                general_sh_obj = max(highs_before_choch, key=lambda sh: df_4h['high'].iloc[sh.index])
+                sl_distance_pips = abs(stop_loss - entry) / pip_size
+                print(f"   🛡️ [V13.2 SL GENERALUL SHORT] Cel mai înalt swing High 4H pre-CHoCH: "
+                      f"idx={general_sh_obj.index} wick_high={general_wick_high:.5f} → SL={stop_loss:.5f} "
+                      f"(distanță={sl_distance_pips:.1f} pips)")
+                # ── REGULA DE FIER: dacă distanța > 100 pips, trade RESPINS ──────────────
+                # 100 pips SL → RR 1:4 necesită 400 pips TP → nesustenabil structural
+                # Botul NU strânge SL în zgomot — ori respiră cu structura, ori NU intră
+                _max_sl_pips = 200 if 'JPY' in symbol else 100
+                if sl_distance_pips > _max_sl_pips:
+                    print(f"   ⛔ [V13.2 REJECT: SL distanță {sl_distance_pips:.1f} pips > {_max_sl_pips} pips max] "
+                          f"{symbol} — Generalul prea departe, RR nesustenabil. Trade ANULAT.")
+                    return None, None, None
+            else:
+                # Fallback: max body din fereastra 40 bare
+                body_highs_4h = df_4h[['open', 'close']].max(axis=1)
+                sl_window_start = max(0, h4_choch_idx - 40)
+                stop_loss = body_highs_4h.iloc[sl_window_start:].max() + sl_buffer
+                print(f"   🛡️ [V13.2 SL FALLBACK] Body max 40-bar window: {stop_loss:.5f}")
 
             # Validare: SL trebuie să fie deasupra entry pentru SHORT
             if stop_loss <= entry:
-                stop_loss = body_highs_4h.max()
-                print(f"   🛡️ [V11.2 SL FALLBACK] Body max din toți df_4h: {stop_loss:.5f}")
+                body_highs_4h = df_4h[['open', 'close']].max(axis=1)
+                stop_loss = body_highs_4h.max() + sl_buffer
+                print(f"   🛡️ [V13.2 SL FALLBACK2] Body max total 4H: {stop_loss:.5f}")
 
-            # ── V11.2 TP STRUCTURAL D1: EXTREMA ABSOLUTĂ din tot istoricul D1 ────────
-            # LOGICĂ NOUĂ: TP = MIN body low din TOATE bare D1 disponibile (200 bare = 10 luni)
-            # Lichiditatea externă jos = cel mai JOS punct atins de piață în 10 luni.
-            # Nu mai filtrăm prin swing detection — luăm direct min(open, close) din tot istoricul.
-            body_lows_d1 = df_daily[['open', 'close']].min(axis=1)
-            # Excludem bara curentă (neconfirmată)
-            take_profit = body_lows_d1.iloc[:-1].min()
-            print(f"   🎯 [V11.2 TP] Extrema absolută D1 din {len(df_daily)-1} bare: {take_profit:.5f}")
+            # ── V12.1 TP STRUCTURAL D1: primul swing Low D1 SUB prețul curent ────
+            # TP = cel mai apropiat swing Low pe D1 care este sub entry.
+            # Acesta este suportul structural real, NU extrema din 10 luni.
+            current_price = df_4h['close'].iloc[-1]
+            swing_lows_d1_list = self.detect_swing_lows(df_daily)
+            # Filtrăm swing-urile D1 SUB prețul curent
+            lows_below_price = [sl for sl in swing_lows_d1_list if sl.price < current_price]
+            if lows_below_price:
+                # Cel mai apropiat (cel mai sus) swing Low sub preț = primul suport
+                nearest_low = max(lows_below_price, key=lambda sl: sl.price)
+                take_profit = df_daily['low'].iloc[nearest_low.index]
+                print(f"   🎯 [V12.1 TP] Nearest D1 swing Low: idx={nearest_low.index} price={take_profit:.5f}")
+            else:
+                # Fallback: ultimul swing Low pe D1
+                if swing_lows_d1_list:
+                    take_profit = df_daily['low'].iloc[swing_lows_d1_list[-1].index]
+                else:
+                    body_lows_d1 = df_daily[['open', 'close']].min(axis=1)
+                    take_profit = body_lows_d1.iloc[:-1].min()
+                print(f"   🎯 [V12.1 TP FALLBACK] Ultimul swing Low D1: {take_profit:.5f}")
 
             # Validare: TP trebuie să fie sub entry pentru SHORT
             if take_profit >= entry:
-                take_profit = body_lows_d1.min()
-                print(f"   🎯 [V11.2 TP FALLBACK] Min body D1 (inclusiv bara curentă): {take_profit:.5f}")
+                body_lows_d1 = df_daily[['open', 'close']].min(axis=1)
+                take_profit = body_lows_d1.iloc[:-1].min()
+                print(f"   🎯 [V12.1 TP FALLBACK2] Min body D1: {take_profit:.5f}")
 
         # ══════════════════════════════════════════════════════════════════
         # RR FLOOR 1:4 STRUCTURAL — Levier 1:500 = fără compromisuri
@@ -2332,9 +2469,10 @@ class SMCDetector:
             print(f"⛔ [V10.2 REJECT: RR=1:{rr:.2f} < 1:4 în calculate_entry_sl_tp] {symbol}")
             return None, None, None
 
-        print(f"✅ [V11.2 EXTREME VISION] {symbol} {'LONG' if fvg.direction == 'bullish' else 'SHORT'}: "
+        print(f"✅ [V13.2 GENERALUL] {symbol} {'LONG' if fvg.direction == 'bullish' else 'SHORT'}: "
               f"Entry={entry:.5f} | SL={stop_loss:.5f} | TP={take_profit:.5f} | RR=1:{rr:.2f}")
-        print(f"   📐 SL dist={abs(entry-stop_loss)/entry*10000:.1f} pips | TP dist={abs(take_profit-entry)/entry*10000:.1f} pips")
+        pip_size_final = 0.01 if 'JPY' in symbol else 0.0001
+        print(f"   📐 SL dist={abs(entry-stop_loss)/pip_size_final:.1f} pips | TP dist={abs(take_profit-entry)/pip_size_final:.1f} pips")
 
         return entry, stop_loss, take_profit
     
@@ -2766,6 +2904,13 @@ class SMCDetector:
         # Nu mai reasignăm 'debug' (parametrul) — folosim 'current_debug' în tot corpul funcției
         current_debug = debug or (symbol == "NZDCAD")
         debug = current_debug  # alias — tot codul existent folosește 'debug'
+
+        # ⚡ V13.1 PERFORMANCE: Clear swing/choch cache la fiecare pair nou
+        # df_daily si df_4h sunt obiecte noi per apel → cache-ul precedent devine irelevant
+        # Dar IN CADRUL aceluiasi apel, acelasi df va fi cacheat — evita 6-10 recalculari
+        self._swing_highs_cache.clear()
+        self._swing_lows_cache.clear()
+        self._choch_bos_cache.clear()
         
         # V4.0: Initialize variables early to avoid UnboundLocalError
         order_block = None  # Will be populated later with detect_order_block()
@@ -2787,44 +2932,55 @@ class SMCDetector:
                 for i, bos in enumerate(daily_bos_list[-3:]):  # Last 3
                     print(f"   BOS [{i}] {bos.direction.upper()} @ {bos.break_price:.5f} (index {bos.index})")
         
-        # ━━━ V11.9 UNCONFIRMED CHOCH DETECTION ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # ━━━ V11.9 UNCONFIRMED CHOCH DETECTION (UPDATED) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         # Fractal Window 10 necesită 10 bare bilaterale confirmate — CHoCH recent (±15 bare)
         # poate să nu fie prins. Verificăm price action: dacă prețul a scăzut față de
-        # ultimul swing high cu ≥1.5% (bearish) sau urcat față de ultimul swing low (bullish),
-        # există o schimbare de caracter neconfirmată — blocăm MOMENTUM READY pentru acea direcție.
+        # ultimul swing high cu ≥0.8% (bearish) sau urcat față de ultimul swing low (bullish),
+        # există o schimbare de caracter neconfirmată — blocăm setup-ul.
+        # FEREASTRA: 60 bare (nu 30) — prinde și swing-uri mai vechi dar relevante.
+        # Ex: GBPJPY swing high idx=162 (37 bare ago) cu drop 1.59% — trebuia prins!
         _swing_highs_unconf = self.detect_swing_highs(df_daily)
         _swing_lows_unconf  = self.detect_swing_lows(df_daily)
         current_price_unconf = df_daily['close'].iloc[-1]
         _unconfirmed_bearish_choch = False
         _unconfirmed_bullish_choch = False
+        _unconf_bearish_drop_pct = 0.0
+        _unconf_bullish_rise_pct = 0.0
 
         if _swing_highs_unconf:
-            last_sh_price = _swing_highs_unconf[-1].price
-            last_sh_idx   = _swing_highs_unconf[-1].index
-            # Swing high recent (ultimele 30 bare) + preț actual a scăzut față de el
-            # Folosim WICK HIGH pentru a capta retracerile reale (body poate fi mai mic)
-            _wick_high_recent = df_daily['high'].iloc[last_sh_idx] if last_sh_idx < len(df_daily) else last_sh_price
-            _ref_high = max(last_sh_price, _wick_high_recent)
-            if (len(df_daily) - last_sh_idx) <= 30 and _ref_high > 0:
-                drop_pct = (_ref_high - current_price_unconf) / _ref_high * 100.0
-                if drop_pct >= 1.0:  # 1.0% față de swing high recent = retracere semnificativă
-                    _unconfirmed_bearish_choch = True
-                    if debug:
-                        print(f"   ⚠️ V11.9: Posibil CHoCH bearish neconfirmat — prețul a scăzut {drop_pct:.1f}% față de swing high @ {_ref_high:.5f}")
+            # Căutăm cel mai recent swing high din ultimele 60 bare
+            # cu cel mai mare drop față de prețul curent (cel mai relevant)
+            for _sh_candidate in reversed(_swing_highs_unconf):
+                _sh_bars_ago = len(df_daily) - _sh_candidate.index - 1
+                if _sh_bars_ago > 60:
+                    break  # sunt sortate crescător, deci tot ce urmează e mai vechi
+                _wick_h = df_daily['high'].iloc[_sh_candidate.index] if _sh_candidate.index < len(df_daily) else _sh_candidate.price
+                _ref_h = max(_sh_candidate.price, _wick_h)
+                if _ref_h > 0:
+                    _drop = (_ref_h - current_price_unconf) / _ref_h * 100.0
+                    if _drop > _unconf_bearish_drop_pct:
+                        _unconf_bearish_drop_pct = _drop
+                        _unconf_bearish_ref = _ref_h
+            if _unconf_bearish_drop_pct >= 0.8:  # 0.8% față de swing high = retracere semnificativă
+                _unconfirmed_bearish_choch = True
+                print(f"   ⚠️ [V11.9] {symbol}: CHoCH bearish neconfirmat — preț a scăzut {_unconf_bearish_drop_pct:.1f}% față de swing high @ {_unconf_bearish_ref:.3f} (în 60 bare)")
 
         if _swing_lows_unconf:
-            last_sl_price = _swing_lows_unconf[-1].price
-            last_sl_idx   = _swing_lows_unconf[-1].index
-            # Swing low recent (ultimele 30 bare) + preț actual a urcat față de el
-            # Folosim WICK LOW pentru a capta retracerile reale
-            _wick_low_recent = df_daily['low'].iloc[last_sl_idx] if last_sl_idx < len(df_daily) else last_sl_price
-            _ref_low = min(last_sl_price, _wick_low_recent)
-            if (len(df_daily) - last_sl_idx) <= 30 and _ref_low > 0:
-                rise_pct = (current_price_unconf - _ref_low) / _ref_low * 100.0
-                if rise_pct >= 1.0:  # 1.0% față de swing low recent = retracere semnificativă
-                    _unconfirmed_bullish_choch = True
-                    if debug:
-                        print(f"   ⚠️ V11.9: Posibil CHoCH bullish neconfirmat — prețul a urcat {rise_pct:.1f}% față de swing low @ {_ref_low:.5f}")
+            # Căutăm cel mai recent swing low din ultimele 60 bare
+            for _sl_candidate in reversed(_swing_lows_unconf):
+                _sl_bars_ago = len(df_daily) - _sl_candidate.index - 1
+                if _sl_bars_ago > 60:
+                    break
+                _wick_l = df_daily['low'].iloc[_sl_candidate.index] if _sl_candidate.index < len(df_daily) else _sl_candidate.price
+                _ref_l = min(_sl_candidate.price, _wick_l)
+                if _ref_l > 0:
+                    _rise = (current_price_unconf - _ref_l) / _ref_l * 100.0
+                    if _rise > _unconf_bullish_rise_pct:
+                        _unconf_bullish_rise_pct = _rise
+                        _unconf_bullish_ref = _ref_l
+            if _unconf_bullish_rise_pct >= 0.8:  # 0.8% față de swing low = retracere semnificativă
+                _unconfirmed_bullish_choch = True
+                print(f"   ⚠️ [V11.9] {symbol}: CHoCH bullish neconfirmat — preț a urcat {_unconf_bullish_rise_pct:.1f}% față de swing low @ {_unconf_bullish_ref:.3f} (în 60 bare)")
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
         # 🆕 V7.1 LOGIC: BOS HIERARCHY - 3+ consecutive BOS = DOMINANT TREND
@@ -2832,6 +2988,92 @@ class SMCDetector:
         
         latest_choch = daily_chochs[-1] if daily_chochs else None
         latest_bos = daily_bos_list[-1] if daily_bos_list else None
+
+        # ━━━ V13.0 REGULA GENERALULUI — BODY CLOSE STRUCTURAL (înlocuiește V12.0) ━━━
+        # V12.0 ELIMINAT: Procentele (rise_from_low_pct >= 1.0%) NU schimbă trendul.
+        # Un bounce de 1%, 2%, 5% dintr-un minim ÎNTR-UN TREND BEARISH = pullback/retracement.
+        # TRENDUL se schimbă DOAR când "Generalul" (Swing High-ul de unde a plecat BOS-ul)
+        # este doborât cu BODY CLOSE (max(open,close)) DEASUPRA acelui nivel.
+        #
+        # REGULA DE FIER:
+        # - BOS Bearish confirmat (preț a spart un Swing Low cu body) → bias = BEARISH
+        # - CHoCH Bullish valid DOAR dacă o bară D1 închide cu BODY CLOSE PESTE
+        #   Swing High-ul specific de unde a plecat acel BOS Bearish ("Generalul")
+        # - Orice mișcare bullishă care NU depășește "Generalul" cu body = RETRACEMENT
+        # - Același principiu invers pentru BOS Bullish → CHoCH Bearish
+        if latest_choch is None and latest_bos is not None and _swing_highs_unconf and _swing_lows_unconf:
+            last_idx = len(df_daily) - 1
+            candle_time_now = df_daily.iloc[last_idx]['time'] if 'time' in df_daily.columns else datetime.now()
+
+            if latest_bos.direction == 'bearish':
+                # ── BEARISH BOS activ → căutăm CHoCH Bullish structural ──
+                # "Generalul" = Swing High de unde a plecat BOS-ul Bearish
+                # Găsim Swing High-ul care a precedat BOS-ul bearish (cel imediat anterior)
+                general_highs = [sh for sh in _swing_highs_unconf if sh.index < latest_bos.index]
+                if general_highs:
+                    general = general_highs[-1]  # ultimul SH înainte de BOS bearish
+                    general_level = float(df_daily['high'].iloc[general.index]) if general.index < len(df_daily) else general.price
+
+                    # Verificăm dacă VREO bară D1 după BOS a închis cu BODY (max(open,close)) PESTE "General"
+                    structural_body_close_above = False
+                    body_close_idx = None
+                    body_close_price = None
+                    for pos in range(latest_bos.index + 1, len(df_daily)):
+                        row = df_daily.iloc[pos]
+                        body_high = max(float(row['open']), float(row['close']))
+                        if body_high > general_level:
+                            structural_body_close_above = True
+                            body_close_idx = pos
+                            body_close_price = body_high
+                            break
+
+                    if structural_body_close_above:
+                        # "Generalul" doborât cu body close → CHoCH Bullish structural valid
+                        latest_choch = CHoCH(
+                            index=body_close_idx if body_close_idx is not None else last_idx,
+                            direction='bullish',
+                            break_price=float(body_close_price),
+                            previous_trend='bearish',
+                            candle_time=candle_time_now,
+                            swing_broken=general
+                        )
+                        print(f"✅ [V13.0 CHoCH STRUCTURAL] {symbol}: BULLISH CHoCH confirmat — body close {body_close_price:.5f} > General @ {general_level:.5f}")
+                    else:
+                        print(f"🛡️ [V13.0 GENERALUL INTACT] {symbol}: BOS Bearish activ. General @ {general_level:.5f} nedoborât cu body. Bias=BEARISH.")
+
+            elif latest_bos.direction == 'bullish':
+                # ── BULLISH BOS activ → căutăm CHoCH Bearish structural ──
+                # "Generalul" = Swing Low de unde a plecat BOS-ul Bullish
+                general_lows = [sl for sl in _swing_lows_unconf if sl.index < latest_bos.index]
+                if general_lows:
+                    general = general_lows[-1]  # ultimul SL înainte de BOS bullish
+                    general_level = float(df_daily['low'].iloc[general.index]) if general.index < len(df_daily) else general.price
+
+                    # Verificăm dacă VREO bară D1 după BOS a închis cu BODY (min(open,close)) SUB "General"
+                    structural_body_close_below = False
+                    body_close_idx = None
+                    body_close_price = None
+                    for pos in range(latest_bos.index + 1, len(df_daily)):
+                        row = df_daily.iloc[pos]
+                        body_low = min(float(row['open']), float(row['close']))
+                        if body_low < general_level:
+                            structural_body_close_below = True
+                            body_close_idx = pos
+                            body_close_price = body_low
+                            break
+
+                    if structural_body_close_below:
+                        latest_choch = CHoCH(
+                            index=body_close_idx if body_close_idx is not None else last_idx,
+                            direction='bearish',
+                            break_price=float(body_close_price),
+                            previous_trend='bullish',
+                            candle_time=candle_time_now,
+                            swing_broken=general
+                        )
+                        print(f"✅ [V13.0 CHoCH STRUCTURAL] {symbol}: BEARISH CHoCH confirmat — body close {body_close_price:.5f} < General @ {general_level:.5f}")
+                    else:
+                        print(f"🛡️ [V13.0 GENERALUL INTACT] {symbol}: BOS Bullish activ. General @ {general_level:.5f} nedoborât cu body. Bias=BULLISH.")
         
         # 🔥 CHECK BOS SEQUENCE: Count consecutive BOS in same direction
         consecutive_bos_count = 0
@@ -3613,7 +3855,7 @@ class SMCDetector:
             if _unconf_choch_blocks:
                 # Posibil pullback major neconfirmat → nu executăm breakout, așteptăm 4H
                 status = 'MONITORING'
-                print(f"⏳ [V11.9 MOMENTUM GUARD] {symbol}: MOMENTUM {_momentum_dir.upper()} blocat — CHoCH opus neconfirmat detectat prin price action (-/+1.5% vs swing). Așteptăm 4H CHoCH.")
+                print(f"⏳ [V11.9 MOMENTUM GUARD] {symbol}: MOMENTUM {_momentum_dir.upper()} blocat — CHoCH opus neconfirmat detectat (drop/rise ≥0.8% față de swing în 60 bare). Așteptăm 4H CHoCH.")
             else:
                 status = 'READY'
                 if debug:

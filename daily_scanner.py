@@ -129,7 +129,7 @@ class DailyScanner:
         self.ai_analyzer = AIProbabilityAnalyzer()
         
         # Load pairs configuration
-        with open('pairs_config.json', 'r') as f:
+        with open('pairs_config.json', 'r', encoding='utf-8') as f:
             config = json.load(f)
             self.pairs = config['pairs']
             self.scanner_settings = config['scanner_settings']
@@ -137,7 +137,7 @@ class DailyScanner:
     def _load_learned_rules(self) -> dict:
         """Load learned rules from ML optimizer"""
         try:
-            with open('learned_rules.json', 'r') as f:
+            with open('learned_rules.json', 'r', encoding='utf-8') as f:
                 rules = json.load(f)
                 print(f"✅ Loaded learned rules (analyzed {rules['total_trades_analyzed']} trades)")
                 return rules
@@ -208,7 +208,7 @@ class DailyScanner:
         # V3.0: Load existing monitoring setups to re-evaluate their status
         monitoring_symbols = set()
         try:
-            with open('monitoring_setups.json', 'r') as f:
+            with open('monitoring_setups.json', 'r', encoding='utf-8') as f:
                 data = json.load(f)
                 
                 # V8.0 FAILSAFE: Handle both formats (dict with 'setups' key or direct list)
@@ -254,7 +254,7 @@ class DailyScanner:
                     print(f"⚠️  Skipping {symbol} - no Daily data")
                     # 🚨 AUDIT: Log data errors for forensics
                     try:
-                        with open('data_errors.log', 'a') as f:
+                        with open('data_errors.log', 'a', encoding='utf-8') as f:
                             f.write(f"{datetime.now().isoformat()} - {symbol} - D1 data unavailable\n")
                     except Exception as log_err:
                         print(f"⚠️  Could not write to data_errors.log: {log_err}")
@@ -301,12 +301,38 @@ class DailyScanner:
                     print(f"⚠️  Error scanning {symbol}: {scan_error}")
                     # Log error but continue to next pair
                     try:
-                        with open('scanner_errors.log', 'a') as f:
+                        with open('scanner_errors.log', 'a', encoding='utf-8') as f:
                             f.write(f"{datetime.now().isoformat()} - {symbol} - {scan_error}\n")
                     except:
                         pass
                     setup = None
                 
+                if setup:
+                    # ━━━ V13.0 SNIPER ALIGNMENT FILTER ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+                    # FLUX CORECT:
+                    #   D1 Bearish + preț în FVG Daily → așteptăm CHoCH BEARISH pe 4H
+                    #   → 4H CHoCH bearish = aliniere cu D1 → VALID SELL ✅
+                    #   → 4H CHoCH bullish = contrar D1 → RESPINS ❌
+                    #
+                    # D1 stabilește DIRECȚIA. 4H confirmă ENTRY-UL în aceeași direcție.
+                    # Un CHoCH bullish pe 4H într-un D1 bearish = retracement intern, nu setup.
+                    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+                    d1_direction = setup.daily_choch.direction if hasattr(setup, 'daily_choch') and setup.daily_choch else None
+                    h4_direction = setup.h4_choch.direction if hasattr(setup, 'h4_choch') and setup.h4_choch else None
+
+                    if d1_direction and h4_direction and h4_direction != d1_direction:
+                        # 4H CHoCH este opus D1 → retracement intern, nu confirmare
+                        h4_label = "SELL" if h4_direction == 'bearish' else "BUY"
+                        d1_label  = "SELL" if d1_direction == 'bearish' else "BUY"
+                        print(f"⛔ [V13.0 SNIPER MISALIGNED] {symbol}: 4H CHoCH={h4_label} dar D1={d1_label} — "
+                              f"4H CHoCH {h4_direction.upper()} în D1 {d1_direction.upper()} = retracement intern. "
+                              f"Așteptăm CHoCH {d1_label} pe 4H din FVG Daily.")
+                        setup = None
+                    elif d1_direction and h4_direction and h4_direction == d1_direction:
+                        d1_label = "SELL" if d1_direction == 'bearish' else "BUY"
+                        print(f"✅ [V13.0 SNIPER ALIGNED] {symbol}: 4H CHoCH {h4_direction.upper()} = aliniat cu D1 {d1_direction.upper()} → {d1_label} valid")
+                    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
                 if setup:
                     # V10.1: Display strategy type immediately
                     strategy = setup.strategy_type.upper() if hasattr(setup, 'strategy_type') else "UNKNOWN"
@@ -420,7 +446,7 @@ class DailyScanner:
         # Load monitoring setups + check for recently executed setups still in open positions
         monitoring_setups = []
         try:
-            with open('monitoring_setups.json', 'r') as f:
+            with open('monitoring_setups.json', 'r', encoding='utf-8') as f:
                 data = json.load(f)
                 
                 # V8.0 FAILSAFE: Handle both formats
@@ -442,7 +468,7 @@ class DailyScanner:
         all_open_positions = []
         open_position_symbols = set()  # Track which symbols have open positions
         try:
-            with open('trade_history.json', 'r') as f:
+            with open('trade_history.json', 'r', encoding='utf-8') as f:
                 trade_data = json.load(f)
                 all_open_positions = trade_data.get('open_positions', [])
                 # V8.2: If IGNORE_OPEN_POSITIONS is True, treat as if no positions exist
@@ -455,14 +481,40 @@ class DailyScanner:
         except Exception as e:
             logger.debug(f"Could not check open positions: {e}")
         
-        # NEW LOGIC: Don't filter out setups with open positions
-        # They need to stay in monitoring until TP/SL is hit
-        # Split into: truly_new (no position) and active_with_position (has position, still monitoring)
-        truly_new_setups = [s for s in setups_found if s.symbol not in open_position_symbols]
-        active_with_position = [s for s in setups_found if s.symbol in open_position_symbols]
-        
-        # All setups (new + active with positions) should be saved for monitoring
-        all_active_setups = setups_found  # Keep ALL detected setups active
+        # V11.0 FIX: Build open position direction map {symbol: 'buy'/'sell'}
+        open_position_direction = {}
+        for p in all_open_positions:
+            sym = p.get('symbol')
+            direction = (p.get('direction') or '').lower()  # 'SELL' → 'sell'
+            if sym:
+                open_position_direction[sym] = direction
+
+        # FILTER: Remove setups that CONFLICT with open positions (opposite direction)
+        # A new BUY setup must NOT override an existing SELL position and vice-versa
+        filtered_setups = []
+        skipped_conflict = []
+        for s in setups_found:
+            setup_dir = "buy" if s.daily_choch.direction == "bullish" else "sell"
+            open_dir = open_position_direction.get(s.symbol)
+            if open_dir and open_dir != setup_dir:
+                # CONFLICT: scanner found opposite direction to open position
+                logger.warning(
+                    f"⛔ CONFLICT GUARD: {s.symbol} scanner→{setup_dir.upper()} "
+                    f"but open position is {open_dir.upper()} — skipping this setup"
+                )
+                skipped_conflict.append(s.symbol)
+            else:
+                filtered_setups.append(s)
+
+        if skipped_conflict:
+            print(f"\n⛔ CONFLICT GUARD: Skipped {skipped_conflict} — opposite direction to open positions")
+
+        # Use filtered setups (no conflicts with open positions)
+        all_active_setups = filtered_setups
+
+        # Breakdown: setups cu vs fără poziție deschisă (pentru summary report)
+        truly_new_setups   = [s for s in all_active_setups if s.symbol not in open_position_symbols]
+        active_with_position = [s for s in all_active_setups if s.symbol in open_position_symbols]
 
         # SAVE first, then show final summary
         save_monitoring_setups(all_active_setups)
@@ -470,7 +522,7 @@ class DailyScanner:
         # Now reload to get accurate count
         final_monitoring_count = 0
         try:
-            with open('monitoring_setups.json', 'r') as f:
+            with open('monitoring_setups.json', 'r', encoding='utf-8') as f:
                 data = json.load(f)
                 
                 # V8.0 FAILSAFE: Handle both formats
@@ -504,7 +556,7 @@ class DailyScanner:
             try:
                 ds_file = os.path.join('data', 'deep_sleep_state.json')
                 if os.path.exists(ds_file):
-                    with open(ds_file, 'r') as f:
+                    with open(ds_file, 'r', encoding='utf-8') as f:
                         ds_state = json.load(f)
                     wake_str = ds_state.get('wake_time')
                     if wake_str:
@@ -631,12 +683,27 @@ def save_monitoring_setups(setups: List[TradeSetup]):
     
     IMPORTANT: Păstrează setups existente și adaugă doar pe cele noi.
     Doar dacă același symbol are setup nou, îl înlocuiește.
+    
+    V11.0 CONFLICT GUARD: Nu suprascrie un setup cu direcție OPUSĂ față de o poziție deschisă.
     """
+    # V11.0: Load open positions for direction conflict check
+    open_position_dir_map = {}
+    try:
+        with open('trade_history.json', 'r', encoding='utf-8') as f:
+            trade_data = json.load(f)
+            for p in trade_data.get('open_positions', []):
+                sym = p.get('symbol')
+                direction = (p.get('direction') or '').lower()
+                if sym:
+                    open_position_dir_map[sym] = direction
+    except Exception:
+        pass  # If we can't load, no guard applied (safe fallback)
+
     try:
         # Load existing setups FIRST
         existing_setups = {}
         try:
-            with open('monitoring_setups.json', 'r') as f:
+            with open('monitoring_setups.json', 'r', encoding='utf-8') as f:
                 data = json.load(f)
                 
                 # V8.0 FAILSAFE: Handle both formats (dict with 'setups' key or direct list)
@@ -710,6 +777,16 @@ def save_monitoring_setups(setups: List[TradeSetup]):
                     "swap_short":       getattr(setup, 'swap_short', None),
                     "swap_triple_day":  getattr(setup, 'swap_triple_day', None),
                 }
+
+                # V11.0 CONFLICT GUARD (second line of defence inside save):
+                # If an open position exists with OPPOSITE direction, do NOT overwrite
+                new_dir = monitoring_setup["direction"]  # 'buy' or 'sell'
+                open_dir = open_position_dir_map.get(setup.symbol)
+                if open_dir and open_dir != new_dir:
+                    print(f"⛔ SAVE GUARD: {setup.symbol} — NOT saving {new_dir.upper()} setup, "
+                          f"open {open_dir.upper()} position exists")
+                    continue  # Skip this setup entirely
+
                 existing_setups[setup.symbol] = monitoring_setup  # Update/add
         
         # Convert back to list
@@ -717,7 +794,7 @@ def save_monitoring_setups(setups: List[TradeSetup]):
         
         # ALWAYS save (even if empty, to update timestamp)
         # But if we have setups, they should persist
-        with open('monitoring_setups.json', 'w') as f:
+        with open('monitoring_setups.json', 'w', encoding='utf-8') as f:
             json.dump({
                 "setups": monitoring_setups,
                 "last_updated": datetime.now().isoformat()
@@ -789,13 +866,12 @@ if __name__ == "__main__":
     # For full daily scan:
     main()
 
-import os
 from pathlib import Path
 
 def get_active_positions(path):
     if not os.path.exists(path):
         return []
-    with open(path, 'r') as f:
+    with open(path, 'r', encoding='utf-8') as f:
         return json.load(f)
 
 def format_telegram_active_setups(positions):

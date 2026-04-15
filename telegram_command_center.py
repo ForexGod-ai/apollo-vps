@@ -1111,74 +1111,144 @@ class TelegramCommandCenter:
             return f"❌ <b>RESUME ERROR:</b> {str(e)}"
 
     def handle_news_command(self) -> str:
-        """/news — Next 3 High Impact events remaining this week (V11.5)"""
-        try:
+        """/news — Next 5 High Impact events (next 7 days). V12.2: dual-source with origin label."""
+        FLAG_MAP = {
+            'USD': '🇺🇸', 'EUR': '🇪🇺', 'GBP': '🇬🇧', 'JPY': '🇯🇵',
+            'AUD': '🇦🇺', 'NZD': '🇳🇿', 'CAD': '🇨🇦', 'CHF': '🇨🇭',
+        }
+        MAJOR_CCY = set(FLAG_MAP.keys())
+        now = datetime.now(timezone.utc)
+        cutoff = now + timedelta(days=7)
+
+        def _parse_events_from_json() -> tuple[list, str]:
+            """Load from economic_calendar.json — returns (events, source_label)."""
             script_dir = Path(__file__).parent.resolve()
             cal_file = script_dir / 'economic_calendar.json'
             if not cal_file.exists():
-                return "❌ <b>economic_calendar.json not found</b>"
-
+                return [], ''
             with open(cal_file, 'r') as f:
                 data = json.load(f)
-
-            # Colectăm toate evenimentele din toate cheile
-            all_events = []
+            raw = []
             if isinstance(data, list):
-                all_events = data
+                raw = data
             else:
                 for v in data.values():
                     if isinstance(v, list):
-                        all_events.extend(v)
-
-            # Filtrăm: High Impact + viitoare săptămâna curentă
-            now = datetime.now(timezone.utc)
-            week_end = now + timedelta(days=(6 - now.weekday()))  # duminică
-            week_end = week_end.replace(hour=23, minute=59, second=59)
-
-            upcoming = []
-            for e in all_events:
+                        raw.extend(v)
+            result = []
+            for e in raw:
                 if str(e.get('impact', '')).lower() not in ('high', 'red'):
                     continue
+                if e.get('currency') not in MAJOR_CCY:
+                    continue
+                t = e.get('time', '00:00') or '00:00'
+                if t in ('All Day', 'Tentative', ''):
+                    t = '00:00'
                 try:
-                    dt_str = f"{e['date']} {e.get('time', '00:00')}"
-                    dt = datetime.strptime(dt_str, '%Y-%m-%d %H:%M').replace(tzinfo=timezone.utc)
-                    if now <= dt <= week_end:
-                        upcoming.append((dt, e))
+                    dt = datetime.strptime(
+                        f"{e['date']} {t}", '%Y-%m-%d %H:%M'
+                    ).replace(tzinfo=timezone.utc)
+                    if now <= dt <= cutoff:
+                        result.append((dt, e))
                 except Exception:
                     continue
+            return result, '📂 economic_calendar.json'
+
+        def _parse_events_from_ctrader() -> tuple[list, str]:
+            """Load from cTrader EconomicCalendarBot port 8768."""
+            try:
+                import requests as _req
+                resp = _req.get('http://localhost:8768/calendar', timeout=5)
+                if resp.status_code != 200:
+                    return [], ''
+                data = resp.json()
+                raw = data.get('events', [])
+                if not raw:
+                    return [], ''
+                result = []
+                for e in raw:
+                    if str(e.get('impact', '')).lower() not in ('high', 'red'):
+                        continue
+                    if e.get('currency') not in MAJOR_CCY:
+                        continue
+                    try:
+                        dt = datetime.strptime(
+                            e['time'], '%Y-%m-%d %H:%M:%S'
+                        ).replace(tzinfo=timezone.utc)
+                        if now <= dt <= cutoff:
+                            result.append((dt, {
+                                'currency': e.get('currency'),
+                                'event':    e.get('event'),
+                                'forecast': str(e.get('forecast', '')) if e.get('forecast') else '',
+                                'previous': str(e.get('previous', '')) if e.get('previous') else '',
+                            }))
+                    except Exception:
+                        continue
+                return result, '🤖 cTrader Live Bot (8768)'
+            except Exception:
+                return [], ''
+
+        try:
+            # ── Source 1: JSON file
+            upcoming, source = _parse_events_from_json()
+
+            # ── Source 2: cTrader bot (fallback if JSON empty or stale)
+            if not upcoming:
+                upcoming, source = _parse_events_from_ctrader()
 
             upcoming.sort(key=lambda x: x[0])
-            top3 = upcoming[:3]
 
-            if not top3:
-                return (
-                    f"<b>🗓️ HIGH IMPACT NEWS — This Week</b>\n"
-                    f"{UNIVERSAL_SEPARATOR}\n\n"
-                    f"✅ No High Impact events remaining this week."
-                )
-
-            FLAG_MAP = {
-                'USD': '🇺🇸', 'EUR': '🇪🇺', 'GBP': '🇬🇧', 'JPY': '🇯🇵',
-                'AUD': '🇦🇺', 'NZD': '🇳🇿', 'CAD': '🇨🇦', 'CHF': '🇨🇭',
-            }
-
+            # ── Build header
             msg = (
-                f"<b>🚨 HIGH IMPACT NEWS — Next Events</b>\n"
+                f"<b>🚨 HIGH IMPACT NEWS — Next 7 Days</b>\n"
                 f"{UNIVERSAL_SEPARATOR}\n\n"
             )
-            for dt, e in top3:
-                flag = FLAG_MAP.get(e.get('currency', ''), '🌐')
+
+            if not upcoming:
+                msg += "✅ <b>ALL CLEAR</b> — No High Impact events in the next 7 days.\n"
+                msg += f"\n<i>Sursă: {source or '📂 economic_calendar.json'}</i>"
+                return msg
+
+            # ── Group by day and display ALL events
+            current_day = None
+            for dt, e in upcoming:
+                day_label = dt.strftime('%A, %d %b').upper()   # e.g. WEDNESDAY, 01 APR
+                if day_label != current_day:
+                    if current_day is not None:
+                        msg += "\n"
+                    msg += f"📅 <b>{day_label}</b>\n"
+                    current_day = day_label
+
+                flag     = FLAG_MAP.get(e.get('currency', ''), '🌐')
                 currency = e.get('currency', 'N/A')
-                event_name = e.get('event', 'N/A')
-                forecast = e.get('forecast', 'N/A')
-                previous = e.get('previous', 'N/A')
-                time_str = dt.strftime('%a %d %b, %H:%M UTC')
+                name     = e.get('event', 'N/A')
+                fc       = e.get('forecast', '') or '—'
+                prev     = e.get('previous', '') or '—'
+                tstr     = dt.strftime('%H:%M UTC')
+
+                # Countdown
+                delta_s = (dt - now).total_seconds()
+                delta_h = int(delta_s // 3600)
+                if delta_s < 3600:
+                    delta_m = int(delta_s // 60)
+                    countdown = f"⏳ {delta_m}min"
+                elif delta_h < 24:
+                    countdown = f"⏳ {delta_h}h"
+                else:
+                    countdown = f"⏳ {delta_h // 24}d {delta_h % 24}h"
+
+                # Critical badge
+                is_critical = any(kw.lower() in name.lower() for kw in
+                    ['NFP','Non-Farm','Payroll','FOMC','CPI','GDP','Interest Rate','Bank Rate'])
+                badge = "🔥" if is_critical else "🚨"
+
                 msg += (
-                    f"🚨 <b>{flag} {currency} — {event_name}</b>\n"
-                    f"   ⏰ {time_str}\n"
-                    f"   📊 Forecast: <b>{forecast}</b> | Prev: {previous}\n\n"
+                    f"{badge} <b>{flag} {currency} — {name}</b>\n"
+                    f"   ⏰ {tstr}  {countdown}  |  F:<b>{fc}</b>  P:{prev}\n"
                 )
 
+            msg += f"\n{UNIVERSAL_SEPARATOR}\n"
+            msg += f"<i>Sursă date: {source}</i>"
             return msg
 
         except Exception as e:

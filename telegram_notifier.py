@@ -82,8 +82,27 @@ class TelegramNotifier:
                 "text": text,
                 "parse_mode": parse_mode
             }
-            response = requests.post(url, json=data)
-            return response.status_code == 200
+            # V11.9: Retry once on 429 (rate limit) using retry-after header
+            for attempt in range(2):
+                response = requests.post(url, json=data)
+                if response.status_code == 200:
+                    return True
+                if response.status_code == 429:
+                    try:
+                        retry_after = response.json().get('parameters', {}).get('retry_after', 30)
+                    except Exception:
+                        retry_after = 30
+                    print(f"[TELEGRAM 429] Rate limited — waiting {retry_after}s before retry...")
+                    time.sleep(retry_after + 1)
+                    continue  # retry
+                # Other error — log and fail
+                try:
+                    err_json = response.json()
+                    print(f"[TELEGRAM ERROR] status={response.status_code} | {err_json.get('description', response.text[:200])}")
+                except Exception:
+                    print(f"[TELEGRAM ERROR] status={response.status_code} | {response.text[:200]}")
+                return False
+            return False
         except Exception as e:
             print(f"❌ Error sending Telegram message: {e}")
             return False
@@ -92,14 +111,27 @@ class TelegramNotifier:
         """Send photo to Telegram (raw bytes)"""
         try:
             url = f"{self.base_url}/sendPhoto"
-            files = {"photo": photo_bytes}
             data = {
                 "chat_id": self.chat_id,
                 "caption": caption,
                 "parse_mode": "Markdown"
             }
-            response = requests.post(url, files=files, data=data)
-            return response.status_code == 200
+            # V11.9: Retry once on 429 using retry-after
+            for attempt in range(2):
+                files = {"photo": photo_bytes}
+                response = requests.post(url, files=files, data=data)
+                if response.status_code == 200:
+                    return True
+                if response.status_code == 429:
+                    try:
+                        retry_after = response.json().get('parameters', {}).get('retry_after', 30)
+                    except Exception:
+                        retry_after = 30
+                    print(f"[TELEGRAM 429] Photo rate limited — waiting {retry_after}s...")
+                    time.sleep(retry_after + 1)
+                    continue
+                return False
+            return False
         except Exception as e:
             print(f"❌ Error sending Telegram photo: {e}")
             return False
@@ -148,8 +180,8 @@ class TelegramNotifier:
             print(f"[ERROR] Failed to send main message for {setup.symbol}")
             return False
         
-        # V10.1: Anti-flood delay — Telegram rate-limits rapid media sends
-        time.sleep(1.5)
+        # V11.9: Anti-flood delay — mărit la 3s (10 perechi × 3 chart-uri = 30+ req/scan)
+        time.sleep(3)
         
         # 2. Generate and send Daily chart
         try:
@@ -165,8 +197,8 @@ class TelegramNotifier:
             import traceback
             traceback.print_exc()
         
-        # V10.1: Anti-flood delay between charts
-        time.sleep(1.5)
+        # V11.9: Anti-flood delay între chart-uri
+        time.sleep(3)
         
         # 3. Generate and send 4H chart
         try:
@@ -182,8 +214,8 @@ class TelegramNotifier:
             import traceback
             traceback.print_exc()
         
-        # V10.1: Anti-flood delay before 1H chart
-        time.sleep(1.5)
+        # V11.9: Anti-flood delay înainte de 1H chart
+        time.sleep(3)
         
         # 4. Generate and send 1H chart (for SCALE_IN strategy)
         if df_1h is not None:
@@ -291,9 +323,11 @@ class TelegramNotifier:
             conf_boost = getattr(setup, 'confidence_boost', 0)
             liquidity_line = f"\n💧 {sweep_type} +{conf_boost}"
 
+        daily_structure_label = "CHoCH" if strategy_type == 'REVERSAL' else "BOS"
+
         daily_section = (
             f"\n{SEP}\n"
-            f"📊 <b>DAILY:</b> {setup.daily_choch.direction.upper()} CHoCH\n"
+            f"📊 <b>DAILY:</b> {setup.daily_choch.direction.upper()} {daily_structure_label}\n"
             f"🎯 FVG: <code>{setup.fvg.bottom:.5f}</code> – <code>{setup.fvg.top:.5f}</code>"
             f"{liquidity_line}\n"
             f"{h4_line}\n"
@@ -352,7 +386,7 @@ class TelegramNotifier:
             if not history_file.exists():
                 return None
             
-            with open(history_file, 'r') as f:
+            with open(history_file, 'r', encoding='utf-8') as f:
                 data = json.load(f)
             
             # Filter closed trades for this symbol
@@ -636,12 +670,13 @@ class TelegramNotifier:
         
         return success
     
-    def send_execution_confirmation(self, setup: TradeSetup, entry_type: str = 'pullback', 
-                                    momentum_score: float = 0, hours_elapsed: float = 0) -> bool:
+    def send_execution_confirmation(self, setup: TradeSetup, entry_type: str = 'pullback',
+                                    momentum_score: float = 0, hours_elapsed: float = 0,
+                                    swap_info: dict = None) -> bool:
         """Send execution confirmation when trade is placed"""
         direction = "🟢 LONG" if setup.direction == 'buy' else "🔴 SHORT"
         direction_emoji = "📈" if setup.direction == 'buy' else "📉"
-        
+
         # ✅ TELEGRAM UPDATES by ФорексГод: SL description with protection type
         # Detect asset class for SL description
         symbol_upper = setup.symbol.upper()
@@ -657,13 +692,22 @@ class TelegramNotifier:
                 sl_description = f"🛡️ SL: <code>{setup.stop_loss:.5f}</code> ({sl_pips:.0f} pips - Min Protected) ✅"
             else:
                 sl_description = f"🛡️ SL: <code>{setup.stop_loss:.5f}</code> ({sl_pips:.0f} pips)"
-        
+
+        # V12.0: Build compact swap transparency line
+        sep = "────────────────"
+        if swap_info and swap_info.get('value') is not None:
+            _sv = swap_info['value']
+            _sl = swap_info['label']
+            swap_line = f"\n{sep}\n💱 EXECUTION SWAP: {_sl} | <code>{_sv:+.2f}</code> pips/zi"
+        else:
+            swap_line = ""
+
         if entry_type == 'pullback':
             message = f"""
 🎯 <b>TRADE EXECUTED - PULLBACK ENTRY</b>
 
 {setup.symbol} {direction} {direction_emoji}
-──────────────────
+{sep}
 
 ✅ Pullback reached Fibo 50%
 📍 Entry: <code>{setup.entry_price:.5f}</code>
@@ -672,14 +716,14 @@ class TelegramNotifier:
 📊 RR: <code>1:{setup.risk_reward:.1f}</code>
 
 ⏰ Time to entry: <code>{hours_elapsed:.1f}h</code>
-🎯 Classic pullback strategy ✅
+🎯 Classic pullback strategy ✅{swap_line}
 """
         else:  # continuation momentum
             message = f"""
 🚀 <b>TRADE EXECUTED - MOMENTUM ENTRY</b>
 
 {setup.symbol} {direction} {direction_emoji}
-──────────────────
+{sep}
 
 ✅ Strong continuation detected!
 📊 Momentum Score: <code>{momentum_score:.0f}/100</code> 🔥
@@ -689,9 +733,9 @@ class TelegramNotifier:
 📊 RR: <code>1:{setup.risk_reward:.1f}</code>
 
 ⏰ Time to entry: <code>{hours_elapsed:.1f}h</code> (after 6h wait)
-💨 Riding the momentum! 🚀
+💨 Riding the momentum! 🚀{swap_line}
 """
-        
+
         return self.send_message(message.strip(), parse_mode="HTML")
     
     def send_error_alert(self, error_msg: str) -> bool:
@@ -741,7 +785,7 @@ class TelegramNotifier:
             print("📊 Generating daily performance report...")
             
             # ============ LOAD ACCOUNT DATA ============
-            with open('trade_history.json', 'r') as f:
+            with open('trade_history.json', 'r', encoding='utf-8') as f:
                 data = json.load(f)
             
             account = data.get('account', {})
@@ -905,7 +949,7 @@ Worst: `${today_worst:.2f}`
             
             # ============ MONITORING SETUPS ============
             try:
-                with open('monitoring_setups.json', 'r') as f:
+                with open('monitoring_setups.json', 'r', encoding='utf-8') as f:
                     setups_data = json.load(f)
                 setups = setups_data.get('setups', [])
                 
@@ -964,7 +1008,7 @@ Worst: `${today_worst:.2f}`
             from datetime import timedelta
             
             # Try to load economic_calendar.json
-            with open('economic_calendar.json', 'r') as f:
+            with open('economic_calendar.json', 'r', encoding='utf-8') as f:
                 calendar = json.load(f)
             
             events = calendar.get('events', [])

@@ -90,7 +90,7 @@ class SignalQueue:
             existing_signals = []
             if os.path.exists(target_path):
                 try:
-                    with open(target_path, 'r') as f:
+                    with open(target_path, 'r', encoding='utf-8') as f:
                         data = json.load(f)
                     # Handle both old format (single dict) and new format (array)
                     if isinstance(data, list):
@@ -112,8 +112,8 @@ class SignalQueue:
                 text=True
             )
             
-            with os.fdopen(fd, 'w') as f:
-                json.dump(existing_signals, f, indent=2)
+            with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                json.dump(existing_signals, f, indent=2, ensure_ascii=False)
                 f.flush()
                 os.fsync(f.fileno())
             
@@ -154,7 +154,7 @@ class SignalQueue:
             try:
                 # Try NEW protocol first (execution_report.json)
                 if os.path.exists(execution_report_path):
-                    with open(execution_report_path, 'r') as f:
+                    with open(execution_report_path, 'r', encoding='utf-8') as f:
                         data = json.load(f)
                     
                     if data.get('SignalId') == signal_id:
@@ -171,7 +171,7 @@ class SignalQueue:
                 
                 # Fallback to LEGACY (trade_confirmations.json)
                 if os.path.exists(legacy_path):
-                    with open(legacy_path, 'r') as f:
+                    with open(legacy_path, 'r', encoding='utf-8') as f:
                         data = json.load(f)
                     
                     if data.get('SignalId') == signal_id:
@@ -419,7 +419,8 @@ class CTraderExecutor:
     
     def execute_trade(self, symbol: str, direction: str, entry_price: float, 
                      stop_loss: float, take_profit: float, lot_size: float = 0.01,
-                     comment: str = "", status: str = "READY", setup=None):
+                     comment: str = "", status: str = "READY", setup=None,
+                     risk_override_percent: float = None):
         """
         Write a trade signal to signals.json for PythonSignalExecutor to execute
         
@@ -497,7 +498,8 @@ class CTraderExecutor:
                 symbol=symbol,
                 direction=direction,
                 entry_price=entry_price,
-                stop_loss=stop_loss
+                stop_loss=stop_loss,
+                risk_override_percent=risk_override_percent  # V14.1: None for E1 (5%), 7.5 for E2 scale-in
             )
             
             if not validation['approved']:
@@ -523,17 +525,11 @@ class CTraderExecutor:
         # STEP 3: PREPARE SIGNAL FOR CBOT
         # ──────────────────
         
-        # 🚨 V5.6 BULLETPROOF FIX: HARDCODED LOT SIZE FOR BTCUSD
-        # Force 0.50 lots for BTCUSD to bypass all BadVolume issues
-        # BULLETPROOF: Ignore case, spaces, slashes
-        if 'BTC' in symbol.upper().replace(' ', '').replace('/', ''):
-            lot_size = 0.50
-            logger.warning(f"🚨 V5.6 BULLETPROOF: Forcing 0.50 lots for {symbol} (detected as BTC)")
-        
-        # 🚨 CRITICAL FIX by ФорексГод: Enforce minimum lot size of 0.01
-        # Broker minimum = 0.01 lots (micro lot)
-        # MUST be done BEFORE signal creation to prevent BadVolume!
-        elif lot_size < 0.01:
+        # ✅ V14.0: BTC bypass REMOVED — lot_size comes from unified_risk_manager.py dynamic calc
+        # (pip_value=1.0, formula: risk_amount / sl_distance_USD — cTrader native model)
+
+        # 🚨 Enforce minimum lot size of 0.01 (broker minimum = micro lot)
+        if lot_size < 0.01:
             logger.warning(f"⚠️  Lot size {lot_size:.4f} below broker minimum - forcing to 0.01")
             lot_size = 0.01
         
@@ -798,7 +794,7 @@ class CTraderExecutor:
             dir_path = os.path.dirname(self.signals_file)
             fd, temp_path = tempfile.mkstemp(suffix='.json.tmp', dir=dir_path, text=True)
             
-            with os.fdopen(fd, 'w') as f:
+            with os.fdopen(fd, 'w', encoding='utf-8') as f:
                 json.dump([], f)
                 f.flush()
                 os.fsync(f.fileno())
@@ -818,7 +814,7 @@ class CTraderExecutor:
             if not os.path.exists(self.signals_file):
                 return []
             
-            with open(self.signals_file, 'r') as f:
+            with open(self.signals_file, 'r', encoding='utf-8') as f:
                 signals = json.load(f)
                 if not isinstance(signals, list):
                     return []

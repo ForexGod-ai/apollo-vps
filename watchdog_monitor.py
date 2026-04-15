@@ -132,14 +132,16 @@ class WatchdogMonitor:
         }
         
         # 🔥 NEW: Rate Limiter Configuration (Anti-Spam)
-        self.notification_cooldown = 900  # 15 minutes (900 seconds)
+        self.notification_cooldown = 900        # 15 minutes — restart OK alerts
+        self.failed_restart_cooldown = 3600     # 60 minutes — FAILED TO RESTART (anti-spam)
+        self._failed_restart_last_sent = {}     # {process_name: timestamp}
         
         self.telegram_token = os.getenv('TELEGRAM_BOT_TOKEN')
         self.telegram_chat_id = os.getenv('TELEGRAM_CHAT_ID')
         
         logger.info("🛡️ Watchdog Monitor V4.1 - 7 MONITORS (V10.0 + News Reminder)")
         logger.info(f"⏱️  Check interval: {check_interval}s")
-        logger.info(f"🔇 Notification cooldown: {self.notification_cooldown}s (15 min)")
+        logger.info(f"🔇 Notification cooldown: {self.notification_cooldown}s (15 min) | FAILED: {self.failed_restart_cooldown}s (60 min)")
         logger.info(f"🐍 Python: {self.python_path}")
     
     def is_process_running(self, process_name: str) -> bool:
@@ -307,18 +309,24 @@ class WatchdogMonitor:
                     else:
                         logger.debug(f"🔇 Restart notification skipped for {process_info['name']} (rate limiter)")
                 else:
-                    # Failed to restart - send critical alert (always send, ignore cooldown)
-                    alert = f"""🚨 <b>WATCHDOG CRITICAL ALERT</b>
+                    # Failed to restart — cooldown 60 min (anti-spam)
+                    import time as _time
+                    last_sent = self._failed_restart_last_sent.get(process_name, 0)
+                    if _time.time() - last_sent >= self.failed_restart_cooldown:
+                        alert = f"""🚨 <b>WATCHDOG CRITICAL ALERT</b>
 
 ❌ Process: <code>{process_info['name']}</code>
 🔴 Status: <b>FAILED TO RESTART</b>
 ⏰ Time: <code>{now_ro().strftime('%H:%M:%S')} RO</code>
 
 ⚠️ Manual intervention required!"""
-                    
-                    self.send_telegram_alert(alert)
-                    self.update_notification_time(process_name)
-                    logger.error(f"📱 Sent critical alert for {process_info['name']}")
+                        
+                        self.send_telegram_alert(alert)
+                        self._failed_restart_last_sent[process_name] = _time.time()
+                        logger.error(f"📱 Sent critical alert for {process_info['name']} (next in 60 min)")
+                    else:
+                        remaining = int((self.failed_restart_cooldown - (_time.time() - last_sent)) / 60)
+                        logger.warning(f"🔇 Critical alert suppressed for {process_info['name']} ({remaining} min until next alert)")
     
     def get_status_report(self) -> dict:
         """Get status of all monitored processes"""
@@ -433,7 +441,7 @@ class WatchdogMonitor:
         logger.info("\n" + "="*60)
         logger.info("🛡️ WATCHDOG MONITOR V4.1 - ARMED & PROTECTING")
         logger.info(f"⏱️  Check Interval: {self.check_interval}s")
-        logger.info(f"🔇 Anti-Spam: 15 min cooldown per alert")
+        logger.info(f"🔇 Anti-Spam: restart OK → 15 min | FAILED TO RESTART → 60 min")
         logger.info(f"📊 Monitoring: {len(self.processes)} processes")
         logger.info("="*60 + "\n")
         # V10.6: init persistent-reminder state
@@ -462,7 +470,8 @@ class WatchdogMonitor:
 
 ✅ System guardian activated
 ⏱️ Check interval: <code>{self.check_interval}s</code>
-🔇 Anti-Spam: 15 min cooldown
+🔇 Anti-Spam: restart OK → 15 min
+↳ FAILED → 60 min
 📊 Monitoring: <b>{total_count} processes</b>
 
 <b>Initial Status ({running_count}/{total_count} running):</b>

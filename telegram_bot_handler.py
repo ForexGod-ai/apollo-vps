@@ -247,7 +247,7 @@ I'm your AI-powered trading assistant. Here's what I can do:
         """Generate full status report with account + positions + today's performance"""
         try:
             # Read trade_history.json
-            with open('trade_history.json', 'r') as f:
+            with open('trade_history.json', 'r', encoding='utf-8') as f:
                 data = json.load(f)
             
             account = data.get('account', {})
@@ -447,7 +447,7 @@ Worst Trade: `${worst_trade:.2f}`
     def _generate_positions_report(self) -> str:
         """Generate detailed positions report"""
         try:
-            with open('trade_history.json', 'r') as f:
+            with open('trade_history.json', 'r', encoding='utf-8') as f:
                 data = json.load(f)
             
             positions = data.get('open_positions', [])
@@ -512,7 +512,7 @@ _No open positions_
     def _generate_balance_report(self) -> str:
         """Generate balance snapshot"""
         try:
-            with open('trade_history.json', 'r') as f:
+            with open('trade_history.json', 'r', encoding='utf-8') as f:
                 data = json.load(f)
             
             account = data.get('account', {})
@@ -733,7 +733,7 @@ Please check economic_calendar.json manually.
     def _get_monitoring_setups(self) -> List[Dict]:
         """Load monitoring setups from monitoring_setups.json"""
         try:
-            with open('monitoring_setups.json', 'r') as f:
+            with open('monitoring_setups.json', 'r', encoding='utf-8') as f:
                 data = json.load(f)
             return data.get('setups', [])
         except FileNotFoundError:
@@ -765,7 +765,7 @@ Please check economic_calendar.json manually.
         """Get high-impact news events from calendar"""
         try:
             # Try to load from economic_calendar.json
-            with open('economic_calendar.json', 'r') as f:
+            with open('economic_calendar.json', 'r', encoding='utf-8') as f:
                 calendar = json.load(f)
             
             events = calendar.get('events', [])

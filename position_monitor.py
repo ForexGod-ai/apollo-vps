@@ -42,26 +42,37 @@ def acquire_pid_lock(lock_file: Path) -> bool:
     Returns True if lock acquired, False if another instance is already running
     """
     try:
+        my_pid = os.getpid()
         if lock_file.exists():
-            # Read existing PID
-            with open(lock_file, 'r') as f:
-                old_pid = int(f.read().strip())
-            
-            # Check if process is still running
-            if psutil.pid_exists(old_pid):
+            try:
+                with open(lock_file, 'r') as f:
+                    old_pid = int(f.read().strip())
+            except (ValueError, OSError):
+                old_pid = None
+
+            # If lock contains our own PID, it's a stale lock from a previous failed start
+            if old_pid == my_pid or old_pid is None:
+                logger.warning(f"🔧 Stale lock with own PID — removing")
+                lock_file.unlink()
+            elif psutil.pid_exists(old_pid):
                 try:
                     proc = psutil.Process(old_pid)
-                    # Verify it's the same script (not PID reuse)
-                    if 'position_monitor' in ' '.join(proc.cmdline()):
+                    cmdline = ' '.join(proc.cmdline())
+                    # Verify it's the same script (not PID reuse by another process)
+                    if 'position_monitor' in cmdline:
                         logger.error(f"❌ Position Monitor already running (PID {old_pid})")
                         logger.error("⚠️  Cannot start duplicate instance - exiting")
                         return False
+                    # PID exists but it's a different process (PID reuse) — stale lock
+                    logger.warning(f"🔧 PID {old_pid} is a different process — stale lock, removing")
+                    lock_file.unlink()
                 except (psutil.NoSuchProcess, psutil.AccessDenied):
-                    pass
-            
-            # Stale lock file - remove it
-            logger.warning(f"🔧 Removing stale lock file (PID {old_pid} not running)")
-            lock_file.unlink()
+                    logger.warning(f"🔧 Cannot verify PID {old_pid} — treating as stale lock")
+                    lock_file.unlink()
+            else:
+                # PID not running — stale lock
+                logger.warning(f"🔧 Removing stale lock file (PID {old_pid} not running)")
+                lock_file.unlink()
         
         # Acquire lock
         with open(lock_file, 'w') as f:

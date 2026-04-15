@@ -62,7 +62,7 @@ class StrategyOptimizer:
     def _load_learned_rules(self) -> dict:
         """Load learned rules from file"""
         try:
-            with open('learned_rules.json', 'r') as f:
+            with open('learned_rules.json', 'r', encoding='utf-8') as f:
                 return json.load(f)
         except FileNotFoundError:
             return {}

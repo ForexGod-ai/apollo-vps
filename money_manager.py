@@ -41,7 +41,7 @@ class MoneyManager:
         """
         try:
             # Read from trade_history.json for accurate balance
-            with open('trade_history.json', 'r') as f:
+            with open('trade_history.json', 'r', encoding='utf-8') as f:
                 trades = json.load(f)
             
             if not trades:
@@ -73,7 +73,7 @@ class MoneyManager:
         """
         try:
             # Read from active_positions.json (synced by position_monitor)
-            with open('active_positions.json', 'r') as f:
+            with open('active_positions.json', 'r', encoding='utf-8') as f:
                 positions = json.load(f)
             
             # Handle both list and dict formats

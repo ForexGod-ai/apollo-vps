@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 import sys
 
 def check_setup_staleness():
-    with open('monitoring_setups.json', 'r') as f:
+    with open('monitoring_setups.json', 'r', encoding='utf-8') as f:
         data = json.load(f)
     
     print(f"🔍 SETUP STALENESS CHECK - {datetime.now().strftime('%Y-%m-%d %H:%M')}")

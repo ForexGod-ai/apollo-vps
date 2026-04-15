@@ -1,0 +1,1147 @@
+{
+  "recurring_events": {
+    "monthly": [
+      {
+        "name": "US Non-Farm Payroll (NFP)",
+        "currency": "USD",
+        "impact": "High",
+        "schedule": "first_friday",
+        "time": "13:30",
+        "description": "Most important US employment data"
+      },
+      {
+        "name": "US CPI m/m",
+        "currency": "USD",
+        "impact": "High",
+        "schedule": "mid_month",
+        "typical_day": 13,
+        "time": "13:30"
+      },
+      {
+        "name": "US Retail Sales m/m",
+        "currency": "USD",
+        "impact": "High",
+        "schedule": "mid_month",
+        "typical_day": 15,
+        "time": "13:30"
+      },
+      {
+        "name": "FOMC Meeting",
+        "currency": "USD",
+        "impact": "High",
+        "schedule": "varies",
+        "meetings_2025": [
+          "2025-01-29",
+          "2025-03-19",
+          "2025-05-07",
+          "2025-06-18",
+          "2025-07-30",
+          "2025-09-17",
+          "2025-11-06",
+          "2025-12-17"
+        ],
+        "time": "19:00"
+      },
+      {
+        "name": "ECB Interest Rate Decision",
+        "currency": "EUR",
+        "impact": "High",
+        "schedule": "varies",
+        "meetings_2025": [
+          "2025-01-30",
+          "2025-03-13",
+          "2025-04-17",
+          "2025-06-05",
+          "2025-07-24",
+          "2025-09-11",
+          "2025-10-30",
+          "2025-12-18"
+        ],
+        "time": "13:15"
+      },
+      {
+        "name": "BOE Interest Rate Decision",
+        "currency": "GBP",
+        "impact": "High",
+        "schedule": "varies",
+        "meetings_2025": [
+          "2025-02-06",
+          "2025-03-20",
+          "2025-05-08",
+          "2025-06-19",
+          "2025-08-07",
+          "2025-09-18",
+          "2025-11-06",
+          "2025-12-18"
+        ],
+        "time": "12:00"
+      },
+      {
+        "name": "Canada CPI m/m",
+        "currency": "CAD",
+        "impact": "High",
+        "schedule": "mid_month",
+        "typical_day": 15,
+        "time": "13:30"
+      },
+      {
+        "name": "UK CPI y/y",
+        "currency": "GBP",
+        "impact": "High",
+        "schedule": "mid_month",
+        "typical_day": 17,
+        "time": "07:00"
+      },
+      {
+        "name": "Germany Flash Manufacturing PMI",
+        "currency": "EUR",
+        "impact": "High",
+        "schedule": "late_month",
+        "typical_day": 21,
+        "time": "08:30"
+      },
+      {
+        "name": "US Flash Manufacturing PMI",
+        "currency": "USD",
+        "impact": "High",
+        "schedule": "late_month",
+        "typical_day": 21,
+        "time": "14:45"
+      }
+    ]
+  },
+  "custom_events_december_2025": [
+    {
+      "date": "2025-12-15",
+      "time": "15:30",
+      "currency": "CAD",
+      "event": "CPI m/m",
+      "impact": "High",
+      "forecast": "0.1%",
+      "previous": "0.2%"
+    },
+    {
+      "date": "2025-12-16",
+      "time": "13:30",
+      "currency": "USD",
+      "event": "Non-Farm Employment Change",
+      "impact": "High",
+      "forecast": "200K",
+      "previous": "227K"
+    },
+    {
+      "date": "2025-12-16",
+      "time": "13:30",
+      "currency": "USD",
+      "event": "Unemployment Rate",
+      "impact": "High",
+      "forecast": "4.2%",
+      "previous": "4.2%"
+    },
+    {
+      "date": "2025-12-17",
+      "time": "09:00",
+      "currency": "GBP",
+      "event": "CPI y/y",
+      "impact": "High"
+    },
+    {
+      "date": "2025-12-17",
+      "time": "23:45",
+      "currency": "NZD",
+      "event": "GDP q/q",
+      "impact": "High"
+    },
+    {
+      "date": "2025-12-18",
+      "time": "12:00",
+      "currency": "GBP",
+      "event": "Official Bank Rate",
+      "impact": "High",
+      "forecast": "4.75%",
+      "previous": "4.75%"
+    },
+    {
+      "date": "2025-12-18",
+      "time": "13:15",
+      "currency": "EUR",
+      "event": "Main Refinancing Rate",
+      "impact": "High"
+    },
+    {
+      "date": "2025-12-18",
+      "time": "13:30",
+      "currency": "USD",
+      "event": "CPI y/y",
+      "impact": "High"
+    },
+    {
+      "date": "2025-12-18",
+      "time": "19:00",
+      "currency": "USD",
+      "event": "FOMC Statement",
+      "impact": "High"
+    },
+    {
+      "date": "2025-12-18",
+      "time": "19:00",
+      "currency": "USD",
+      "event": "Federal Funds Rate",
+      "impact": "High"
+    },
+    {
+      "date": "2025-12-18",
+      "time": "19:30",
+      "currency": "USD",
+      "event": "FOMC Press Conference",
+      "impact": "High"
+    },
+    {
+      "date": "2026-01-03",
+      "time": "15:00",
+      "currency": "USD",
+      "event": "ISM Manufacturing PMI",
+      "impact": "High",
+      "forecast": "48.3",
+      "previous": "48.4"
+    },
+    {
+      "date": "2026-01-06",
+      "time": "08:30",
+      "currency": "EUR",
+      "event": "German Unemployment Rate",
+      "impact": "Medium"
+    },
+    {
+      "date": "2026-01-06",
+      "time": "10:00",
+      "currency": "EUR",
+      "event": "CPI Flash Estimate y/y",
+      "impact": "High"
+    },
+    {
+      "date": "2026-01-07",
+      "time": "08:30",
+      "currency": "GBP",
+      "event": "Halifax HPI m/m",
+      "impact": "Medium"
+    },
+    {
+      "date": "2026-01-07",
+      "time": "13:15",
+      "currency": "USD",
+      "event": "ADP Non-Farm Employment Change",
+      "impact": "High",
+      "forecast": "150K",
+      "previous": "146K"
+    },
+    {
+      "date": "2026-01-08",
+      "time": "13:30",
+      "currency": "USD",
+      "event": "Unemployment Claims",
+      "impact": "Medium"
+    },
+    {
+      "date": "2026-01-09",
+      "time": "13:30",
+      "currency": "CAD",
+      "event": "Employment Change",
+      "impact": "High"
+    },
+    {
+      "date": "2026-01-09",
+      "time": "13:30",
+      "currency": "USD",
+      "event": "Average Hourly Earnings m/m",
+      "impact": "High",
+      "forecast": "0.3%",
+      "previous": "0.4%"
+    },
+    {
+      "date": "2026-01-09",
+      "time": "13:30",
+      "currency": "USD",
+      "event": "Non-Farm Employment Change (NFP)",
+      "impact": "High",
+      "forecast": "160K",
+      "previous": "227K"
+    },
+    {
+      "date": "2026-01-09",
+      "time": "13:30",
+      "currency": "USD",
+      "event": "Unemployment Rate",
+      "impact": "High",
+      "forecast": "4.2%",
+      "previous": "4.2%"
+    }
+  ],
+  "custom_events_january_2026": [
+    {
+      "date": "2026-01-03",
+      "time": "15:00",
+      "currency": "USD",
+      "event": "ISM Manufacturing PMI",
+      "impact": "High"
+    },
+    {
+      "date": "2026-01-06",
+      "time": "10:00",
+      "currency": "EUR",
+      "event": "CPI Flash Estimate y/y",
+      "impact": "High"
+    },
+    {
+      "date": "2026-01-06",
+      "time": "08:55",
+      "currency": "EUR",
+      "event": "German Unemployment Change",
+      "impact": "Medium"
+    },
+    {
+      "date": "2026-01-06",
+      "time": "09:30",
+      "currency": "GBP",
+      "event": "Halifax HPI m/m",
+      "impact": "Medium"
+    },
+    {
+      "date": "2026-01-07",
+      "time": "13:15",
+      "currency": "USD",
+      "event": "ADP Non-Farm Employment Change",
+      "impact": "High"
+    },
+    {
+      "date": "2026-01-08",
+      "time": "13:30",
+      "currency": "USD",
+      "event": "Unemployment Claims",
+      "impact": "Medium"
+    },
+    {
+      "date": "2026-01-09",
+      "time": "13:30",
+      "currency": "CAD",
+      "event": "Employment Change",
+      "impact": "High"
+    },
+    {
+      "date": "2026-01-09",
+      "time": "13:30",
+      "currency": "USD",
+      "event": "Average Hourly Earnings m/m",
+      "impact": "High"
+    },
+    {
+      "date": "2026-01-09",
+      "time": "13:30",
+      "currency": "USD",
+      "event": "Non-Farm Employment Change",
+      "impact": "High"
+    },
+    {
+      "date": "2026-01-09",
+      "time": "13:30",
+      "currency": "USD",
+      "event": "Unemployment Rate",
+      "impact": "High"
+    },
+    {
+      "date": "2026-01-13",
+      "time": "13:30",
+      "currency": "USD",
+      "event": "Core CPI m/m",
+      "impact": "High"
+    },
+    {
+      "date": "2026-01-13",
+      "time": "13:30",
+      "currency": "USD",
+      "event": "CPI m/m",
+      "impact": "High"
+    },
+    {
+      "date": "2026-01-14",
+      "time": "13:30",
+      "currency": "USD",
+      "event": "Core PPI m/m",
+      "impact": "High"
+    },
+    {
+      "date": "2026-01-14",
+      "time": "13:30",
+      "currency": "USD",
+      "event": "PPI m/m",
+      "impact": "High"
+    },
+    {
+      "date": "2026-01-15",
+      "time": "13:30",
+      "currency": "USD",
+      "event": "Retail Sales m/m",
+      "impact": "High"
+    },
+    {
+      "date": "2026-01-15",
+      "time": "13:30",
+      "currency": "CAD",
+      "event": "CPI m/m",
+      "impact": "High"
+    },
+    {
+      "date": "2026-01-16",
+      "time": "13:30",
+      "currency": "USD",
+      "event": "Building Permits",
+      "impact": "Medium"
+    },
+    {
+      "date": "2026-01-16",
+      "time": "15:00",
+      "currency": "USD",
+      "event": "Prelim UoM Consumer Sentiment",
+      "impact": "High"
+    },
+    {
+      "date": "2026-01-21",
+      "time": "07:00",
+      "currency": "GBP",
+      "event": "CPI y/y",
+      "impact": "High"
+    },
+    {
+      "date": "2026-01-21",
+      "time": "13:30",
+      "currency": "CAD",
+      "event": "Core Retail Sales m/m",
+      "impact": "High"
+    },
+    {
+      "date": "2026-01-22",
+      "time": "09:30",
+      "currency": "GBP",
+      "event": "Retail Sales m/m",
+      "impact": "High"
+    },
+    {
+      "date": "2026-01-23",
+      "time": "08:30",
+      "currency": "EUR",
+      "event": "German Flash Manufacturing PMI",
+      "impact": "High"
+    },
+    {
+      "date": "2026-01-23",
+      "time": "09:00",
+      "currency": "EUR",
+      "event": "Flash Manufacturing PMI",
+      "impact": "High"
+    },
+    {
+      "date": "2026-01-23",
+      "time": "14:45",
+      "currency": "USD",
+      "event": "Flash Manufacturing PMI",
+      "impact": "High"
+    },
+    {
+      "date": "2026-01-23",
+      "time": "15:00",
+      "currency": "USD",
+      "event": "New Home Sales",
+      "impact": "Medium"
+    },
+    {
+      "date": "2026-01-27",
+      "time": "15:00",
+      "currency": "USD",
+      "event": "CB Consumer Confidence",
+      "impact": "High"
+    },
+    {
+      "date": "2026-01-28",
+      "time": "13:30",
+      "currency": "USD",
+      "event": "Core Durable Goods Orders m/m",
+      "impact": "High"
+    },
+    {
+      "date": "2026-01-28",
+      "time": "13:30",
+      "currency": "USD",
+      "event": "Durable Goods Orders m/m",
+      "impact": "Medium"
+    },
+    {
+      "date": "2026-01-29",
+      "time": "13:30",
+      "currency": "USD",
+      "event": "Advance GDP q/q",
+      "impact": "High"
+    },
+    {
+      "date": "2026-01-29",
+      "time": "15:00",
+      "currency": "USD",
+      "event": "Pending Home Sales m/m",
+      "impact": "Medium"
+    },
+    {
+      "date": "2026-01-29",
+      "time": "19:00",
+      "currency": "USD",
+      "event": "FOMC Statement",
+      "impact": "High"
+    },
+    {
+      "date": "2026-01-29",
+      "time": "19:30",
+      "currency": "USD",
+      "event": "FOMC Press Conference",
+      "impact": "High"
+    },
+    {
+      "date": "2026-01-30",
+      "time": "13:15",
+      "currency": "EUR",
+      "event": "ECB Interest Rate Decision",
+      "impact": "High"
+    },
+    {
+      "date": "2026-01-30",
+      "time": "13:45",
+      "currency": "EUR",
+      "event": "ECB Press Conference",
+      "impact": "High"
+    }
+  ],
+  "custom_events_february_2026": [
+    {
+      "date": "2026-02-02",
+      "time": "17:00",
+      "currency": "USD",
+      "event": "ISM Manufacturing PMI",
+      "impact": "High",
+      "forecast": "48.5",
+      "previous": "47.9"
+    },
+    {
+      "date": "2026-02-03",
+      "time": "05:00",
+      "currency": "AUD",
+      "event": "Cash Rate",
+      "impact": "High",
+      "forecast": "3.85%",
+      "previous": "3.60%"
+    },
+    {
+      "date": "2026-02-03",
+      "time": "06:30",
+      "currency": "AUD",
+      "event": "RBA Monetary Policy Statement",
+      "impact": "High",
+      "forecast": "",
+      "previous": ""
+    },
+    {
+      "date": "2026-02-03",
+      "time": "06:30",
+      "currency": "AUD",
+      "event": "RBA Rate Statement",
+      "impact": "High",
+      "forecast": "",
+      "previous": ""
+    },
+    {
+      "date": "2026-02-03",
+      "time": "06:30",
+      "currency": "AUD",
+      "event": "RBA Press Conference",
+      "impact": "High",
+      "forecast": "",
+      "previous": ""
+    },
+    {
+      "date": "2026-02-03",
+      "time": "17:00",
+      "currency": "USD",
+      "event": "JOLTS Job Openings",
+      "impact": "High",
+      "forecast": "7.21M",
+      "previous": "7.15M"
+    },
+    {
+      "date": "2026-02-03",
+      "time": "23:45",
+      "currency": "NZD",
+      "event": "Employment Change q/q",
+      "impact": "High",
+      "forecast": "0.3%",
+      "previous": "0.0%"
+    },
+    {
+      "date": "2026-02-03",
+      "time": "23:45",
+      "currency": "NZD",
+      "event": "Unemployment Rate",
+      "impact": "High",
+      "forecast": "5.3%",
+      "previous": "5.3%"
+    },
+    {
+      "date": "2026-02-04",
+      "time": "15:15",
+      "currency": "USD",
+      "event": "ADP Non-Farm Employment Change",
+      "impact": "High",
+      "forecast": "48K",
+      "previous": "41K"
+    },
+    {
+      "date": "2026-02-04",
+      "time": "17:00",
+      "currency": "USD",
+      "event": "ISM Services PMI",
+      "impact": "High",
+      "forecast": "53.6",
+      "previous": "54.4"
+    },
+    {
+      "date": "2026-02-05",
+      "time": "14:00",
+      "currency": "GBP",
+      "event": "BOE Monetary Policy Report",
+      "impact": "High",
+      "forecast": "",
+      "previous": ""
+    },
+    {
+      "date": "2026-02-05",
+      "time": "14:00",
+      "currency": "GBP",
+      "event": "Monetary Policy Summary",
+      "impact": "High",
+      "forecast": "",
+      "previous": ""
+    },
+    {
+      "date": "2026-02-05",
+      "time": "14:00",
+      "currency": "GBP",
+      "event": "MPC Official Bank Rate Votes",
+      "impact": "High",
+      "forecast": "0-2-7",
+      "previous": "0-5-4"
+    },
+    {
+      "date": "2026-02-05",
+      "time": "14:00",
+      "currency": "GBP",
+      "event": "Official Bank Rate",
+      "impact": "High",
+      "forecast": "3.75%",
+      "previous": "3.75%"
+    },
+    {
+      "date": "2026-02-05",
+      "time": "14:30",
+      "currency": "GBP",
+      "event": "BOE Gov Bailey Speaks",
+      "impact": "High",
+      "forecast": "",
+      "previous": ""
+    },
+    {
+      "date": "2026-02-05",
+      "time": "15:15",
+      "currency": "EUR",
+      "event": "Main Refinancing Rate",
+      "impact": "High",
+      "forecast": "2.15%",
+      "previous": "2.15%"
+    },
+    {
+      "date": "2026-02-05",
+      "time": "15:15",
+      "currency": "EUR",
+      "event": "Monetary Policy Statement",
+      "impact": "High",
+      "forecast": "",
+      "previous": ""
+    },
+    {
+      "date": "2026-02-05",
+      "time": "15:30",
+      "currency": "USD",
+      "event": "Unemployment Claims",
+      "impact": "High",
+      "forecast": "213K",
+      "previous": "209K"
+    },
+    {
+      "date": "2026-02-05",
+      "time": "15:45",
+      "currency": "EUR",
+      "event": "ECB Press Conference",
+      "impact": "High",
+      "forecast": "",
+      "previous": ""
+    },
+    {
+      "date": "2026-02-05",
+      "time": "19:25",
+      "currency": "CAD",
+      "event": "BOC Gov Macklem Speaks",
+      "impact": "High",
+      "forecast": "",
+      "previous": ""
+    },
+    {
+      "date": "2026-02-06",
+      "time": "00:30",
+      "currency": "AUD",
+      "event": "RBA Gov Bullock Speaks",
+      "impact": "High",
+      "forecast": "",
+      "previous": ""
+    },
+    {
+      "date": "2026-02-06",
+      "time": "15:30",
+      "currency": "CAD",
+      "event": "Employment Change",
+      "impact": "High",
+      "forecast": "7.2K",
+      "previous": "8.2K"
+    },
+    {
+      "date": "2026-02-06",
+      "time": "15:30",
+      "currency": "CAD",
+      "event": "Unemployment Rate",
+      "impact": "High",
+      "forecast": "6.8%",
+      "previous": "6.8%"
+    },
+    {
+      "date": "2026-02-06",
+      "time": "15:30",
+      "currency": "USD",
+      "event": "Average Hourly Earnings m/m",
+      "impact": "High",
+      "forecast": "0.3%",
+      "previous": "0.3%"
+    },
+    {
+      "date": "2026-02-06",
+      "time": "15:30",
+      "currency": "USD",
+      "event": "Non-Farm Employment Change (NFP)",
+      "impact": "High",
+      "forecast": "67K",
+      "previous": "50K"
+    },
+    {
+      "date": "2026-02-06",
+      "time": "15:30",
+      "currency": "USD",
+      "event": "Unemployment Rate",
+      "impact": "High",
+      "forecast": "4.4%",
+      "previous": "4.4%"
+    },
+    {
+      "date": "2026-02-06",
+      "time": "17:00",
+      "currency": "USD",
+      "event": "Prelim UoM Consumer Sentiment",
+      "impact": "High",
+      "forecast": "55.4",
+      "previous": "56.4"
+    },
+    {
+      "date": "2026-02-06",
+      "time": "17:00",
+      "currency": "USD",
+      "event": "Prelim UoM Inflation Expectations",
+      "impact": "High",
+      "forecast": "",
+      "previous": "4.0%"
+    }
+  ],
+  "custom_events_march_2026": [
+    {
+      "date": "2026-03-24",
+      "time": "15:45",
+      "currency": "USD",
+      "event": "Flash Manufacturing PMI",
+      "impact": "High",
+      "forecast": "52.0",
+      "previous": "51.6"
+    },
+    {
+      "date": "2026-03-24",
+      "time": "15:45",
+      "currency": "USD",
+      "event": "Flash Services PMI",
+      "impact": "High",
+      "forecast": "50.6",
+      "previous": "51.0"
+    },
+    {
+      "date": "2026-03-25",
+      "time": "14:00",
+      "currency": "USD",
+      "event": "CB Consumer Confidence",
+      "impact": "High",
+      "forecast": "93.3",
+      "previous": "98.3"
+    },
+    {
+      "date": "2026-03-25",
+      "time": "14:00",
+      "currency": "USD",
+      "event": "New Home Sales",
+      "impact": "High",
+      "forecast": "675K",
+      "previous": "657K"
+    },
+    {
+      "date": "2026-03-26",
+      "time": "12:30",
+      "currency": "USD",
+      "event": "Core Durable Goods Orders m/m",
+      "impact": "High",
+      "forecast": "0.2%",
+      "previous": "0.1%"
+    },
+    {
+      "date": "2026-03-26",
+      "time": "14:30",
+      "currency": "USD",
+      "event": "Crude Oil Inventories",
+      "impact": "High",
+      "forecast": "-1.2M",
+      "previous": "-1.3M"
+    },
+    {
+      "date": "2026-03-27",
+      "time": "12:30",
+      "currency": "USD",
+      "event": "Final GDP q/q",
+      "impact": "High",
+      "forecast": "2.3%",
+      "previous": "2.3%"
+    },
+    {
+      "date": "2026-03-27",
+      "time": "12:30",
+      "currency": "USD",
+      "event": "Unemployment Claims",
+      "impact": "High",
+      "forecast": "225K",
+      "previous": "223K"
+    },
+    {
+      "date": "2026-03-27",
+      "time": "14:00",
+      "currency": "USD",
+      "event": "Pending Home Sales m/m",
+      "impact": "High",
+      "forecast": "1.4%",
+      "previous": "-4.6%"
+    },
+    {
+      "date": "2026-03-28",
+      "time": "12:30",
+      "currency": "USD",
+      "event": "Core PCE Price Index m/m",
+      "impact": "High",
+      "forecast": "0.3%",
+      "previous": "0.3%"
+    },
+    {
+      "date": "2026-03-28",
+      "time": "12:30",
+      "currency": "USD",
+      "event": "Personal Spending m/m",
+      "impact": "High",
+      "forecast": "0.5%",
+      "previous": "-0.2%"
+    },
+    {
+      "date": "2026-03-28",
+      "time": "14:00",
+      "currency": "USD",
+      "event": "Revised UoM Consumer Sentiment",
+      "impact": "High",
+      "forecast": "57.9",
+      "previous": "64.7"
+    },
+    {
+      "date": "2026-03-24",
+      "time": "09:15",
+      "currency": "EUR",
+      "event": "Flash Manufacturing PMI",
+      "impact": "High",
+      "forecast": "48.0",
+      "previous": "47.6"
+    },
+    {
+      "date": "2026-03-24",
+      "time": "09:15",
+      "currency": "EUR",
+      "event": "Flash Services PMI",
+      "impact": "High",
+      "forecast": "51.0",
+      "previous": "50.6"
+    },
+    {
+      "date": "2026-03-24",
+      "time": "08:30",
+      "currency": "GBP",
+      "event": "Flash Manufacturing PMI",
+      "impact": "High",
+      "forecast": "46.9",
+      "previous": "46.9"
+    },
+    {
+      "date": "2026-03-24",
+      "time": "08:30",
+      "currency": "GBP",
+      "event": "Flash Services PMI",
+      "impact": "High",
+      "forecast": "51.1",
+      "previous": "51.0"
+    },
+    {
+      "date": "2026-03-26",
+      "time": "12:00",
+      "currency": "GBP",
+      "event": "MPC Official Bank Rate Votes",
+      "impact": "High",
+      "forecast": "0-0-9",
+      "previous": "0-0-9"
+    },
+    {
+      "date": "2026-03-26",
+      "time": "12:00",
+      "currency": "GBP",
+      "event": "Official Bank Rate",
+      "impact": "High",
+      "forecast": "4.50%",
+      "previous": "4.50%"
+    },
+    {
+      "date": "2026-03-26",
+      "time": "12:00",
+      "currency": "GBP",
+      "event": "Monetary Policy Summary",
+      "impact": "High",
+      "forecast": "",
+      "previous": ""
+    }
+  ],
+  "custom_events_april_2026": [
+    {
+      "date": "2026-03-31",
+      "time": "12:30",
+      "currency": "EUR",
+      "event": "CPI Flash Estimate (Mar)",
+      "impact": "High",
+      "forecast": "2.2%",
+      "previous": "2.3%"
+    },
+    {
+      "date": "2026-04-01",
+      "time": "12:30",
+      "currency": "USD",
+      "event": "NFP (Mar)",
+      "impact": "High",
+      "forecast": "185K",
+      "previous": "151K"
+    },
+    {
+      "date": "2026-04-01",
+      "time": "12:30",
+      "currency": "USD",
+      "event": "Unemployment Rate (Mar)",
+      "impact": "High",
+      "forecast": "4.1%",
+      "previous": "4.1%"
+    },
+    {
+      "date": "2026-04-01",
+      "time": "14:00",
+      "currency": "USD",
+      "event": "ISM Manufacturing PMI (Mar)",
+      "impact": "High",
+      "forecast": "49.8",
+      "previous": "50.3"
+    },
+    {
+      "date": "2026-04-07",
+      "time": "14:00",
+      "currency": "USD",
+      "event": "ISM Services PMI (Mar)",
+      "impact": "High",
+      "forecast": "53.0",
+      "previous": "53.5"
+    },
+    {
+      "date": "2026-04-08",
+      "time": "12:30",
+      "currency": "USD",
+      "event": "FOMC Minutes",
+      "impact": "High",
+      "forecast": "",
+      "previous": ""
+    },
+    {
+      "date": "2026-04-10",
+      "time": "12:30",
+      "currency": "USD",
+      "event": "CPI (Mar) YoY",
+      "impact": "High",
+      "forecast": "2.5%",
+      "previous": "2.8%"
+    },
+    {
+      "date": "2026-04-10",
+      "time": "12:30",
+      "currency": "USD",
+      "event": "Core CPI (Mar) YoY",
+      "impact": "High",
+      "forecast": "3.0%",
+      "previous": "3.1%"
+    },
+    {
+      "date": "2026-04-11",
+      "time": "12:30",
+      "currency": "USD",
+      "event": "PPI (Mar) MoM",
+      "impact": "High",
+      "forecast": "0.2%",
+      "previous": "0.0%"
+    },
+    {
+      "date": "2026-04-14",
+      "time": "All Day",
+      "currency": "USD",
+      "event": "Good Friday (Markets Closed)",
+      "impact": "High",
+      "forecast": "",
+      "previous": ""
+    },
+    {
+      "date": "2026-04-15",
+      "time": "12:30",
+      "currency": "USD",
+      "event": "Retail Sales (Mar) MoM",
+      "impact": "High",
+      "forecast": "0.5%",
+      "previous": "-0.9%"
+    },
+    {
+      "date": "2026-04-16",
+      "time": "12:30",
+      "currency": "USD",
+      "event": "Initial Jobless Claims",
+      "impact": "High",
+      "forecast": "220K",
+      "previous": "219K"
+    },
+    {
+      "date": "2026-04-17",
+      "time": "13:15",
+      "currency": "USD",
+      "event": "Industrial Production (Mar)",
+      "impact": "High",
+      "forecast": "0.2%",
+      "previous": "0.7%"
+    },
+    {
+      "date": "2026-04-22",
+      "time": "14:00",
+      "currency": "USD",
+      "event": "Existing Home Sales (Mar)",
+      "impact": "High",
+      "forecast": "4.15M",
+      "previous": "4.26M"
+    },
+    {
+      "date": "2026-04-23",
+      "time": "13:45",
+      "currency": "USD",
+      "event": "S&P Global Manufacturing PMI Flash (Apr)",
+      "impact": "High",
+      "forecast": "49.5",
+      "previous": "49.8"
+    },
+    {
+      "date": "2026-04-24",
+      "time": "12:30",
+      "currency": "USD",
+      "event": "GDP Advance (Q1 2026)",
+      "impact": "High",
+      "forecast": "1.8%",
+      "previous": "2.4%"
+    },
+    {
+      "date": "2026-04-24",
+      "time": "12:30",
+      "currency": "USD",
+      "event": "Initial Jobless Claims",
+      "impact": "High",
+      "forecast": "222K",
+      "previous": "220K"
+    },
+    {
+      "date": "2026-04-28",
+      "time": "09:00",
+      "currency": "EUR",
+      "event": "ECB Interest Rate Decision",
+      "impact": "High",
+      "forecast": "2.40%",
+      "previous": "2.65%"
+    },
+    {
+      "date": "2026-04-29",
+      "time": "12:30",
+      "currency": "USD",
+      "event": "Core PCE (Mar) MoM",
+      "impact": "High",
+      "forecast": "0.2%",
+      "previous": "0.4%"
+    },
+    {
+      "date": "2026-04-30",
+      "time": "14:00",
+      "currency": "USD",
+      "event": "CB Consumer Confidence (Apr)",
+      "impact": "High",
+      "forecast": "93.0",
+      "previous": "92.9"
+    },
+    {
+      "date": "2026-04-30",
+      "time": "03:00",
+      "currency": "JPY",
+      "event": "BoJ Interest Rate Decision",
+      "impact": "High",
+      "forecast": "0.50%",
+      "previous": "0.50%"
+    },
+    {
+      "date": "2026-04-01",
+      "time": "09:30",
+      "currency": "GBP",
+      "event": "Manufacturing PMI Final (Mar)",
+      "impact": "High",
+      "forecast": "44.6",
+      "previous": "44.6"
+    }
+  ]
+}

@@ -344,7 +344,7 @@ class PullbackChecker:
     def load_monitoring_setups(self) -> List[Dict]:
         """Load setups from monitoring_setups.json"""
         try:
-            with open('monitoring_setups.json', 'r') as f:
+            with open('monitoring_setups.json', 'r', encoding='utf-8') as f:
                 data = json.load(f)
                 
                 if isinstance(data, dict):

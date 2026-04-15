@@ -150,7 +150,7 @@ class GlitchBacktester:
         # Ensure pair_list is always loaded
         self.pair_list = []
         try:
-            with open('pairs_config.json', 'r') as f:
+            with open('pairs_config.json', 'r', encoding='utf-8') as f:
                 config = json.load(f)
                 self.pair_list = [p['symbol'] for p in config['pairs']]
         except Exception as e:
@@ -331,7 +331,7 @@ class GlitchBacktester:
         if pair == 'XAUUSD':
             # Load config to check scale_in setting
             try:
-                with open('pairs_config.json', 'r') as f:
+                with open('pairs_config.json', 'r', encoding='utf-8') as f:
                     config = json.load(f)
                     for p in config['pairs']:
                         if p['symbol'] == pair:

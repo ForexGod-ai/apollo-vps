@@ -256,7 +256,7 @@ def write_trade_history(data, db: TradeDatabase):
         data['closed_trades'] = closed_trades
         
         # Write to JSON (for dashboard compatibility)
-        with open(TRADE_HISTORY_FILE, 'w') as f:
+        with open(TRADE_HISTORY_FILE, 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=2)
         
         # Extract data
@@ -368,7 +368,7 @@ def main():
 
     # 🔒 SINGLE INSTANCE LOCK — prevent 2 sync daemons writing trade_history.json simultaneously
     _lock_path = _Path(__file__).parent / "process_ctrader_sync_daemon.lock"
-    _lock_fd = open(_lock_path, 'w')
+    _lock_fd = open(_lock_path, 'w', encoding='utf-8')
     try:
         _fcntl.flock(_lock_fd, _fcntl.LOCK_EX | _fcntl.LOCK_NB)
         _lock_fd.write(str(__import__('os').getpid()))

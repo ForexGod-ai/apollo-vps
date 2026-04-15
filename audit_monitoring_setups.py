@@ -207,7 +207,7 @@ class MonitoringRadar:
     def load_monitoring_setups(self) -> List[Dict]:
         """Încarcă setup-urile din monitoring_setups.json"""
         try:
-            with open('monitoring_setups.json', 'r') as f:
+            with open('monitoring_setups.json', 'r', encoding='utf-8') as f:
                 data = json.load(f)
                 
                 # Handle both formats (dict with 'setups' key or direct list)

@@ -519,7 +519,7 @@ class MultiTFRadar:
         """
         try:
             # Load monitoring_setups.json
-            with open('monitoring_setups.json', 'r') as f:
+            with open('monitoring_setups.json', 'r', encoding='utf-8') as f:
                 data = json.load(f)
             
             if isinstance(data, dict):
@@ -604,7 +604,7 @@ class MultiTFRadar:
             else:
                 data = setups
             
-            with open('monitoring_setups.json', 'w') as f:
+            with open('monitoring_setups.json', 'w', encoding='utf-8') as f:
                 json.dump(data, f, indent=2)
             
             logger.debug(f"💾 monitoring_setups.json updated with radar data")
@@ -709,7 +709,7 @@ class MultiTFRadar:
     def load_monitoring_setups(self) -> List[Dict]:
         """Load setups from monitoring_setups.json"""
         try:
-            with open('monitoring_setups.json', 'r') as f:
+            with open('monitoring_setups.json', 'r', encoding='utf-8') as f:
                 data = json.load(f)
                 
                 if isinstance(data, dict):
