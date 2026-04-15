@@ -73,9 +73,12 @@ except ImportError:
 load_dotenv()
 
 # Configure logger (remove default, add custom)
+# Windows VPS fix: wrap stdout with UTF-8 to prevent UnicodeEncodeError on emoji
+import io as _io
+_safe_stdout = _io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace') if hasattr(sys.stdout, 'buffer') else sys.stdout
 logger.remove()
 logger.add(
-    sys.stdout,
+    _safe_stdout,
     format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{message}</cyan>",
     level="INFO"
 )

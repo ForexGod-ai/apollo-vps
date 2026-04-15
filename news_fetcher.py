@@ -32,15 +32,16 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import List, Dict, Optional
 
-# Setup logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s | %(levelname)-8s | %(message)s',
-    handlers=[
-        logging.StreamHandler(sys.stdout),
-        logging.FileHandler('logs/news_fetcher.log', mode='a')
-    ]
-)
+# Setup logging — UTF-8 safe stdout for Windows cp1252 compatibility
+import io as _io
+_utf8_stdout = _io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace') if hasattr(sys.stdout, 'buffer') else sys.stdout
+_stream_handler = logging.StreamHandler(_utf8_stdout)
+_stream_handler.setFormatter(logging.Formatter('%(asctime)s | %(levelname)-8s | %(message)s'))
+_logs_dir = Path(__file__).parent.resolve() / 'logs'
+_logs_dir.mkdir(exist_ok=True)
+_file_handler = logging.FileHandler(_logs_dir / 'news_fetcher.log', mode='a', encoding='utf-8')
+_file_handler.setFormatter(logging.Formatter('%(asctime)s | %(levelname)-8s | %(message)s'))
+logging.basicConfig(level=logging.INFO, handlers=[_stream_handler, _file_handler])
 logger = logging.getLogger(__name__)
 
 try:

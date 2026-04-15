@@ -44,17 +44,16 @@ except ImportError:
     _RO_TZ = None
 
 # Setup logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s | %(levelname)-8s | %(message)s',
-    handlers=[
-        logging.StreamHandler(sys.stdout),
-        logging.FileHandler(
-            Path(__file__).parent.resolve() / 'logs' / 'news_reminder.log',
-            mode='a'
-        ),
-    ]
-)
+# Windows VPS fix: force UTF-8 on stdout handler to prevent UnicodeEncodeError on emoji
+import io as _io
+_utf8_stdout = _io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace') if hasattr(sys.stdout, 'buffer') else sys.stdout
+_stream_handler = logging.StreamHandler(_utf8_stdout)
+_stream_handler.setFormatter(logging.Formatter('%(asctime)s | %(levelname)-8s | %(message)s'))
+_logs_dir = Path(__file__).parent.resolve() / 'logs'
+_logs_dir.mkdir(exist_ok=True)
+_file_handler = logging.FileHandler(_logs_dir / 'news_reminder.log', mode='a', encoding='utf-8')
+_file_handler.setFormatter(logging.Formatter('%(asctime)s | %(levelname)-8s | %(message)s'))
+logging.basicConfig(level=logging.INFO, handlers=[_stream_handler, _file_handler])
 logger = logging.getLogger(__name__)
 
 try:
@@ -167,9 +166,14 @@ class NewsReminderEngine:
                 return []
             with open(NEWS_FILE, 'r', encoding='utf-8') as f:
                 data = json.load(f)
-            return data.get('events', [])
+            # Handle both formats: dict with 'events' key OR direct list
+            if isinstance(data, list):
+                return data
+            elif isinstance(data, dict):
+                return data.get('events', [])
+            return []
         except Exception as e:
-            logger.error(f"❌ Error reading {NEWS_FILE}: {e}")
+            logger.error(f"Error reading {NEWS_FILE}: {e}")
             return []
 
     # ━━━ FLASH ALERT FORMATTER ━━━
