@@ -1,5 +1,5 @@
 @echo off
-cd /d "C:\Users\Administrator\Desktop\Glitch in Matrix\trading-ai-agent apollo"
+cd /d "%~dp0"
 
 echo.
 echo ╔═══════════════════════════════════════════════════╗

@@ -1,6 +1,7 @@
 #!/bin/bash
 
-cd "/Users/forexgod/Desktop/Glitch in Matrix/trading-ai-agent apollo"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
 
 echo "🚀 ForexGod - Starting Complete Auto-Notification System"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
