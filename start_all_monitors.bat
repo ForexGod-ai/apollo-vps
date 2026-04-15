@@ -1,12 +1,13 @@
 @echo off
-title GLITCH IN MATRIX — Launcher
+chcp 65001 >nul
+title GLITCH IN MATRIX - Launcher
 cd /d "%~dp0"
 
 echo.
-echo ╔═══════════════════════════════════════════════════╗
-echo ║  ✨ GLITCH IN MATRIX by ForexGod ✨             ║
-echo ║  Starting All 7 Monitors — Windows VPS Helsinki  ║
-echo ╚═══════════════════════════════════════════════════╝
+echo ===================================================
+echo   GLITCH IN MATRIX by ForexGod
+echo   Starting All 7 Monitors - Windows VPS Helsinki
+echo ===================================================
 echo.
 
 :: Create logs directory
@@ -54,12 +55,12 @@ start "[7] Watchdog" /MIN cmd /c "python watchdog_monitor.py --interval 60 >> lo
 timeout /t 4 /nobreak >nul
 
 echo.
-echo ╔═══════════════════════════════════════════════════╗
-echo ║  ✅ All 7 monitors started!                      ║
-echo ║  Named windows: [1] through [7]                  ║
-echo ║  Logs: logs\*.log  (one file per monitor)        ║
-echo ║  Use Task Manager to verify all python.exe alive ║
-echo ╚═══════════════════════════════════════════════════╝
+echo ===================================================
+echo   [OK] All 7 monitors started!
+echo   Named windows: [1] through [7]
+echo   Logs: logs\*.log  (one file per monitor)
+echo   Use Task Manager to verify all python.exe alive
+echo ===================================================
 echo.
 echo Press any key to exit launcher...
 pause >nul
