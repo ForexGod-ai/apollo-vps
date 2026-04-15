@@ -79,8 +79,9 @@ _safe_stdout = _io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='re
 logger.remove()
 logger.add(
     _safe_stdout,
-    format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{message}</cyan>",
-    level="INFO"
+    format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {message}",
+    level="INFO",
+    colorize=False
 )
 _LOG_DIR = Path(__file__).parent / "logs"
 _LOG_DIR.mkdir(exist_ok=True)
