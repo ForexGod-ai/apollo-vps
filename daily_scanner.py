@@ -880,7 +880,7 @@ def format_telegram_active_setups(positions):
     msg = '🎯 ACTIVE SETUPS (cTrader Sync):\n'
     for pos in positions:
         direction = 'LONG' if pos['direction'] == 'buy' else 'SHORT'
-        msg += f"• {pos['symbol']} - {direction}\n  Entry: {pos['entry_price']} | Vol: {pos['volume']}\n"
+        msg += f"• {pos.get('symbol','?')} - {direction}\n  Entry: {pos.get('entry_price','?')} | Vol: {pos.get('volume', 0)}\n"
     return msg
 
 # La finalul scanării, trimite active setups din cTrader

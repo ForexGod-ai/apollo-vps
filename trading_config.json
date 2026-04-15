@@ -1,8 +1,8 @@
 {
   "auto_trading": {
     "enabled": true,
-    "mode": "demo",
-    "comment": "Set to false to disable autonomous trading. Mode can be 'demo' or 'live'."
+    "mode": "live",
+    "comment": "Set to false to disable autonomous trading. Mode can be 'demo' or 'live'."  
   },
   
   "risk_management": {

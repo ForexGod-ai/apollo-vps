@@ -488,19 +488,24 @@ class PositionMonitor:
 
 if __name__ == "__main__":
     import sys
-    import fcntl
+    import platform
 
     # 🔒 PID LOCK - Prevent duplicate instances (absolute path — works from any cwd)
     lock_file = Path(__file__).parent / "process_position_monitor.lock"
 
-    # Extra safety: fcntl exclusive lock so two processes can never both "win"
-    _lock_fd = open(lock_file, 'w')
+    # Cross-platform exclusive lock: msvcrt on Windows, fcntl on Unix
+    _lock_fd = open(lock_file, 'w', encoding='utf-8')
     try:
-        fcntl.flock(_lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        if platform.system() == 'Windows':
+            import msvcrt
+            msvcrt.locking(_lock_fd.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(_lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         _lock_fd.write(str(os.getpid()))
         _lock_fd.flush()
-    except BlockingIOError:
-        logger.error("🚫 DUPLICATE INSTANCE DETECTED (fcntl) — another position_monitor is running. Exiting.")
+    except (BlockingIOError, OSError):
+        logger.error("🚫 DUPLICATE INSTANCE DETECTED — another position_monitor is running. Exiting.")
         sys.exit(1)
 
     if not acquire_pid_lock(lock_file):

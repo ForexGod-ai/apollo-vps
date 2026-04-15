@@ -17,7 +17,7 @@ class CTraderAccountStats:
     """Extrage și afișează statistici complete cont cTrader"""
     
     def __init__(self):
-        self.account_id = os.getenv('CTRADER_ACCOUNT_ID', '9709773')
+        self.account_id = os.getenv('CTRADER_ACCOUNT_ID', '6139026')  # Live account (IC Markets)
         self.trade_history_file = Path("trade_history.json")
         self.telegram_token = os.getenv('TELEGRAM_BOT_TOKEN')
         self.telegram_chat_id = os.getenv('TELEGRAM_CHAT_ID')

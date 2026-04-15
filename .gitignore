@@ -58,3 +58,4 @@ data/backups/
 
 # OS files
 .DS_Store
+process_*.lock

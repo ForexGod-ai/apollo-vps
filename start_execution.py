@@ -29,9 +29,9 @@ from typing import List, Dict
 # ABSOLUTE PATH CONFIGURATION - NO MORE RELATIVE PATHS!
 # ══════════════════════════════════════════════════════════════════════
 
-ROOT_PATH = Path("/Users/forexgod/GlitchMatrix")
-WORKSPACE = Path(__file__).parent
-VENV_PYTHON = WORKSPACE / ".venv" / "bin" / "python"
+# Cross-platform: works on Mac, Linux, Windows VPS
+ROOT_PATH = Path(__file__).parent
+WORKSPACE = ROOT_PATH
 
 # CRITICAL: All scripts MUST use these absolute paths
 SIGNALS_FILE = ROOT_PATH / "signals.json"

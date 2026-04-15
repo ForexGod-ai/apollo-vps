@@ -13,7 +13,7 @@ if not trade_file.exists():
     print("❌ trade_history.json nu există!")
     exit(1)
 
-with open(trade_file, 'r') as f:
+with open(trade_file, 'r', encoding='utf-8') as f:
     trades = json.load(f)
 
 # Stats

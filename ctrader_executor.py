@@ -73,18 +73,42 @@ class SignalQueue:
         
         cBot reads ALL signals from the array and processes them one by one.
         
-        Uses fcntl file locking to prevent concurrent write corruption.
+        Uses file locking to prevent concurrent write corruption.
+        Cross-platform: msvcrt on Windows, fcntl on Unix.
         """
-        import fcntl
+        import sys
         
         target_path = self.signals_file
         dir_path = os.path.dirname(target_path)
         lock_path = target_path + ".lock"
+        lock_fd = None
+        
+        def _acquire_lock(fd):
+            if sys.platform == 'win32':
+                import msvcrt
+                msvcrt.locking(fd.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(fd.fileno(), fcntl.LOCK_EX)
+        
+        def _release_lock(fd):
+            if sys.platform == 'win32':
+                try:
+                    import msvcrt
+                    msvcrt.locking(fd.fileno(), msvcrt.LK_UNLCK, 1)
+                except Exception:
+                    pass
+            else:
+                try:
+                    import fcntl
+                    fcntl.flock(fd.fileno(), fcntl.LOCK_UN)
+                except Exception:
+                    pass
         
         try:
             # Acquire file lock to prevent concurrent writes
-            lock_fd = open(lock_path, 'w')
-            fcntl.flock(lock_fd.fileno(), fcntl.LOCK_EX)
+            lock_fd = open(lock_path, 'w', encoding='utf-8')
+            _acquire_lock(lock_fd)
             
             # READ existing signals array (or create empty)
             existing_signals = []
@@ -128,11 +152,12 @@ class SignalQueue:
                 os.unlink(temp_path)
         finally:
             # Release file lock
-            try:
-                fcntl.flock(lock_fd.fileno(), fcntl.LOCK_UN)
-                lock_fd.close()
-            except Exception:
-                pass
+            if lock_fd is not None:
+                _release_lock(lock_fd)
+                try:
+                    lock_fd.close()
+                except Exception:
+                    pass
     
     def _wait_for_confirmation(self, signal_id: str, timeout: int = 30) -> Optional[Dict]:
         """

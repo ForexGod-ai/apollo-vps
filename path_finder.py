@@ -24,7 +24,8 @@ class PathFinder:
     """Ultra-rapid diagnostic for V4.0 system state"""
     
     def __init__(self):
-        self.root = Path("/Users/forexgod/Desktop/Glitch in Matrix/trading-ai-agent apollo")
+        # Cross-platform: works on Mac, Linux, Windows VPS
+        self.root = Path(__file__).parent
         self.signals_file = self.root / "signals.json"
         self.monitoring_file = self.root / "monitoring_setups.json"
         self.active_positions_file = self.root / "active_positions.json"
