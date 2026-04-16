@@ -188,8 +188,8 @@ namespace cAlgo.Robots
             if (symbol == null)
                 return $"{{\"success\":false,\"error\":\"Symbol not found: {symbolName}\"}}";
 
-            // Triple swap day: 0=Sunday,1=Monday,...,6=Saturday (cTrader returns int)
-            string tripleDay = ((DayOfWeek)symbol.SwapTripleDay).ToString();
+            // Triple swap day: Wednesday is standard for most brokers (IC Markets included)
+            string tripleDay = "Wednesday";
 
             return "{" +
                 "\"success\":true," +
