@@ -196,13 +196,27 @@ class WatchdogMonitor:
             stdout_log = open(log_dir / f"{process_stem}_stdout.log", 'a')
             stderr_log = open(log_dir / f"{process_stem}_stderr.log", 'a')
             
-            subprocess.Popen(
-                command,
-                cwd=self.base_path,
-                stdout=stdout_log,
-                stderr=stderr_log,
-                start_new_session=True
-            )
+            # Windows-compatible process spawning
+            import platform
+            if platform.system() == 'Windows':
+                import ctypes
+                CREATE_NEW_PROCESS_GROUP = 0x00000200
+                DETACHED_PROCESS = 0x00000008
+                subprocess.Popen(
+                    command,
+                    cwd=self.base_path,
+                    stdout=stdout_log,
+                    stderr=stderr_log,
+                    creationflags=CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS
+                )
+            else:
+                subprocess.Popen(
+                    command,
+                    cwd=self.base_path,
+                    stdout=stdout_log,
+                    stderr=stderr_log,
+                    start_new_session=True
+                )
             
             time.sleep(2)  # Wait for process to start
             

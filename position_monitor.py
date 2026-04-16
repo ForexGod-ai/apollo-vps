@@ -89,6 +89,22 @@ def acquire_pid_lock(lock_file: Path) -> bool:
         logger.success(f"🔒 PID lock acquired: {lock_file} (PID {os.getpid()})")
         return True
         
+    except PermissionError as e:
+        # Windows WinError 32: lock file held by OS — force remove via rename trick
+        try:
+            import tempfile, shutil
+            tmp = lock_file.parent / (lock_file.name + '.tmp_delete')
+            lock_file.rename(tmp)
+            tmp.unlink(missing_ok=True)
+            logger.warning(f"🔧 Force-removed locked lock file (WinError 32 workaround)")
+            # Retry acquire
+            with open(lock_file, 'w') as f:
+                f.write(str(os.getpid()))
+            logger.success(f"🔒 PID lock acquired after force-remove: {lock_file}")
+            return True
+        except Exception as e2:
+            logger.error(f"❌ Failed to force-remove lock file: {e2}")
+            return False
     except Exception as e:
         logger.error(f"❌ Failed to acquire PID lock: {e}")
         return False
@@ -501,20 +517,19 @@ if __name__ == "__main__":
     # 🔒 PID LOCK - Prevent duplicate instances (absolute path — works from any cwd)
     lock_file = Path(__file__).parent / "process_position_monitor.lock"
 
-    # Cross-platform exclusive lock: msvcrt on Windows, fcntl on Unix
-    _lock_fd = open(lock_file, 'w', encoding='utf-8')
-    try:
-        if platform.system() == 'Windows':
-            import msvcrt
-            msvcrt.locking(_lock_fd.fileno(), msvcrt.LK_NBLCK, 1)
-        else:
+    # Windows: use only acquire_pid_lock (psutil-based), skip msvcrt file locking
+    # Linux/Mac: use fcntl + acquire_pid_lock
+    import platform as _platform
+    if _platform.system() != 'Windows':
+        _lock_fd = open(lock_file, 'w', encoding='utf-8')
+        try:
             import fcntl
             fcntl.flock(_lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        _lock_fd.write(str(os.getpid()))
-        _lock_fd.flush()
-    except (BlockingIOError, OSError):
-        logger.error("🚫 DUPLICATE INSTANCE DETECTED — another position_monitor is running. Exiting.")
-        sys.exit(1)
+            _lock_fd.write(str(os.getpid()))
+            _lock_fd.flush()
+        except (BlockingIOError, OSError):
+            logger.error("🚫 DUPLICATE INSTANCE DETECTED — another position_monitor is running. Exiting.")
+            sys.exit(1)
 
     if not acquire_pid_lock(lock_file):
         logger.error("🚫 DUPLICATE INSTANCE DETECTED - Exiting to prevent double notifications")
