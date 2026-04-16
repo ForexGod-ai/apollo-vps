@@ -237,34 +237,42 @@ class UnifiedRiskManager:
             raise
     
     def get_account_balance(self):
-        """Get current account balance from SQLite"""
+        """Get current account balance — reads trade_history.json (live) first, SQLite fallback"""
+        # PRIMARY: trade_history.json written by ctrader_sync_daemon every 30s
+        try:
+            th_path = Path(__file__).parent / 'trade_history.json'
+            if th_path.exists():
+                with open(th_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                account = data.get('account', {})
+                equity = float(account.get('equity', 0))
+                balance = float(account.get('balance', 0))
+                if equity > 0 or balance > 0:
+                    return equity, balance
+        except Exception as e:
+            print(f"⚠️  trade_history.json read error: {e}")
+
+        # FALLBACK: SQLite account_snapshots
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
-            
-            # Get latest snapshot
             cursor.execute("""
                 SELECT equity, balance 
                 FROM account_snapshots 
                 ORDER BY timestamp DESC 
                 LIMIT 1
             """)
-            
             result = cursor.fetchone()
             conn.close()
-            
             if result:
                 equity, balance = result
                 return float(equity), float(balance)
-            else:
-                # Fallback to env variable
-                balance = float(os.getenv('ACCOUNT_BALANCE', 1000))
-                return balance, balance
-                
         except Exception as e:
-            print(f"⚠️  Error reading balance: {e}")
-            balance = float(os.getenv('ACCOUNT_BALANCE', 1000))
-            return balance, balance
+            print(f"⚠️  Error reading balance from SQLite: {e}")
+
+        # LAST RESORT: env variable
+        balance = float(os.getenv('ACCOUNT_BALANCE', 1000))
+        return balance, balance
     
     def get_daily_pnl(self):
         """

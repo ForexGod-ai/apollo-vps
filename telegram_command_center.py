@@ -565,29 +565,33 @@ class TelegramCommandCenter:
             }
             
             ps_output = ''
+            # Build running process list using psutil (cross-platform: works on Windows + Linux)
+            running_procs = {}
             try:
-                result = subprocess.run(['ps', 'aux'], capture_output=True, text=True, timeout=5)
-                ps_output = result.stdout
+                for proc in psutil.process_iter(['pid', 'cmdline', 'create_time']):
+                    try:
+                        cmdline = ' '.join(proc.info['cmdline'] or [])
+                        for proc_name in processes:
+                            if proc_name in cmdline and proc_name not in running_procs:
+                                running_procs[proc_name] = proc.info['create_time']
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        pass
             except Exception:
                 pass
-            
+
             online_count = 0
             total_count = len(processes)
             for proc_name, display_name in processes.items():
-                if proc_name in ps_output:
-                    # Get uptime from PID
+                if proc_name in running_procs:
                     uptime_str = ''
                     try:
-                        for proc in psutil.process_iter(['pid', 'cmdline', 'create_time']):
-                            if proc.info['cmdline'] and proc_name in ' '.join(proc.info['cmdline']):
-                                age_s = time.time() - proc.info['create_time']
-                                if age_s >= 86400:
-                                    uptime_str = f" ({age_s/86400:.0f}d)"
-                                elif age_s >= 3600:
-                                    uptime_str = f" ({age_s/3600:.0f}h)"
-                                else:
-                                    uptime_str = f" ({age_s/60:.0f}m)"
-                                break
+                        age_s = time.time() - running_procs[proc_name]
+                        if age_s >= 86400:
+                            uptime_str = f" ({age_s/86400:.0f}d)"
+                        elif age_s >= 3600:
+                            uptime_str = f" ({age_s/3600:.0f}h)"
+                        else:
+                            uptime_str = f" ({age_s/60:.0f}m)"
                     except Exception:
                         pass
                     message += f"  {display_name} ✅{uptime_str}\n"
