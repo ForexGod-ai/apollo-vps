@@ -1,6 +1,8 @@
 using System;
 using System.IO;
+using System.Net;
 using System.Text;
+using System.Threading;
 using System.Linq;
 using System.Globalization;
 using cAlgo.API;
@@ -14,22 +16,73 @@ namespace cAlgo.Robots
         [Parameter("JSON File Path", DefaultValue = @"C:\Users\Administrator\Desktop\Glitch in Matrix\trading-ai-agent apollo\trade_history.json")]
         public string JsonFilePath { get; set; }
 
+        [Parameter("HTTP Port", DefaultValue = 8767)]
+        public int HttpPort { get; set; }
+
         [Parameter("Update Interval (seconds)", DefaultValue = 10)]
         public int UpdateInterval { get; set; }
 
         private DateTime _lastUpdate = DateTime.MinValue;
+        private HttpListener _httpListener;
+        private Thread _httpThread;
+        private string _lastJson = "{}";
+        private readonly object _jsonLock = new object();
 
         protected override void OnStart()
         {
-            Print("🔄 Trade History Syncer Started");
+            Print("🔄 Trade History Syncer V2 Started");
             Print($"📁 Output: {JsonFilePath}");
+            Print($"🌐 HTTP Port: {HttpPort}");
             Print($"⏱️ Update interval: {UpdateInterval}s");
-            
+
+            // Start HTTP server
+            StartHttpServer();
+
             // Sync immediately on start
             SyncTradeHistory();
-            
+
             // Setup timer for periodic sync
             Timer.Start(UpdateInterval);
+        }
+
+        private void StartHttpServer()
+        {
+            try
+            {
+                _httpListener = new HttpListener();
+                _httpListener.Prefixes.Add($"http://localhost:{HttpPort}/");
+                _httpListener.Start();
+                Print($"✅ HTTP server started: http://localhost:{HttpPort}/");
+
+                _httpThread = new Thread(() =>
+                {
+                    while (_httpListener.IsListening)
+                    {
+                        try
+                        {
+                            var ctx = _httpListener.GetContext();
+                            string responseJson;
+                            lock (_jsonLock)
+                                responseJson = _lastJson;
+
+                            var bytes = Encoding.UTF8.GetBytes(responseJson);
+                            ctx.Response.ContentType = "application/json; charset=utf-8";
+                            ctx.Response.ContentLength64 = bytes.Length;
+                            ctx.Response.StatusCode = 200;
+                            ctx.Response.OutputStream.Write(bytes, 0, bytes.Length);
+                            ctx.Response.OutputStream.Close();
+                        }
+                        catch (HttpListenerException) { break; }
+                        catch (Exception ex) { Print($"⚠️ HTTP response error: {ex.Message}"); }
+                    }
+                });
+                _httpThread.IsBackground = true;
+                _httpThread.Start();
+            }
+            catch (Exception ex)
+            {
+                Print($"❌ HTTP server failed to start: {ex.Message}");
+            }
         }
 
         protected override void OnTimer()
@@ -39,6 +92,9 @@ namespace cAlgo.Robots
 
         protected override void OnStop()
         {
+            // Stop HTTP server
+            try { _httpListener?.Stop(); } catch { }
+
             // Final sync on stop
             SyncTradeHistory();
             Print("🛑 Trade History Syncer Stopped");
@@ -152,12 +208,19 @@ namespace cAlgo.Robots
                 
                 json.AppendLine("}");
 
+                var jsonString = json.ToString();
+
                 // Write to file
-                File.WriteAllText(JsonFilePath, json.ToString());
+                File.WriteAllText(JsonFilePath, jsonString);
+
+                // Update in-memory JSON served via HTTP on port 8767
+                lock (_jsonLock)
+                    _lastJson = jsonString;
 
                 Print($"✅ Synced {closedPositions.Count} closed + {openPositions.Count} open to JSON");
                 Print($"💰 Balance: ${currentBalance:F2} | Open P/L: ${openPositions.Sum(p => p.NetProfit):F2}");
-                
+                Print($"🌐 HTTP: http://localhost:{HttpPort}/ — response updated");
+
                 _lastUpdate = DateTime.Now;
             }
             catch (Exception ex)

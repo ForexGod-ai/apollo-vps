@@ -42,7 +42,7 @@ logger.add(
     compression="zip"
 )
 
-CTRADER_API_URL = "http://localhost:8767/"  # root endpoint (bars/market data — not used for account sync)
+CTRADER_API_URL = "http://localhost:8767/"  # TradeHistorySyncer HTTP server (account + history)
 TRADE_HISTORY_FILE = "trade_history.json"
 SYNC_INTERVAL = 30  # seconds
 SQLITE_DB_PATH = "data/trades.db"
@@ -214,38 +214,42 @@ class TradeDatabase:
 
 
 def fetch_ctrader_data():
-    """Read live data written by TradeHistorySyncer cBot directly from trade_history.json.
+    """Fetch live account data from TradeHistorySyncer HTTP server on localhost:8767.
 
-    TradeHistorySyncer.cs writes this file every 10s with the exact structure needed:
+    TradeHistorySyncer.cs runs an HTTP server on port 8767 and serves:
       { "account": { "balance", "equity", ... }, "open_positions": [...], "closed_trades": [...] }
 
-    Port 8767 (MarketDataProvider cBot) serves OHLCV bar data only — it has no /history
-    or /account endpoint. Reading the file is faster and requires no extra HTTP hop.
+    Port 8000 = MarketDataProvider (OHLCV bars only — different bot, different port).
     """
     try:
-        if not os.path.exists(TRADE_HISTORY_FILE):
-            logger.error(f"❌ {TRADE_HISTORY_FILE} not found — is TradeHistorySyncer cBot running in cTrader?")
-            return None
+        logger.debug(f"📡 Fetching from {CTRADER_API_URL}")
+        response = requests.get(CTRADER_API_URL, timeout=10)
+        response.raise_for_status()
 
-        with open(TRADE_HISTORY_FILE, 'r', encoding='utf-8') as f:
-            data = json.load(f)
+        data = response.json()
 
         account = data.get('account', {})
         balance = account.get('balance')
         equity = account.get('equity')
 
         if balance is None or equity is None:
-            logger.error("❌ trade_history.json missing account.balance/equity — file may be stale or corrupt")
+            logger.error("❌ Response missing account.balance/equity — TradeHistorySyncer may not be synced yet")
             return None
 
-        logger.success(f"✅ Read from file: Balance ${balance:.2f}, Equity ${equity:.2f}")
+        logger.success(f"✅ API Response: Balance ${balance:.2f}, Equity ${equity:.2f}")
         return data
 
-    except json.JSONDecodeError as e:
-        logger.error(f"❌ trade_history.json is not valid JSON: {e}")
+    except requests.exceptions.ConnectionError:
+        logger.error("❌ Cannot connect to TradeHistorySyncer (localhost:8767) — is the cBot running in cTrader?")
         return None
-    except Exception as e:
-        logger.error(f"❌ Failed to read trade_history.json: {e}")
+    except requests.exceptions.Timeout:
+        logger.error("⏱️ Request timeout after 10 seconds")
+        return None
+    except requests.exceptions.RequestException as e:
+        logger.error(f"❌ HTTP request failed: {e}")
+        return None
+    except json.JSONDecodeError:
+        logger.error("❌ Invalid JSON response from TradeHistorySyncer")
         return None
 
 

@@ -12,7 +12,7 @@ from loguru import logger
 class CTraderCBotClient:
     """Client for cTrader cBot Market Data Provider"""
     
-    def __init__(self, host='localhost', port=8767):
+    def __init__(self, host='localhost', port=8000):
         self.base_url = f"http://{host}:{port}"
         logger.info(f"🤖 CTrader cBot Client initialized: {self.base_url}")
     
