@@ -822,6 +822,11 @@ def main():
         action='store_true',
         help='Force scan all pairs even if they have open positions (for testing/audit)'
     )
+    parser.add_argument(
+        '--live',
+        action='store_true',
+        help='Run in live mode (connects to cTrader on port 8010)'
+    )
     args = parser.parse_args()
     
     # Set global flag
