@@ -8,6 +8,8 @@ import os
 import time
 import requests
 import io
+import pandas as pd
+import numpy as np
 from typing import Optional
 from datetime import datetime
 from dotenv import load_dotenv

@@ -547,10 +547,10 @@ class SetupExecutorMonitor:
             if not block:
                 return ""
 
-            ctrader_port = int(os.environ.get('CTRADER_PORT', '8767'))
+            ctrader_port = int(os.environ.get('CTRADER_PORT', '8010'))
             try:
                 r = requests.get(
-                    f"http://localhost:{ctrader_port}/spread?symbol={symbol}",
+                    f"http://127.0.0.1:{ctrader_port}/spread?symbol={symbol}",
                     timeout=3
                 )
                 if r.status_code == 200:

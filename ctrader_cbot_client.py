@@ -12,17 +12,25 @@ from loguru import logger
 class CTraderCBotClient:
     """Client for cTrader cBot Market Data Provider"""
     
-    def __init__(self, host='localhost', port=8000):
+    def __init__(self, host='localhost', port=8010):
         self.base_url = f"http://{host}:{port}"
         logger.info(f"🤖 CTrader cBot Client initialized: {self.base_url}")
     
-    def is_available(self) -> bool:
-        """Check if cBot server is running"""
-        try:
-            response = requests.get(f"{self.base_url}/health", timeout=2)
-            return response.status_code == 200
-        except:
-            return False
+    def is_available(self, retries: int = 3, wait: float = 2.0) -> bool:
+        """Check if cBot server is running on port 8010 with retry logic"""
+        for attempt in range(1, retries + 1):
+            try:
+                response = requests.get(f"{self.base_url}/health", timeout=3)
+                if response.status_code == 200:
+                    return True
+            except requests.exceptions.ConnectionError:
+                print(f"⏳ Waiting for cTrader on port 8010... (attempt {attempt}/{retries})")
+            except Exception as e:
+                print(f"⚠️ cTrader health check error: {e}")
+            if attempt < retries:
+                import time as _t; _t.sleep(wait)
+        print("❌ cTrader MarketDataProvider (port 8010) not reachable. Start the DATA-Market cBot in cTrader.")
+        return False
     
     def get_historical_data(self, symbol: str, timeframe: str = 'Daily', bars: int = 200) -> Optional[pd.DataFrame]:
         """

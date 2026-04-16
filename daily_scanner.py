@@ -41,15 +41,19 @@ class CTraderDataProvider:
         self.connected = False
     
     def connect(self) -> bool:
-        """Check if cBot server is running"""
+        """Check if cBot server is running on port 8010"""
         try:
             if self.client.is_available():
-                print("✅ cTrader cBot connected (IC Markets)")
+                print("✅ cTrader cBot connected (IC Markets, port 8010)")
                 self.connected = True
                 return True
             else:
-                print("❌ cTrader cBot not running. Please start MarketDataProvider cBot in cTrader.")
+                print("❌ cTrader cBot not running.")
+                print("   → Start the DATA-Market (MarketDataProvider) cBot in cTrader on port 8010.")
                 return False
+        except requests.exceptions.ConnectionError:
+            print("⏳ Waiting for cTrader on port 8010... cBot not reachable.")
+            return False
         except Exception as e:
             print(f"❌ cTrader connection error: {e}")
             return False
@@ -198,7 +202,7 @@ class DailyScanner:
         
         # Connect to cTrader
         if not self.data_provider.connect():
-            error_msg = "Failed to connect to cTrader cBot API (localhost:8767)"
+            error_msg = "Failed to connect to cTrader cBot API (localhost:8010)"
             print(f"❌ {error_msg}")
             self.telegram.send_error_alert(error_msg)
             return []
