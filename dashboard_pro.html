@@ -228,9 +228,56 @@
         ::-webkit-scrollbar-track { background: rgba(255,255,255,0.05); }
         ::-webkit-scrollbar-thumb { background: rgba(102, 126, 234, 0.5); border-radius: 4px; }
         ::-webkit-scrollbar-thumb:hover { background: rgba(102, 126, 234, 0.7); }
+
+        /* Loading Overlay */
+        #loadingOverlay {
+            position: fixed;
+            inset: 0;
+            background: linear-gradient(135deg, #1e1e2e 0%, #2d2d44 100%);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 9999;
+            transition: opacity 0.5s ease;
+        }
+        #loadingOverlay.hidden {
+            opacity: 0;
+            pointer-events: none;
+        }
+        .loading-spinner {
+            width: 60px;
+            height: 60px;
+            border: 4px solid rgba(102,126,234,0.2);
+            border-top-color: #667eea;
+            border-radius: 50%;
+            animation: spin 0.9s linear infinite;
+            margin-bottom: 20px;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .loading-text {
+            font-size: 1.1em;
+            color: rgba(255,255,255,0.7);
+            letter-spacing: 1px;
+        }
+        .loading-error {
+            margin-top: 15px;
+            color: #f87171;
+            font-size: 0.9em;
+            text-align: center;
+            max-width: 400px;
+            display: none;
+        }
     </style>
 </head>
 <body>
+    <!-- Loading Overlay -->
+    <div id="loadingOverlay">
+        <div class="loading-spinner"></div>
+        <div class="loading-text">🔄 Connecting to LIVE account...</div>
+        <div class="loading-error" id="loadingError"></div>
+    </div>
+
     <div class="container">
         <!-- Header -->
         <div class="header">
@@ -366,10 +413,22 @@
                 document.getElementById('lastUpdate').textContent = 
                     '⏰ ' + new Date().toLocaleTimeString();
 
+                // Hide loading overlay once data is fully parsed
+                const overlay = document.getElementById('loadingOverlay');
+                if (overlay && !overlay.classList.contains('hidden')) {
+                    overlay.classList.add('hidden');
+                    setTimeout(() => { overlay.style.display = 'none'; }, 500);
+                }
+
             } catch (error) {
                 console.error('Error loading dashboard:', error);
                 document.getElementById('lastUpdate').textContent = 
-                    '❌ Error loading data';
+                    '❌ Error loading data — retry in 10s';
+                const errEl = document.getElementById('loadingError');
+                if (errEl) {
+                    errEl.style.display = 'block';
+                    errEl.textContent = '❌ ' + error.message + '\nVerify: python -m http.server 8000 is running and trade_history.json exists.';
+                }
             }
         }
 
@@ -391,8 +450,8 @@
                 : 0;
 
             return {
-                balance: account.balance || 1000,
-                equity: account.equity || 1000,
+                balance: account.balance || 0,
+                equity: account.equity || 0,
                 openPL: account.open_pl || 0,
                 totalProfit,
                 winRate,
@@ -425,7 +484,7 @@
                     <div class="stat-value ${stats.totalProfit >= 0 ? 'positive' : 'negative'}">
                         ${stats.totalProfit >= 0 ? '+' : ''}$${stats.totalProfit.toFixed(2)}
                     </div>
-                    <div class="stat-subvalue">${((stats.totalProfit / 1000) * 100).toFixed(1)}% ROI</div>
+                    <div class="stat-subvalue">${stats.balance > 0 ? ((stats.totalProfit / stats.balance) * 100).toFixed(1) : '0.0'}% ROI</div>
                 </div>
                 <div class="stat-card">
                     <div class="stat-label">📈 Win Rate</div>
@@ -465,7 +524,10 @@
                 new Date(a.close_time) - new Date(b.close_time)
             );
 
-            let runningBalance = 1000; // Initial balance
+            // Use actual account balance as base; subtract all closed trade P/L to get initial deposit
+            const totalClosedPL = closedTrades.reduce((s, t) => s + (t.profit || 0), 0);
+            const initialBalance = (currentBalance || 0) - totalClosedPL;
+            let runningBalance = initialBalance > 0 ? initialBalance : (currentBalance || 0);
             const equityData = [{ x: 'Start', y: runningBalance }];
 
             sortedTrades.forEach(trade => {
