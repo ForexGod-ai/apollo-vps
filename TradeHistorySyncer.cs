@@ -11,7 +11,7 @@ namespace cAlgo.Robots
     [Robot(TimeZone = TimeZones.UTC, AccessRights = AccessRights.FullAccess)]
     public class TradeHistorySyncer : Robot
     {
-        [Parameter("JSON File Path", DefaultValue = "/Users/forexgod/Desktop/Glitch in Matrix/trading-ai-agent apollo/trade_history.json")]
+        [Parameter("JSON File Path", DefaultValue = @"C:\Users\Administrator\Desktop\Glitch in Matrix\trading-ai-agent apollo\trade_history.json")]
         public string JsonFilePath { get; set; }
 
         [Parameter("Update Interval (seconds)", DefaultValue = 10)]

@@ -21,6 +21,13 @@ Verifică la fiecare 30s:
 4. Execută Entry 1 când pullback reached (cu strategy tag + news guard)
 5. Trimite Telegram notification cu semnătura ФорексГод
 """
+# Windows VPS fix: force UTF-8 stdout to prevent UnicodeEncodeError on emoji
+import sys as _sys, io as _io
+if hasattr(_sys.stdout, 'buffer'):
+    _sys.stdout = _io.TextIOWrapper(_sys.stdout.buffer, encoding='utf-8', errors='replace')
+if hasattr(_sys.stderr, 'buffer'):
+    _sys.stderr = _io.TextIOWrapper(_sys.stderr.buffer, encoding='utf-8', errors='replace')
+
 import json
 import time
 import requests

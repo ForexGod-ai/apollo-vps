@@ -1,13 +1,1 @@
-[
-  {
-    "symbol": "USDCHF",
-    "direction": "sell",
-    "entry_price": 0.78008,
-    "volume": 19000,
-    "opened_at": "2026-04-14T12:19:18.638Z",
-    "stop_loss": 0.79063,
-    "take_profit": 0.77541,
-    "net_profit": -59.35,
-    "pips": -22.9
-  }
-]
+[]

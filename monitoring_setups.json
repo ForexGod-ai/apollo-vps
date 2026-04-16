@@ -12,7 +12,7 @@
       "d1_bias_direction": "bearish",
       "setup_time": "2026-04-13T14:17:29.419340",
       "priority": 1,
-      "status": "WAITING_POSITION_CLOSE",
+      "status": "MONITORING",
       "fvg_top": 0.80324,
       "fvg_bottom": 0.78727,
       "h4_sync_fvg_top": 0.0,
@@ -41,8 +41,7 @@
       "entry1_time": "2026-04-14T12:19:15.944791",
       "entry1_lots": 0.5,
       "entry_reason": "Continuation momentum after 25.0H (distance: 83.1 pips)",
-      "last_check": "2026-04-15T10:21:28.932149",
-      "block_reason": "USDCHF position already open \u2014 will auto-resume when closed"
+      "last_check": "2026-04-15T10:21:28.932149"
     },
     {
       "symbol": "USDJPY",
@@ -378,5 +377,5 @@
     }
   ],
   "last_updated": "2026-04-13T14:19:19.415396",
-  "last_update": "2026-04-15T13:05:14.300475"
+  "last_update": "2026-04-16T09:36:48.218387"
 }

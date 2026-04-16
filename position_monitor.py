@@ -2,6 +2,14 @@
 Position Monitor - detectează NOUL TRADE OPEN și trimite ARMAGEDDON notification
 Monitorizează trade_history.json pentru poziții noi deschise
 """
+
+# Windows VPS fix: force UTF-8 stdout to prevent UnicodeEncodeError on emoji
+import sys as _sys, io as _io
+if hasattr(_sys.stdout, 'buffer'):
+    _sys.stdout = _io.TextIOWrapper(_sys.stdout.buffer, encoding='utf-8', errors='replace')
+if hasattr(_sys.stderr, 'buffer'):
+    _sys.stderr = _io.TextIOWrapper(_sys.stderr.buffer, encoding='utf-8', errors='replace')
+
 import json
 import time
 import os

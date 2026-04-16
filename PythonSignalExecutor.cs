@@ -12,7 +12,7 @@ namespace cAlgo.Robots
     [Robot(TimeZone = TimeZones.UTC, AccessRights = AccessRights.FullAccess)]
     public class PythonSignalExecutor : Robot
     {
-        [Parameter("Signal File Path", DefaultValue = "/Users/forexgod/Desktop/Glitch in Matrix/trading-ai-agent apollo/signals.json")]
+        [Parameter("Signal File Path", DefaultValue = @"C:\Users\Administrator\Desktop\Glitch in Matrix\trading-ai-agent apollo\signals.json")]
         public string SignalFilePath { get; set; }
 
         [Parameter("Check Interval (seconds)", DefaultValue = 10)]
