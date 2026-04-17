@@ -27,8 +27,14 @@ Usage:
 import os
 import sys
 import time
-import fcntl
 import argparse
+
+# fcntl is Unix-only — not available on Windows
+try:
+    import fcntl
+    HAS_FCNTL = True
+except ImportError:
+    HAS_FCNTL = False
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional
 from pathlib import Path
@@ -1361,7 +1367,12 @@ def main():
     _lock_path = Path(__file__).parent / "process_news_calendar_monitor.lock"
     try:
         _lock_fd = open(_lock_path, 'w')
-        fcntl.flock(_lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        if HAS_FCNTL:
+            fcntl.flock(_lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        else:
+            # Windows fallback: write PID to lock file (best-effort)
+            _lock_fd.write(str(os.getpid()))
+            _lock_fd.flush()
     except BlockingIOError:
         logger.error("🔒 Another news_calendar_monitor.py instance is already running. Exiting.")
         sys.exit(0)
