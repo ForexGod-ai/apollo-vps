@@ -399,7 +399,7 @@ def main():
         _lock_fd.write(str(__import__('os').getpid()))
         _lock_fd.flush()
     except (BlockingIOError, OSError):
-        print(f"🚫 ctrader_sync_daemon already running — exiting duplicate instance")
+        print("[WARN] ctrader_sync_daemon already running - exiting duplicate instance")
         _sys.exit(1)
     parser = argparse.ArgumentParser(
         description="cTrader Sync Daemon - Automatic cTrader → trade_history.json + SQLite synchronization"
