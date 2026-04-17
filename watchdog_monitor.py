@@ -564,6 +564,8 @@ def main():
     parser = argparse.ArgumentParser(description='Watchdog Monitor V4.0 - 6 Monitors (Complete Protection)')
     parser.add_argument('--interval', type=int, default=60,
                         help='Check interval in seconds (default: 60)')
+    parser.add_argument('--live', action='store_true',
+                        help='Live account mode (passed through to child processes)')
     
     args = parser.parse_args()
     

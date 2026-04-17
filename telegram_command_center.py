@@ -604,7 +604,7 @@ class TelegramCommandCenter:
             # ═══ SECTION 2: CONNECTIONS ═══
             message += "<b>📡 CONNECTIONS:</b>\n"
             try:
-                resp = requests.get('http://localhost:8767/health', timeout=2)
+                resp = requests.get('http://localhost:8767/', timeout=3)
                 cbot_status = '✅' if resp.status_code == 200 else '⚠️'
             except Exception:
                 cbot_status = '❌'
