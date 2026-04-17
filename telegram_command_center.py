@@ -572,6 +572,7 @@ class TelegramCommandCenter:
                 'ctrader_sync_daemon.py': '📡 Sync',
                 'news_calendar_monitor.py': '📅 News Calendar',
                 'news_reminder_engine.py': '🔔 News Alerts',
+                'auto_scanner_daemon.py': '🔍 Auto Scanner',
             }
             
             ps_output = ''
