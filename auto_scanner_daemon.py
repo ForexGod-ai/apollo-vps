@@ -112,34 +112,15 @@ def run_auto_scan():
         f"⏰ <b>AUTO SCAN PORNIT</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"📅 {day_name}, {timestamp}\n"
-        f"🔄 Step 1/2: Reset Matrix...\n"
+        f"🔄 Scanez piețele... (fara reset — setup-urile vechi sunt pastrate)\n"
         f"⏳ Scanul dureaza ~2-4 minute"
     )
 
     python = sys.executable
     scan_ok = False
 
-    # ── Step 1: Reset Matrix ──────────────────────────────
-    logger.info("[Step 1/2] Running reset_matrix.py...")
-    try:
-        result = subprocess.run(
-            [python, 'reset_matrix.py'],
-            cwd=str(BASE_DIR),
-            capture_output=True,
-            text=True,
-            timeout=60
-        )
-        if result.returncode == 0:
-            logger.success("[Step 1/2] reset_matrix.py DONE")
-        else:
-            logger.warning(f"[Step 1/2] reset_matrix.py exited {result.returncode}: {result.stderr[:200]}")
-    except subprocess.TimeoutExpired:
-        logger.error("[Step 1/2] reset_matrix.py TIMEOUT (60s)")
-    except Exception as e:
-        logger.error(f"[Step 1/2] reset_matrix.py ERROR: {e}")
-
-    # ── Step 2: Daily Scanner ────────────────────────────
-    logger.info("[Step 2/2] Running daily_scanner.py...")
+    # ── Daily Scanner (SMCDetector — merge cu setups existente) ──────────────
+    logger.info("[Step 1/1] Running daily_scanner.py (preserving existing setups)...")
     try:
         result = subprocess.run(
             [python, 'daily_scanner.py'],
@@ -149,15 +130,15 @@ def run_auto_scan():
             timeout=300  # 5 minute max
         )
         if result.returncode == 0:
-            logger.success("[Step 2/2] daily_scanner.py DONE")
+            logger.success("[Step 1/1] daily_scanner.py DONE")
             scan_ok = True
         else:
-            logger.error(f"[Step 2/2] daily_scanner.py FAILED (code {result.returncode})")
+            logger.error(f"[Step 1/1] daily_scanner.py FAILED (code {result.returncode})")
             logger.error(f"STDERR: {result.stderr[:400]}")
     except subprocess.TimeoutExpired:
-        logger.error("[Step 2/2] daily_scanner.py TIMEOUT (300s)")
+        logger.error("[Step 1/1] daily_scanner.py TIMEOUT (300s)")
     except Exception as e:
-        logger.error(f"[Step 2/2] daily_scanner.py ERROR: {e}")
+        logger.error(f"[Step 1/1] daily_scanner.py ERROR: {e}")
 
     # ── Finish notification ──────────────────────────────
     finish_time = get_bucharest_time().strftime('%H:%M:%S')
