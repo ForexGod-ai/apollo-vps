@@ -154,8 +154,8 @@ class TelegramCommandCenter:
         try:
             logger.info("🔄 Force syncing from cTrader...")
             
-            # Fetch from cTrader API
-            ctrader_api_url = "http://localhost:8767/history"
+            # Fetch from cTrader API (root endpoint returns full JSON)
+            ctrader_api_url = "http://localhost:8767/"
             response = requests.get(ctrader_api_url, timeout=5)
             
             if response.status_code == 200:
@@ -209,39 +209,66 @@ class TelegramCommandCenter:
     def handle_stats_command(self):
         """📊 Handle /stats command - Show today's trading statistics (COMPACT VERTICAL)"""
         try:
-            # 🔄 FORCE SYNC - Get fresh data from cTrader first
-            self.force_sync_from_ctrader()
-            
-            if not self.db_path.exists():
-                return "❌ <b>Database not found!</b>\n\n<code>trades.db</code> missing."
-            
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            
-            # 🕒 Today's stats using LOCALTIME (critical for timezone accuracy)
             today = datetime.now().strftime('%Y-%m-%d')
-            
-            cursor.execute("""
-                SELECT COUNT(*), 
-                       SUM(CASE WHEN profit > 0 THEN 1 ELSE 0 END) as wins,
-                       SUM(profit) as total_profit,
-                       AVG(profit) as avg_profit
-                FROM closed_trades
-                WHERE DATE(close_time, 'localtime') = ?
-            """, (today,))
-            
-            row = cursor.fetchone()
-            total_trades = row[0] or 0
-            wins = row[1] or 0
-            total_profit = row[2] or 0
-            avg_profit = row[3] or 0
-            
-            losses = total_trades - wins
-            win_rate = (wins / total_trades * 100) if total_trades > 0 else 0
+            week_ago = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
+
+            # ── Read from trade_history.json (live cBot data) ──
+            trade_history_file = Path(__file__).parent.resolve() / 'trade_history.json'
+            total_trades = wins = losses = 0
+            total_profit = avg_profit = 0.0
+            weekly_profit = 0.0
+            weekly_trades = 0
+
+            if trade_history_file.exists():
+                with open(trade_history_file, 'r', encoding='utf-8') as f:
+                    th = json.load(f)
+                for trade in th.get('closed_trades', []):
+                    ct = trade.get('close_time', '')
+                    profit = float(trade.get('profit', 0))
+                    if ct and ct[:10] == today:
+                        total_trades += 1
+                        total_profit += profit
+                        if profit > 0:
+                            wins += 1
+                        else:
+                            losses += 1
+                    if ct and ct[:10] >= week_ago:
+                        weekly_profit += profit
+                        weekly_trades += 1
+                avg_profit = (total_profit / total_trades) if total_trades > 0 else 0.0
+            else:
+                # Fallback to SQLite
+                self.force_sync_from_ctrader()
+                if not self.db_path.exists():
+                    return "❌ <b>Database not found!</b>\n\n<code>trades.db</code> missing."
+                conn = sqlite3.connect(self.db_path)
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT COUNT(*),
+                           SUM(CASE WHEN profit > 0 THEN 1 ELSE 0 END),
+                           SUM(profit), AVG(profit)
+                    FROM closed_trades WHERE DATE(close_time, 'localtime') = ?
+                """, (today,))
+                row = cursor.fetchone()
+                total_trades = row[0] or 0
+                wins = row[1] or 0
+                total_profit = row[2] or 0
+                avg_profit = row[3] or 0
+                losses = total_trades - wins
+                cursor.execute("""
+                    SELECT SUM(profit), COUNT(*) FROM closed_trades
+                    WHERE DATE(close_time, 'localtime') >= ?
+                """, (week_ago,))
+                row = cursor.fetchone()
+                weekly_profit = row[0] or 0
+                weekly_trades = row[1] or 0
+                conn.close()
             
             # Emoji based on profit
+            win_rate = (wins / total_trades * 100) if total_trades > 0 else 0
             profit_emoji = "🔥" if total_profit > 0 else ("💥" if total_profit < 0 else "⚪")
-            
+            weekly_emoji = "🔥" if weekly_profit > 0 else ("💥" if weekly_profit < 0 else "⚪")
+
             # 📦 COMPACT VERTICAL LAYOUT (Dashboard Sniper)
             message = f"""<b>📊 DAILY STATS</b>
 ──────────────────
@@ -262,26 +289,9 @@ class TelegramCommandCenter:
 💵 <b>Avg P/L</b>
 <code>${avg_profit:+.2f}</code>
 ──────────────────"""
-            
-            # Week stats (compact)
-            week_ago = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
-            
-            cursor.execute("""
-                SELECT SUM(profit) as weekly_profit,
-                       COUNT(*) as weekly_trades
-                FROM closed_trades
-                WHERE DATE(close_time, 'localtime') >= ?
-            """, (week_ago,))
-            
-            row = cursor.fetchone()
-            weekly_profit = row[0] or 0
-            weekly_trades = row[1] or 0
-            
-            weekly_emoji = "🔥" if weekly_profit > 0 else ("💥" if weekly_profit < 0 else "⚪")
-            
+
             message += f"""\n<b>📈 WEEKLY (7d)</b>\n\n{weekly_emoji} <b>Profit</b>\n<code>${weekly_profit:+.2f}</code>\n\n📋 <b>Trades</b>\n<code>{weekly_trades}</code>"""
-            
-            conn.close()
+
             return message
             
         except Exception as e:
@@ -614,24 +624,36 @@ class TelegramCommandCenter:
             # ═══ SECTION 3: TODAY'S P/L ═══
             message += "<b>💰 TODAY'S P/L:</b>\n"
             try:
-                # Force sync for fresh data
-                self.force_sync_from_ctrader()
-                
-                conn = sqlite3.connect(self.db_path)
-                cursor = conn.cursor()
+                # Read directly from trade_history.json (live data from cBot)
+                trade_history_file = Path(__file__).parent.resolve() / 'trade_history.json'
+                closed_pnl = 0.0
+                trade_count = 0
+                balance = 0.0
                 today = datetime.now().strftime('%Y-%m-%d')
-                
-                cursor.execute("""
-                    SELECT COALESCE(SUM(profit), 0), COUNT(*)
-                    FROM closed_trades WHERE DATE(close_time, 'localtime') = ?
-                """, (today,))
-                closed_pnl, trade_count = cursor.fetchone()
-                
-                # Get balance for percentage
-                cursor.execute("SELECT balance FROM account_snapshots ORDER BY timestamp DESC LIMIT 1")
-                row = cursor.fetchone()
-                balance = row[0] if row else 0
-                conn.close()
+
+                if trade_history_file.exists():
+                    with open(trade_history_file, 'r', encoding='utf-8') as f:
+                        th = json.load(f)
+                    balance = th.get('account', {}).get('balance', 0.0)
+                    for trade in th.get('closed_trades', []):
+                        close_time = trade.get('close_time', '')
+                        if close_time and close_time[:10] == today:
+                            closed_pnl += float(trade.get('profit', 0))
+                            trade_count += 1
+                else:
+                    # Fallback to SQLite
+                    self.force_sync_from_ctrader()
+                    conn = sqlite3.connect(self.db_path)
+                    cursor = conn.cursor()
+                    cursor.execute("""
+                        SELECT COALESCE(SUM(profit), 0), COUNT(*)
+                        FROM closed_trades WHERE DATE(close_time, 'localtime') = ?
+                    """, (today,))
+                    closed_pnl, trade_count = cursor.fetchone()
+                    cursor.execute("SELECT balance FROM account_snapshots ORDER BY timestamp DESC LIMIT 1")
+                    row = cursor.fetchone()
+                    balance = row[0] if row else 0
+                    conn.close()
                 
                 pnl_pct = (closed_pnl / balance * 100) if balance > 0 else 0
                 pnl_emoji = '🟢' if closed_pnl >= 0 else '🔴'
