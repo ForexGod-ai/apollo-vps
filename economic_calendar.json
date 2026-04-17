@@ -1304,6 +1304,343 @@
       "impact": "High",
       "forecast": "3.4%",
       "previous": "2.4%"
+    },
+    {
+      "date": "2026-04-20",
+      "time": "12:30",
+      "currency": "CAD",
+      "event": "CPI m/m",
+      "impact": "High",
+      "previous": "0.5%"
+    },
+    {
+      "date": "2026-04-20",
+      "time": "12:30",
+      "currency": "CAD",
+      "event": "Median CPI y/y",
+      "impact": "High",
+      "previous": "2.3%"
+    },
+    {
+      "date": "2026-04-20",
+      "time": "12:30",
+      "currency": "CAD",
+      "event": "Trimmed CPI y/y",
+      "impact": "High",
+      "previous": "2.3%"
+    },
+    {
+      "date": "2026-04-20",
+      "time": "21:45",
+      "currency": "NZD",
+      "event": "CPI q/q",
+      "impact": "High",
+      "previous": "0.6%"
+    },
+    {
+      "date": "2026-04-21",
+      "time": "06:00",
+      "currency": "GBP",
+      "event": "Claimant Count Change",
+      "impact": "High",
+      "previous": "24.7K"
+    },
+    {
+      "date": "2026-04-21",
+      "time": "12:30",
+      "currency": "USD",
+      "event": "Core Retail Sales m/m",
+      "impact": "High",
+      "previous": "0.5%"
+    },
+    {
+      "date": "2026-04-21",
+      "time": "12:30",
+      "currency": "USD",
+      "event": "Retail Sales m/m",
+      "impact": "High",
+      "previous": "0.6%"
+    },
+    {
+      "date": "2026-04-21",
+      "time": "14:00",
+      "currency": "USD",
+      "event": "Fed Chair-Designate Warsh Testifies",
+      "impact": "High"
+    },
+    {
+      "date": "2026-04-22",
+      "time": "06:00",
+      "currency": "GBP",
+      "event": "CPI y/y",
+      "impact": "High",
+      "previous": "3.0%"
+    },
+    {
+      "date": "2026-04-23",
+      "time": "07:30",
+      "currency": "EUR",
+      "event": "German Flash Manufacturing PMI",
+      "impact": "High",
+      "previous": "52.2"
+    },
+    {
+      "date": "2026-04-23",
+      "time": "07:30",
+      "currency": "EUR",
+      "event": "German Flash Services PMI",
+      "impact": "High",
+      "previous": "51.6"
+    },
+    {
+      "date": "2026-04-23",
+      "time": "08:30",
+      "currency": "GBP",
+      "event": "Flash Manufacturing PMI",
+      "impact": "High",
+      "previous": "51.0"
+    },
+    {
+      "date": "2026-04-23",
+      "time": "08:30",
+      "currency": "GBP",
+      "event": "Flash Services PMI",
+      "impact": "High",
+      "previous": "50.5"
+    },
+    {
+      "date": "2026-04-24",
+      "time": "06:00",
+      "currency": "GBP",
+      "event": "Retail Sales m/m",
+      "impact": "High",
+      "previous": "-0.4%"
+    },
+    {
+      "date": "2026-04-28",
+      "time": "02:00",
+      "currency": "JPY",
+      "event": "BOJ Policy Rate",
+      "impact": "High"
+    },
+    {
+      "date": "2026-04-28",
+      "time": "02:00",
+      "currency": "JPY",
+      "event": "Monetary Policy Statement",
+      "impact": "High"
+    },
+    {
+      "date": "2026-04-28",
+      "time": "02:00",
+      "currency": "JPY",
+      "event": "BOJ Outlook Report",
+      "impact": "High"
+    },
+    {
+      "date": "2026-04-28",
+      "time": "05:30",
+      "currency": "JPY",
+      "event": "BOJ Press Conference",
+      "impact": "High"
+    },
+    {
+      "date": "2026-04-29",
+      "time": "01:30",
+      "currency": "AUD",
+      "event": "CPI m/m",
+      "impact": "High"
+    },
+    {
+      "date": "2026-04-29",
+      "time": "01:30",
+      "currency": "AUD",
+      "event": "CPI y/y",
+      "impact": "High"
+    },
+    {
+      "date": "2026-04-29",
+      "time": "01:30",
+      "currency": "AUD",
+      "event": "Trimmed Mean CPI m/m",
+      "impact": "High"
+    },
+    {
+      "date": "2026-04-29",
+      "time": "13:45",
+      "currency": "CAD",
+      "event": "BOC Monetary Policy Report",
+      "impact": "High"
+    },
+    {
+      "date": "2026-04-29",
+      "time": "13:45",
+      "currency": "CAD",
+      "event": "BOC Rate Statement",
+      "impact": "High"
+    },
+    {
+      "date": "2026-04-29",
+      "time": "13:45",
+      "currency": "CAD",
+      "event": "Overnight Rate",
+      "impact": "High"
+    },
+    {
+      "date": "2026-04-29",
+      "time": "14:30",
+      "currency": "CAD",
+      "event": "BOC Press Conference",
+      "impact": "High"
+    },
+    {
+      "date": "2026-04-29",
+      "time": "18:00",
+      "currency": "USD",
+      "event": "Federal Funds Rate",
+      "impact": "High"
+    },
+    {
+      "date": "2026-04-29",
+      "time": "18:00",
+      "currency": "USD",
+      "event": "FOMC Statement",
+      "impact": "High"
+    },
+    {
+      "date": "2026-04-29",
+      "time": "18:30",
+      "currency": "USD",
+      "event": "FOMC Press Conference",
+      "impact": "High"
+    },
+    {
+      "date": "2026-04-30",
+      "time": "11:00",
+      "currency": "GBP",
+      "event": "BOE Monetary Policy Report",
+      "impact": "High"
+    },
+    {
+      "date": "2026-04-30",
+      "time": "11:00",
+      "currency": "GBP",
+      "event": "Monetary Policy Summary",
+      "impact": "High"
+    },
+    {
+      "date": "2026-04-30",
+      "time": "11:00",
+      "currency": "GBP",
+      "event": "MPC Official Bank Rate Votes",
+      "impact": "High"
+    },
+    {
+      "date": "2026-04-30",
+      "time": "11:00",
+      "currency": "GBP",
+      "event": "Official Bank Rate",
+      "impact": "High"
+    },
+    {
+      "date": "2026-04-30",
+      "time": "13:15",
+      "currency": "EUR",
+      "event": "Main Refinancing Rate",
+      "impact": "High"
+    },
+    {
+      "date": "2026-04-30",
+      "time": "13:15",
+      "currency": "EUR",
+      "event": "Monetary Policy Statement",
+      "impact": "High"
+    },
+    {
+      "date": "2026-04-30",
+      "time": "12:30",
+      "currency": "CAD",
+      "event": "GDP m/m",
+      "impact": "High"
+    },
+    {
+      "date": "2026-04-30",
+      "time": "12:30",
+      "currency": "USD",
+      "event": "Advance GDP q/q",
+      "impact": "High"
+    },
+    {
+      "date": "2026-04-30",
+      "time": "12:30",
+      "currency": "USD",
+      "event": "Core PCE Price Index m/m",
+      "impact": "High"
+    },
+    {
+      "date": "2026-04-30",
+      "time": "12:30",
+      "currency": "USD",
+      "event": "Employment Cost Index q/q",
+      "impact": "High"
+    },
+    {
+      "date": "2026-04-30",
+      "time": "12:30",
+      "currency": "USD",
+      "event": "Unemployment Claims",
+      "impact": "High"
+    },
+    {
+      "date": "2026-04-30",
+      "time": "13:45",
+      "currency": "EUR",
+      "event": "ECB Press Conference",
+      "impact": "High"
+    }
+  ],
+  "custom_events_may_2026": [
+    {
+      "date": "2026-04-30",
+      "time": "11:00",
+      "currency": "GBP",
+      "event": "BOE Monetary Policy Report",
+      "impact": "High"
+    },
+    {
+      "date": "2026-04-30",
+      "time": "11:00",
+      "currency": "GBP",
+      "event": "Official Bank Rate",
+      "impact": "High"
+    },
+    {
+      "date": "2026-04-30",
+      "time": "13:15",
+      "currency": "EUR",
+      "event": "Main Refinancing Rate",
+      "impact": "High"
+    },
+    {
+      "date": "2026-04-30",
+      "time": "12:30",
+      "currency": "USD",
+      "event": "Advance GDP q/q",
+      "impact": "High"
+    },
+    {
+      "date": "2026-04-30",
+      "time": "12:30",
+      "currency": "USD",
+      "event": "Core PCE Price Index m/m",
+      "impact": "High"
+    },
+    {
+      "date": "2026-04-30",
+      "time": "13:45",
+      "currency": "EUR",
+      "event": "ECB Press Conference",
+      "impact": "High"
     }
   ]
 }
