@@ -101,6 +101,13 @@ class SMCDetector:
         # Format: {symbol: {'4H': [FVG, FVG], '1H': [FVG, FVG]}}
         self.fvg_magnets = {}  # Zonele de întoarcere pentru preț
 
+        # ⚡ V13.1 PERFORMANCE CACHE: Evită re-calcularea swing-urilor pentru același df
+        # Key = (id(df), len(df)) — același obiect df, aceleași date → returnam cached
+        # Clear la fiecare scan_for_setup() nou pentru a evita date stale
+        self._swing_highs_cache: dict = {}  # {(id, len): List[SwingPoint]}
+        self._swing_lows_cache:  dict = {}  # {(id, len): List[SwingPoint]}
+        self._choch_bos_cache:   dict = {}  # {(id, len): (List[CHoCH], List[BOS])}
+
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     # V15.0 WEEKLY ANCHOR — W1 BIAS CALCULATOR (Body Close Rule)
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -187,13 +194,6 @@ class SMCDetector:
             print(f"⚠️ [W1 BIAS] Error: {e}")
             return {'bias': 'NEUTRAL', 'last_bos_direction': None, 'last_bos_price': None, 'last_bos_bar_idx': None}
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-        # ⚡ V13.1 PERFORMANCE CACHE: Evită re-calcularea swing-urilor pentru același df
-        # Key = (id(df), len(df)) — același obiect df, aceleași date → returnam cached
-        # Clear la fiecare scan_for_setup() nou pentru a evita date stale
-        self._swing_highs_cache: dict = {}  # {(id, len): List[SwingPoint]}
-        self._swing_lows_cache:  dict = {}  # {(id, len): List[SwingPoint]}
-        self._choch_bos_cache:   dict = {}  # {(id, len): (List[CHoCH], List[BOS])}
     
     def store_fvg_magnet(self, symbol: str, timeframe: str, fvg: FVG) -> None:
         """
@@ -3015,12 +3015,10 @@ class SMCDetector:
         current_debug = debug or (symbol == "NZDCAD")
         debug = current_debug  # alias — tot codul existent folosește 'debug'
 
-        # ⚡ V13.1 PERFORMANCE: Clear swing/choch cache la fiecare pair nou
-        # df_daily si df_4h sunt obiecte noi per apel → cache-ul precedent devine irelevant
-        # Dar IN CADRUL aceluiasi apel, acelasi df va fi cacheat — evita 6-10 recalculari
-        self._swing_highs_cache.clear()
-        self._swing_lows_cache.clear()
-        self._choch_bos_cache.clear()
+        # ⚡ V13.1 PERFORMANCE: Re-init cache la fiecare pair nou (defensiv — nu .clear())
+        self._swing_highs_cache = {}
+        self._swing_lows_cache = {}
+        self._choch_bos_cache = {}
         
         # V4.0: Initialize variables early to avoid UnboundLocalError
         order_block = None  # Will be populated later with detect_order_block()
