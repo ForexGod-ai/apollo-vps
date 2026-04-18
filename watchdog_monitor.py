@@ -143,6 +143,14 @@ class WatchdogMonitor:
                 'last_restart': None,
                 'state': 'unknown',
                 'last_notification': 0
+            },
+            'dashboard_server.py': {
+                'name': 'Dashboard Server',
+                'command': [self.python_path, 'dashboard_server.py'],
+                'restart_count': 0,
+                'last_restart': None,
+                'state': 'unknown',
+                'last_notification': 0
             }
         }
         
@@ -154,7 +162,7 @@ class WatchdogMonitor:
         self.telegram_token = os.getenv('TELEGRAM_BOT_TOKEN')
         self.telegram_chat_id = os.getenv('TELEGRAM_CHAT_ID')
         
-        logger.info("🛡️ Watchdog Monitor V4.2 - 8 MONITORS (+ Auto Scanner Mon/Wed/Fri)")
+        logger.info("🛡️ Watchdog Monitor V4.2 - 9 MONITORS (+ Auto Scanner Mon/Wed/Fri + Dashboard)")
         logger.info(f"⏱️  Check interval: {check_interval}s")
         logger.info(f"🔇 Notification cooldown: {self.notification_cooldown}s (15 min) | FAILED: {self.failed_restart_cooldown}s (60 min)")
         logger.info(f"🐍 Python: {self.python_path}")
