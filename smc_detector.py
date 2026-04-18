@@ -4444,6 +4444,24 @@ class SMCDetector:
                 print(f"\n\u274c REJECTED {symbol}: strategy_type='{strategy_type}' is not valid (must be 'reversal' or 'continuation')")
                 print(f"   Circuit D1\u21924H\u21921H requires an explicit D1 bias. Setup discarded.")
             return None
+
+        # ✅ V14.2 FINAL DIRECTION GUARD — ultimul zid înainte de TradeSetup
+        # Bug: blocul OB din step 2 (linie ~4395) overrideaza entry+SL dar NU și TP.
+        # Dacă entry vine din OB.middle (zona 212.94) dar tp vine din else-branch FVG
+        # (fvg.top * 1.015 = 206.90), TP iese sub entry pentru LONG → trade inversat!
+        # Fix: verificare finală direcțională — dacă TP e în direcție greșită → anulat.
+        if entry is not None and sl is not None and tp is not None:
+            if current_trend == 'bullish' and tp <= entry:
+                print(f"⛔ [V14.2 FINAL DIRECTION GUARD] {symbol} LONG: TP={tp:.5f} <= Entry={entry:.5f} "
+                      f"— direcție GREȘITĂ (OB override fără recalcul TP). Trade ANULAT.")
+                return None
+            elif current_trend == 'bearish' and tp >= entry:
+                print(f"⛔ [V14.2 FINAL DIRECTION GUARD] {symbol} SHORT: TP={tp:.5f} >= Entry={entry:.5f} "
+                      f"— direcție GREȘITĂ (OB override fără recalcul TP). Trade ANULAT.")
+                return None
+        elif entry is None or sl is None or tp is None:
+            print(f"⛔ [V14.2 NULL GUARD] {symbol}: entry/sl/tp are None — setup incomplete. Trade ANULAT.")
+            return None
         
         # Return setup (MONITORING or READY)
         # Convert pandas Timestamp to Python datetime properly
