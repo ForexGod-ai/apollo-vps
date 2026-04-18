@@ -122,7 +122,7 @@ class WatchdogMonitor:
             },
             'news_calendar_monitor.py': {
                 'name': 'News Calendar',
-                'command': [self.python_path, 'news_calendar_monitor.py', '--interval', '24'],
+                'command': [self.python_path, 'news_calendar_monitor.py'],
                 'restart_count': 0,
                 'last_restart': None,
                 'state': 'unknown',  # 🔥 NEW: Track state
