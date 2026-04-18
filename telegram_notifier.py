@@ -266,36 +266,21 @@ class TelegramNotifier:
             sep = "────────────────"
 
             msg = (
-                f"🚨 <b>4H CHoCH CONFIRMAT!</b> — Pregătire Entry
-"
-                f"{sep}
-"
-                f"{dir_emoji} <b>{symbol}</b> {direction}
-"
-                f"🎯 Strategy: <code>{strategy}</code>
-"
-                f"📅 W1 Bias: <b>{w1_bias}</b> {w1_emoji}
-"
-                f"{sep}
-"
-                f"🔹 Entry  <code>{entry:.5f}</code>
-"
-                f"🔸 SL     <code>{sl:.5f}</code>
-"
-                f"🎯 TP     <code>{tp:.5f}</code>
-"
-                f"⚖️ RR     1:{rr:.2f}
-"
-                f"{sep}
-"
-                f"⏳ Așteptăm pullback în FVG 4H pentru entry final...
-"
-                f"  {sep}
-"
-                f"  🔱 AUTHORED BY <b>ФорексГод</b> 🔱
-"
-                f"  {sep}
-"
+                f"🚨 <b>4H CHoCH CONFIRMAT!</b> — Pregătire Entry\n"
+                f"{sep}\n"
+                f"{dir_emoji} <b>{symbol}</b> {direction}\n"
+                f"🎯 Strategy: <code>{strategy}</code>\n"
+                f"📅 W1 Bias: <b>{w1_bias}</b> {w1_emoji}\n"
+                f"{sep}\n"
+                f"🔹 Entry  <code>{entry:.5f}</code>\n"
+                f"🔸 SL     <code>{sl:.5f}</code>\n"
+                f"🎯 TP     <code>{tp:.5f}</code>\n"
+                f"⚖️ RR     1:{rr:.2f}\n"
+                f"{sep}\n"
+                f"⏳ Așteptăm pullback în FVG 4H pentru entry final...\n"
+                f"  {sep}\n"
+                f"  🔱 AUTHORED BY <b>ФорексГод</b> 🔱\n"
+                f"  {sep}\n"
                 f"  🏛️  <b>Глитч Ин Матрикс</b>  🏛️"
             )
             self.send_message(msg)
@@ -353,34 +338,20 @@ class TelegramNotifier:
             sep = "────────────────"
 
             msg = (
-                f"🎯 <b>SNIPER ENTRY READY!</b> — CHoCH 1H Confirmat
-"
-                f"{sep}
-"
-                f"{dir_emoji} <b>{symbol}</b> {direction}
-"
-                f"📍 1H CHoCH @ <code>{choch_1h_price:.5f}</code>
-"
-                f"{sep}
-"
-                f"🔹 Entry  <code>{entry:.5f}</code>
-"
-                f"🔸 SL     <code>{sl:.5f}</code>
-"
-                f"🎯 TP     <code>{tp:.5f}</code>
-"
-                f"⚖️ RR     1:{rr:.2f}
-"
-                f"{sep}
-"
-                f"⚡ EXECUTE în curs... așteptăm pullback final în FVG 1H.
-"
-                f"  {sep}
-"
-                f"  🔱 AUTHORED BY <b>ФорексГод</b> 🔱
-"
-                f"  {sep}
-"
+                f"🎯 <b>SNIPER ENTRY READY!</b> — CHoCH 1H Confirmat\n"
+                f"{sep}\n"
+                f"{dir_emoji} <b>{symbol}</b> {direction}\n"
+                f"📍 1H CHoCH @ <code>{choch_1h_price:.5f}</code>\n"
+                f"{sep}\n"
+                f"🔹 Entry  <code>{entry:.5f}</code>\n"
+                f"🔸 SL     <code>{sl:.5f}</code>\n"
+                f"🎯 TP     <code>{tp:.5f}</code>\n"
+                f"⚖️ RR     1:{rr:.2f}\n"
+                f"{sep}\n"
+                f"⚡ EXECUTE în curs... așteptăm pullback final în FVG 1H.\n"
+                f"  {sep}\n"
+                f"  🔱 AUTHORED BY <b>ФорексГод</b> 🔱\n"
+                f"  {sep}\n"
                 f"  🏛️  <b>Глитч Ин Матрикс</b>  🏛️"
             )
             self.send_message(msg)
