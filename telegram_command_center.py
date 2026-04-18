@@ -1258,18 +1258,10 @@ class TelegramCommandCenter:
                 name     = e.get('event', 'N/A')
                 fc       = e.get('forecast', '') or '—'
                 prev     = e.get('previous', '') or '—'
-                try:
-                    from zoneinfo import ZoneInfo
-                    dt_ro = dt.astimezone(ZoneInfo('Europe/Bucharest'))
-                    tstr = dt_ro.strftime('%H:%M EET')
-                except Exception:
-                    # Fallback manual: UTC+3 (EEST Apr-Oct) / UTC+2 (EET Nov-Mar)
-                    import calendar as _cal
-                    _month = dt.month
-                    _offset = 3 if 4 <= _month <= 10 else 2
-                    from datetime import timezone as _tz, timedelta as _td
-                    dt_ro = dt.astimezone(_tz(_td(hours=_offset)))
-                    tstr = dt_ro.strftime('%H:%M EET')
+                # UTC → EET: +3 (EEST Apr-Oct) / +2 (EET Nov-Mar)
+                _offset_h = 3 if 4 <= dt.month <= 10 else 2
+                dt_ro = dt + timedelta(hours=_offset_h)
+                tstr = dt_ro.strftime('%H:%M EET')
 
                 # Countdown
                 delta_s = (dt - now).total_seconds()
