@@ -573,6 +573,7 @@ class TelegramCommandCenter:
                 'news_calendar_monitor.py': '📅 News Calendar',
                 'news_reminder_engine.py': '🔔 News Alerts',
                 'auto_scanner_daemon.py': '🔍 Auto Scanner',
+                'dashboard_server.py': '🌐 Dashboard',
             }
             
             ps_output = ''
