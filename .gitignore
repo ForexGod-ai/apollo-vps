@@ -60,3 +60,4 @@ data/backups/
 .DS_Store
 process_*.lock
 trade_history.json
+monitoring_setups.json
