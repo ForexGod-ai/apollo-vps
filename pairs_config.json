@@ -20,11 +20,10 @@
         "note": "V3.3 HYBRID: Pullback (classic) OR Continuation momentum after 6h (score ≥60)"
       },
       "quality_filters": {
-        "fvg_validation": "v2.0_strict",
+        "fvg_validation": "v14.0_relaxed",
         "allow_only_continuation": true,
-        "preferred_direction": "bearish",
         "max_trades_per_fvg": 4,
-        "note": "V2.0 FVG filter (Gap ≥0.15%, Body ≥40%) + max 4 trades per zone"
+        "note": "V14.0 FVG filter (Gap ≥0.10%, Body ≥25%) — preferred_direction ELIMINAT (era dead key, putea forța bearish)"
       }
     },
     {

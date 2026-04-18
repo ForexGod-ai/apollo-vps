@@ -2362,6 +2362,12 @@ class SMCDetector:
                 body_highs_d1 = df_daily[['open', 'close']].max(axis=1)
                 take_profit = body_highs_d1.iloc[:-1].max()
                 print(f"   🎯 [V12.1 TP FALLBACK2] Max body D1: {take_profit:.5f}")
+                # ✅ V14.0 ATH REJECT: dacă toate fallback-urile eșuează (ex: preț la ATH)
+                # nu există target structural deasupra → trade ANULAT, nu raportat inversat
+                if take_profit <= entry:
+                    print(f"   ⛔ [V14.0 ATH REJECT] {symbol}: Niciun swing High D1 deasupra entry {entry:.5f} "
+                          f"— preț la ATH, TP imposibil structural. Trade ANULAT.")
+                    return None, None, None
 
         else:
             # ══════════════════════════════════════════════
@@ -2454,12 +2460,29 @@ class SMCDetector:
                 body_lows_d1 = df_daily[['open', 'close']].min(axis=1)
                 take_profit = body_lows_d1.iloc[:-1].min()
                 print(f"   🎯 [V12.1 TP FALLBACK2] Min body D1: {take_profit:.5f}")
+                # ✅ V14.0 ATL REJECT: dacă toate fallback-urile eșuează (ex: preț la ATL)
+                # nu există target structural sub preț → trade ANULAT
+                if take_profit >= entry:
+                    print(f"   ⛔ [V14.0 ATL REJECT] {symbol}: Niciun swing Low D1 sub entry {entry:.5f} "
+                          f"— preț la ATL, TP imposibil structural. Trade ANULAT.")
+                    return None, None, None
 
         # ══════════════════════════════════════════════════════════════════
-        # RR FLOOR 1:4 STRUCTURAL — Levier 1:500 = fără compromisuri
+        # V14.0 DIRECTION GUARD — abs() masca direcția greșită, eliminat
+        # reward TREBUIE să fie pozitiv direcțional: LONG = TP > Entry, SHORT = TP < Entry
         # ══════════════════════════════════════════════════════════════════
         risk = abs(entry - stop_loss)
-        reward = abs(take_profit - entry)
+        if fvg.direction == 'bullish':
+            reward = take_profit - entry        # LONG: TP deasupra entry → reward pozitiv
+        else:
+            reward = entry - take_profit        # SHORT: TP sub entry → reward pozitiv
+
+        # ✅ V14.0 DIRECTION GUARD: reward ≤ 0 = TP în direcție greșită → respins
+        if reward <= 0:
+            print(f"⛔ [V14.0 DIRECTION GUARD] {symbol} {'LONG' if fvg.direction == 'bullish' else 'SHORT'}: "
+                  f"TP={take_profit:.5f} în direcție GREȘITĂ față de Entry={entry:.5f}. Trade ANULAT.")
+            return None, None, None
+
         if risk <= 0:
             print(f"⛔ [V10.2 REJECT: SL=ENTRY, risc zero] {symbol} — SL invalid structural")
             return None, None, None
@@ -3467,31 +3490,32 @@ class SMCDetector:
             is_gold = symbol == 'XAUUSD'
             
             if is_gold:
-                # XAUUSD: Use V2.0 simple validation (86% WR logic)
-                # V2.0 had strict FVG requirements → fewer but better setups
-                # Gap ≥ 0.10% + Body ≥ 25% (no complex scoring)
+                # ✅ V14.0 XAUUSD FIX: Praguri relaxate de la 0.15%/40% la 0.10%/25%
+                # Motivul: Gold are frecvent doji pe Daily (body_ratio 20-35%) = structuri valide
+                # dar respinse de pragul strict de 40%. Cu 0.10%/25%, setup-urile reale trec.
+                # Gap 0.10% pe XAUUSD @ 3200 = ~3.2$ gap — suficient pentru imbalance real.
                 
                 gap_size = fvg.top - fvg.bottom
                 gap_pct = (gap_size / fvg.bottom) * 100
                 
-                if gap_pct < 0.15:  # V2.0 threshold (stricter than 0.10%)
+                if gap_pct < 0.10:  # V14.0: relaxat de la 0.15% la 0.10%
                     if debug:
-                        print(f"\n❌ REJECTED XAUUSD FVG: Gap {gap_pct:.3f}% < 0.15%")
+                        print(f"\n❌ REJECTED XAUUSD FVG: Gap {gap_pct:.3f}% < 0.10%")
                     return None
                 
-                # Check body strength (V2.0 logic)
+                # Check body strength
                 gap_candle = df_daily.iloc[fvg.index]
                 candle_body = abs(gap_candle['close'] - gap_candle['open'])
                 candle_range = gap_candle['high'] - gap_candle['low']
                 body_ratio = candle_body / candle_range if candle_range > 0 else 0
                 
-                if body_ratio < 0.40:  # V2.0 threshold (strict momentum)
+                if body_ratio < 0.25:  # V14.0: relaxat de la 0.40 la 0.25 (Gold = doji frecvent)
                     if debug:
-                        print(f"\n❌ REJECTED XAUUSD FVG: Body {body_ratio:.1%} < 40%")
+                        print(f"\n❌ REJECTED XAUUSD FVG: Body {body_ratio:.1%} < 25%")
                     return None
                 
                 if debug:
-                    print(f"\n✅ XAUUSD FVG V2.0 PASSED: Gap {gap_pct:.3f}%, Body {body_ratio:.1%}")
+                    print(f"\n✅ XAUUSD FVG V14.0 PASSED: Gap {gap_pct:.3f}%, Body {body_ratio:.1%}")
                     
             elif is_gbp:
                 min_score = 45  # V10.8: GBP relaxat la 45 (era 60)
@@ -3979,13 +4003,18 @@ class SMCDetector:
                 print(f"   ✅ TP: {tp:.5f} (Daily structure)")
 
         elif h4_signal:
-            # Fallback: Use FVG-based entry/SL from calculate_entry_sl_tp
-            entry, sl, tp = self.calculate_entry_sl_tp(symbol, fvg, h4_signal, df_4h, df_daily)
+            # ✅ V14.0 BUG#2 FIX: Prioritizează h4_sync_fvg (entry zone precisă din mișcarea 4H)
+            # față de Daily FVG (POI macro). Daily FVG = zona de interes, h4_sync_fvg = entry sniper.
+            # Dacă Fibonacci pe impulsul macro 4H cade sub FVG (ex: XTIUSD impulse 31$),
+            # entry era decuplat complet de zonă. Cu h4_sync_fvg, entry = marginea FVG-ului 4H real.
+            fvg_for_entry = h4_sync_fvg if h4_sync_fvg else fvg
+            entry, sl, tp = self.calculate_entry_sl_tp(symbol, fvg_for_entry, h4_signal, df_4h, df_daily)
             # V10.0: daca RR sub 1:4, calculate_entry_sl_tp returneaza None — respinge setup-ul
             if entry is None:
                 return None
             if debug:
-                print(f"\n💰 FVG-based Trade Levels (no high-quality OB):")
+                fvg_source = 'h4_sync_fvg' if h4_sync_fvg else 'Daily FVG (fallback)'
+                print(f"\n💰 FVG-based Trade Levels — Entry zone: {fvg_source}")
         
         else:
             # No 4H CHoCH yet - use FVG edge as entry (discount/premium zone)
