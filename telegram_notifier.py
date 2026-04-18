@@ -392,9 +392,9 @@ class TelegramNotifier:
         status_emoji = "✅" if setup.status == 'READY' else "👀"
         status = "READY" if setup.status == 'READY' else "MONITORING"
 
-        # Strategy type
+        # Strategy type — V15.0: startswith suport pentru reversal_counter_w1 etc.
         strategy_type = getattr(setup, 'strategy_type', 'reversal').upper()
-        if strategy_type == 'REVERSAL':
+        if strategy_type.startswith('REVERSAL'):
             strategy_emoji = "🔄"
             strategy_label = "REVERSAL (CHoCH)"
         else:
@@ -463,7 +463,7 @@ class TelegramNotifier:
             conf_boost = getattr(setup, 'confidence_boost', 0)
             liquidity_line = f"\n💧 {sweep_type} +{conf_boost}"
 
-        daily_structure_label = "CHoCH" if strategy_type == 'REVERSAL' else "BOS"
+        daily_structure_label = "CHoCH" if strategy_type.startswith('REVERSAL') else "BOS"
 
         # V15.0 W1 BIAS LINE
         w1_bias_val = getattr(setup, 'w1_bias', None)
