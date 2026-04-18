@@ -41,7 +41,7 @@
       "entry1_time": "2026-04-14T12:19:15.944791",
       "entry1_lots": 0.5,
       "entry_reason": "Continuation momentum after 25.0H (distance: 83.1 pips)",
-      "last_check": "2026-04-15T10:21:28.932149"
+      "last_check": "2026-04-16T12:04:49.073685"
     },
     {
       "symbol": "USDJPY",
@@ -116,6 +116,7 @@
       "stop_loss": 211.68010700000002,
       "take_profit": 206.90572,
       "risk_reward": 17.202235731712275,
+      "_audit_warning": "V16.1 AUDIT: TP 206.905 is BELOW entry 212.943 for BUY — inverted TP, will re-execute wrong. Needs rescanner.",
       "strategy_type": "continuation",
       "strategy_locked": true,
       "d1_bias_direction": "bullish",
@@ -307,7 +308,7 @@
       "entry1_lots": 0.5,
       "pullback_status": "MOMENTUM_ENTRY",
       "entry_reason": "Continuation momentum after 22.0H (distance: 57.8 pips)",
-      "last_check": "2026-04-15T13:05:14.288363"
+      "last_check": "2026-04-16T12:04:54.224173"
     },
     {
       "symbol": "XTIUSD",
@@ -339,6 +340,7 @@
       "stop_loss": 2.26255071,
       "take_profit": 2.26099855,
       "risk_reward": 12.331159923560897,
+      "_audit_warning": "V16.1 AUDIT: TP 2.26099 is ABOVE entry 2.25858 for SELL — inverted TP. Entry2 execution blocked until rescanned.",
       "strategy_type": "continuation",
       "strategy_locked": true,
       "d1_bias_direction": "bearish",
@@ -373,9 +375,9 @@
       "entry1_lots": 0.5,
       "pullback_status": "MOMENTUM_ENTRY",
       "entry_reason": "Timeout entry after 12H (distance: 158.8 pips)",
-      "last_check": "2026-04-15T13:05:14.300472"
+      "last_check": "2026-04-16T12:04:54.233992"
     }
   ],
   "last_updated": "2026-04-13T14:19:19.415396",
-  "last_update": "2026-04-16T09:36:48.218387"
+  "last_update": "2026-04-16T12:04:54.234000"
 }

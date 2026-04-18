@@ -913,7 +913,10 @@ class SetupExecutorMonitor:
         # → A aștepta CHoCH pe CONTINUATION = a aștepta inversarea trade-ului!
         # → CONTINUATION: lock imediat, execuție 1H normală.
         h4_locked = setup.get('h4_structure_locked', False)
-        strategy_type = setup.get('strategy_type', 'continuation')
+        # V16.1 FIX: strip _counter_w1 suffix so continuation bypass works correctly
+        # daily_scanner may tag: "continuation_counter_w1" — extract base type only
+        strategy_type_raw = setup.get('strategy_type', 'continuation')
+        strategy_type = 'continuation' if strategy_type_raw.startswith('continuation') else 'reversal'
         
         # ✅ V10.9 CONTINUATION BYPASS: 4H lock imediat pentru setup-uri de continuitate
         # ━━━ V11.9 GUARD: verificăm că direcția trade-ului e aliniată cu d1_bias_direction ━━━
@@ -924,6 +927,9 @@ class SetupExecutorMonitor:
             trade_dir = direction  # 'buy' sau 'sell'
             # Mapăm bias → direcție așteptată
             expected_dir = 'buy' if d1_bias == 'bullish' else ('sell' if d1_bias == 'bearish' else trade_dir)
+
+            # V16.0 FIX: current_price must be fetched here before proximity check
+            current_price = df_h1.iloc[-1]['close'] if df_h1 is not None and not df_h1.empty else 0.0
 
             # V16.0 FVG PROXIMITY: prețul trebuie să fie în FVG sau max 20 pips outside
             if 'BTC' in symbol.upper() or 'ETH' in symbol.upper():
@@ -986,8 +992,8 @@ class SetupExecutorMonitor:
                                     'w1_bias': setup.get('w1_bias', 'NEUTRAL'),
                                 }
                                 self.telegram.send_4h_choch_alert(setup_data_alert, df_4h_lock, df_w1_alert)
-                                setups[i]['alert_4h_sent'] = True
-                                updated = True
+                                # V16.1 FIX: Mark via setup dict directly (setups[i] not in scope here)
+                                setup['alert_4h_sent'] = True
                                 logger.info(f"   📱 V15.0 4H CHoCH Alert sent: {symbol}")
                             except Exception as alert_err:
                                 logger.warning(f"   ⚠️ V15.0 4H alert error for {symbol}: {alert_err}")
