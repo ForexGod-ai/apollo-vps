@@ -3677,16 +3677,35 @@ class SMCDetector:
             # ✅ V10.5 FIX: Buffer de proximitate 0.5% — prețul la câțiva pips de FVG = APPROACHING
             # Vechiul cod: 1.15597 >= 1.15658? FALSE → reject (doar 6 pips distanță!)
             # Fix: dacă prețul e în raza de 0.5% față de FVG = acceptat
+            # ✅ V14.1 FIX STALE FVG: Adăugat limită maximă de distanță (10% din FVG bottom/top)
+            # Bug: BULLISH verifica doar `price <= fvg.top + buffer` → preț la 60$ trecea pentru FVG la 86-88$!
+            # Fix: prețul nu poate fi mai mult de 10% sub FVG bottom (BULLISH) sau 10% deasupra FVG top (BEARISH)
             fvg_size = fvg.top - fvg.bottom
             proximity_buffer = max(fvg_size * 0.5, fvg.bottom * 0.005)  # 0.5% din preț sau 50% din FVG
             if current_trend == 'bullish':
-                # BULLISH: Price below or inside FVG, sau cel mult 0.5% deasupra FVG top
-                if current_price <= fvg.top + proximity_buffer:
+                # BULLISH: Price approaching FVG from below — dar NU mai mult de 10% sub FVG bottom
+                # Exemplu valid:   price=86.40, fvg_bottom=86.54 → 0.16% sub FVG ✓
+                # Exemplu invalid: price=60.00, fvg_bottom=86.54 → 30% sub FVG ✗ (FVG stale!)
+                max_distance_below = fvg.bottom * 0.10  # Max 10% sub FVG bottom
+                below_too_far = current_price < fvg.bottom - max_distance_below
+                if current_price <= fvg.top + proximity_buffer and not below_too_far:
                     price_approaching_fvg = True
+                elif below_too_far and debug:
+                    distance_pct = (fvg.bottom - current_price) / fvg.bottom * 100
+                    print(f"   ❌ [V14.1 STALE FVG REJECT] BULLISH FVG prea departe: "
+                          f"price={current_price:.5f}, fvg_bottom={fvg.bottom:.5f}, distanță={distance_pct:.1f}% > 10%")
             else:
-                # BEARISH: Price above or inside FVG, sau cel mult 0.5% sub FVG bottom
-                if current_price >= fvg.bottom - proximity_buffer:
+                # BEARISH: Price approaching FVG from above — dar NU mai mult de 10% deasupra FVG top
+                # Exemplu valid:   price=1.2610, fvg_top=1.2598 → 0.09% deasupra FVG ✓
+                # Exemplu invalid: price=2.10, fvg_top=1.85 → 13.5% deasupra FVG ✗ (FVG stale!)
+                max_distance_above = fvg.top * 0.10  # Max 10% deasupra FVG top
+                above_too_far = current_price > fvg.top + max_distance_above
+                if current_price >= fvg.bottom - proximity_buffer and not above_too_far:
                     price_approaching_fvg = True
+                elif above_too_far and debug:
+                    distance_pct = (current_price - fvg.top) / fvg.top * 100
+                    print(f"   ❌ [V14.1 STALE FVG REJECT] BEARISH FVG prea departe: "
+                          f"price={current_price:.5f}, fvg_top={fvg.top:.5f}, distanță={distance_pct:.1f}% > 10%")
         
         if debug:
             print(f"   In FVG: {price_in_fvg}")
