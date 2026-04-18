@@ -917,18 +917,29 @@ class SetupExecutorMonitor:
         
         # ✅ V10.9 CONTINUATION BYPASS: 4H lock imediat pentru setup-uri de continuitate
         # ━━━ V11.9 GUARD: verificăm că direcția trade-ului e aliniată cu d1_bias_direction ━━━
-        # Dacă setup-ul a scăpat din smc_detector cu direcție greșită (BOS din pullback),
-        # executorul nu trebuie să-l execute — cerem confirmare 4H CHoCH ca safety net.
+        # ━━━ V16.0 FVG PROXIMITY GUARD: bypass BLOCAT dacă prețul NU e aproape de FVG zone ━━━
+        # BUG FIX (18 Apr 2026): GBPJPY executat la 213 cu FVG la 211.8-212 prin momentum fallback
         if not h4_locked and strategy_type == 'continuation':
             d1_bias = setup.get('d1_bias_direction', '').lower()  # 'bullish' sau 'bearish'
             trade_dir = direction  # 'buy' sau 'sell'
             # Mapăm bias → direcție așteptată
             expected_dir = 'buy' if d1_bias == 'bullish' else ('sell' if d1_bias == 'bearish' else trade_dir)
-            
+
+            # V16.0 FVG PROXIMITY: prețul trebuie să fie în FVG sau max 20 pips outside
+            if 'BTC' in symbol.upper() or 'ETH' in symbol.upper():
+                fvg_proximity_ok = (current_price <= fvg_top + 500) if direction == 'buy' else (current_price >= fvg_bottom - 500)
+            elif 'JPY' in symbol.upper():
+                fvg_proximity_ok = (current_price <= fvg_top + 0.20) if direction == 'buy' else (current_price >= fvg_bottom - 0.20)
+            else:
+                fvg_proximity_ok = (current_price <= fvg_top + 0.0020) if direction == 'buy' else (current_price >= fvg_bottom - 0.0020)
+
             if d1_bias and trade_dir != expected_dir:
                 # Direcție trade != bias D1 → setup suspect (posibil BOS din pullback scăpat)
                 # NU facem bypass — cerem confirmare 4H CHoCH ca safety net
                 logger.warning(f"   ⚠️ V11.9 BYPASS BLOCAT: {symbol} trade={trade_dir.upper()} opus d1_bias={d1_bias.upper()} — cerem confirmare 4H CHoCH")
+            elif not fvg_proximity_ok:
+                # V16.0: Preț prea departe de FVG — NU facem bypass, cerem 4H CHoCH real
+                logger.warning(f"   ⚠️ V16.0 BYPASS BLOCAT: {symbol} pret {current_price:.5f} prea departe de FVG {fvg_bottom:.5f}-{fvg_top:.5f} — cerem confirmare 4H CHoCH")
             else:
                 setup['h4_structure_locked'] = True
                 h4_locked = True
@@ -1310,8 +1321,14 @@ class SetupExecutorMonitor:
                         max_distance = 100
                     
                     within_reasonable_distance = distance_pips <= max_distance
-                    
-                    if momentum_strong and price_beyond_target and within_reasonable_distance:
+
+                    # V16.0 FVG ZONE GUARD: momentum entry BLOCAT dacă prețul nu e în FVG zone
+                    # BUG FIX: GBPJPY executat la 213 fără pullback la FVG 211.8-212
+                    in_fvg_zone_momentum = fvg_bottom <= current_price <= fvg_top
+
+                    if momentum_strong and price_beyond_target and within_reasonable_distance and not in_fvg_zone_momentum:
+                        logger.warning(f"🚫 {symbol}: Momentum BLOCAT — pret {current_price:.5f} NU in FVG zone {fvg_bottom:.5f}-{fvg_top:.5f} — asteptam pullback!")
+                    elif momentum_strong and price_beyond_target and within_reasonable_distance and in_fvg_zone_momentum:
                         logger.success(f"🚀 {symbol}: Continuation momentum entry triggered!")
                         
                         # Use swing-based SL (from fibo_data)
@@ -1352,8 +1369,11 @@ class SetupExecutorMonitor:
                     else:
                         max_timeout_distance = 200
                     
-                    if distance_pips <= max_timeout_distance:
-                        logger.success(f"✅ {symbol}: Force entry at {current_price:.5f} (timeout, {distance_pips:.1f} pips from target)")
+                    # V16.0 FVG ZONE GUARD: timeout entry BLOCAT dacă prețul nu e în FVG zone
+                    in_fvg_zone_timeout = fvg_bottom <= current_price <= fvg_top
+
+                    if distance_pips <= max_timeout_distance and in_fvg_zone_timeout:
+                        logger.success(f"✅ {symbol}: Force entry at {current_price:.5f} (timeout, in FVG zone, {distance_pips:.1f} pips from target)")
                         
                         # Use original SL from setup
                         sl_price = setup.get('stop_loss', fibo_data['swing_high'] if direction == 'sell' else fibo_data['swing_low'])
@@ -1364,7 +1384,14 @@ class SetupExecutorMonitor:
                             'stop_loss': sl_price,
                             'choch_timestamp': (choch_timestamp if isinstance(choch_timestamp, str) else choch_timestamp.isoformat()) if choch_timestamp else datetime.now().isoformat(),
                             'fibo_data': fibo_data,
-                            'reason': f'Timeout entry after 12H (distance: {distance_pips:.1f} pips)'
+                            'reason': f'Timeout entry after 12H in FVG zone (distance: {distance_pips:.1f} pips)'
+                        }
+                    elif distance_pips <= max_timeout_distance and not in_fvg_zone_timeout:
+                        # V16.0: Timeout dar prețul NU e în FVG — NU executa, continuă monitorizarea
+                        logger.warning(f"⏰🚫 {symbol}: Timeout 12H dar pret {current_price:.5f} NU in FVG zone {fvg_bottom:.5f}-{fvg_top:.5f} — asteptam pullback!")
+                        return {
+                            'action': 'KEEP_MONITORING',
+                            'reason': f'Timeout 12H dar pret NU in FVG zone (pret: {current_price:.5f}, FVG: {fvg_bottom:.5f}-{fvg_top:.5f})'
                         }
                     else:
                         # Too far → skip setup
