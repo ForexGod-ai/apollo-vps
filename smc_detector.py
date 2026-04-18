@@ -4397,20 +4397,52 @@ class SMCDetector:
                 print(f"   OB Zone: {order_block.bottom:.5f} - {order_block.top:.5f}")
                 print(f"   OB Score: {order_block.ob_score}/10")
                 print(f"   Using OB middle for entry (more precise than FVG)")
-            
+
             # Override entry calculation to use OB
             entry = order_block.middle
-            
+
             # Tighter SL using OB boundaries
             if current_trend == 'bullish':
                 sl = order_block.bottom * 0.9995  # 5 pips below OB bottom
             else:
                 sl = order_block.top * 1.0005  # 5 pips above OB top
+
+            # ✅ V14.3 FIX: Recalculează TP din structura D1 când OB overrideaza entry/SL
+            # Bug: entry vine din OB (212.94) dar tp rămânea din else-branch (fvg.top*1.015=206.90)
+            # Fix: extragem TP direct din swing highs/lows D1 deasupra/sub prețul curent
+            _current_price_ob = df_daily['close'].iloc[-1]
+            _pip_size_ob = 0.01 if 'JPY' in symbol else 0.0001
+            if current_trend == 'bullish':
+                _swing_highs_ob = self.detect_swing_highs(df_daily)
+                _highs_above = [sh for sh in _swing_highs_ob if df_daily['high'].iloc[sh.index] > entry]
+                if _highs_above:
+                    _nearest_high = min(_highs_above, key=lambda sh: df_daily['high'].iloc[sh.index])
+                    tp = df_daily['high'].iloc[_nearest_high.index]
+                else:
+                    tp = df_daily['high'].iloc[:-1].max()
+                # Dacă TP tot e sub entry după recalcul → fallback la max D1
+                if tp <= entry:
+                    tp = df_daily['high'].iloc[:-1].max()
+                if debug:
+                    print(f"   ✅ [V14.3 OB TP RECALC] LONG TP from D1 swing high: {tp:.5f}")
+            else:
+                _swing_lows_ob = self.detect_swing_lows(df_daily)
+                _lows_below = [sl_pt for sl_pt in _swing_lows_ob if df_daily['low'].iloc[sl_pt.index] < entry]
+                if _lows_below:
+                    _nearest_low = max(_lows_below, key=lambda sl_pt: df_daily['low'].iloc[sl_pt.index])
+                    tp = df_daily['low'].iloc[_nearest_low.index]
+                else:
+                    tp = df_daily['low'].iloc[:-1].min()
+                # Dacă TP tot e deasupra entry → fallback la min D1
+                if tp >= entry:
+                    tp = df_daily['low'].iloc[:-1].min()
+                if debug:
+                    print(f"   ✅ [V14.3 OB TP RECALC] SHORT TP from D1 swing low: {tp:.5f}")
         else:
             # Fallback to FVG-based entry if no high-quality OB
             entry = None  # Will be calculated later in calculate_entry_sl_tp
             sl = None
-            
+
             if debug and order_block:
                 print(f"\n⚠️ ORDER BLOCK NOT ACTIVATED: Score {order_block.ob_score}/10 < 7")
                 print(f"   Falling back to FVG-based entry")
