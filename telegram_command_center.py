@@ -1258,7 +1258,13 @@ class TelegramCommandCenter:
                 name     = e.get('event', 'N/A')
                 fc       = e.get('forecast', '') or '—'
                 prev     = e.get('previous', '') or '—'
-                tstr     = dt.strftime('%H:%M UTC')
+                try:
+                    import pytz as _pytz
+                    _ro_tz = _pytz.timezone('Europe/Bucharest')
+                    dt_ro = dt.astimezone(_ro_tz)
+                    tstr = dt_ro.strftime('%H:%M EET')
+                except Exception:
+                    tstr = dt.strftime('%H:%M UTC')
 
                 # Countdown
                 delta_s = (dt - now).total_seconds()
