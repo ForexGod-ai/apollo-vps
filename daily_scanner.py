@@ -276,7 +276,7 @@ class DailyScanner:
                     continue
                 
                 # V3.1 SCALE_IN: Download 1H data for ALL pairs (Entry 1 validation)
-                print(f"   📊 Downloading 1H data (SCALE_IN strategy)...")
+                print(f"   📊 Downloading 1H data (SCALE_IN strategy)...") 
                 df_1h = self.data_provider.get_historical_data(
                     symbol,
                     "H1",
@@ -284,6 +284,18 @@ class DailyScanner:
                 )
                 if df_1h is None:
                     print(f"⚠️ Warning: {symbol} has no 1H data (Entry 1 disabled)")
+
+                # V15.0 WEEKLY ANCHOR: Download 300 W1 bars (~6 ani context macro)
+                print(f"   📅 Downloading W1 data (Weekly Anchor — 300 bars)...")
+                df_w1 = None
+                try:
+                    df_w1 = self.data_provider.get_historical_data(symbol, "W1", 300)
+                    if df_w1 is not None:
+                        print(f"   ✅ W1 data: {len(df_w1)} bars")
+                    else:
+                        print(f"   ⚠️ W1 data unavailable for {symbol} — bias = NEUTRAL")
+                except Exception as w1_err:
+                    print(f"   ⚠️ W1 fetch error for {symbol}: {w1_err} — continuing")
                 
                 # GBP pairs still need 1H for additional validation
                 is_gbp = 'GBP' in symbol
@@ -376,7 +388,28 @@ class DailyScanner:
                         print(f"   {ai_prob['warning']}")
                     
                     setups_found.append(setup)
-                    
+
+                    # V15.0 WEEKLY ANCHOR: Calculează W1 bias și atașează la setup
+                    try:
+                        w1_result = self.smc_detector.calculate_w1_bias(df_w1)
+                        setup.w1_bias = w1_result['bias']
+                        setup.w1_last_bos_price = w1_result.get('last_bos_price')
+                        # Tag COUNTER_TREND_W1 dacă D1 e opus W1
+                        d1_dir = setup.daily_choch.direction  # 'bullish' / 'bearish'
+                        w1_bias_lower = w1_result['bias'].lower()  # 'bullish' / 'bearish' / 'neutral'
+                        if w1_bias_lower != 'neutral' and w1_bias_lower != d1_dir:
+                            # Opus → tag Counter-Trend
+                            original_strategy = getattr(setup, 'strategy_type', 'reversal')
+                            setup.strategy_type = f"{original_strategy}_counter_w1"
+                            print(f"   ⚠️ [W1 COUNTER-TREND] {symbol}: D1={d1_dir.upper()} opus W1={w1_result['bias']} — tagged")
+                        else:
+                            align_label = "ALINIAT" if w1_bias_lower == d1_dir else "NEUTRAL"
+                            print(f"   📅 [W1 BIAS] {symbol}: {w1_result['bias']} — {align_label} cu D1")
+                    except Exception as w1_bias_err:
+                        setup.w1_bias = 'NEUTRAL'
+                        setup.w1_last_bos_price = None
+                        print(f"   ⚠️ W1 bias error: {w1_bias_err}")
+
                     # ✅ V10.9 CARRY MATRIX: Fetch live swap rates and attach to setup
                     try:
                         swap_info = self.data_provider.client.get_swap_info(symbol)
@@ -425,9 +458,10 @@ class DailyScanner:
                                 setup=setup,
                                 df_daily=df_daily,
                                 df_4h=df_4h,
-                                df_1h=df_1h
+                                df_1h=df_1h,
+                                charts_mode='daily_only'  # V15.0: Silent Scan — doar Daily chart la scanare
                             )
-                            print(f"   ✅ Chart trimis pe Telegram: {symbol} [{tg_prefix}]")
+                            print(f"   ✅ Chart trimis pe Telegram: {symbol} [{tg_prefix}] [DAILY ONLY]")
                         except Exception as e:
                             print(f"   ⚠️ Failed to send charts: {e}")
                     

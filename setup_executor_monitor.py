@@ -184,6 +184,7 @@ class SetupExecutorMonitor:
             'D1': 14400,  # 4 hours (D1 candles don't change between 4H closes)
             'H4': 1800,   # 30 minutes
             'H1': 300,    # 5 minutes
+            'W1': 86400,  # V15.0: 24 hours (W1 se schimbă o dată/săptămână)
         }
         
         # Telegram config for Deep Sleep alerts
@@ -958,7 +959,28 @@ class SetupExecutorMonitor:
                         setup['h4_lock_time'] = datetime.now().isoformat()
                         h4_locked = True
                         logger.success(f"   🔒 V10.6 4H SYNC LOCK: {symbol} {valid_4h_lock.direction.upper()} CHoCH @ {valid_4h_lock.break_price:.5f} — {lock_reason}")
-                        
+
+                        # V15.0 EVENT ALERT: 4H CHoCH confirmat — trimite 4H + W1 charts
+                        if not setup.get('alert_4h_sent', False):
+                            try:
+                                df_w1_alert = self._get_cached_data(symbol, "W1", 300)
+                                setup_data_alert = {
+                                    'symbol': symbol,
+                                    'direction': setup.get('direction', 'buy'),
+                                    'entry_price': setup.get('entry_price', 0),
+                                    'stop_loss': setup.get('stop_loss', 0),
+                                    'take_profit': setup.get('take_profit', 0),
+                                    'risk_reward': setup.get('risk_reward', 0),
+                                    'strategy_type': setup.get('strategy_type', 'reversal'),
+                                    'w1_bias': setup.get('w1_bias', 'NEUTRAL'),
+                                }
+                                self.telegram.send_4h_choch_alert(setup_data_alert, df_4h_lock, df_w1_alert)
+                                setups[i]['alert_4h_sent'] = True
+                                updated = True
+                                logger.info(f"   📱 V15.0 4H CHoCH Alert sent: {symbol}")
+                            except Exception as alert_err:
+                                logger.warning(f"   ⚠️ V15.0 4H alert error for {symbol}: {alert_err}")
+
                         # V10.4: Detectăm 4H sync FVG din mișcarea de confirmare (entry zone)
                         if not setup.get('h4_sync_fvg_top'):
                             try:
@@ -1663,10 +1685,27 @@ class SetupExecutorMonitor:
                             setups[i]['choch_1h_price'] = result.get('choch_price')
                             updated = True
                             
-                            # 🔕 1H CHoCH Telegram notification disabled — ARMAGEDDON from
-                            # position_monitor.py fires when trade appears in cTrader (~30s later).
-                            # Building a TradeSetup object here just to send a duplicate is removed.
-                            logger.info(f"📱 {symbol} 1H CHoCH @ {result.get('choch_price', 'N/A')} — ARMAGEDDON pending via position_monitor")
+                            # V15.0 EVENT ALERT: 1H CHoCH confirmat — trimite 1H chart
+                            if not setups[i].get('alert_1h_sent', False):
+                                try:
+                                    setup_data_1h = {
+                                        'symbol': symbol,
+                                        'direction': setup.get('direction', 'buy'),
+                                        'entry_price': setup.get('entry_price', 0),
+                                        'stop_loss': setup.get('stop_loss', 0),
+                                        'take_profit': setup.get('take_profit', 0),
+                                        'risk_reward': setup.get('risk_reward', 0),
+                                        'choch_1h_price': result.get('choch_price', setup.get('entry_price', 0)),
+                                        'w1_bias': setup.get('w1_bias', 'NEUTRAL'),
+                                    }
+                                    self.telegram.send_1h_choch_alert(setup_data_1h, df_1h)
+                                    setups[i]['alert_1h_sent'] = True
+                                    updated = True
+                                    logger.info(f"📱 V15.0 1H CHoCH Alert sent: {symbol} @ {result.get('choch_price', 'N/A')}")
+                                except Exception as alert_err:
+                                    logger.warning(f"⚠️ V15.0 1H alert error for {symbol}: {alert_err}")
+                            else:
+                                logger.info(f"📱 {symbol} 1H CHoCH @ {result.get('choch_price', 'N/A')} — ARMAGEDDON pending via position_monitor")
                             
                             continue  # Skip to next iteration to wait for pullback
                         

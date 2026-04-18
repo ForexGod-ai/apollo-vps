@@ -101,6 +101,93 @@ class SMCDetector:
         # Format: {symbol: {'4H': [FVG, FVG], '1H': [FVG, FVG]}}
         self.fvg_magnets = {}  # Zonele de întoarcere pentru preț
 
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # V15.0 WEEKLY ANCHOR — W1 BIAS CALCULATOR (Body Close Rule)
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    def calculate_w1_bias(self, df_w1: 'pd.DataFrame') -> dict:
+        """
+        Calculează W1 macro bias folosind EXCLUSIV Body Close (nu wick).
+
+        Reguli:
+          • W1 BULLISH  — ultimul BOS body-close în sus (prețul a închis cu corpul DEASUPRA unui High anterior)
+          • W1 BEARISH  — ultimul BOS body-close în jos  (prețul a închis cu corpul SUB un Low anterior)
+          • W1 NEUTRAL  — niciun BOS confirmat recent (ultimele 20 bare)
+
+        Returnează dict:
+            {
+              'bias': 'BULLISH' | 'BEARISH' | 'NEUTRAL',
+              'last_bos_direction': 'bullish' | 'bearish' | None,
+              'last_bos_price': float | None,
+              'last_bos_bar_idx': int | None,
+            }
+        """
+        try:
+            import pandas as pd
+            if df_w1 is None or len(df_w1) < 10:
+                return {'bias': 'NEUTRAL', 'last_bos_direction': None, 'last_bos_price': None, 'last_bos_bar_idx': None}
+
+            df = df_w1.copy().reset_index(drop=True)
+            # [W1 BODY CLOSE RULE] — body = interval [open, close], ignorăm wick-urile
+            body_high = df[['open', 'close']].max(axis=1)
+            body_low  = df[['open', 'close']].min(axis=1)
+
+            lookback = min(20, len(df) - 1)  # ultimele 20 bare W1 (~5 luni)
+            last_bos_direction = None
+            last_bos_price = None
+            last_bos_bar_idx = None
+
+            # Parcurgem de la cel mai recent spre trecut
+            for i in range(len(df) - 1, max(len(df) - lookback - 1, 5), -1):
+                current_body_high = body_high.iloc[i]
+                current_body_low  = body_low.iloc[i]
+
+                # Caută cel mai recent swing High/Low din bare anterioare (fereastra 5)
+                window_start = max(0, i - 10)
+                window_end   = i - 1
+                if window_end < window_start:
+                    continue
+
+                prev_highs = body_high.iloc[window_start:window_end + 1]
+                prev_lows  = body_low.iloc[window_start:window_end + 1]
+
+                if prev_highs.empty or prev_lows.empty:
+                    continue
+
+                swing_high = prev_highs.max()
+                swing_low  = prev_lows.min()
+
+                # [W1 BODY CLOSE RULE] BOS BULLISH: corpul lumânării curente se închide DEASUPRA swing High
+                if current_body_high > swing_high and current_body_low > swing_low * 0.995:
+                    last_bos_direction = 'bullish'
+                    last_bos_price = float(swing_high)
+                    last_bos_bar_idx = i
+                    break
+
+                # [W1 BODY CLOSE RULE] BOS BEARISH: corpul lumânării curente se închide SUB swing Low
+                if current_body_low < swing_low and current_body_high < swing_high * 1.005:
+                    last_bos_direction = 'bearish'
+                    last_bos_price = float(swing_low)
+                    last_bos_bar_idx = i
+                    break
+
+            if last_bos_direction == 'bullish':
+                bias = 'BULLISH'
+            elif last_bos_direction == 'bearish':
+                bias = 'BEARISH'
+            else:
+                bias = 'NEUTRAL'
+
+            return {
+                'bias': bias,
+                'last_bos_direction': last_bos_direction,
+                'last_bos_price': last_bos_price,
+                'last_bos_bar_idx': last_bos_bar_idx,
+            }
+        except Exception as e:
+            print(f"⚠️ [W1 BIAS] Error: {e}")
+            return {'bias': 'NEUTRAL', 'last_bos_direction': None, 'last_bos_price': None, 'last_bos_bar_idx': None}
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
         # ⚡ V13.1 PERFORMANCE CACHE: Evită re-calcularea swing-urilor pentru același df
         # Key = (id(df), len(df)) — același obiect df, aceleași date → returnam cached
         # Clear la fiecare scan_for_setup() nou pentru a evita date stale

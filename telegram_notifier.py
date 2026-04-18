@@ -165,19 +165,21 @@ class TelegramNotifier:
         setup: TradeSetup, 
         df_daily: pd.DataFrame,
         df_4h: pd.DataFrame,
-        df_1h: pd.DataFrame = None
+        df_1h: pd.DataFrame = None,
+        charts_mode: str = 'full'  # V15.0: 'full' | 'daily_only'
     ) -> bool:
         """
         Send complete trade setup alert with:
         - Formatted message
         - Daily chart screenshot
-        - 4H chart screenshot
-        - 1H chart screenshot (for SCALE_IN strategy)
-        - Interactive buttons
+        - 4H chart screenshot (ONLY when charts_mode='full')
+        - 1H chart screenshot  (ONLY when charts_mode='full')
+        V15.0 Silent Scan: charts_mode='daily_only' → trimite doar Daily chart la scanare.
+        4H+1H se trimit separat la confirmare CHoCH (send_4h_choch_alert / send_1h_choch_alert).
         """
         # 1. Send main alert message
         message = self.format_setup_alert(setup)
-        print(f"[DEBUG] Sending setup alert for {setup.symbol} | status: {getattr(setup, 'status', None)}")
+        print(f"[DEBUG] Sending setup alert for {setup.symbol} | status: {getattr(setup, 'status', None)} | mode: {charts_mode}")
         if not self.send_message(message):
             print(f"[ERROR] Failed to send main message for {setup.symbol}")
             return False
@@ -185,7 +187,7 @@ class TelegramNotifier:
         # V11.9: Anti-flood delay — mărit la 3s (10 perechi × 3 chart-uri = 30+ req/scan)
         time.sleep(3)
         
-        # 2. Generate and send Daily chart
+        # 2. Generate and send Daily chart (ALWAYS)
         try:
             print(f"[INFO] Generating Daily chart for {setup.symbol}...")
             daily_chart = self._create_daily_chart(setup, df_daily)
@@ -199,7 +201,12 @@ class TelegramNotifier:
             import traceback
             traceback.print_exc()
         
-        # V11.9: Anti-flood delay între chart-uri
+        # V15.0 SILENT SCAN: la charts_mode='daily_only' oprim aici — 4H+1H vin la confirmare CHoCH
+        if charts_mode == 'daily_only':
+            print(f"[INFO] {setup.symbol}: daily_only mode — skip 4H/1H charts (vor veni la CHoCH confirm)")
+            self._send_action_buttons(setup)
+            return True
+
         time.sleep(3)
         
         # 3. Generate and send 4H chart
@@ -237,6 +244,166 @@ class TelegramNotifier:
         # 5. Send interactive buttons
         self._send_action_buttons(setup)
         return True
+
+    def send_4h_choch_alert(self, setup_data: dict, df_4h: pd.DataFrame, df_w1: pd.DataFrame = None) -> bool:
+        """
+        V15.0 EVENT ALERT: Trimis automat când setup_executor_monitor confirmă CHoCH 4H.
+        Conține: mesaj text + chart 4H + chart W1 (dacă disponibil).
+        """
+        try:
+            symbol   = setup_data.get('symbol', 'UNKNOWN')
+            direction = setup_data.get('direction', 'buy').upper()
+            entry    = setup_data.get('entry_price', 0)
+            sl       = setup_data.get('stop_loss', 0)
+            tp       = setup_data.get('take_profit', 0)
+            rr       = setup_data.get('risk_reward', 0)
+            strategy = setup_data.get('strategy_type', 'reversal').upper()
+            w1_bias  = setup_data.get('w1_bias', 'NEUTRAL')
+            dir_emoji = "🟢" if direction == 'BUY' else "🔴"
+            w1_emoji  = "✅" if w1_bias == 'BULLISH' and direction == 'BUY' else \
+                        "✅" if w1_bias == 'BEARISH' and direction == 'SELL' else \
+                        "⚠️ COUNTER" if w1_bias != 'NEUTRAL' else "⏳ NEUTRAL"
+            sep = "────────────────"
+
+            msg = (
+                f"🚨 <b>4H CHoCH CONFIRMAT!</b> — Pregătire Entry
+"
+                f"{sep}
+"
+                f"{dir_emoji} <b>{symbol}</b> {direction}
+"
+                f"🎯 Strategy: <code>{strategy}</code>
+"
+                f"📅 W1 Bias: <b>{w1_bias}</b> {w1_emoji}
+"
+                f"{sep}
+"
+                f"🔹 Entry  <code>{entry:.5f}</code>
+"
+                f"🔸 SL     <code>{sl:.5f}</code>
+"
+                f"🎯 TP     <code>{tp:.5f}</code>
+"
+                f"⚖️ RR     1:{rr:.2f}
+"
+                f"{sep}
+"
+                f"⏳ Așteptăm pullback în FVG 4H pentru entry final...
+"
+                f"  {sep}
+"
+                f"  🔱 AUTHORED BY <b>ФорексГод</b> 🔱
+"
+                f"  {sep}
+"
+                f"  🏛️  <b>Глитч Ин Матрикс</b>  🏛️"
+            )
+            self.send_message(msg)
+            time.sleep(2)
+
+            # Chart 4H
+            if df_4h is not None and not df_4h.empty:
+                from types import SimpleNamespace
+                setup_ns = SimpleNamespace(
+                    symbol=symbol, entry_price=entry, stop_loss=sl, take_profit=tp,
+                    risk_reward=rr, status='MONITORING',
+                    daily_choch=SimpleNamespace(direction='bullish' if direction == 'BUY' else 'bearish'),
+                    h4_choch=None, fvg=SimpleNamespace(bottom=sl, top=tp)
+                )
+                chart_4h = self._create_4h_chart(setup_ns, df_4h)
+                if chart_4h:
+                    self.send_photo(chart_4h, caption=f"🔍 {symbol} - 4H Timeframe (CHoCH Confirmat)")
+                    time.sleep(2)
+
+            # Chart W1
+            if df_w1 is not None and not df_w1.empty:
+                from types import SimpleNamespace
+                setup_ns_w1 = SimpleNamespace(
+                    symbol=symbol, entry_price=entry, stop_loss=sl, take_profit=tp,
+                    risk_reward=rr, status='MONITORING',
+                    daily_choch=SimpleNamespace(direction='bullish' if direction == 'BUY' else 'bearish'),
+                    h4_choch=None, fvg=SimpleNamespace(bottom=sl, top=tp)
+                )
+                chart_w1 = self.chart_generator.create_daily_chart(
+                    symbol=symbol, df=df_w1, setup=setup_ns_w1, save_path=None, timeframe="W1"
+                )
+                if chart_w1:
+                    self.send_photo(chart_w1, caption=f"📅 {symbol} - W1 Timeframe (Macro Bias: {w1_bias})")
+
+            print(f"[✅] 4H CHoCH Alert sent: {symbol}")
+            return True
+        except Exception as e:
+            print(f"[ERROR] send_4h_choch_alert failed for {setup_data.get('symbol', '?')}: {e}")
+            return False
+
+    def send_1h_choch_alert(self, setup_data: dict, df_1h: pd.DataFrame) -> bool:
+        """
+        V15.0 EVENT ALERT: Trimis automat când setup_executor_monitor confirmă CHoCH 1H.
+        Conține: mesaj text + chart 1H only.
+        """
+        try:
+            symbol   = setup_data.get('symbol', 'UNKNOWN')
+            direction = setup_data.get('direction', 'buy').upper()
+            entry    = setup_data.get('entry_price', 0)
+            sl       = setup_data.get('stop_loss', 0)
+            tp       = setup_data.get('take_profit', 0)
+            rr       = setup_data.get('risk_reward', 0)
+            choch_1h_price = setup_data.get('choch_1h_price', entry)
+            dir_emoji = "🟢" if direction == 'BUY' else "🔴"
+            sep = "────────────────"
+
+            msg = (
+                f"🎯 <b>SNIPER ENTRY READY!</b> — CHoCH 1H Confirmat
+"
+                f"{sep}
+"
+                f"{dir_emoji} <b>{symbol}</b> {direction}
+"
+                f"📍 1H CHoCH @ <code>{choch_1h_price:.5f}</code>
+"
+                f"{sep}
+"
+                f"🔹 Entry  <code>{entry:.5f}</code>
+"
+                f"🔸 SL     <code>{sl:.5f}</code>
+"
+                f"🎯 TP     <code>{tp:.5f}</code>
+"
+                f"⚖️ RR     1:{rr:.2f}
+"
+                f"{sep}
+"
+                f"⚡ EXECUTE în curs... așteptăm pullback final în FVG 1H.
+"
+                f"  {sep}
+"
+                f"  🔱 AUTHORED BY <b>ФорексГод</b> 🔱
+"
+                f"  {sep}
+"
+                f"  🏛️  <b>Глитч Ин Матрикс</b>  🏛️"
+            )
+            self.send_message(msg)
+            time.sleep(2)
+
+            # Chart 1H only
+            if df_1h is not None and not df_1h.empty:
+                from types import SimpleNamespace
+                setup_ns = SimpleNamespace(
+                    symbol=symbol, entry_price=entry, stop_loss=sl, take_profit=tp,
+                    risk_reward=rr, status='MONITORING',
+                    daily_choch=SimpleNamespace(direction='bullish' if direction == 'BUY' else 'bearish'),
+                    h4_choch=None, fvg=SimpleNamespace(bottom=sl, top=tp)
+                )
+                chart_1h = self._create_1h_chart(setup_ns, df_1h)
+                if chart_1h:
+                    self.send_photo(chart_1h, caption=f"⏰ {symbol} - 1H Timeframe (Sniper Entry)")
+
+            print(f"[✅] 1H CHoCH Alert sent: {symbol}")
+            return True
+        except Exception as e:
+            print(f"[ERROR] send_1h_choch_alert failed for {setup_data.get('symbol', '?')}: {e}")
+            return False
     
     def format_setup_alert(self, setup) -> str:
         """Format trade setup for Telegram message - COMPACT CARD v11.8 (Radar & Sniper)"""
@@ -327,11 +494,23 @@ class TelegramNotifier:
 
         daily_structure_label = "CHoCH" if strategy_type == 'REVERSAL' else "BOS"
 
+        # V15.0 W1 BIAS LINE
+        w1_bias_val = getattr(setup, 'w1_bias', None)
+        if w1_bias_val and w1_bias_val != 'NEUTRAL':
+            raw_dir = setup.daily_choch.direction
+            is_aligned = (w1_bias_val == 'BULLISH' and raw_dir == 'bullish') or \
+                         (w1_bias_val == 'BEARISH' and raw_dir == 'bearish')
+            w1_align_emoji = "✅" if is_aligned else "⚠️ COUNTER-TREND"
+            w1_line = f"\n📅 W1: <b>{w1_bias_val}</b> {w1_align_emoji}"
+        else:
+            w1_line = "\n📅 W1: NEUTRAL ⏳"
+
         daily_section = (
             f"\n{SEP}\n"
             f"📊 <b>DAILY:</b> {setup.daily_choch.direction.upper()} {daily_structure_label}\n"
             f"🎯 FVG: <code>{setup.fvg.bottom:.5f}</code> – <code>{setup.fvg.top:.5f}</code>"
             f"{liquidity_line}\n"
+            f"{w1_line}\n"
             f"{h4_line}\n"
             f"{h1_line}"
         )
