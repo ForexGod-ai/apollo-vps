@@ -44,15 +44,15 @@ class CTraderDataProvider:
         """Check if cBot server is running on port 8010"""
         try:
             if self.client.is_available():
-                print("✅ cTrader cBot connected (IC Markets, port 8010)")
+                print("✅ cTrader cBot connected (IC Markets, port 8000)")
                 self.connected = True
                 return True
             else:
                 print("❌ cTrader cBot not running.")
-                print("   → Start the DATA-Market (MarketDataProvider) cBot in cTrader on port 8010.")
+                print("   → Start the DATA-Market (MarketDataProvider) cBot in cTrader on port 8000.")
                 return False
         except requests.exceptions.ConnectionError:
-            print("⏳ Waiting for cTrader on port 8010... cBot not reachable.")
+            print("⏳ Waiting for cTrader on port 8000... cBot not reachable.")
             return False
         except Exception as e:
             print(f"❌ cTrader connection error: {e}")
@@ -202,7 +202,7 @@ class DailyScanner:
         
         # Connect to cTrader
         if not self.data_provider.connect():
-            error_msg = "Failed to connect to cTrader cBot API (localhost:8010)"
+            error_msg = "Failed to connect to cTrader cBot API (localhost:8000)"
             print(f"❌ {error_msg}")
             self.telegram.send_error_alert(error_msg)
             return []
@@ -825,7 +825,7 @@ def main():
     parser.add_argument(
         '--live',
         action='store_true',
-        help='Run in live mode (connects to cTrader on port 8010)'
+        help='Run in live mode (connects to cTrader on port 8000)'
     )
     args = parser.parse_args()
     
@@ -871,33 +871,20 @@ if __name__ == "__main__":
     # For testing single pair:
     # scanner = DailyScanner()
     # scanner.scan_single_pair("GBPUSD")
-    
+
     # For full daily scan:
     main()
 
-from pathlib import Path
-
-def get_active_positions(path):
-    if not os.path.exists(path):
-        return []
-    with open(path, 'r', encoding='utf-8') as f:
-        return json.load(f)
-
-def format_telegram_active_setups(positions):
-    if not positions:
-        return 'No active positions in cTrader.'
-    msg = '🎯 ACTIVE SETUPS (cTrader Sync):\n'
-    for pos in positions:
-        direction = 'LONG' if pos['direction'] == 'buy' else 'SHORT'
-        msg += f"• {pos.get('symbol','?')} - {direction}\n  Entry: {pos.get('entry_price','?')} | Vol: {pos.get('volume', 0)}\n"
-    return msg
-
-# La finalul scanării, trimite active setups din cTrader
-ACTIVE_POSITIONS_FILE = str(Path(__file__).parent / 'active_positions.json')
-active_positions = get_active_positions(ACTIVE_POSITIONS_FILE)
-active_setups_message = format_telegram_active_setups(active_positions)
-print(active_setups_message)
-# Dacă vrei să trimiți și aici mesajul pe Telegram, decomentează liniile de mai jos:
-# from telegram_notifier import TelegramNotifier
-# telegram = TelegramNotifier()
-# telegram.send_message(active_setups_message)
+    # Show active positions summary after scan
+    from pathlib import Path as _Path
+    _active_path = str(_Path(__file__).parent / 'active_positions.json')
+    if os.path.exists(_active_path):
+        with open(_active_path, 'r', encoding='utf-8') as _f:
+            _positions = json.load(_f)
+        if _positions:
+            print('\n🎯 ACTIVE SETUPS (cTrader Sync):')
+            for pos in _positions:
+                _dir = 'LONG' if pos.get('direction') == 'buy' else 'SHORT'
+                print(f"• {pos.get('symbol','?')} - {_dir}  Entry: {pos.get('entry_price','?')} | Vol: {pos.get('volume', 0)}")
+        else:
+            print('No active positions in cTrader.')
