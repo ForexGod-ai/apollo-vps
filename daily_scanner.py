@@ -44,15 +44,15 @@ class CTraderDataProvider:
         """Check if cBot server is running on port 8010"""
         try:
             if self.client.is_available():
-                print("✅ cTrader cBot connected (IC Markets, port 8000)")
+                print("✅ cTrader cBot connected (IC Markets, port 8010)")
                 self.connected = True
                 return True
             else:
                 print("❌ cTrader cBot not running.")
-                print("   → Start the DATA-Market (MarketDataProvider) cBot in cTrader on port 8000.")
+                print("   → Start the DATA-Market (MarketDataProvider) cBot in cTrader on port 8010.")
                 return False
         except requests.exceptions.ConnectionError:
-            print("⏳ Waiting for cTrader on port 8000... cBot not reachable.")
+            print("⏳ Waiting for cTrader on port 8010... cBot not reachable.")
             return False
         except Exception as e:
             print(f"❌ cTrader connection error: {e}")
@@ -202,7 +202,7 @@ class DailyScanner:
         
         # Connect to cTrader
         if not self.data_provider.connect():
-            error_msg = "Failed to connect to cTrader cBot API (localhost:8000)"
+            error_msg = "Failed to connect to cTrader cBot API (localhost:8010)"
             print(f"❌ {error_msg}")
             self.telegram.send_error_alert(error_msg)
             return []
@@ -825,7 +825,7 @@ def main():
     parser.add_argument(
         '--live',
         action='store_true',
-        help='Run in live mode (connects to cTrader on port 8000)'
+        help='Run in live mode (connects to cTrader on port 8010)'
     )
     args = parser.parse_args()
     
