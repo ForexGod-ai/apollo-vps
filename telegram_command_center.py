@@ -1259,12 +1259,17 @@ class TelegramCommandCenter:
                 fc       = e.get('forecast', '') or '—'
                 prev     = e.get('previous', '') or '—'
                 try:
-                    import pytz as _pytz
-                    _ro_tz = _pytz.timezone('Europe/Bucharest')
-                    dt_ro = dt.astimezone(_ro_tz)
+                    from zoneinfo import ZoneInfo
+                    dt_ro = dt.astimezone(ZoneInfo('Europe/Bucharest'))
                     tstr = dt_ro.strftime('%H:%M EET')
                 except Exception:
-                    tstr = dt.strftime('%H:%M UTC')
+                    # Fallback manual: UTC+3 (EEST Apr-Oct) / UTC+2 (EET Nov-Mar)
+                    import calendar as _cal
+                    _month = dt.month
+                    _offset = 3 if 4 <= _month <= 10 else 2
+                    from datetime import timezone as _tz, timedelta as _td
+                    dt_ro = dt.astimezone(_tz(_td(hours=_offset)))
+                    tstr = dt_ro.strftime('%H:%M EET')
 
                 # Countdown
                 delta_s = (dt - now).total_seconds()
