@@ -200,9 +200,17 @@ class DailyScanner:
         print(f"⏰ Scan Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         print("="*60 + "\n")
         
-        # Connect to cTrader
-        if not self.data_provider.connect():
-            error_msg = "Failed to connect to cTrader cBot API (localhost:8010)"
+        # ✅ V14.4 RETRY: 3 încercări la 30s — cTrader poate fi lent la start VPS
+        connected = False
+        for _attempt in range(1, 4):
+            if self.data_provider.connect():
+                connected = True
+                break
+            print(f"⏳ [Attempt {_attempt}/3] cTrader nu răspunde pe port 8010 — retry în 30s...")
+            time.sleep(30)
+
+        if not connected:
+            error_msg = "Failed to connect to cTrader cBot API (localhost:8010) după 3 încercări (90s)"
             print(f"❌ {error_msg}")
             self.telegram.send_error_alert(error_msg)
             return []

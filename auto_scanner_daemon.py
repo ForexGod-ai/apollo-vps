@@ -21,6 +21,14 @@ from datetime import datetime, date
 from loguru import logger
 from dotenv import load_dotenv
 
+# ✅ V14.4 TIMEZONE FIX: pytz explicit — nu depindem de setarea VPS-ului (UTC vs EET)
+try:
+    import pytz
+    _BUCHAREST_TZ = pytz.timezone('Europe/Bucharest')
+    _HAS_PYTZ = True
+except ImportError:
+    _HAS_PYTZ = False
+
 load_dotenv()
 
 # ━━━ CONFIG ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -42,8 +50,11 @@ DAY_NAMES = {0: "Luni", 1: "Marți", 2: "Miercuri", 3: "Joi", 4: "Vineri", 5: "S
 def get_bucharest_time() -> datetime:
     """
     Returnează ora curentă în Europa/București.
-    VPS-ul este setat cu timezone București — folosim ora locală direct.
+    ✅ V14.4: pytz explicit — corect indiferent dacă VPS-ul e pe UTC sau EET.
+    Dacă pytz nu e instalat → fallback la ora sistemului (comportament vechi).
     """
+    if _HAS_PYTZ:
+        return datetime.now(_BUCHAREST_TZ).replace(tzinfo=None)
     return datetime.now()
 
 
