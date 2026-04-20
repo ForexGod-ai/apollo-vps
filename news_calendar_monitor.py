@@ -303,15 +303,16 @@ class NewsCalendarMonitor:
                             hour=int(time_parts[0]),
                             minute=int(time_parts[1])
                         )
-                        # V13.2 FIX: timpii din economic_calendar.json sunt EET (Europe/Bucharest)
-                        # NU UTC! FOMC azi 21:00 EET = 21:00 în JSON, nu conversie UTC+2=23:00.
-                        # Dacă vrei UTC în JSON, adaugă câmpul 'tz': 'UTC' explicit.
-                        tz_field = e.get('tz', 'EET').upper()
-                        if tz_field == 'UTC':
-                            event_date = self.utc_tz.localize(event_date).astimezone(self.local_tz)
-                        else:
-                            # Default: EET — ora din JSON = ora română directă
+                        # V13.3 FIX: timpii din economic_calendar.json sunt UTC
+                        # Verificat: 12:30 UTC=15:30 EET, 06:00 UTC=09:00 EET, 14:00 UTC=17:00 EET
+                        # Dacă un eveniment e în EET explicit, adaugă 'tz': 'EET' în JSON.
+                        tz_field = e.get('tz', 'UTC').upper()
+                        if tz_field == 'EET':
+                            # Explicit EET: ora din JSON = ora română directă
                             event_date = self.local_tz.localize(event_date)
+                        else:
+                            # Default: UTC → convert to Romania time
+                            event_date = self.utc_tz.localize(event_date).astimezone(self.local_tz)
                     else:
                         event_date = event_date.replace(hour=9, minute=0)
                         event_date = self.local_tz.localize(event_date)
