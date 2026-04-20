@@ -17,11 +17,21 @@ class CTraderCBotClient:
         logger.info(f"🤖 CTrader cBot Client initialized: {self.base_url}")
     
     def is_available(self, retries: int = 3, wait: float = 2.0) -> bool:
-        """Check if cBot server is running on port 8010 with retry logic"""
+        """
+        Check if cBot server is running on port 8010 with retry logic.
+        V14.5 FIX: Nu mai folosim /health (endpoint inexistent pe cBot) — 
+        testăm direct /data cu GBPUSD 1 bar. Orice răspuns HTTP = cBot pornit.
+        """
         for attempt in range(1, retries + 1):
             try:
-                response = requests.get(f"{self.base_url}/health", timeout=3)
-                if response.status_code == 200:
+                # Test real: cerem 1 bar de GBPUSD — dacă cBot răspunde, e pornit
+                response = requests.get(
+                    f"{self.base_url}/data",
+                    params={'symbol': 'GBPUSD', 'timeframe': 'Daily', 'bars': 1},
+                    timeout=5
+                )
+                # Orice răspuns HTTP (200, 500 etc.) = cBot-ul ascultă pe port 8010
+                if response.status_code in (200, 500, 400):
                     return True
             except requests.exceptions.ConnectionError:
                 print(f"⏳ Waiting for cTrader on port 8010... (attempt {attempt}/{retries})")
