@@ -1247,7 +1247,10 @@ class TelegramCommandCenter:
             # ── Group by day and display ALL events
             current_day = None
             for dt, e in upcoming:
-                day_label = dt.strftime('%A, %d %b').upper()   # e.g. WEDNESDAY, 01 APR
+                # ✅ FIX: Convert UTC→Romania FIRST, then use dt_ro for both day label and time
+                _offset_h = 3 if 4 <= dt.month <= 10 else 2   # EEST Apr-Oct (+3), EET Nov-Mar (+2)
+                dt_ro = dt + timedelta(hours=_offset_h)
+                day_label = dt_ro.strftime('%A, %d %b').upper()   # e.g. WEDNESDAY, 01 APR (Romania time)
                 if day_label != current_day:
                     if current_day is not None:
                         msg += "\n"
@@ -1259,9 +1262,6 @@ class TelegramCommandCenter:
                 name     = e.get('event', 'N/A')
                 fc       = e.get('forecast', '') or '—'
                 prev     = e.get('previous', '') or '—'
-                # UTC → EET: +3 (EEST Apr-Oct) / +2 (EET Nov-Mar)
-                _offset_h = 3 if 4 <= dt.month <= 10 else 2
-                dt_ro = dt + timedelta(hours=_offset_h)
                 tstr = dt_ro.strftime('%H:%M EET')
 
                 # Countdown
