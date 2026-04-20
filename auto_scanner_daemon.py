@@ -145,7 +145,11 @@ def run_auto_scan():
             scan_ok = True
         else:
             logger.error(f"[Step 1/1] daily_scanner.py FAILED (code {result.returncode})")
-            logger.error(f"STDERR: {result.stderr[:400]}")
+            if result.stderr.strip():
+                logger.error(f"STDERR:\n{result.stderr[:2000]}")
+            if result.stdout.strip():
+                # Last 3000 chars of stdout = most recent output before crash
+                logger.error(f"STDOUT (last 3000 chars):\n{result.stdout[-3000:]}")
     except subprocess.TimeoutExpired:
         logger.error("[Step 1/1] daily_scanner.py TIMEOUT (300s)")
     except Exception as e:

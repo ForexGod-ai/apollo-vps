@@ -910,23 +910,30 @@ def main():
 
 
 if __name__ == "__main__":
-    # For testing single pair:
-    # scanner = DailyScanner()
-    # scanner.scan_single_pair("GBPUSD")
+    import sys
+    import traceback
+    try:
+        # For testing single pair:
+        # scanner = DailyScanner()
+        # scanner.scan_single_pair("GBPUSD")
 
-    # For full daily scan:
-    main()
+        # For full daily scan:
+        main()
 
-    # Show active positions summary after scan
-    from pathlib import Path as _Path
-    _active_path = str(_Path(__file__).parent / 'active_positions.json')
-    if os.path.exists(_active_path):
-        with open(_active_path, 'r', encoding='utf-8') as _f:
-            _positions = json.load(_f)
-        if _positions:
-            print('\n🎯 ACTIVE SETUPS (cTrader Sync):')
-            for pos in _positions:
-                _dir = 'LONG' if pos.get('direction') == 'buy' else 'SHORT'
-                print(f"• {pos.get('symbol','?')} - {_dir}  Entry: {pos.get('entry_price','?')} | Vol: {pos.get('volume', 0)}")
-        else:
-            print('No active positions in cTrader.')
+        # Show active positions summary after scan
+        from pathlib import Path as _Path
+        _active_path = str(_Path(__file__).parent / 'active_positions.json')
+        if os.path.exists(_active_path):
+            with open(_active_path, 'r', encoding='utf-8') as _f:
+                _positions = json.load(_f)
+            if _positions:
+                print('\n🎯 ACTIVE SETUPS (cTrader Sync):')
+                for pos in _positions:
+                    _dir = 'LONG' if pos.get('direction') == 'buy' else 'SHORT'
+                    print(f"• {pos.get('symbol','?')} - {_dir}  Entry: {pos.get('entry_price','?')} | Vol: {pos.get('volume', 0)}")
+            else:
+                print('No active positions in cTrader.')
+    except Exception as _e:
+        print(f"\n💥 FATAL ERROR in daily_scanner.py: {_e}", flush=True)
+        traceback.print_exc(file=sys.stderr)
+        sys.exit(1)
