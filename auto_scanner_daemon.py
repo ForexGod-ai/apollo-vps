@@ -138,22 +138,34 @@ def run_auto_scan():
             cwd=str(BASE_DIR),
             capture_output=True,
             text=True,
-            timeout=300  # 5 minute max
+            encoding='utf-8',       # ✅ Windows fix: prevent cp1252 crash
+            errors='replace',       # ✅ Replace undecodable chars instead of crashing
+            timeout=300             # 5 minute max
         )
         if result.returncode == 0:
             logger.success("[Step 1/1] daily_scanner.py DONE")
             scan_ok = True
         else:
             logger.error(f"[Step 1/1] daily_scanner.py FAILED (code {result.returncode})")
-            if result.stderr.strip():
-                logger.error(f"STDERR:\n{result.stderr[:2000]}")
-            if result.stdout.strip():
-                # Last 3000 chars of stdout = most recent output before crash
-                logger.error(f"STDOUT (last 3000 chars):\n{result.stdout[-3000:]}")
+            stderr_snippet = result.stderr.strip()[:1500] if result.stderr.strip() else ''
+            stdout_snippet = result.stdout.strip()[-1500:] if result.stdout.strip() else ''
+            if stderr_snippet:
+                logger.error(f"STDERR:\n{stderr_snippet}")
+            if stdout_snippet:
+                logger.error(f"STDOUT (last 1500 chars):\n{stdout_snippet}")
+            # ✅ Send error details to Telegram so user can diagnose from phone
+            error_preview = stderr_snippet or stdout_snippet or 'No output captured'
+            send_telegram(
+                f"❌ <b>SCAN ERROR (code {result.returncode})</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"<pre>{error_preview[:800]}</pre>"
+            )
     except subprocess.TimeoutExpired:
         logger.error("[Step 1/1] daily_scanner.py TIMEOUT (300s)")
+        send_telegram("⏰ <b>AUTO SCAN TIMEOUT</b>\ndaily_scanner.py a depasit 5 minute!")
     except Exception as e:
         logger.error(f"[Step 1/1] daily_scanner.py ERROR: {e}")
+        send_telegram(f"💥 <b>SCAN EXCEPTION</b>\n<code>{str(e)[:500]}</code>")
 
     # ── Finish notification ──────────────────────────────
     finish_time = get_bucharest_time().strftime('%H:%M:%S')
