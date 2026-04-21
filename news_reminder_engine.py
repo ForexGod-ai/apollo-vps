@@ -298,7 +298,13 @@ class NewsReminderEngine:
         """
         Core logic: Check all events. If any is ~15 min away → send alert.
         Called every 60 seconds by the daemon loop.
+
+        ⚠️ DISABLED: news_calendar_monitor.py already sends VOLATILITY RADAR
+        alerts at T-15min from economic_calendar.json. Running both causes
+        duplicate alerts. This engine keeps running (watchdog compatibility)
+        but skips sending to avoid spam.
         """
+        return  # Disabled — use news_calendar_monitor.py VOLATILITY RADAR only
         events = self._load_upcoming_news()
         if not events:
             return
