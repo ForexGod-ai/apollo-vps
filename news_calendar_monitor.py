@@ -186,7 +186,10 @@ class NewsCalendarMonitor:
 
         # ━━━ V12.2: SNIPER ALERT state ━━━
         # Set of (event_date_str, currency, event_name) already alerted — prevents duplicate fires
+        # V13.4: persistent on disk — survives watchdog restarts
         self._sniper_alerted: set = set()
+        self._sniper_alerted_file = Path(__file__).parent / 'data' / 'sniper_alerted.json'
+        self._load_sniper_alerted()  # restore from disk
         # War Map: ISO-date of Monday already sent (Sunday night report covers upcoming Mon-Fri)
         self._war_map_sent_week: Optional[str] = None
         self._war_map_sent_file = Path(__file__).parent / 'data' / 'war_map_last_sent.txt'
@@ -1007,6 +1010,36 @@ class NewsCalendarMonitor:
     # 📋 V12.2 WAR MAP — Sunday 23:00 EET Weekly High Impact Report
     # ═══════════════════════════════════════════════════════════════════
 
+    def _load_sniper_alerted(self):
+        """Load sent sniper alerts from disk — survives process restarts."""
+        try:
+            if self._sniper_alerted_file.exists():
+                import json as _json
+                with open(self._sniper_alerted_file, 'r') as f:
+                    data = _json.load(f)
+                # data = {"key": "YYYY-MM-DD"} — filter out entries older than today
+                today = datetime.now().strftime('%Y-%m-%d')
+                self._sniper_alerted = {
+                    k for k, d in data.items() if d >= today
+                }
+                logger.debug(f"📂 Loaded {len(self._sniper_alerted)} sniper dedup keys from disk")
+        except Exception as e:
+            logger.warning(f"⚠️ Could not load sniper_alerted.json: {e}")
+            self._sniper_alerted = set()
+
+    def _save_sniper_alerted(self):
+        """Save sent sniper alerts to disk."""
+        try:
+            self._sniper_alerted_file.parent.mkdir(parents=True, exist_ok=True)
+            import json as _json
+            today = datetime.now().strftime('%Y-%m-%d')
+            # Store as dict key→date so we can expire old entries
+            data = {k: today for k in self._sniper_alerted}
+            with open(self._sniper_alerted_file, 'w') as f:
+                _json.dump(data, f, indent=2)
+        except Exception as e:
+            logger.warning(f"⚠️ Could not save sniper_alerted.json: {e}")
+
     def _load_war_map_sent_week(self):
         """Restore last war-map ISO week string from disk (survives restarts)."""
         try:
@@ -1193,6 +1226,7 @@ class NewsCalendarMonitor:
                 if resp.status_code == 200:
                     logger.success(f"⚡ VOLATILITY RADAR sent: {e.currency} {e.event} @ {tstr} EET")
                     self._sniper_alerted.add(dedup_key)
+                    self._save_sniper_alerted()  # V13.4: persist to disk
                 else:
                     logger.warning(f"⚠️ Sniper alert HTTP {resp.status_code}: {resp.text[:80]}")
             except Exception as ex:
