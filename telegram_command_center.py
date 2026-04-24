@@ -124,12 +124,35 @@ class TelegramCommandCenter:
         self.monitoring_file = script_dir / 'monitoring_setups.json'
         self.active_positions_file = script_dir / 'active_positions.json'
         
-        self.last_update_id = 0
+        self._offset_file = script_dir / 'data' / 'tg_last_update_id.json'
+        self.last_update_id = self._load_update_id()
         
         logger.info("🎮 Telegram Command Center V3.7 initialized")
         logger.info(f"🔐 Authorized User ID: {self.authorized_user_id}")
         logger.info(f"📁 Monitoring file: {self.monitoring_file}")
     
+    def _load_update_id(self) -> int:
+        """Load last processed update_id from disk (prevents re-processing on restart)"""
+        try:
+            if self._offset_file.exists():
+                with open(self._offset_file, 'r') as f:
+                    data = json.load(f)
+                uid = int(data.get('last_update_id', 0))
+                logger.info(f"📂 Resumed from update_id={uid} (no duplicate commands on restart)")
+                return uid
+        except Exception as e:
+            logger.warning(f"Could not load update_id from disk: {e}")
+        return 0
+
+    def _save_update_id(self, update_id: int):
+        """Persist last_update_id to disk immediately"""
+        try:
+            self._offset_file.parent.mkdir(parents=True, exist_ok=True)
+            with open(self._offset_file, 'w') as f:
+                json.dump({'last_update_id': update_id}, f)
+        except Exception as e:
+            logger.warning(f"Could not save update_id: {e}")
+
     def get_updates(self):
         """Get new messages from Telegram"""
         try:
@@ -1428,6 +1451,7 @@ class TelegramCommandCenter:
                 
                 for update in updates:
                     self.last_update_id = update.get('update_id', 0)
+                    self._save_update_id(self.last_update_id)  # persist — no duplicate on restart
                     
                     message = update.get('message', {})
                     if message:
