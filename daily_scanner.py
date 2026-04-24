@@ -940,6 +940,10 @@ if __name__ == "__main__":
             else:
                 print('No active positions in cTrader.')
     except Exception as _e:
-        print(f"\n💥 FATAL ERROR in daily_scanner.py: {_e}", flush=True)
+        # ✅ V14.6: encode-safe error print (Windows cp1252 can't handle emoji)
+        try:
+            print(f"\nFATAL ERROR in daily_scanner.py: {_e}", flush=True)
+        except Exception:
+            sys.stdout.buffer.write(f"\nFATAL ERROR: {_e}\n".encode('utf-8', errors='replace'))
         traceback.print_exc(file=sys.stderr)
         sys.exit(1)

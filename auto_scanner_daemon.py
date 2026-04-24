@@ -133,6 +133,12 @@ def run_auto_scan():
     # ── Daily Scanner (SMCDetector — merge cu setups existente) ──────────────
     logger.info("[Step 1/1] Running daily_scanner.py (preserving existing setups)...")
     try:
+        # ✅ V14.6 FIX: Force UTF-8 in child process so emoji prints don't crash
+        # Windows cp1252 can't encode 📊 🔥 etc → UnicodeEncodeError in daily_scanner.py
+        child_env = os.environ.copy()
+        child_env['PYTHONIOENCODING'] = 'utf-8'
+        child_env['PYTHONUTF8'] = '1'  # Python 3.7+ UTF-8 mode
+
         result = subprocess.run(
             [python, 'daily_scanner.py'],
             cwd=str(BASE_DIR),
@@ -140,7 +146,8 @@ def run_auto_scan():
             text=True,
             encoding='utf-8',       # ✅ Windows fix: prevent cp1252 crash
             errors='replace',       # ✅ Replace undecodable chars instead of crashing
-            timeout=300             # 5 minute max
+            timeout=300,            # 5 minute max
+            env=child_env           # ✅ V14.6: UTF-8 mode for child process
         )
         if result.returncode == 0:
             logger.success("[Step 1/1] daily_scanner.py DONE")
