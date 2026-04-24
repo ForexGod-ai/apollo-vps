@@ -599,20 +599,59 @@ class TelegramCommandCenter:
                 'dashboard_server.py': '🌐 Dashboard',
             }
             
-            ps_output = ''
-            # Build running process list using psutil (cross-platform: works on Windows + Linux)
+            # V10.5 FIX: On Windows, psutil cannot read cmdline of Hidden processes
+            # (started with -WindowStyle Hidden → cmdline=[]).
+            # Use wmic on Windows — reads ALL processes regardless of visibility.
             running_procs = {}
-            try:
-                for proc in psutil.process_iter(['pid', 'cmdline', 'create_time']):
-                    try:
-                        cmdline = ' '.join(proc.info['cmdline'] or [])
+
+            def _get_running_procs_windows():
+                """wmic reads cmdlines of ALL processes including hidden ones"""
+                result = {}
+                try:
+                    import subprocess as _sp
+                    out = _sp.run(
+                        ['wmic', 'process', 'where', 'name="python.exe"',
+                         'get', 'ProcessId,CommandLine', '/format:csv'],
+                        capture_output=True, text=True, timeout=10,
+                        encoding='utf-8', errors='replace'
+                    )
+                    for line in out.stdout.splitlines():
+                        line = line.strip()
+                        if not line or line.startswith('Node'):
+                            continue
+                        parts = line.split(',', 2)
+                        if len(parts) < 3:
+                            continue
+                        cmdline_str = parts[1]
+                        try:
+                            pid = int(parts[2])
+                        except ValueError:
+                            continue
                         for proc_name in processes:
-                            if proc_name in cmdline and proc_name not in running_procs:
-                                running_procs[proc_name] = proc.info['create_time']
-                    except (psutil.NoSuchProcess, psutil.AccessDenied):
-                        pass
-            except Exception:
-                pass
+                            if proc_name in cmdline_str and proc_name not in result:
+                                try:
+                                    result[proc_name] = psutil.Process(pid).create_time()
+                                except Exception:
+                                    result[proc_name] = time.time()
+                except Exception:
+                    pass
+                return result
+
+            if os.name == 'nt':  # Windows VPS
+                running_procs = _get_running_procs_windows()
+
+            if not running_procs:  # fallback: psutil (Linux/Mac or wmic failed)
+                try:
+                    for proc in psutil.process_iter(['pid', 'cmdline', 'create_time']):
+                        try:
+                            cmdline = ' '.join(proc.info['cmdline'] or [])
+                            for proc_name in processes:
+                                if proc_name in cmdline and proc_name not in running_procs:
+                                    running_procs[proc_name] = proc.info['create_time']
+                        except (psutil.NoSuchProcess, psutil.AccessDenied):
+                            pass
+                except Exception:
+                    pass
 
             online_count = 0
             total_count = len(processes)
