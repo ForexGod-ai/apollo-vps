@@ -1469,7 +1469,9 @@ class TelegramCommandCenter:
 
 if __name__ == "__main__":
     # 🔒 PID LOCK - Prevent duplicate instances
-    lock_file = Path("process_telegram_command_center.lock")
+    # ✅ V11.6 FIX: Use absolute path — relative path breaks when watchdog starts
+    # from different CWD, causing 2 instances to see different lock files
+    lock_file = Path(__file__).parent.resolve() / "process_telegram_command_center.lock"
     if not acquire_pid_lock(lock_file):
         logger.error("🚫 DUPLICATE INSTANCE DETECTED - Exiting to prevent double notifications")
         sys.exit(1)
