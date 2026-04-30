@@ -35,6 +35,13 @@ namespace cAlgo.Robots
             Print($"🌐 HTTP Port: {HttpPort}");
             Print($"⏱️ Update interval: {UpdateInterval}s");
 
+            // ✅ V2.1 FIX: Load full trade history from server (from Jan 2026 onwards)
+            // Without this, History collection is empty on cBot start — closed trades show as 0
+            var historyFrom = new DateTime(2026, 1, 1);
+            Print($"📥 Loading trade history from {historyFrom:yyyy-MM-dd}...");
+            History.LoadMore(historyFrom);
+            Print($"✅ History loaded: {History?.Count ?? 0} closed trades");
+
             // Start HTTP server
             StartHttpServer();
 
