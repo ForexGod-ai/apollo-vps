@@ -39,7 +39,7 @@ namespace cAlgo.Robots
             // Without this, History collection is empty on cBot start — closed trades show as 0
             var historyFrom = new DateTime(2026, 1, 1);
             Print($"📥 Loading trade history from {historyFrom:yyyy-MM-dd}...");
-            History.LoadMore(historyFrom);
+            History.Load(historyFrom);
             Print($"✅ History loaded: {History?.Count ?? 0} closed trades");
 
             // Start HTTP server
