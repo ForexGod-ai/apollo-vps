@@ -1602,44 +1602,377 @@
   "custom_events_may_2026": [
     {
       "date": "2026-04-30",
-      "time": "11:00",
+      "time": "10:00",
       "currency": "GBP",
       "event": "BOE Monetary Policy Report",
       "impact": "High"
     },
     {
       "date": "2026-04-30",
-      "time": "11:00",
+      "time": "10:00",
       "currency": "GBP",
       "event": "Official Bank Rate",
+      "impact": "High",
+      "forecast": "3.75%",
+      "previous": "3.75%"
+    },
+    {
+      "date": "2026-04-30",
+      "time": "10:00",
+      "currency": "GBP",
+      "event": "MPC Official Bank Rate Votes",
+      "impact": "High",
+      "forecast": "1-0-8",
+      "previous": "0-0-9"
+    },
+    {
+      "date": "2026-04-30",
+      "time": "10:30",
+      "currency": "GBP",
+      "event": "BOE Gov Bailey Speaks",
       "impact": "High"
     },
     {
       "date": "2026-04-30",
-      "time": "13:15",
+      "time": "11:15",
       "currency": "EUR",
       "event": "Main Refinancing Rate",
-      "impact": "High"
+      "impact": "High",
+      "forecast": "2.15%",
+      "previous": "2.15%"
     },
     {
       "date": "2026-04-30",
-      "time": "12:30",
+      "time": "11:30",
       "currency": "USD",
       "event": "Advance GDP q/q",
-      "impact": "High"
+      "impact": "High",
+      "forecast": "2.2%",
+      "previous": "1.4%"
     },
     {
       "date": "2026-04-30",
-      "time": "12:30",
+      "time": "11:30",
+      "currency": "USD",
+      "event": "Core PCE Price Index m/m",
+      "impact": "High",
+      "forecast": "0.3%",
+      "previous": "0.4%"
+    },
+    {
+      "date": "2026-04-30",
+      "time": "11:30",
+      "currency": "USD",
+      "event": "Employment Cost Index q/q",
+      "impact": "High",
+      "forecast": "0.8%",
+      "previous": "0.7%"
+    },
+    {
+      "date": "2026-04-30",
+      "time": "11:30",
+      "currency": "CAD",
+      "event": "GDP m/m",
+      "impact": "High",
+      "forecast": "0.2%",
+      "previous": "0.1%"
+    },
+    {
+      "date": "2026-04-30",
+      "time": "11:45",
+      "currency": "EUR",
+      "event": "ECB Press Conference",
+      "impact": "High"
+    },
+    {
+      "date": "2026-05-05",
+      "time": "07:30",
+      "currency": "AUD",
+      "event": "Cash Rate",
+      "impact": "High",
+      "previous": "4.10%"
+    },
+    {
+      "date": "2026-05-05",
+      "time": "07:30",
+      "currency": "AUD",
+      "event": "RBA Monetary Policy Statement",
+      "impact": "High"
+    },
+    {
+      "date": "2026-05-05",
+      "time": "07:30",
+      "currency": "AUD",
+      "event": "RBA Rate Statement",
+      "impact": "High"
+    },
+    {
+      "date": "2026-05-05",
+      "time": "08:30",
+      "currency": "AUD",
+      "event": "RBA Press Conference",
+      "impact": "High"
+    },
+    {
+      "date": "2026-05-05",
+      "time": "17:00",
+      "currency": "USD",
+      "event": "ISM Services PMI",
+      "impact": "High",
+      "previous": "54.0"
+    },
+    {
+      "date": "2026-05-05",
+      "time": "17:00",
+      "currency": "USD",
+      "event": "JOLTS Job Openings",
+      "impact": "High",
+      "previous": "6.88M"
+    },
+    {
+      "date": "2026-05-06",
+      "time": "01:45",
+      "currency": "NZD",
+      "event": "Employment Change q/q",
+      "impact": "High",
+      "previous": "0.5%"
+    },
+    {
+      "date": "2026-05-06",
+      "time": "01:45",
+      "currency": "NZD",
+      "event": "Unemployment Rate",
+      "impact": "High",
+      "previous": "5.4%"
+    },
+    {
+      "date": "2026-05-08",
+      "time": "15:30",
+      "currency": "CAD",
+      "event": "Employment Change",
+      "impact": "High",
+      "previous": "14.1K"
+    },
+    {
+      "date": "2026-05-08",
+      "time": "15:30",
+      "currency": "CAD",
+      "event": "Unemployment Rate",
+      "impact": "High",
+      "previous": "6.7%"
+    },
+    {
+      "date": "2026-05-08",
+      "time": "15:30",
+      "currency": "USD",
+      "event": "Average Hourly Earnings m/m",
+      "impact": "High",
+      "previous": "0.2%"
+    },
+    {
+      "date": "2026-05-08",
+      "time": "15:30",
+      "currency": "USD",
+      "event": "Non-Farm Employment Change",
+      "impact": "High",
+      "previous": "178K"
+    },
+    {
+      "date": "2026-05-08",
+      "time": "15:30",
+      "currency": "USD",
+      "event": "Unemployment Rate",
+      "impact": "High",
+      "previous": "4.3%"
+    },
+    {
+      "date": "2026-05-11",
+      "time": "00:00",
+      "currency": "USD",
+      "event": "Fed Chair Nomination Vote",
+      "impact": "High",
+      "previous": "Pass"
+    },
+    {
+      "date": "2026-05-12",
+      "time": "15:30",
+      "currency": "USD",
+      "event": "Core CPI m/m",
+      "impact": "High"
+    },
+    {
+      "date": "2026-05-12",
+      "time": "15:30",
+      "currency": "USD",
+      "event": "CPI m/m",
+      "impact": "High"
+    },
+    {
+      "date": "2026-05-12",
+      "time": "15:30",
+      "currency": "USD",
+      "event": "CPI y/y",
+      "impact": "High"
+    },
+    {
+      "date": "2026-05-13",
+      "time": "15:30",
+      "currency": "USD",
+      "event": "Core PPI m/m",
+      "impact": "High"
+    },
+    {
+      "date": "2026-05-13",
+      "time": "15:30",
+      "currency": "USD",
+      "event": "PPI m/m",
+      "impact": "High"
+    },
+    {
+      "date": "2026-05-14",
+      "time": "09:00",
+      "currency": "GBP",
+      "event": "GDP m/m",
+      "impact": "High"
+    },
+    {
+      "date": "2026-05-14",
+      "time": "15:30",
+      "currency": "USD",
+      "event": "Core Retail Sales m/m",
+      "impact": "High"
+    },
+    {
+      "date": "2026-05-14",
+      "time": "15:30",
+      "currency": "USD",
+      "event": "Retail Sales m/m",
+      "impact": "High"
+    },
+    {
+      "date": "2026-05-19",
+      "time": "09:00",
+      "currency": "GBP",
+      "event": "Claimant Count Change",
+      "impact": "High"
+    },
+    {
+      "date": "2026-05-19",
+      "time": "15:30",
+      "currency": "CAD",
+      "event": "CPI m/m",
+      "impact": "High"
+    },
+    {
+      "date": "2026-05-20",
+      "time": "09:00",
+      "currency": "GBP",
+      "event": "CPI y/y",
+      "impact": "High"
+    },
+    {
+      "date": "2026-05-20",
+      "time": "21:00",
+      "currency": "USD",
+      "event": "FOMC Meeting Minutes",
+      "impact": "High"
+    },
+    {
+      "date": "2026-05-21",
+      "time": "04:30",
+      "currency": "AUD",
+      "event": "Employment Change",
+      "impact": "High"
+    },
+    {
+      "date": "2026-05-21",
+      "time": "04:30",
+      "currency": "AUD",
+      "event": "Unemployment Rate",
+      "impact": "High"
+    },
+    {
+      "date": "2026-05-21",
+      "time": "11:30",
+      "currency": "GBP",
+      "event": "Flash Manufacturing PMI",
+      "impact": "High"
+    },
+    {
+      "date": "2026-05-21",
+      "time": "11:30",
+      "currency": "GBP",
+      "event": "Flash Services PMI",
+      "impact": "High"
+    },
+    {
+      "date": "2026-05-27",
+      "time": "04:30",
+      "currency": "AUD",
+      "event": "CPI m/m",
+      "impact": "High"
+    },
+    {
+      "date": "2026-05-27",
+      "time": "04:30",
+      "currency": "AUD",
+      "event": "CPI y/y",
+      "impact": "High"
+    },
+    {
+      "date": "2026-05-27",
+      "time": "04:30",
+      "currency": "AUD",
+      "event": "Trimmed Mean CPI m/m",
+      "impact": "High"
+    },
+    {
+      "date": "2026-05-27",
+      "time": "05:00",
+      "currency": "NZD",
+      "event": "Official Cash Rate",
+      "impact": "High"
+    },
+    {
+      "date": "2026-05-27",
+      "time": "05:00",
+      "currency": "NZD",
+      "event": "RBNZ Monetary Policy Statement",
+      "impact": "High"
+    },
+    {
+      "date": "2026-05-27",
+      "time": "05:00",
+      "currency": "NZD",
+      "event": "RBNZ Rate Statement",
+      "impact": "High"
+    },
+    {
+      "date": "2026-05-27",
+      "time": "06:00",
+      "currency": "NZD",
+      "event": "RBNZ Press Conference",
+      "impact": "High"
+    },
+    {
+      "date": "2026-05-28",
+      "time": "15:30",
       "currency": "USD",
       "event": "Core PCE Price Index m/m",
       "impact": "High"
     },
     {
-      "date": "2026-04-30",
-      "time": "13:45",
-      "currency": "EUR",
-      "event": "ECB Press Conference",
+      "date": "2026-05-28",
+      "time": "15:30",
+      "currency": "USD",
+      "event": "Prelim GDP q/q",
+      "impact": "High"
+    },
+    {
+      "date": "2026-05-29",
+      "time": "15:30",
+      "currency": "CAD",
+      "event": "GDP m/m",
       "impact": "High"
     }
   ]
