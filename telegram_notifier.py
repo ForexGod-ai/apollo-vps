@@ -790,23 +790,23 @@ class TelegramNotifier:
         report = (
             f"🏛 ГЛИТЧ ИН МАТРИКС | MARKET_REPORT\n"
             f"{sep}\n"
+            f"\n"
             f"✅ SCANARE COMPLETĂ\n"
+            f"\n"
             f"📈 CONTEXT PORTOFOLIU\n"
             f"• Perechi analizate: {total_pairs}\n"
             f"• Monitorizare activă: {monitoring_count}\n"
-            f"• Poziții deschise: {open_positions}\n"
-            f"• Setup-uri noi: {new_setups_found} (noi: {truly_new} | re-detectate: {re_detected})\n"
         )
 
         if setup_symbols:
-            report += f"{sep}\n"
+            report += "\n"
             report += "🎯 SETUP-URI DETECTATE (Daily Bias)\n"
             for sym_info in setup_symbols:
                 symbol = sym_info.get('symbol', '?')
                 direction = str(sym_info.get('direction', '?')).lower()
                 raw_strat = str(sym_info.get('strategy', 'UNKNOWN')).upper()
-                if raw_strat == 'CONTINUATION':
-                    raw_strat = 'CONTINUITY'
+                if raw_strat == 'CONTINUITY':
+                    raw_strat = 'CONTINUATION'
                 h4_locked = sym_info.get('h4_structure_locked', sym_info.get('h4_bias_locked', True))
                 if not h4_locked:
                     dot = "🔵"
@@ -820,9 +820,7 @@ class TelegramNotifier:
                 report += f"{dot} {symbol} ➔ {raw_strat}{status_suffix}\n"
 
         if deep_sleep_active and deep_sleep_until:
-            report += f"{sep}\n😴 Status: DEEP SLEEP ACTIVE\n• Wake: {deep_sleep_until}"
-        else:
-            report += f"{sep}\n⚡ Status: ACTIV — Monitorizare live"
+            report += f"\n😴 Status: DEEP SLEEP ACTIVE\n• Wake: {deep_sleep_until}"
 
         # Retry logic — if Telegram rejects (flood), wait and retry once
         success = self.send_message(report.strip(), parse_mode="HTML")
