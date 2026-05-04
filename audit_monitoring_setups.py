@@ -283,9 +283,12 @@ class MonitoringRadar:
                 direction = "SHORT"
         
         # V8.2: Extract strategy type
+        # Fix #10: Normalizare 'CONTINUATION' → 'CONTINUITY' (detectorul salvează 'continuation')
         strategy_type = setup_data.get('strategy_type', 'REVERSAL').upper()
-        if strategy_type not in ['REVERSAL', 'CONTINUITY']:
-            strategy_type = 'REVERSAL'  # Default fallback
+        if strategy_type in ['CONTINUATION', 'CONTINUITY']:
+            strategy_type = 'CONTINUITY'
+        elif strategy_type != 'REVERSAL':
+            strategy_type = 'REVERSAL'  # Default fallback pentru valori necunoscute
         
         # Get FVG zone values (with fallback to entry_price)
         fvg_top = setup_data.get('fvg_top', entry_price)

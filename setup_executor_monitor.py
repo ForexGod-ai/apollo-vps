@@ -39,12 +39,9 @@ import os
 import psutil
 import pandas as pd
 
-# ━━━ V8.0 VPS-READY: Force UTC timezone + persistent log file ━━━
-os.environ['TZ'] = 'UTC'
-try:
-    time.tzset()  # Apply TZ change (Unix only)
-except AttributeError:
-    pass  # Windows doesn't have tzset
+# ━━━ Fix #5a: UTC via datetime.now(timezone.utc) — os.environ TZ eliminat ━━━
+# Toate timestamp-urile folosesc datetime.now(timezone.utc) explicit.
+# os.environ['TZ'] + time.tzset() eliminat: afecta procesul global și nu era portabil.
 
 _LOG_DIR = Path(__file__).parent / "logs"
 _LOG_DIR.mkdir(exist_ok=True)
@@ -247,7 +244,7 @@ class SetupExecutorMonitor:
                 # V9.1 R1 FIX: Cleanup entries older than 30 days
                 executed_keys = set(data.get('executed_keys', []))
                 timestamps = data.get('timestamps', {})
-                cutoff = (datetime.now() - timedelta(days=30)).isoformat()
+                cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
                 
                 if timestamps:
                     old_count = len(executed_keys)
@@ -267,8 +264,8 @@ class SetupExecutorMonitor:
                             json.dump({
                                 'executed_keys': list(executed_keys),
                                 'timestamps': timestamps,
-                                'last_update': datetime.now().isoformat(),
-                                'last_cleanup': datetime.now().isoformat()
+                                'last_update': datetime.now(timezone.utc).isoformat(),
+                                'last_cleanup': datetime.now(timezone.utc).isoformat()
                             }, f, indent=2)
                         logger.success(f"🧹 R1 CLEANUP: Removed {len(keys_to_remove)} expired entries from .executed_setups.json ({old_count}→{len(executed_keys)})")
                 
@@ -292,13 +289,13 @@ class SetupExecutorMonitor:
                     pass
             
             # Add timestamp for new entry
-            existing_timestamps[setup_key] = datetime.now().isoformat()
+            existing_timestamps[setup_key] = datetime.now(timezone.utc).isoformat()
             
             with open(self.executed_file, 'w', encoding='utf-8') as f:
                 json.dump({
                     'executed_keys': list(self.executed_setups),
                     'timestamps': existing_timestamps,
-                    'last_update': datetime.now().isoformat()
+                    'last_update': datetime.now(timezone.utc).isoformat()
                 }, f, indent=2)
         except Exception as e:
             logger.error(f"Could not save executed setup: {e}")
@@ -872,16 +869,21 @@ class SetupExecutorMonitor:
     
     def _check_pullback_entry(self, setup: dict, df_h1, symbol: str) -> dict:
         """
-        V10.4 HYBRID ENTRY: Pullback OR Continuation with D1 Bias + 4H Sync
-        
+        Fix #4 + V14.2 ARHITECTURA SMC STRICTĂ:
+          Daily FVG  = Zonă de Alertă (nu se execută nimic doar pentru că suntem aici)
+          4H CHoCH   = Confirmare obligatorie (Body Close în direcția Daily bias)
+          Entry      = DOAR pe retragerea 50% Fibonacci din impulsul 4H CHoCH
+                       sau atingerea noului 4H FVG generat de CHoCH
+          SL         = Ultimul Swing High/Low de pe 4H precede CHoCH-ul (INTERZIS Daily swing)
+          TP         = Extras din Daily (Swing Point opus — stabilit de scanner)
+
         Flow:
-        1. V10.4: Verify 4H Structure Lock (body closure CHoCH confirms D1 bias)
-        2. Determine entry FVG zone (prefer 4H sync FVG, fallback to Daily FVG)
-        3. Detect 1H CHoCH/BOS in entry FVG zone
-        4. Calculate Fibonacci 50% from CHoCH swing
-        5. If pullback to Fibo 50% → EXECUTE_ENTRY1 (optimal entry)
-        6. If timeout (6h) → Check continuation momentum
-        7. If timeout (12h) → Force entry or skip based on distance
+        1. V14.2: 4H CHoCH Body Close confirmat în direcția Daily → h4_structure_locked=True
+        2. Fix #4: OBLIGATORIU 4H sync FVG pentru zona de entry — Daily FVG BLOCAT ca fallback
+        3. Fix #2: Detect 1H CHoCH (BOS exclus) în 4H FVG zone
+        4. Fix #1: TP-reached check înainte de pullback step
+        5. Pullback la Fibo 50% din swing 4H → EXECUTE
+        6. Timeout 12H fără pullback → EXPIRED (Fix #1)
         """
         # V4.0: Import datetime at function start to avoid UnboundLocalError
         from datetime import datetime
@@ -900,84 +902,57 @@ class SetupExecutorMonitor:
             fvg_bottom = h4_sync_bottom
             logger.debug(f"   🎯 {symbol}: Using 4H SYNC FVG for entry: {fvg_bottom:.5f} - {fvg_top:.5f}")
         else:
-            fvg_top = setup.get('fvg_zone_top', setup.get('fvg_top', 0))
-            fvg_bottom = setup.get('fvg_zone_bottom', setup.get('fvg_bottom', 0))
-            logger.debug(f"   📍 {symbol}: Using Daily FVG for entry (no 4H sync FVG): {fvg_bottom:.5f} - {fvg_top:.5f}")
-        # ━━━ END V10.4 FVG ZONE ━━━
+            # Fix #4: Daily FVG este DOAR Zonă de Alertă — NU zonă de execuție.
+            # BLOCĂM fallback-ul la Daily FVG. Fără 4H sync FVG confirmat,
+            # așteptăm ca V14.2 să detecteze CHoCH 4H și să genereze FVG-ul precis.
+            logger.info(
+                f"   ⏳ [Fix #4 NO-DAILY-FALLBACK] {symbol}: Lipsă 4H sync FVG — "
+                f"Daily FVG blocat ca zonă de entry. Așteptăm CHoCH 4H să genereze FVG precis."
+            )
+            return {
+                'action': 'KEEP_MONITORING',
+                'reason': 'Fix#4: Daily FVG = alertă only. Așteptăm 4H CHoCH + 4H sync FVG pentru entry precis.'
+            }
+        # ━━━ END FVG ZONE (Fix #4) ━━━
         
-        # ━━━ V10.4: 4H STRUCTURE LOCK (Body Closure Confirmation) ━━━
-        # "Generalii (D1+4H) dau ordinul de atac — 1H doar execută!"
-        # D1 sets bias → 4H CHoCH with body closure confirms → then 1H can execute.
-        # EXCEPȚIE V10.9: CONTINUATION setups nu necesită CHoCH 4H!
-        # → CONTINUATION = structura 4H e deja confirmată prin BOS-uri active.
-        # → A aștepta CHoCH pe CONTINUATION = a aștepta inversarea trade-ului!
-        # → CONTINUATION: lock imediat, execuție 1H normală.
+        # ━━━ V14.2 4H ALIGNMENT LOCK — Fix #12 (Daily Bias → 4H CHoCH → Execute) ━━━
+        # ARHITECTURA CORECTĂ Multi-Timeframe SMC:
+        #   DAILY  = Creierul  → stabilește BIAS (REVERSAL/CONTINUITY) + POI (FVG/OB)
+        #   4H     = Trăgaciul → confirmă că pullback-ul s-a încheiat (CHoCH aliniat cu Daily)
+        #   1H     = Sniper    → execută pe retragerea 50% Fibonacci după CHoCH 4H
+        #
+        # REGULA DE FIER (Fix #12): AMBELE strategii (reversal + continuation) cer CHoCH 4H.
+        # V10.9 CONTINUATION BYPASS ELIMINAT — un BOS pe 4H ≠ aliniere structurală.
+        # CONTINUITY: Daily FVG atins → așteptăm CHoCH 4H în direcția Daily → execute
+        # REVERSAL:   Daily POI atins → așteptăm CHoCH 4H în direcția Daily → execute
         h4_locked = setup.get('h4_structure_locked', False)
-        # V16.1 FIX: strip _counter_w1 suffix so continuation bypass works correctly
-        # daily_scanner may tag: "continuation_counter_w1" — extract base type only
         strategy_type_raw = setup.get('strategy_type', 'continuation')
         strategy_type = 'continuation' if strategy_type_raw.startswith('continuation') else 'reversal'
-        
-        # ✅ V10.9 CONTINUATION BYPASS: 4H lock imediat pentru setup-uri de continuitate
-        # ━━━ V11.9 GUARD: verificăm că direcția trade-ului e aliniată cu d1_bias_direction ━━━
-        # ━━━ V16.0 FVG PROXIMITY GUARD: bypass BLOCAT dacă prețul NU e aproape de FVG zone ━━━
-        # BUG FIX (18 Apr 2026): GBPJPY executat la 213 cu FVG la 211.8-212 prin momentum fallback
-        if not h4_locked and strategy_type == 'continuation':
-            d1_bias = setup.get('d1_bias_direction', '').lower()  # 'bullish' sau 'bearish'
-            trade_dir = direction  # 'buy' sau 'sell'
-            # Mapăm bias → direcție așteptată
-            expected_dir = 'buy' if d1_bias == 'bullish' else ('sell' if d1_bias == 'bearish' else trade_dir)
 
-            # V16.0 FIX: current_price must be fetched here before proximity check
-            current_price = df_h1.iloc[-1]['close'] if df_h1 is not None and not df_h1.empty else 0.0
-
-            # V16.0 FVG PROXIMITY: prețul trebuie să fie în FVG sau max 20 pips outside
-            if 'BTC' in symbol.upper() or 'ETH' in symbol.upper():
-                fvg_proximity_ok = (current_price <= fvg_top + 500) if direction == 'buy' else (current_price >= fvg_bottom - 500)
-            elif 'JPY' in symbol.upper():
-                fvg_proximity_ok = (current_price <= fvg_top + 0.20) if direction == 'buy' else (current_price >= fvg_bottom - 0.20)
-            else:
-                fvg_proximity_ok = (current_price <= fvg_top + 0.0020) if direction == 'buy' else (current_price >= fvg_bottom - 0.0020)
-
-            if d1_bias and trade_dir != expected_dir:
-                # Direcție trade != bias D1 → setup suspect (posibil BOS din pullback scăpat)
-                # NU facem bypass — cerem confirmare 4H CHoCH ca safety net
-                logger.warning(f"   ⚠️ V11.9 BYPASS BLOCAT: {symbol} trade={trade_dir.upper()} opus d1_bias={d1_bias.upper()} — cerem confirmare 4H CHoCH")
-            elif not fvg_proximity_ok:
-                # V16.0: Preț prea departe de FVG — NU facem bypass, cerem 4H CHoCH real
-                logger.warning(f"   ⚠️ V16.0 BYPASS BLOCAT: {symbol} pret {current_price:.5f} prea departe de FVG {fvg_bottom:.5f}-{fvg_top:.5f} — cerem confirmare 4H CHoCH")
-            else:
-                setup['h4_structure_locked'] = True
-                h4_locked = True
-                logger.info(f"   ✅ V10.9 CONTINUATION BYPASS: {symbol} — structura 4H confirmată prin BOS activ (no CHoCH needed)")
-        
         if not h4_locked:
             try:
                 df_4h_lock = self._get_cached_data(symbol, "H4", 225)
                 if df_4h_lock is not None and not df_4h_lock.empty:
                     expected_direction = 'bullish' if direction == 'buy' else 'bearish'
-                    
-                    # ✅ V10.6 FUNCȚIE UNIFICATĂ: get_4h_body_close_confirmation
-                    # Înlocuiește re-implementarea proprie (V10.5) — acum ACELAȘI creier ca scanner-ul.
-                    # Zero divergență de interpretare între daily_scanner și setup_executor_monitor.
-                    # NOTĂ: Blocul acesta rămâne activ DOAR pentru REVERSAL setups.
+
                     confirmed_4h, valid_4h_lock, lock_reason = get_4h_body_close_confirmation(
                         df_4h=df_4h_lock,
                         daily_trend=expected_direction,
                         max_age_candles=48,
-                        debug=False
+                        debug=False,
+                        detector=self.smc_detector  # Fix #5c: reutilizăm instanța existentă
                     )
-                    
+
                     if confirmed_4h and valid_4h_lock:
-                        # ✅ 4H CHoCH cu body closure confirmat — lock it
+                        # ✅ 4H CHoCH cu body closure în direcția Daily bias — aliniere confirmată
                         setup['h4_structure_locked'] = True
                         setup['h4_lock_direction'] = valid_4h_lock.direction
                         setup['h4_lock_price'] = valid_4h_lock.break_price
-                        setup['h4_lock_time'] = datetime.now().isoformat()
+                        setup['h4_lock_time'] = datetime.now(timezone.utc).isoformat()
                         h4_locked = True
-                        logger.success(f"   🔒 V10.6 4H SYNC LOCK: {symbol} {valid_4h_lock.direction.upper()} CHoCH @ {valid_4h_lock.break_price:.5f} — {lock_reason}")
+                        logger.success(f"   🔒 [V14.2 4H ALINIAT] {symbol}: {valid_4h_lock.direction.upper()} CHoCH @ {valid_4h_lock.break_price:.5f} | D1={expected_direction.upper()} ✅ | {lock_reason}")
 
-                        # V15.0 EVENT ALERT: 4H CHoCH confirmat — trimite 4H + W1 charts
+                        # Alert Telegram la aliniere 4H
                         if not setup.get('alert_4h_sent', False):
                             try:
                                 df_w1_alert = self._get_cached_data(symbol, "W1", 300)
@@ -992,13 +967,12 @@ class SetupExecutorMonitor:
                                     'w1_bias': setup.get('w1_bias', 'NEUTRAL'),
                                 }
                                 self.telegram.send_4h_choch_alert(setup_data_alert, df_4h_lock, df_w1_alert)
-                                # V16.1 FIX: Mark via setup dict directly (setups[i] not in scope here)
                                 setup['alert_4h_sent'] = True
-                                logger.info(f"   📱 V15.0 4H CHoCH Alert sent: {symbol}")
+                                logger.info(f"   📱 [V14.2] 4H CHoCH Alert trimis: {symbol}")
                             except Exception as alert_err:
-                                logger.warning(f"   ⚠️ V15.0 4H alert error for {symbol}: {alert_err}")
+                                logger.warning(f"   ⚠️ 4H alert error for {symbol}: {alert_err}")
 
-                        # V10.4: Detectăm 4H sync FVG din mișcarea de confirmare (entry zone)
+                        # Detectăm 4H sync FVG din impulsul CHoCH (zona entry precisă)
                         if not setup.get('h4_sync_fvg_top'):
                             try:
                                 current_price_4h = df_4h_lock['close'].iloc[-1]
@@ -1008,21 +982,20 @@ class SetupExecutorMonitor:
                                     setup['h4_sync_fvg_bottom'] = float(sync_fvg.bottom)
                                     fvg_top = float(sync_fvg.top)
                                     fvg_bottom = float(sync_fvg.bottom)
-                                    logger.success(f"   🎯 V10.6 4H SYNC FVG: {sync_fvg.bottom:.5f} - {sync_fvg.top:.5f} (entry zone)")
+                                    logger.success(f"   🎯 [V14.2 4H FVG SYNC] {sync_fvg.bottom:.5f} - {sync_fvg.top:.5f} (zona entry precisă)")
                                 else:
-                                    logger.info(f"   ⚠️ V10.6: No 4H sync FVG after CHoCH — using Daily FVG for entry")
+                                    logger.info(f"   ⚠️ [V14.2] No 4H sync FVG după CHoCH — Daily FVG rămâne zona de entry")
                             except Exception as fvg_err:
-                                logger.warning(f"   ⚠️ V10.6 sync FVG detection error: {fvg_err}")
+                                logger.warning(f"   ⚠️ [V14.2] 4H sync FVG error: {fvg_err}")
                     else:
-                        d1_bias = setup.get('strategy_type', 'unknown').upper()
-                        logger.info(f"   ⏳ V10.6 4H UNIFIED: {symbol} D1_{d1_bias} — {lock_reason}")
+                        logger.info(f"   ⏳ [V14.2 AȘTEPTĂM 4H CHoCH] {symbol} | D1={expected_direction.upper()} | {lock_reason}")
                         return {
                             'action': 'KEEP_MONITORING',
-                            'reason': f'V10.6 4H UNIFIED: {lock_reason}'
+                            'reason': f'[V14.2] Așteptăm CHoCH 4H aliniat cu Daily bias ({expected_direction.upper()}): {lock_reason}'
                         }
             except Exception as e:
-                logger.warning(f"   ⚠️ V10.6 4H check failed for {symbol}: {e}")
-        # ━━━ END V10.6 4H STRUCTURE LOCK ━━━
+                logger.warning(f"   ⚠️ [V14.2] 4H check eșuat pentru {symbol}: {e}")
+        # ━━━ END V14.2 4H ALIGNMENT LOCK ━━━
         
         # Check if CHoCH already detected
         choch_detected = setup.get('choch_1h_detected', False)
@@ -1030,18 +1003,20 @@ class SetupExecutorMonitor:
         fibo_data = setup.get('fibo_data')
         
         if not choch_detected:
-            # ========== STEP 1: DETECT 1H CHoCH OR SWING BREAK ==========
-            # For REVERSAL setups after Daily CHoCH, 1H may show BOS (continuation) not CHoCH
-            # We accept ANY swing break in trade direction within FVG zone
+            # ========== STEP 1: DETECT 1H CHoCH (Fix #2 — BOS exclus) ==========
+            # REGULA SMC: Doar CHoCH pe 1H poate declanșa execuția.
+            # Un BOS = continuarea trendului local (în pullback = contra Daily bias).
+            # Un CHoCH = schimbare de caracter = pullback-ul s-a terminat, 1H se aliniază cu Daily.
+            # BOS-urile sunt excluse complet din procesul de decizie pentru Step 1.
             chochs, bos_list = self.smc_detector.detect_choch_and_bos(df_h1)
-            
-            # Combine CHoCH and BOS for unified structure break detection
-            all_breaks = chochs + bos_list
-            
+
+            # Fix #2: all_breaks = EXCLUSIV CHoCH (bos_list eliminat)
+            all_breaks = chochs  # ← BOS exclus — nu declanșează execuție
+
             if not all_breaks:
                 return {
                     'action': 'KEEP_MONITORING',
-                    'reason': 'No 1H structure break detected yet'
+                    'reason': 'No 1H CHoCH detected yet (BOS excluded — awaiting trend reversal confirmation)'
                 }
             
             # Find most recent break matching direction and in FVG zone
@@ -1076,14 +1051,14 @@ class SetupExecutorMonitor:
                 
                 if in_fvg and direction_match:
                     matching_break = break_obj
-                    break_type = "CHoCH" if break_obj in chochs else "BOS"
-                    logger.info(f"   ✅ {symbol}: {break_type} CONFIRMED with body closure at {break_price:.5f} (Close: {close_price:.5f})")
+                    break_type = "CHoCH"  # Fix #2: all_breaks conține doar CHoCH
+                    logger.info(f"   ✅ {symbol}: CHoCH CONFIRMED with body closure at {break_price:.5f} (Close: {close_price:.5f})")
                     break
             
             if not matching_break:
                 return {
                     'action': 'KEEP_MONITORING',
-                    'reason': f'No {direction} CHoCH/BOS in FVG zone yet'
+                    'reason': f'No {direction} CHoCH in FVG zone yet (awaiting 1H trend flip)'
                 }
             
             # Structure break found! Calculate Fibonacci (V4.0 Multi-Timeframe)
@@ -1128,7 +1103,7 @@ class SetupExecutorMonitor:
                 elif isinstance(break_timestamp, str) and break_timestamp.startswith('20'):
                     setup['choch_1h_timestamp'] = break_timestamp
                 else:
-                    setup['choch_1h_timestamp'] = datetime.now().isoformat()
+                    setup['choch_1h_timestamp'] = datetime.now(timezone.utc).isoformat()
                 setup['fibo_data'] = fibo_data
                 setup['pullback_status'] = 'WAITING_REAL_PULLBACK'
                 return {'action': 'KEEP_MONITORING', 'reason': f'⚠️ Micro-swing {swing_range_pips:.1f}p < {min_swing_pips}p min — waiting FVG daily pullback'}
@@ -1139,7 +1114,7 @@ class SetupExecutorMonitor:
                 setup['choch_1h_timestamp'] = break_timestamp
             else:
                 # Fallback: use current time if timestamp invalid
-                setup['choch_1h_timestamp'] = datetime.now().isoformat()
+                setup['choch_1h_timestamp'] = datetime.now(timezone.utc).isoformat()
                 logger.warning(f"⚠️  {symbol}: Invalid break_timestamp type ({type(break_timestamp)}), using current time")
             setup['choch_1h_detected'] = True
             setup['fibo_data'] = fibo_data
@@ -1151,7 +1126,26 @@ class SetupExecutorMonitor:
         
         # ========== STEP 2: VALIDATE PULLBACK TO FIBONACCI 50% ==========
         if choch_detected and fibo_data:
-            # V4.3 FIX-007: Use HIGH for SELL pullback detection, LOW for BUY
+            # ── Fix #1: TP-REACHED GUARD — prețul a atins TP fără retragere → EXPIRED ──
+            # Dacă mercele a mers direct la TP înainte să facă pullback la Fibo 50%,
+            # setup-ul devine invalid (nu mai alerpăm după preț).
+            take_profit_val = setup.get('take_profit', 0)
+            current_price_tp_check = df_h1.iloc[-1]['close']
+            if take_profit_val and take_profit_val != 0:
+                tp_reached = (
+                    (direction == 'buy'  and current_price_tp_check >= take_profit_val) or
+                    (direction == 'sell' and current_price_tp_check <= take_profit_val)
+                )
+                if tp_reached:
+                    logger.warning(
+                        f"⏰ [Fix #1 TP-REACHED] {symbol}: Prețul {current_price_tp_check:.5f} a atins/depăşit TP "
+                        f"{take_profit_val:.5f} fără pullback — Setup → EXPIRED."
+                    )
+                    return {
+                        'action': 'EXPIRE_SETUP',
+                        'reason': f'Fix#1: Preț a atins TP {take_profit_val:.5f} înainte de retragere la Fibo 50% — slot eliberat'
+                    }
+            # ── END Fix #1 TP-REACHED GUARD ─────────────────────────────────
             # SELL waits for pullback UP → check if HIGH touched Fibo 50%
             # BUY waits for pullback DOWN → check if LOW touched Fibo 50%
             
@@ -1221,19 +1215,49 @@ class SetupExecutorMonitor:
                         break
             
             if pullback_detected:
-                # Calculate SL based on swing
-                # V4.4 FIX-014: Crypto SL buffer (use percentage instead of pips)
-                if 'BTC' in symbol.upper() or 'ETH' in symbol.upper() or 'CRYPTO' in symbol.upper():
-                    sl_buffer = fibo_50 * 0.005  # 0.5% buffer for crypto (~$340 for BTC at $68k)
-                elif 'JPY' in symbol.upper():
-                    sl_buffer = 0.01 * self.pullback_config['sl_buffer_pips']
-                else:
-                    sl_buffer = 0.0001 * self.pullback_config['sl_buffer_pips']
-                
-                if direction == 'buy':
-                    sl_price = fibo_data['swing_low'] - sl_buffer
-                else:
-                    sl_price = fibo_data['swing_high'] + sl_buffer
+                # Fix #4: SL STRUCTURAL PE 4H — interzis să preia swing-uri din Daily
+                # Se extrage ultimul Swing High/Low de pe 4H care a precedat CHoCH-ul
+                sl_price = None
+                try:
+                    df_4h_sl = self._get_cached_data(symbol, "H4", 100)
+                    if df_4h_sl is not None and not df_4h_sl.empty:
+                        if direction == 'buy':
+                            # BUY: SL sub ultimul Swing Low 4H anterior CHoCH
+                            swing_lows_4h = self.smc_detector.detect_swing_lows(df_4h_sl)
+                            if swing_lows_4h:
+                                last_4h_low = swing_lows_4h[-1]
+                                sl_buffer_4h = 0.01 * self.pullback_config['sl_buffer_pips'] if 'JPY' in symbol.upper() else 0.0001 * self.pullback_config['sl_buffer_pips']
+                                if 'BTC' in symbol.upper() or 'ETH' in symbol.upper():
+                                    sl_buffer_4h = fibo_50 * 0.005
+                                sl_price = last_4h_low.price - sl_buffer_4h
+                                logger.info(f"   🛡️ [Fix #4 SL 4H] {symbol}: SL @ 4H swing low {last_4h_low.price:.5f} - buffer = {sl_price:.5f}")
+                        else:
+                            # SELL: SL deasupra ultimului Swing High 4H anterior CHoCH
+                            swing_highs_4h = self.smc_detector.detect_swing_highs(df_4h_sl)
+                            if swing_highs_4h:
+                                last_4h_high = swing_highs_4h[-1]
+                                sl_buffer_4h = 0.01 * self.pullback_config['sl_buffer_pips'] if 'JPY' in symbol.upper() else 0.0001 * self.pullback_config['sl_buffer_pips']
+                                if 'BTC' in symbol.upper() or 'ETH' in symbol.upper():
+                                    sl_buffer_4h = fibo_50 * 0.005
+                                sl_price = last_4h_high.price + sl_buffer_4h
+                                logger.info(f"   🛡️ [Fix #4 SL 4H] {symbol}: SL @ 4H swing high {last_4h_high.price:.5f} + buffer = {sl_price:.5f}")
+                except Exception as sl_err:
+                    logger.warning(f"   ⚠️ [Fix #4 SL 4H] {symbol}: Eroare la extragerea swing 4H: {sl_err}")
+
+                if sl_price is None:
+                    # Fallback sigur: folosim fibo_data swing (din 1H/4H CHoCH swing)
+                    # NOTĂ: Acesta nu este swing Daily — fibo_data provine din CHoCH detectat pe 1H/4H
+                    logger.warning(f"   ⚠️ [Fix #4 SL FALLBACK] {symbol}: Fără swing 4H valid — folosim fibo_data swing.")
+                    if direction == 'buy':
+                        sl_buffer_fb = 0.01 * self.pullback_config['sl_buffer_pips'] if 'JPY' in symbol.upper() else 0.0001 * self.pullback_config['sl_buffer_pips']
+                        if 'BTC' in symbol.upper() or 'ETH' in symbol.upper():
+                            sl_buffer_fb = fibo_50 * 0.005
+                        sl_price = fibo_data['swing_low'] - sl_buffer_fb
+                    else:
+                        sl_buffer_fb = 0.01 * self.pullback_config['sl_buffer_pips'] if 'JPY' in symbol.upper() else 0.0001 * self.pullback_config['sl_buffer_pips']
+                        if 'BTC' in symbol.upper() or 'ETH' in symbol.upper():
+                            sl_buffer_fb = fibo_50 * 0.005
+                        sl_price = fibo_data['swing_high'] + sl_buffer_fb
                 
                 # V4.3 FIX-008: Use Fibo 50% as entry price (not HIGH/LOW which might be wick)
                 entry_execution_price = fibo_50
@@ -1256,7 +1280,7 @@ class SetupExecutorMonitor:
                     'action': 'EXECUTE_ENTRY1',
                     'entry_price': entry_execution_price,
                     'stop_loss': sl_price,
-                    'choch_timestamp': (choch_timestamp if isinstance(choch_timestamp, str) else choch_timestamp.isoformat()) if choch_timestamp else datetime.now().isoformat(),
+                    'choch_timestamp': (choch_timestamp if isinstance(choch_timestamp, str) else choch_timestamp.isoformat()) if choch_timestamp else datetime.now(timezone.utc).isoformat(),
                     'fibo_data': fibo_data,
                     'reason': f'🔥 INSTANT: CHoCH + Pullback confirmed (diff: {pips_display:.1f} pips)'
                 }
@@ -1270,21 +1294,21 @@ class SetupExecutorMonitor:
                 if choch_timestamp is None or (isinstance(choch_timestamp, str) and not choch_timestamp.startswith('20')):
                     # Fallback: use setup_time as reference (less accurate but safe)
                     # Handles: None, numeric strings like "217", or invalid formats
-                    setup_time_str = setup.get('setup_time', datetime.now().isoformat())
+                    setup_time_str = setup.get('setup_time', datetime.now(timezone.utc).isoformat())
                     reference_time = datetime.fromisoformat(setup_time_str) if isinstance(setup_time_str, str) else setup_time_str
-                    hours_elapsed = (datetime.now() - reference_time).total_seconds() / 3600
+                    hours_elapsed = (datetime.now(timezone.utc) - reference_time).total_seconds() / 3600
                     logger.warning(f"⚠️  {symbol}: CHoCH timestamp invalid/missing (value: {choch_timestamp}) - using setup_time as reference ({hours_elapsed:.1f}H elapsed)")
                 else:
                     # Normal flow: use CHoCH detection time
                     try:
                         choch_time = datetime.fromisoformat(choch_timestamp) if isinstance(choch_timestamp, str) else choch_timestamp
-                        hours_elapsed = (datetime.now() - choch_time).total_seconds() / 3600
+                        hours_elapsed = (datetime.now(timezone.utc) - choch_time).total_seconds() / 3600
                     except (ValueError, TypeError) as e:
                         # Extra safety: if fromisoformat fails, use setup_time
                         logger.error(f"❌ {symbol}: Failed to parse CHoCH timestamp '{choch_timestamp}': {e}")
-                        setup_time_str = setup.get('setup_time', datetime.now().isoformat())
+                        setup_time_str = setup.get('setup_time', datetime.now(timezone.utc).isoformat())
                         reference_time = datetime.fromisoformat(setup_time_str) if isinstance(setup_time_str, str) else setup_time_str
-                        hours_elapsed = (datetime.now() - reference_time).total_seconds() / 3600
+                        hours_elapsed = (datetime.now(timezone.utc) - reference_time).total_seconds() / 3600
                 
                 # V4.0 FIX-005: Detect JPY pairs and CRYPTO for correct pip calculation
                 if 'BTC' in symbol.upper() or 'ETH' in symbol.upper() or 'CRYPTO' in symbol.upper():
@@ -1355,7 +1379,7 @@ class SetupExecutorMonitor:
                             'action': 'EXECUTE_ENTRY1_CONTINUATION',
                             'entry_price': current_price,
                             'stop_loss': sl_price,
-                            'choch_timestamp': (choch_timestamp if isinstance(choch_timestamp, str) else choch_timestamp.isoformat()) if choch_timestamp else datetime.now().isoformat(),
+                            'choch_timestamp': (choch_timestamp if isinstance(choch_timestamp, str) else choch_timestamp.isoformat()) if choch_timestamp else datetime.now(timezone.utc).isoformat(),
                             'fibo_data': fibo_data,
                             'reason': f'Continuation momentum after {hours_elapsed:.1f}H (distance: {distance_pips:.1f} pips)'
                         }
@@ -1363,49 +1387,16 @@ class SetupExecutorMonitor:
                         logger.debug(f"⏳ {symbol}: Momentum not strong enough - keep waiting...")
                         logger.debug(f"   Strong momentum: {momentum_strong}, Beyond target: {price_beyond_target}, Within range: {within_reasonable_distance}")
                 
-                # ========== V4.0 STEP 4: TIMEOUT ENTRY (After 12H) ==========
+                # ========== Fix #1: TIMEOUT 12H → EXPIRED (nu forcăm intrarea) ==========
                 if hours_elapsed >= 12:
-                    logger.warning(f"⏰ {symbol}: 12H timeout reached - evaluating force entry...")
-                    
-                    # V4.4 FIX-017: Crypto timeout uses dollar-based tolerance
-                    if 'BTC' in symbol.upper() or 'ETH' in symbol.upper() or 'CRYPTO' in symbol.upper():
-                        max_timeout_distance = 2000  # $2000 tolerance for crypto timeout
-                    elif 'JPY' in symbol.upper():
-                        max_timeout_distance = 300
-                    else:
-                        max_timeout_distance = 200
-                    
-                    # V16.0 FVG ZONE GUARD: timeout entry BLOCAT dacă prețul nu e în FVG zone
-                    in_fvg_zone_timeout = fvg_bottom <= current_price <= fvg_top
-
-                    if distance_pips <= max_timeout_distance and in_fvg_zone_timeout:
-                        logger.success(f"✅ {symbol}: Force entry at {current_price:.5f} (timeout, in FVG zone, {distance_pips:.1f} pips from target)")
-                        
-                        # Use original SL from setup
-                        sl_price = setup.get('stop_loss', fibo_data['swing_high'] if direction == 'sell' else fibo_data['swing_low'])
-                        
-                        return {
-                            'action': 'EXECUTE_ENTRY1_TIMEOUT',
-                            'entry_price': current_price,
-                            'stop_loss': sl_price,
-                            'choch_timestamp': (choch_timestamp if isinstance(choch_timestamp, str) else choch_timestamp.isoformat()) if choch_timestamp else datetime.now().isoformat(),
-                            'fibo_data': fibo_data,
-                            'reason': f'Timeout entry after 12H in FVG zone (distance: {distance_pips:.1f} pips)'
-                        }
-                    elif distance_pips <= max_timeout_distance and not in_fvg_zone_timeout:
-                        # V16.0: Timeout dar prețul NU e în FVG — NU executa, continuă monitorizarea
-                        logger.warning(f"⏰🚫 {symbol}: Timeout 12H dar pret {current_price:.5f} NU in FVG zone {fvg_bottom:.5f}-{fvg_top:.5f} — asteptam pullback!")
-                        return {
-                            'action': 'KEEP_MONITORING',
-                            'reason': f'Timeout 12H dar pret NU in FVG zone (pret: {current_price:.5f}, FVG: {fvg_bottom:.5f}-{fvg_top:.5f})'
-                        }
-                    else:
-                        # Too far → skip setup
-                        logger.error(f"❌ {symbol}: Timeout but too far from target ({distance_pips:.1f} pips) - skipping setup")
-                        return {
-                            'action': 'SKIP_SETUP',
-                            'reason': f'Timeout + distance too large ({distance_pips:.1f} pips)'
-                        }
+                    logger.warning(
+                        f"⏰ [Fix #1 TIMEOUT] {symbol}: 12H fără pullback la Fibo 50% — Setup → EXPIRED. "
+                        f"Slot eliberat pentru scan nou."
+                    )
+                    return {
+                        'action': 'EXPIRE_SETUP',
+                        'reason': f'Fix#1: Timeout 12H fără retragere la Fibo 50% ({distance_pips:.1f}p distanță) — EXPIRED'
+                    }
                 
                 # Still within 6H → keep monitoring normally
                 return {
@@ -1461,41 +1452,115 @@ class SetupExecutorMonitor:
 
     def _cleanup_monitoring_setups(self):
         """
-        🧹 V9.1 AUTO-CLEANUP: Remove EXPIRED/CLOSED/CANCELLED setups from monitoring_setups.json
-        R6 AUDIT FIX — Prevents infinite file growth
+        Fix #11: CLEAN SLATE POLICY — Ștergere definitivă a setup-urilor stale.
+
+        Criterii de expirare (orice condiție = șters definitiv din JSON):
+          1. Status mort: EXPIRED / CLOSED / CANCELLED / FAILED
+          2. Vârstă > 7 zile (setup_time vechi)
+          3. Distanță > 500 pips de la prețul de entry (structură invalidată de piață)
+          4. Lipsă câmpuri obligatorii (symbol, direction, entry_price)
+
+        După ștergere, perechea devine "liberă" — Daily Scanner-ul o va re-analiza
+        de la zero la următoarea scanare matinală.
         """
         if not self.monitoring_file.exists():
             return
-        
+
         try:
             with open(self.monitoring_file, 'r', encoding='utf-8') as f:
                 data = json.load(f)
-            
+
             if isinstance(data, dict):
                 setups = data.get('setups', [])
             elif isinstance(data, list):
                 setups = data
             else:
                 return
-            
-            dead_statuses = {'EXPIRED', 'CLOSED', 'CANCELLED', 'FAILED'}
-            active_setups = [s for s in setups if s.get('status', '') not in dead_statuses]
+
+            now = datetime.now(timezone.utc)
+            active_setups = []
+            removed_reasons = []
+
+            for s in setups:
+                symbol = s.get('symbol', '?')
+                reason_remove = None
+
+                # Condiția 1: Status mort
+                dead_statuses = {'EXPIRED', 'CLOSED', 'CANCELLED', 'FAILED'}
+                if s.get('status', '') in dead_statuses:
+                    reason_remove = f"status={s.get('status')}"
+
+                # Condiția 2: Vârstă > 7 zile
+                if not reason_remove:
+                    setup_time_str = s.get('setup_time') or s.get('created_at', '')
+                    if setup_time_str:
+                        try:
+                            st = datetime.fromisoformat(str(setup_time_str).replace('Z', '+00:00'))
+                            if st.tzinfo is None:
+                                st = st.replace(tzinfo=timezone.utc)
+                            age_days = (now - st).total_seconds() / 86400
+                            if age_days > 7:
+                                reason_remove = f"vârstă={age_days:.1f} zile > 7"
+                        except Exception:
+                            pass
+
+                # Condiția 3: Distanță > 500 pips de la entry (structură invalidată)
+                if not reason_remove:
+                    entry_px = s.get('entry_price', 0)
+                    sym_upper = symbol.upper()
+                    pip_sz = 0.01 if 'JPY' in sym_upper else (1.0 if 'BTC' in sym_upper else 0.0001)
+                    current_px = 0.0
+                    try:
+                        th_path = Path(__file__).parent / 'trade_history.json'
+                        if th_path.exists():
+                            with open(th_path, 'r', encoding='utf-8') as _tf:
+                                _th = json.load(_tf)
+                            prices = _th.get('prices', _th.get('rates', {}))
+                            clean_sym = sym_upper.replace('/', '').replace(' ', '')
+                            px = prices.get(clean_sym) or prices.get(sym_upper)
+                            if px:
+                                current_px = float(px)
+                    except Exception:
+                        pass
+                    if current_px > 0 and entry_px > 0:
+                        dist_pips = abs(current_px - entry_px) / pip_sz
+                        if dist_pips > 500:
+                            reason_remove = f"distanță={dist_pips:.0f} pips > 500 (structură invalidată)"
+
+                # Condiția 4: Câmpuri obligatorii lipsă
+                if not reason_remove:
+                    if not s.get('symbol') or not s.get('direction') or not s.get('entry_price'):
+                        reason_remove = "câmpuri obligatorii lipsă (symbol/direction/entry_price)"
+
+                if reason_remove:
+                    removed_reasons.append(f"{symbol}: {reason_remove}")
+                else:
+                    active_setups.append(s)
+
             removed_count = len(setups) - len(active_setups)
-            
+
             if removed_count > 0:
-                # Write cleaned data back
                 if isinstance(data, dict):
                     data['setups'] = active_setups
+                    data['last_cleanup'] = now.isoformat()
                     write_data = data
                 else:
                     write_data = active_setups
-                
+
                 with open(self.monitoring_file, 'w', encoding='utf-8') as f:
                     json.dump(write_data, f, indent=2, default=str)
-                
-                logger.success(f"🧹 R6 CLEANUP: Removed {removed_count} dead setups from monitoring_setups.json ({len(setups)}→{len(active_setups)})")
+
+                logger.success(
+                    f"🧹 [Fix #11 CLEAN SLATE] {removed_count} setup-uri șterse definitiv "
+                    f"({len(setups)}→{len(active_setups)} active). Sloturi eliberate pentru re-scanare."
+                )
+                for r in removed_reasons:
+                    logger.info(f"   🗑️  Removed: {r}")
+            else:
+                logger.debug(f"🧹 [Fix #11] Cleanup: 0 setup-uri stale — {len(active_setups)} active.")
+
         except Exception as e:
-            logger.error(f"⚠️  Cleanup monitoring_setups failed: {e}")
+            logger.error(f"⚠️  [Fix #11] Cleanup monitoring_setups failed: {e}")
     
     def _process_monitoring_setups(self):
         """
@@ -1673,7 +1738,7 @@ class SetupExecutorMonitor:
                         if success:
                             setups[i]['entry1_filled'] = True
                             setups[i]['entry1_price'] = setup['entry_price']
-                            setups[i]['entry1_time'] = datetime.now().isoformat()
+                            setups[i]['entry1_time'] = datetime.now(timezone.utc).isoformat()
                             setups[i]['status'] = 'ACTIVE'
                             setups[i]['force_executed'] = True
                             updated = True
@@ -1686,7 +1751,7 @@ class SetupExecutorMonitor:
                             # Instead: set status back to ACTIVE so monitor keeps scanning
                             self._track_rejection(f"READY execution rejected for {symbol}")
                             setups[i]['status'] = 'ACTIVE'
-                            setups[i]['last_rejection_time'] = datetime.now().isoformat()
+                            setups[i]['last_rejection_time'] = datetime.now(timezone.utc).isoformat()
                             setups[i]['last_rejection_reason'] = 'Risk Manager: daily loss limit'
                             updated = True
                             logger.warning(f"⚠️ {symbol}: READY → ACTIVE (rejected, will retry when risk allows)")
@@ -1762,6 +1827,41 @@ class SetupExecutorMonitor:
                             # Prevents same-cycle double execution (race condition fix)
                             self.signal_cache.mark_processed(execution_id)
                             
+                            # ━━━ Fix #6: RR SAFETY BARRIER — revalidare RR la prețul actual ━━━
+                            _entry_px = result.get('entry_price', setup.get('entry_price', 0))
+                            _sl_px = result.get('stop_loss', setup.get('stop_loss', 0))
+                            _tp_px = setup.get('take_profit', 0)
+                            _cur_px = df_1h.iloc[-1]['close'] if df_1h is not None and not df_1h.empty else _entry_px
+                            if _entry_px and _sl_px and _tp_px:
+                                _risk_real = abs(_cur_px - _sl_px)
+                                _reward_real = abs(_tp_px - _cur_px)
+                                _rr_real = _reward_real / _risk_real if _risk_real > 0 else 0
+                                if _rr_real < 4.0:
+                                    logger.warning(f"⛔ [Fix #6 RR BARRIER] {symbol}: RR_Real=1:{_rr_real:.2f} < 1:4 la execuție — BLOCAT. Setup → EXPIRED.")
+                                    setups[i]['status'] = 'EXPIRED'
+                                    setups[i]['expired_reason'] = f'RR_Real={_rr_real:.2f} < 4.0 at execution'
+                                    updated = True
+                                    continue
+                                else:
+                                    logger.info(f"✅ [Fix #6 RR OK] {symbol}: RR_Real=1:{_rr_real:.2f} ≥ 1:4 — execuție permisă")
+                            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+                            # ━━━ Fix #7: SL ULTIMATUM BARRIER — max 100 pips hard cap ━━━
+                            _pip_sz = 0.01 if 'JPY' in symbol.upper() else 0.0001
+                            _sl_entry = result.get('entry_price', setup.get('entry_price', 0))
+                            _sl_val = result.get('stop_loss', setup.get('stop_loss', 0))
+                            if _sl_entry and _sl_val:
+                                _sl_pips = abs(_sl_entry - _sl_val) / _pip_sz
+                                if _sl_pips > 100:
+                                    logger.critical(f"🚨 [Fix #7 SL ULTIMATUM] {symbol}: SL={_sl_pips:.1f} pips > 100 — BLOCAT DEFINITIV. Setup → EXPIRED.")
+                                    setups[i]['status'] = 'EXPIRED'
+                                    setups[i]['expired_reason'] = f'SL={_sl_pips:.1f} pips > 100 hard cap'
+                                    updated = True
+                                    continue
+                                else:
+                                    logger.info(f"✅ [Fix #7 SL OK] {symbol}: SL={_sl_pips:.1f} pips ≤ 100 — execuție permisă")
+                            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
                             # 🔥🔥🔥 AGGRESSIVE EXECUTION - INSTANT SIGNALS.JSON WRITE!
                             logger.critical(f"🔥 TRIGGER: {symbol} confirmed CHoCH + Pullback. Pushing to Executor NOW!")
                             logger.success(f"🚀 EXECUTING {symbol} Entry 1: {setup['direction'].upper()} @ {result['entry_price']:.5f}")
@@ -1795,7 +1895,7 @@ class SetupExecutorMonitor:
                                 # Update setup with Entry 1 details and pullback data
                                 setups[i]['entry1_filled'] = True
                                 setups[i]['entry1_price'] = result['entry_price']
-                                setups[i]['entry1_time'] = datetime.now().isoformat()
+                                setups[i]['entry1_time'] = datetime.now(timezone.utc).isoformat()
                                 setups[i]['entry1_lots'] = self.execution_strategy.get('entry1_position_size', 0.5)
                                 setups[i]['choch_1h_detected'] = True
                                 setups[i]['choch_1h_timestamp'] = result.get('choch_timestamp')
@@ -1811,27 +1911,22 @@ class SetupExecutorMonitor:
                             setups.pop(i)
                             updated = True
                             continue
-                        
+
+                        elif result['action'] == 'EXPIRE_SETUP':
+                            # Fix #1: TP reached before pullback OR 12H timeout — EXPIRED
+                            logger.warning(f"⛔ [Fix #1 EXPIRE_SETUP] {symbol}: {result.get('reason', 'Setup expirat')} — slot eliberat.")
+                            setups[i]['status'] = 'EXPIRED'
+                            setups[i]['expired_reason'] = result.get('reason', 'Fix#1 EXPIRE_SETUP')
+                            updated = True
+                            continue
+
                         elif result['action'] == 'TIMEOUT_FORCE_ENTRY':
-                            # Timeout exceeded - force entry at current price
-                            current_price = df_1h.iloc[-1]['close']
-                            success = self._execute_entry(
-                                setup=setup,
-                                entry_number=1,
-                                entry_price=current_price,
-                                stop_loss=result['stop_loss'],
-                                take_profit=setup['take_profit'],
-                                position_size=self.execution_strategy.get('entry1_position_size', 0.5)
-                            )
-                            
-                            if success:
-                                setups[i]['entry1_filled'] = True
-                                setups[i]['entry1_price'] = current_price
-                                setups[i]['entry1_time'] = datetime.now().isoformat()
-                                setups[i]['entry1_lots'] = self.execution_strategy.get('entry1_position_size', 0.5)
-                                setups[i]['pullback_status'] = 'TIMEOUT_FORCED_ENTRY'
-                                updated = True
-                                logger.warning(f"⏰ Timeout - forced entry for {symbol} at {current_price}")
+                            # Fix #1: TIMEOUT_FORCE_ENTRY ELIMINAT — treat as EXPIRED
+                            logger.warning(f"⛔ [Fix #1] {symbol}: TIMEOUT_FORCE_ENTRY blocat — nu forțăm intrarea. Setup → EXPIRED.")
+                            setups[i]['status'] = 'EXPIRED'
+                            setups[i]['expired_reason'] = 'Fix#1: TIMEOUT_FORCE_ENTRY eliminat — nu alergăm după preț'
+                            updated = True
+                            continue
                         
                         elif result['action'] == 'KEEP_MONITORING':
                             # Update pullback tracking data
@@ -1882,7 +1977,7 @@ class SetupExecutorMonitor:
                         # Validate for Entry 2
                         result = validate_choch_confirmation_scale_in(
                             setup=setup_obj,
-                            current_time=datetime.now(),
+                            current_time=datetime.now(timezone.utc),
                             df_daily=df_daily,
                             df_4h=df_4h,
                             df_1h=df_1h,
@@ -1915,7 +2010,7 @@ class SetupExecutorMonitor:
                                 # Update setup with Entry 2 details
                                 setups[i]['entry2_filled'] = True
                                 setups[i]['entry2_price'] = result['entry_price']
-                                setups[i]['entry2_time'] = datetime.now().isoformat()
+                                setups[i]['entry2_time'] = datetime.now(timezone.utc).isoformat()
                                 setups[i]['entry2_lots'] = result['position_size']
                                 updated = True
                                 logger.success(f"✅ Entry 2 executed for {symbol}, full scale in complete!")
@@ -1947,19 +2042,19 @@ class SetupExecutorMonitor:
                             # Update setup status regardless (signal was attempted)
                             setups[i]['status'] = 'CLOSED'
                             setups[i]['close_reason'] = close_reason
-                            setups[i]['close_time'] = datetime.now().isoformat()
+                            setups[i]['close_time'] = datetime.now(timezone.utc).isoformat()
                             setups[i]['broker_close_sent'] = True
                             updated = True
                         
                         elif action == 'EXPIRE':
                             logger.info(f"   ⏰ Setup {symbol} expired: {reason}")
                             setups[i]['status'] = 'EXPIRED'
-                            setups[i]['expire_time'] = datetime.now().isoformat()
+                            setups[i]['expire_time'] = datetime.now(timezone.utc).isoformat()
                             updated = True
                         
                         elif action == 'KEEP_MONITORING':
                             logger.debug(f"   ⏳ {reason}")
-                            setups[i]['last_check'] = datetime.now().isoformat()
+                            setups[i]['last_check'] = datetime.now(timezone.utc).isoformat()
                             updated = True
                 
                 except Exception as e:
@@ -1971,7 +2066,7 @@ class SetupExecutorMonitor:
             # Save updated setups
             if updated:
                 data['setups'] = setups
-                data['last_update'] = datetime.now().isoformat()
+                data['last_update'] = datetime.now(timezone.utc).isoformat()
                 
                 with open(self.monitoring_file, 'w', encoding='utf-8') as f:
                     json.dump(data, f, indent=2)
@@ -1982,7 +2077,70 @@ class SetupExecutorMonitor:
             logger.error(f"❌ Error in _process_monitoring_setups: {e}")
             import traceback
             traceback.print_exc()
-    
+
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # Fix #13: SENTINELA DE RISC — 4 bariere finale înainte de execuție
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    def _final_safety_check(self, symbol: str, direction: str, entry_price: float,
+                            stop_loss: float, take_profit: float, setup: dict) -> tuple:
+        """
+        Fix #13: Sentinela finală — 4 bariere de risc validate înainte de execuția cTrader.
+        Returns: (passed: bool, reason: str)
+        """
+        pip_size = 0.01 if 'JPY' in symbol.upper() else 0.0001
+        sl_pips = abs(entry_price - stop_loss) / pip_size if pip_size > 0 else 0
+        tp_pips = abs(take_profit - entry_price) / pip_size if pip_size > 0 else 0
+
+        # ── Guard 1: RR Net cu comisionul cTrader (~0.7 pips per side) ──────────
+        commission_pips = 0.7  # cTrader spread/commission approximation per side
+        net_reward = tp_pips - commission_pips
+        net_risk   = sl_pips + commission_pips
+        rr_net = net_reward / net_risk if net_risk > 0 else 0
+        if rr_net < 4.0:
+            return False, (f"Guard#1 RR Net={rr_net:.2f} < 1:4 "
+                           f"(TP={tp_pips:.1f}p SL={sl_pips:.1f}p comision~{commission_pips}p)")
+
+        # ── Guard 2: SL Sniper Limit — max 50 pips ──────────────────────────────
+        if sl_pips > 50:
+            return False, f"Guard#2 SL={sl_pips:.1f} pips > 50 sniper cap (whale stop)"
+
+        # ── Guard 3: Capital Guard — pierderea estimată ≤ 5.1% din balanță ──────
+        balance = float(os.getenv('ACCOUNT_BALANCE', 1336))
+        try:
+            _th_path = Path(__file__).parent / 'trade_history.json'
+            if _th_path.exists():
+                with open(_th_path, 'r', encoding='utf-8') as _tf:
+                    _th = json.load(_tf)
+                _live_bal = float(_th.get('account', {}).get('balance', 0))
+                if _live_bal > 0:
+                    balance = _live_bal
+        except Exception:
+            pass  # use env fallback
+
+        # pip_value_per_lot: USD profit per pip, per standard lot (100k units)
+        # JPY pairs ≈ $8.33/pip, non-JPY ≈ $10/pip (USD-quoted)
+        pip_value_per_lot = 8.33 if 'JPY' in symbol.upper() else 10.0
+        risk_budget = balance * 0.05
+        lots = risk_budget / (sl_pips * pip_value_per_lot) if sl_pips > 0 else 0
+        estimated_loss = lots * sl_pips * pip_value_per_lot
+        estimated_loss_pct = estimated_loss / balance if balance > 0 else 0
+        if estimated_loss_pct > 0.051:
+            return False, (f"Guard#3 Risc estimat={estimated_loss_pct*100:.2f}% > 5.1% "
+                           f"(lots={lots:.3f} sl={sl_pips:.1f}p bal={balance:.0f})")
+
+        # ── Guard 4: D1 Bias → 4H CHoCH aliniere confirmată ────────────────────
+        h4_locked = setup.get('h4_bias_locked', False)
+        strategy_type = setup.get('strategy_type', '').upper()
+        if not h4_locked:
+            return False, (f"Guard#4 h4_bias_locked=False — CHoCH 4H neconfirmat "
+                           f"pentru strategie {strategy_type or 'UNKNOWN'}")
+        if strategy_type not in ('REVERSAL', 'CONTINUITY', 'CONTINUATION'):
+            return False, (f"Guard#4 strategy_type='{strategy_type}' necunoscut "
+                           f"— setup posibil stale sau corupt")
+
+        return True, "TOATE 4 GĂRZI TRECUTE — execuție autorizată"
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
     def _execute_entry(self, setup: dict, entry_number: int, entry_price: float, 
                        stop_loss: float, take_profit: float, position_size: float,
                        risk_override_percent: float = None) -> bool:
@@ -2007,9 +2165,41 @@ class SetupExecutorMonitor:
             symbol = setup['symbol']
             direction = setup['direction']
             
+            # ━━━ Fix #13: SENTINELA FINALĂ — validare obligatorie la execuție ━━━
+            _sentinel_ok, _sentinel_reason = self._final_safety_check(
+                symbol=symbol, direction=direction,
+                entry_price=entry_price, stop_loss=stop_loss,
+                take_profit=take_profit, setup=setup
+            )
+            if not _sentinel_ok:
+                logger.critical(f"🚨 [Fix #13 SENTINELĂ] {symbol} E{entry_number} BLOCAT: {_sentinel_reason}")
+                logger.critical(f"🗑️  Setup {symbol} eliminat din monitoring — slot eliberat pentru scan nou.")
+                # Auto-cleanup: scoate setup-ul din monitoring ca să elibereze slotul
+                try:
+                    _mf = Path(self.monitoring_file)
+                    if _mf.exists():
+                        with open(_mf, 'r', encoding='utf-8') as _mfr:
+                            _mdata = json.load(_mfr)
+                        _mdata['setups'] = [
+                            s for s in _mdata.get('setups', [])
+                            if s.get('symbol') != symbol
+                        ]
+                        _mdata['last_update'] = datetime.now(timezone.utc).isoformat()
+                        with open(_mf, 'w', encoding='utf-8') as _mfw:
+                            json.dump(_mdata, _mfw, indent=2)
+                        logger.info(f"🧹 [Fix #13] Setup {symbol} șters din monitoring_setups.json")
+                except Exception as _ce:
+                    logger.warning(f"⚠️ [Fix #13] Cleanup error pentru {symbol}: {_ce}")
+                return False
+            logger.success(f"✅ [Fix #13 SENTINELĂ] {symbol}: {_sentinel_reason}")
+            # ━━━ END SENTINELĂ ━━━
+
             # ━━━ V10.4: STRATEGY TAGGING — D1_{REVERSAL|CONTINUITY}_4H_SYNC ━━━
             # Format: D1_REVERSAL_4H_SYNC_SNIPER_E1 or D1_CONTINUITY_4H_SYNC_PB50_E2
+            # Fix #10: Normalize 'CONTINUATION' → 'CONTINUITY' pentru consistență
             strategy_type = setup.get('strategy_type', 'unknown').upper()
+            if strategy_type in ('CONTINUATION', 'CONTINUITY'):
+                strategy_type = 'CONTINUITY'
             entry_mode = setup.get('pullback_status', setup.get('entry_reason', 'STANDARD')).upper()
             
             # Simplify entry_mode tag
@@ -2133,12 +2323,12 @@ class SetupExecutorMonitor:
         try:
             while True:
                 iteration += 1
-                logger.debug(f"\n🔄 Check #{iteration} - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+                logger.debug(f"\n🔄 Check #{iteration} - {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')}")
                 
-                # 🧹 V9.1 R6 CLEANUP: Remove dead setups every 100 iterations (~50min at 30s)
-                if iteration == 1 or iteration % 100 == 0:
-                    self._cleanup_monitoring_setups()
-                
+                # Fix #11: CLEAN SLATE — cleanup la fiecare ciclu (nu la 100)
+                # Setup-urile stale blochează sloturi — trebuie șterse imediat ce devin invalide
+                self._cleanup_monitoring_setups()
+
                 self._process_monitoring_setups()
                 
                 # Wait before next check

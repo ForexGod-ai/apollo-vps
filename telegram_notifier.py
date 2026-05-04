@@ -24,8 +24,8 @@ load_dotenv()
 # 16-line symmetrical footer on EVERY message, no exceptions.
 # Branding = FOOTER ONLY. Never header. Clean & institutional.
 # ════════════════════════════════════════
-UNIVERSAL_SEPARATOR = "────────────────"  # EXACTLY 16 chars — COMPACT SYMMETRIC
-SEPARATOR_LENGTH = 16  # Enforced rule: Name-aligned width
+UNIVERSAL_SEPARATOR = "────────────────────────"  # EXACTLY 24 chars — INSTITUTIONAL SYMMETRIC
+SEPARATOR_LENGTH = 24  # Enforced rule: Name-aligned width
 # ════════════════════════════════════════
 
 
@@ -45,29 +45,20 @@ class TelegramNotifier:
     
     def _add_branding_signature(self, message: str, parse_mode: str = "Markdown") -> str:
         """
-        V10.4 SOVEREIGN SIGNATURE — 16-Line Symmetry by ФорексГод
-        
+        V14.3 SOVEREIGN SIGNATURE — 24-char Separator by ФорексГод
+
         Every Telegram message ends with this institutional stamp.
         FOOTER ONLY. No header duplication. No exceptions.
         """
-        sep = UNIVERSAL_SEPARATOR  # 16 chars
-        if parse_mode == "HTML":
-            footer = (
-                f"\n\n"
-                f"  {sep}\n"
-                f"  🔱 AUTHORED BY <b>ФорексГод</b> 🔱\n"
-                f"  {sep}\n"
-                f"  🏛️  <b>Глитч Ин Матрикс</b>  🏛️"
-            )
-        else:  # Markdown
-            footer = (
-                f"\n\n"
-                f"  {sep}\n"
-                f"  🔱 AUTHORED BY *ФорексГод* 🔱\n"
-                f"  {sep}\n"
-                f"  🏛️  *Глитч Ин Матрикс*  🏛️"
-            )
-        
+        sep = UNIVERSAL_SEPARATOR  # 24 chars
+        footer = (
+            f"\n\n"
+            f"{sep}\n"
+            f"🔱 AUTHORED BY ФорексГод 🔱\n"
+            f"{sep}\n"
+            f"🏛 Глитч Ин Матрикс 🏛"
+        )
+
         # FOOTER ONLY — message stays clean, stamp at the end
         return f"{message.rstrip()}{footer}"
     
@@ -697,65 +688,82 @@ class TelegramNotifier:
             print(f"❌ Error sending action buttons: {e}")
             return False
     
+    def send_system_start(self) -> bool:
+        """V14.3 SYSTEM_START message — sent on bot startup"""
+        sep = UNIVERSAL_SEPARATOR
+        now = datetime.now(timezone.utc)
+        current_date = now.strftime('%d.%m.%Y')
+        current_time = now.strftime('%H:%M UTC')
+        message = (
+            f"🛰 ГЛИТЧ ИН МАТРИКС | SYSTEM_START\n"
+            f"{sep}\n"
+            f"📅 Data: {current_date}\n"
+            f"🕒 Ora: {current_time}\n"
+            f"🔄 Acțiune: Scanare structurală în curs (16 perechi)...\n"
+            f"🛡 Risk Sentinel: ACTIV (Risc 5% per trade)"
+        )
+        return self.send_message(message.strip(), parse_mode="HTML")
+
     def send_daily_summary(self, scanned_pairs: int, setups_found: int, active_setups: list = None) -> bool:
-        """Send daily scan summary with ACTIVE monitoring setups - CLEAN HTML FORMAT"""
+        """V14.3 MARKET_REPORT — CLEAN INSTITUTIONAL FORMAT by ФорексГод"""
+        sep = UNIVERSAL_SEPARATOR
+        now = datetime.now(timezone.utc)
+
         # Separate monitoring setups from executed positions
         monitoring_setups = [s for s in (active_setups or []) if s.get('status') != 'EXECUTED']
         executed_positions = [s for s in (active_setups or []) if s.get('status') == 'EXECUTED']
-        
-        # Header with clean HTML
-        message = f"""<b>📊 Daily Scan Complete</b>
+        active_count = len(monitoring_setups)
 
-🔍 Pairs Scanned: <code>{scanned_pairs}</code>
-🎯 New Setups Found: <code>{setups_found}</code>
-📋 Monitoring: <code>{len(monitoring_setups)}</code> | Active Trades: <code>{len(executed_positions)}</code>
-⏰ Scan Time: <code>{datetime.now().strftime('%Y-%m-%d %H:%M EET')}</code>
-"""
-        
-        # Add monitoring setups with clean formatting
+        # Header
+        message = (
+            f"🏛 ГЛИТЧ ИН МАТРИКС | MARKET_REPORT\n"
+            f"{sep}\n"
+            f"✅ SCANARE COMPLETĂ\n"
+            f"📈 CONTEXT PORTOFOLIU\n"
+            f"• Perechi analizate: {scanned_pairs}\n"
+            f"• Monitorizare activă: {active_count}\n"
+        )
+
+        # Setup list — monitoring
         if monitoring_setups:
-            message += f"\n{UNIVERSAL_SEPARATOR}\n"
-            message += "<b>📊 MONITORING SETUPS:</b>\n\n"
+            message += f"{sep}\n"
+            message += "🎯 SETUP-URI DETECTATE (Daily Bias)\n"
             for setup in monitoring_setups:
                 symbol = setup.get('symbol', 'Unknown')
                 dir_raw = str(setup.get('direction', '')).strip().lower()
-                direction = "🟢 LONG" if dir_raw == 'buy' else ("🔴 SHORT" if dir_raw == 'sell' else dir_raw.upper())
-                entry = setup.get('entry_price')
-                rr = setup.get('risk_reward')
-                
-                # CRITICAL FIX by ФорексГод: Verifică None înainte de formatare
-                if entry is None or rr is None:
-                    # Skip acest setup dacă datele sunt incomplete
-                    continue
-                
-                # Clean HTML formatting - no markdown
-                message += f"• <b>{symbol}</b> - {direction}\n"
-                message += f"  Entry: <code>{entry:.5f}</code> | RR: <code>1:{rr:.1f}</code>\n"
-        
-        # Add active positions with clean formatting
+                h4_locked = setup.get('h4_structure_locked', setup.get('h4_bias_locked', False))
+                # Normalize strategy type
+                raw_strat = str(setup.get('strategy_type', 'UNKNOWN')).upper()
+                if raw_strat in ('CONTINUATION',):
+                    raw_strat = 'CONTINUITY'
+                # Color coding
+                if not h4_locked:
+                    dot = "🔵"
+                    status_suffix = " (Waiting 4H CHoCH)"
+                elif dir_raw == 'sell':
+                    dot = "🔴"
+                    status_suffix = "   (confirmed SELL)"
+                else:
+                    dot = "🟢"
+                    status_suffix = "   (confirmed BUY)"
+                message += f"{dot} {symbol} ➔ {raw_strat}{status_suffix}\n"
+
+        # Active trades section
         if executed_positions:
-            message += f"\n{UNIVERSAL_SEPARATOR}\n"
-            message += "<b>🔥 ACTIVE TRADES:</b>\n\n"
+            message += f"{sep}\n"
+            message += "🔥 POZIȚII ACTIVE\n"
             for pos in executed_positions:
                 symbol = pos.get('symbol', 'Unknown')
                 dir_raw = str(pos.get('direction', '')).strip().lower()
-                direction = "🟢 LONG" if dir_raw == 'buy' else ("🔴 SHORT" if dir_raw == 'sell' else dir_raw.upper())
                 entry = pos.get('entry_price')
                 rr = pos.get('risk_reward')
                 profit = pos.get('profit')
-                
-                # CRITICAL FIX by ФорексГод: Verifică None înainte de formatare
                 if entry is None or rr is None or profit is None:
-                    # Skip această poziție dacă datele sunt incomplete
                     continue
-                
                 profit_emoji = "💚" if profit > 0 else ("❤️" if profit < 0 else "💛")
-                
-                # Clean HTML formatting - no markdown
-                message += f"• <b>{symbol}</b> - {direction} {profit_emoji}\n"
-                message += f"  Entry: <code>{entry:.5f}</code> | RR: <code>1:{rr:.1f}</code> | P/L: <code>${profit:.2f}</code>\n"
-        
-        # Send with HTML parse mode
+                dot = "🔴" if dir_raw == 'sell' else "🟢"
+                message += f"{dot} {symbol} {profit_emoji} Entry: {entry:.5f} | RR: 1:{rr:.1f} | P/L: ${profit:.2f}\n"
+
         return self.send_message(message.strip(), parse_mode="HTML")
     
     def send_scan_report(
@@ -771,47 +779,52 @@ class TelegramNotifier:
         setup_symbols: list = None
     ) -> bool:
         """
-        V10.1 SCAN REPORT — The Official Stamp by ФорексГод
-        
+        V14.3 MARKET_REPORT — Institutional scan summary by ФорексГод
+
         Sends a SINGLE final message after ALL charts are delivered.
-        Mirrors the exact console output so the Telegram report matches
-        what you see in the terminal. This is the 'ștampila de control'.
-        
         Must be called with time.sleep(2) BEFORE to dodge Telegram flood-control.
         """
         sep = UNIVERSAL_SEPARATOR
-        
-        # Build the report — exact mirror of console output
-        report = f"<b>✅ Scan Complete!</b>\n\n"
-        report += f"📊 Total Pairs Scanned: <code>{total_pairs}</code>\n"
-        report += f"🆕 New Setups Found: <code>{new_setups_found}</code>\n"
-        report += f"    └─ Truly New (no position): <code>{truly_new}</code>\n"
-        report += f"    └─ Re-detected (has position): <code>{re_detected}</code>\n"
-        report += f"📋 Total Active Tracking:\n"
-        report += f"    └─ Saved in Monitoring: <code>{monitoring_count}</code>\n"
-        report += f"    └─ Open Positions: <code>{open_positions}</code>\n"
-        report += f"\n⏰ <code>{datetime.now().strftime('%Y-%m-%d %H:%M EET')}</code>"
-        
-        # V10.1: List setup symbols if available
+        now = datetime.now(timezone.utc)
+
+        report = (
+            f"🏛 ГЛИТЧ ИН МАТРИКС | MARKET_REPORT\n"
+            f"{sep}\n"
+            f"✅ SCANARE COMPLETĂ\n"
+            f"📈 CONTEXT PORTOFOLIU\n"
+            f"• Perechi analizate: {total_pairs}\n"
+            f"• Monitorizare activă: {monitoring_count}\n"
+            f"• Poziții deschise: {open_positions}\n"
+            f"• Setup-uri noi: {new_setups_found} (noi: {truly_new} | re-detectate: {re_detected})\n"
+        )
+
         if setup_symbols:
-            report += f"\n\n{sep}\n"
-            report += f"<b>🎯 DETECTED SETUPS:</b>\n"
+            report += f"{sep}\n"
+            report += "🎯 SETUP-URI DETECTATE (Daily Bias)\n"
             for sym_info in setup_symbols:
                 symbol = sym_info.get('symbol', '?')
-                direction = sym_info.get('direction', '?')
-                dir_emoji = "🟢" if direction.lower() == 'buy' else "🔴"
-                strategy = sym_info.get('strategy', 'UNKNOWN')
-                strat_emoji = "🔄" if strategy == 'REVERSAL' else "➡️"
-                report += f"  {dir_emoji} <b>{symbol}</b> {strat_emoji} {strategy}\n"
-        
-        # V9.3: Deep Sleep status line
+                direction = str(sym_info.get('direction', '?')).lower()
+                raw_strat = str(sym_info.get('strategy', 'UNKNOWN')).upper()
+                if raw_strat == 'CONTINUATION':
+                    raw_strat = 'CONTINUITY'
+                h4_locked = sym_info.get('h4_structure_locked', sym_info.get('h4_bias_locked', True))
+                if not h4_locked:
+                    dot = "🔵"
+                    status_suffix = " (Waiting 4H CHoCH)"
+                elif direction == 'sell':
+                    dot = "🔴"
+                    status_suffix = "   (confirmed SELL)"
+                else:
+                    dot = "🟢"
+                    status_suffix = "   (confirmed BUY)"
+                report += f"{dot} {symbol} ➔ {raw_strat}{status_suffix}\n"
+
         if deep_sleep_active and deep_sleep_until:
-            report += f"\n\n😴 <b>Status: DEEP SLEEP ACTIVE</b>\n"
-            report += f"    └─ Wake: <code>{deep_sleep_until}</code>"
+            report += f"{sep}\n😴 Status: DEEP SLEEP ACTIVE\n• Wake: {deep_sleep_until}"
         else:
-            report += f"\n\n⚡ Status: <b>ACTIVE</b> — Monitoring live"
-        
-        # V10.1: Retry logic — if Telegram rejects (flood), wait and retry once
+            report += f"{sep}\n⚡ Status: ACTIV — Monitorizare live"
+
+        # Retry logic — if Telegram rejects (flood), wait and retry once
         success = self.send_message(report.strip(), parse_mode="HTML")
         if not success:
             print("[WARN] Scan report send failed — retrying in 5s...")
@@ -819,7 +832,7 @@ class TelegramNotifier:
             success = self.send_message(report.strip(), parse_mode="HTML")
             if not success:
                 print("[ERROR] Scan report FAILED after retry. Report lost.")
-        
+
         return success
     
     def send_execution_confirmation(self, setup: TradeSetup, entry_type: str = 'pullback',

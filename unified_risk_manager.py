@@ -273,8 +273,100 @@ class UnifiedRiskManager:
         # LAST RESORT: env variable
         balance = float(os.getenv('ACCOUNT_BALANCE', 1000))
         return balance, balance
-    
-    def get_daily_pnl(self):
+
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # Fix #8: PIP VALUE DINAMIC — valoare reală USD per pip per lot standard
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    def _get_pip_value(self, symbol: str) -> float:
+        """
+        Fix #8: Returnează valoarea reală a unui pip în USD per lot standard (100k units).
+
+        Logica:
+        - Dacă quote currency = USD: pip_value = $10 (fix, nu se schimbă)
+        - Dacă quote currency != USD: pip_value = 10 / (USD/QuoteCcy rate)
+            e.g. GBPJPY: pip = 0.01 JPY; 1000 JPY / USDJPY rate = USD pip value
+            e.g. GBPNZD: pip = 0.0001 NZD; 10 NZD / NZDUSE rate (sau 10 * NZDUSD)
+
+        Rate-urile live sunt citite din trade_history.json (scris de cTrader la 30s).
+        Fallback la valori statice calibrate dacă fişierul lipseşte.
+        """
+        sc = symbol.upper().replace('/', '').replace(' ', '')
+
+        # ── Perechi direct USD-quoted: pip = $10 exact ─────────────────────────
+        usd_quoted = ('EURUSD', 'GBPUSD', 'AUDUSD', 'NZDUSD', 'XAUUSD', 'XAGUSD',
+                      'BTCUSD', 'ETHUSD', 'XTIUSD')
+        if sc in usd_quoted or sc.endswith('USD'):
+            return 10.0  # $10 per pip per standard lot — exact
+
+        # ── JPY-quoted pairs: 1 pip = 0.01 JPY; 1000 JPY per lot per pip ────────
+        # pip_value_USD = 1000 / USDJPY
+        if sc.endswith('JPY'):
+            usdjpy_rate = self._get_live_rate('USDJPY', fallback=150.0)
+            pv = 1000.0 / usdjpy_rate
+            print(f"   [Fix #8] {symbol}: pip_value = 1000 / {usdjpy_rate:.3f} = ${pv:.3f}")
+            return pv
+
+        # ── CAD-quoted pairs (USDCAD, GBPCAD): pip_value = 10 / USDCAD ─────────
+        if sc.endswith('CAD'):
+            usdcad_rate = self._get_live_rate('USDCAD', fallback=1.36)
+            pv = 10.0 / usdcad_rate
+            print(f"   [Fix #8] {symbol}: pip_value = 10 / {usdcad_rate:.4f} = ${pv:.3f}")
+            return pv
+
+        # ── CHF-quoted pairs (USDCHF, EURCHF): pip_value = 10 / USDCHF ────────
+        if sc.endswith('CHF'):
+            usdchf_rate = self._get_live_rate('USDCHF', fallback=0.895)
+            pv = 10.0 / usdchf_rate
+            print(f"   [Fix #8] {symbol}: pip_value = 10 / {usdchf_rate:.4f} = ${pv:.3f}")
+            return pv
+
+        # ── GBP-quoted pairs (EURGBP): pip_value = 10 * GBPUSD ──────────────
+        if sc.endswith('GBP'):
+            gbpusd_rate = self._get_live_rate('GBPUSD', fallback=1.27)
+            pv = 10.0 * gbpusd_rate
+            print(f"   [Fix #8] {symbol}: pip_value = 10 * {gbpusd_rate:.4f} = ${pv:.3f}")
+            return pv
+
+        # ── NZD-quoted pairs (GBPNZD, AUDNZD): pip_value = 10 * NZDUSD ───────
+        if sc.endswith('NZD'):
+            nzdusd_rate = self._get_live_rate('NZDUSD', fallback=0.60)
+            pv = 10.0 * nzdusd_rate
+            print(f"   [Fix #8] {symbol}: pip_value = 10 * {nzdusd_rate:.4f} = ${pv:.3f}")
+            return pv
+
+        # ── AUD-quoted pairs: pip_value = 10 * AUDUSD ────────────────────
+        if sc.endswith('AUD'):
+            audusd_rate = self._get_live_rate('AUDUSD', fallback=0.64)
+            pv = 10.0 * audusd_rate
+            print(f"   [Fix #8] {symbol}: pip_value = 10 * {audusd_rate:.4f} = ${pv:.3f}")
+            return pv
+
+        # ── Default fallback (EUR-quoted, etc.): $10 cu warning ────────────
+        print(f"   [Fix #8] {symbol}: quote currency necunoscută — fallback $10/pip")
+        return 10.0
+
+    def _get_live_rate(self, pair: str, fallback: float = 1.0) -> float:
+        """
+        Fix #8: Citeşte rata de schimb live din trade_history.json.
+        trade_history.json este scris de cTrader sync daemon la fiecare 30s
+        şi conține prețurile curente ale perechilor active.
+        """
+        try:
+            th_path = Path(__file__).parent / 'trade_history.json'
+            if th_path.exists():
+                with open(th_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                # trade_history.json poate stoca prețuri în 'prices' sau 'rates'
+                prices = data.get('prices', data.get('rates', {}))
+                clean = pair.upper().replace('/', '').replace(' ', '')
+                rate = prices.get(clean) or prices.get(pair.upper())
+                if rate and float(rate) > 0:
+                    return float(rate)
+        except Exception:
+            pass
+        return fallback  # valoare statică calibrată ca fallback
+    # ━━━ END Fix #8 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
         """
         Calculate P&L for today.
 
@@ -608,17 +700,17 @@ class UnifiedRiskManager:
                 pip_size = 0.01
                 pip_value = 10.0
             elif 'JPY' in symbol_clean:
-                # JPY pairs: pip at 2nd decimal (0.01)
+                # Fix #8: JPY pairs — pip_value dinamic (1000 JPY / USDJPY rate)
                 pip_size = 0.01
-                pip_value = 10.0  # $10 per standard lot per pip (0.01 move)
+                pip_value = self._get_pip_value(symbol)
             elif any(x in symbol_clean for x in ['XTI', 'WTI', 'OIL']):
                 # Oil: pip at 2nd decimal
                 pip_size = 0.01
                 pip_value = 10.0
             else:
-                # Standard forex: pip at 4th decimal (0.0001)
+                # Fix #8: Standard/cross forex — pip_value dinamic per quote currency
                 pip_size = 0.0001
-                pip_value = 10.0  # $10 per standard lot per pip
+                pip_value = self._get_pip_value(symbol)
             
             # Calculate lot size: risk_amount / (SL_distance_in_price * pip_value_per_unit)
             sl_pips = sl_distance / pip_size
