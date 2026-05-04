@@ -779,15 +779,16 @@ class TelegramNotifier:
         setup_symbols: list = None
     ) -> bool:
         """
-        V14.3 MARKET_REPORT — Institutional scan summary by ФорексГод
+        V14.4 MARKET_REPORT — Professional institutional format by ФорексГод
 
         Sends a SINGLE final message after ALL charts are delivered.
         Must be called with time.sleep(2) BEFORE to dodge Telegram flood-control.
         """
         sep = UNIVERSAL_SEPARATOR
-        now = datetime.now(timezone.utc)
 
+        # ── HEADER ──
         report = (
+            f"ФорексГод.АИ\n"
             f"🏛 ГЛИТЧ ИН МАТРИКС | MARKET_REPORT\n"
             f"{sep}\n"
             f"\n"
@@ -796,11 +797,14 @@ class TelegramNotifier:
             f"📈 CONTEXT PORTOFOLIU\n"
             f"• Perechi analizate: {total_pairs}\n"
             f"• Monitorizare activă: {monitoring_count}\n"
+            f"• Poziții deschise: {open_positions}\n"
+            f"• Setup-uri noi: {new_setups_found} (noi: {truly_new} | re-detectate: {re_detected})\n"
+            f"{sep}\n"
         )
 
+        # ── SETUP-URI ──
         if setup_symbols:
-            report += "\n"
-            report += "🎯 SETUP-URI DETECTATE (Daily Bias)\n"
+            report += "\n🎯 SETUP-URI DETECTATE (Daily Bias)\n\n"
             for sym_info in setup_symbols:
                 symbol = sym_info.get('symbol', '?')
                 direction = str(sym_info.get('direction', '?')).lower()
@@ -813,21 +817,34 @@ class TelegramNotifier:
                     status_suffix = " (Waiting 4H CHoCH)"
                 elif direction == 'sell':
                     dot = "🔴"
-                    status_suffix = "   (confirmed SELL)"
+                    status_suffix = " (confirmed SELL)"
                 else:
                     dot = "🟢"
-                    status_suffix = "   (confirmed BUY)"
+                    status_suffix = " (confirmed BUY)"
                 report += f"{dot} {symbol} ➔ {raw_strat}{status_suffix}\n"
+            report += "\n"
 
+        # ── STATUS ──
         if deep_sleep_active and deep_sleep_until:
-            report += f"\n😴 Status: DEEP SLEEP ACTIVE\n• Wake: {deep_sleep_until}"
+            report += f"{sep}\n😴 Status: DEEP SLEEP ACTIVE\n• Wake: {deep_sleep_until}\n"
+        else:
+            report += f"{sep}\n⚡ Status: ACTIV — Monitoring live\n"
 
-        # Retry logic — if Telegram rejects (flood), wait and retry once
-        success = self.send_message(report.strip(), parse_mode="HTML")
+        # Trimitere cu retry — fără semnătură automată (o adăugăm manual mai jos)
+        # Semnătura ALL CAPS conform spec
+        footer = (
+            f"{sep}\n"
+            f"🔱 AUTHORED BY ФОРЕКСГОД 🔱\n"
+            f"{sep}\n"
+            f"🏛 ГЛИТЧ ИН МАТРИКС 🏛"
+        )
+        full_report = report.rstrip() + "\n\n" + footer
+
+        success = self.send_message(full_report.strip(), parse_mode="HTML", add_signature=False)
         if not success:
             print("[WARN] Scan report send failed — retrying in 5s...")
             time.sleep(5)
-            success = self.send_message(report.strip(), parse_mode="HTML")
+            success = self.send_message(full_report.strip(), parse_mode="HTML", add_signature=False)
             if not success:
                 print("[ERROR] Scan report FAILED after retry. Report lost.")
 
