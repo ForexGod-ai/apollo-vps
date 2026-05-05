@@ -749,9 +749,7 @@ class MultiTFRadar:
                 print(f"\n⚠️  No setup found for {symbol}\n")
                 return
             setups = target_setups
-        elif not all_setups:
-            # Scan first setup only
-            setups = [setups[0]]
+        # else: scan all setups (default behavior — no filtering needed)
         
         # Run multi-TF analysis
         for setup in setups:
