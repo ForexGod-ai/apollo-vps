@@ -638,7 +638,15 @@ class MultiTFRadar:
         print(f"   Price: {result.current_price:.5f}")
         
         if not result.daily_zone_validated:
-            print("\n⏳ Price not in Daily FVG - Skipping multi-TF analysis")
+            if result.current_price > result.daily_fvg_top:
+                dist = (result.current_price - result.daily_fvg_top)
+                dist_pips = dist / 0.01 if 'JPY' in result.symbol else dist / 0.0001
+                direction_txt = f"ABOVE FVG by {dist_pips:.0f} pips"
+            else:
+                dist = (result.daily_fvg_bottom - result.current_price)
+                dist_pips = dist / 0.01 if 'JPY' in result.symbol else dist / 0.0001
+                direction_txt = f"BELOW FVG by {dist_pips:.0f} pips"
+            print(f"\n⏳ Price NOT in Daily FVG ({direction_txt}) - Waiting for pullback")
             print("\n" + "="*80)
             print(f"🎯 [VERDICT]: {result.verdict}")
             print("="*80)
@@ -725,7 +733,8 @@ class MultiTFRadar:
                 else:
                     return []
                 
-                return [s for s in setups if isinstance(s, dict) and s.get('status') == 'MONITORING']
+                # Accept MONITORING, ACTIVE, or any non-empty status
+                return [s for s in setups if isinstance(s, dict) and s.get('symbol') and s.get('entry_price')]
         
         except FileNotFoundError:
             print("⚠️  monitoring_setups.json not found")
@@ -751,13 +760,24 @@ class MultiTFRadar:
             setups = target_setups
         # else: scan all setups (default behavior — no filtering needed)
         
+        # Print summary header
+        print("\n" + "="*80)
+        symbols_list = " | ".join([f"{s.get('symbol','?')} {s.get('direction','?')}" for s in setups])
+        print(f"📋 LOADED {len(setups)} SETUP(S): {symbols_list}")
+        print("="*80)
+        
         # Run multi-TF analysis
         for setup in setups:
             try:
                 result = self.analyze_setup(setup)
                 self.print_result(result)
             except Exception as e:
-                print(f"\n⚠️  Error analyzing {setup.get('symbol', 'UNKNOWN')}: {e}\n")
+                sym = setup.get('symbol', 'UNKNOWN')
+                print(f"\n{'='*80}")
+                print(f"❌ ERROR ANALYZING {sym}: {e}")
+                import traceback
+                traceback.print_exc()
+                print("="*80 + "\n")
     
     def watch_mode(self, interval: int, symbol: Optional[str] = None, all_setups: bool = False):
         """Run scan in watch mode with auto-refresh"""
