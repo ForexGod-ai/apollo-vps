@@ -244,12 +244,18 @@ def main():
 
     # ── Startup Telegram notification ───────────────────
     next_days = [DAY_NAMES[d] for d in sorted(SCAN_DAYS)]
+    _sep = "────────────────"
     send_telegram(
         f"⏰ <b>AUTO SCANNER DAEMON ONLINE</b>\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"{_sep}\n"
         f"📅 Scan: {', '.join(next_days)} la {scan_hour:02d}:{scan_minute:02d}\n"
         f"🕐 Ora sistem: {get_bucharest_time().strftime('%H:%M:%S')}\n"
-        f"✅ Watchdog il protejeaza automat"
+        f"📊 Auto-restart enabled\n"
+        f"📈 State tracking active\n"
+        f"{_sep}\n"
+        f"🔱 AUTHORED BY <b>ФорексГод</b> 🔱\n"
+        f"{_sep}\n"
+        f"🏛️  <b>Глитч Ин Матрикс</b>  🏛️"
     )
 
     logger.info(f"[DAEMON] Loop started. Checking every {CHECK_INTERVAL}s...")
