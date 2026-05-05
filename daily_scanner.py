@@ -106,8 +106,10 @@ class DailyScanner:
             self.data_provider = CTraderDataProvider()
             print("📊 Using cTrader cBot for market data (IC Markets)")
         else:
-            self.data_provider = MT5DataProvider()
-            print("📊 Using MT5 for market data")
+            raise NotImplementedError(
+                "MT5DataProvider nu mai este suportat. "
+                "Folosește DailyScanner(use_ctrader=True) sau omite argumentul (default=True)."
+            )
             
         # V10.1: Initialize SMCDetector — pure structural, no arbitrary ATR floors
         self.smc_detector = SMCDetector(

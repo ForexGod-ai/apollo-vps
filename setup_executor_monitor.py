@@ -204,7 +204,12 @@ class SetupExecutorMonitor:
         })
         
         # SMC Detector for CHoCH detection
-        self.smc_detector = SMCDetector()
+        # V10.5 ATR SYNC: atr_multiplier=0.6 — echilibru între Scanner (1.2) și
+        # vechiul default (0.3). Elimină intrările false pe 4H noise fără a bloca
+        # swing-urile structurale valide. Scanner rămâne la 1.2 (detecție strictă D1).
+        self.smc_detector = SMCDetector(
+            atr_multiplier=0.6
+        )
         
         # Track executed setups to avoid duplicates
         self.executed_setups = self._load_executed_setups()

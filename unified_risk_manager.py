@@ -367,6 +367,7 @@ class UnifiedRiskManager:
         return fallback  # valoare statică calibrată ca fallback
     # ━━━ END Fix #8 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+    def get_daily_pnl(self) -> dict:
         """
         Calculate P&L for today.
 
