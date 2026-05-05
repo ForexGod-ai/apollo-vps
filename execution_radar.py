@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 #!/usr/bin/env python3
 """
 🔥 EXECUTION RADAR - V8.2 LTF Confirmation Scanner
@@ -20,6 +21,14 @@ Usage:
 
 import json
 import sys
+import io
+
+# Force UTF-8 output on Windows (fixes emoji display in PowerShell)
+if sys.stdout.encoding != 'utf-8':
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+if sys.stderr.encoding != 'utf-8':
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
+
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
