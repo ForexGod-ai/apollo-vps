@@ -385,9 +385,9 @@ class ExecutionRadar:
         else:
             direction = "SHORT"
         
-        # Extract strategy type
+        # Extract strategy type — păstrează valoarea exactă din JSON (REVERSAL_COUNTER_W1 etc.)
         strategy_type = setup_data.get('strategy_type', 'REVERSAL').upper()
-        if strategy_type not in ['REVERSAL', 'CONTINUITY']:
+        if not strategy_type:
             strategy_type = 'REVERSAL'
         
         # Get FVG zone values
