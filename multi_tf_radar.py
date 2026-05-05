@@ -29,6 +29,12 @@ Usage:
 
 import json
 import sys
+import io
+# Force UTF-8 output on Windows (fixes emoji display in PowerShell)
+if hasattr(sys.stdout, 'buffer') and sys.stdout.encoding != 'utf-8':
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+if hasattr(sys.stderr, 'buffer') and sys.stderr.encoding != 'utf-8':
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 import time
 import argparse
 from datetime import datetime

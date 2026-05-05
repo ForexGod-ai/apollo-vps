@@ -17,6 +17,12 @@ Usage:
 
 import json
 import sys
+import io
+# Force UTF-8 output on Windows (fixes emoji display in PowerShell)
+if hasattr(sys.stdout, 'buffer') and sys.stdout.encoding != 'utf-8':
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+if hasattr(sys.stderr, 'buffer') and sys.stderr.encoding != 'utf-8':
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 from datetime import datetime
 from typing import Dict, List, Optional
 from dataclasses import dataclass
@@ -287,8 +293,8 @@ class MonitoringRadar:
         strategy_type = setup_data.get('strategy_type', 'REVERSAL').upper()
         if strategy_type in ['CONTINUATION', 'CONTINUITY']:
             strategy_type = 'CONTINUITY'
-        elif strategy_type != 'REVERSAL':
-            strategy_type = 'REVERSAL'  # Default fallback pentru valori necunoscute
+        elif not strategy_type:
+            strategy_type = 'REVERSAL'  # Default fallback doar dacă e gol
         
         # Get FVG zone values (with fallback to entry_price)
         fvg_top = setup_data.get('fvg_top', entry_price)
