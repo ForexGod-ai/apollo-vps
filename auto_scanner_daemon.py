@@ -119,12 +119,18 @@ def run_auto_scan():
     logger.success(f"[AUTO SCAN] TRIGGER - {day_name} {timestamp}")
     logger.success(f"{'='*60}")
 
+    _sep = "────────────────────────"
     send_telegram(
+        f"<b>ФорексГод.АИ</b>\n"
         f"⏰ <b>AUTO SCAN PORNIT</b>\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"{_sep}\n"
         f"📅 {day_name}, {timestamp}\n"
-        f"🔄 Scanez piețele... (fara reset — setup-urile vechi sunt pastrate)\n"
-        f"⏳ Scanul dureaza ~2-4 minute"
+        f"🔄 Scanez piețele... (setup-urile vechi sunt pastrate)\n"
+        f"⏳ Scanul durează ~2-4 minute\n"
+        f"{_sep}\n"
+        f"🔱 AUTHORED BY <b>ФорексГод</b> 🔱\n"
+        f"{_sep}\n"
+        f"🏛 <b>ГЛИТЧ ИН МАТРИКС</b> 🏛"
     )
 
     python = sys.executable
@@ -162,9 +168,10 @@ def run_auto_scan():
                 logger.error(f"STDOUT (last 1500 chars):\n{stdout_snippet}")
             # ✅ Send error details to Telegram so user can diagnose from phone
             error_preview = stderr_snippet or stdout_snippet or 'No output captured'
+            _sep = "────────────────────────"
             send_telegram(
                 f"❌ <b>SCAN ERROR (code {result.returncode})</b>\n"
-                f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"{_sep}\n"
                 f"<pre>{error_preview[:800]}</pre>"
             )
     except subprocess.TimeoutExpired:
@@ -177,22 +184,33 @@ def run_auto_scan():
     # ── Finish notification ──────────────────────────────
     finish_time = get_bucharest_time().strftime('%H:%M:%S')
     if scan_ok:
+        _sep = "────────────────────────"
         logger.success(f"[AUTO SCAN] COMPLETED successfully at {finish_time}")
         send_telegram(
+            f"<b>ФорексГод.АИ</b>\n"
             f"✅ <b>AUTO SCAN COMPLET</b>\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"{_sep}\n"
             f"📅 {day_name} — Ora: {finish_time}\n"
-            f"📊 Urmatorul scan: vezi /status\n"
-            f"💡 Foloseste /monitoring pentru setups noi"
+            f"📊 Următorul scan: vezi /status\n"
+            f"💡 Folosește /monitoring pentru setup-uri noi\n"
+            f"{_sep}\n"
+            f"🔱 AUTHORED BY <b>ФорексГод</b> 🔱\n"
+            f"{_sep}\n"
+            f"🏛 <b>ГЛИТЧ ИН МАТРИКС</b> 🏛"
         )
     else:
         logger.error(f"[AUTO SCAN] FAILED at {finish_time}")
         send_telegram(
-            f"❌ <b>AUTO SCAN ESUAT</b>\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"<b>ФорексГод.АИ</b>\n"
+            f"❌ <b>AUTO SCAN EȘUAT</b>\n"
+            f"{_sep}\n"
             f"📅 {day_name} — Ora: {finish_time}\n"
-            f"⚠️ Verifica auto_scanner.log pe VPS\n"
-            f"🔧 Ruleaza manual: python daily_scanner.py"
+            f"⚠️ Verifică auto_scanner.log pe VPS\n"
+            f"🔧 Rulează manual: python daily_scanner.py\n"
+            f"{_sep}\n"
+            f"🔱 AUTHORED BY <b>ФорексГод</b> 🔱\n"
+            f"{_sep}\n"
+            f"🏛 <b>ГЛИТЧ ИН МАТРИКС</b> 🏛"
         )
 
     return scan_ok

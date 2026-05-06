@@ -627,10 +627,12 @@ class DailyScanner:
             for s in setups_found:
                 direction_str = "buy" if s.daily_choch.direction == 'bullish' else "sell"
                 strategy_str = getattr(s, 'strategy_type', 'UNKNOWN').upper()
+                h4_locked = getattr(s, 'h4_structure_locked', getattr(s, 'h4_bias_locked', False))
                 setup_symbols.append({
                     'symbol': s.symbol,
                     'direction': direction_str,
-                    'strategy': strategy_str
+                    'strategy': strategy_str,
+                    'h4_structure_locked': h4_locked
                 })
             
             # Send the OFFICIAL scan report (mirrors console exactly)

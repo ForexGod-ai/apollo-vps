@@ -43,7 +43,7 @@ class TelegramNotifier:
         if not self.bot_token or not self.chat_id:
             raise ValueError("TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID must be set in .env")
     
-    def _add_branding_signature(self, message: str, parse_mode: str = "Markdown") -> str:
+    def _add_branding_signature(self, message: str, parse_mode: str = "HTML") -> str:
         """
         V14.3 SOVEREIGN SIGNATURE — 24-char Separator by ФорексГод
 
@@ -107,7 +107,7 @@ class TelegramNotifier:
             data = {
                 "chat_id": self.chat_id,
                 "caption": caption,
-                "parse_mode": "Markdown"
+                "parse_mode": "HTML"
             }
             # V11.9: Retry once on 429 using retry-after
             for attempt in range(2):
@@ -127,28 +127,6 @@ class TelegramNotifier:
             return False
         except Exception as e:
             print(f"❌ Error sending Telegram photo: {e}")
-            return False
-    
-    def send_photo_file(self, file_path: str, caption: str = "") -> bool:
-        """Send photo from file path"""
-        try:
-            if not os.path.exists(file_path):
-                print(f"❌ Photo file not found: {file_path}")
-                return False
-            
-            url = f"{self.base_url}/sendPhoto"
-            with open(file_path, 'rb') as photo_file:
-                files = {"photo": photo_file}
-                data = {
-                    "chat_id": self.chat_id,
-                    "caption": caption,
-                    "parse_mode": "Markdown"
-                }
-                response = requests.post(url, files=files, data=data)
-            
-            return response.status_code == 200
-        except Exception as e:
-            print(f"❌ Error sending Telegram photo from file: {e}")
             return False
     
     def send_setup_alert(
@@ -676,8 +654,8 @@ class TelegramNotifier:
             
             data = {
                 "chat_id": self.chat_id,
-                "text": "🎯 *What would you like to do?*",
-                "parse_mode": "Markdown",
+                "text": "🎯 <b>What would you like to do?</b>",
+                "parse_mode": "HTML",
                 "reply_markup": keyboard
             }
             
@@ -689,18 +667,22 @@ class TelegramNotifier:
             return False
     
     def send_system_start(self) -> bool:
-        """V14.3 SYSTEM_START message — sent on bot startup"""
+        """V15.1 SYSTEM_START message — rich institutional System Boot-up design"""
         sep = UNIVERSAL_SEPARATOR
         now = datetime.now(timezone.utc)
-        current_date = now.strftime('%d.%m.%Y')
+        current_date = now.strftime('%A, %d %B %Y')
         current_time = now.strftime('%H:%M UTC')
         message = (
-            f"🛰 ГЛИТЧ ИН МАТРИКС | SYSTEM_START\n"
+            f"<b>ФорексГод.АИ</b>\n"
+            f"🛰 <b>ГЛИТЧ ИН МАТРИКС | SYSTEM_START</b>\n"
             f"{sep}\n"
-            f"📅 Data: {current_date}\n"
+            f"📅 {current_date}\n"
             f"🕒 Ora: {current_time}\n"
-            f"🔄 Acțiune: Scanare structurală în curs (16 perechi)...\n"
-            f"🛡 Risk Sentinel: ACTIV (Risc 5% per trade)"
+            f"{sep}\n"
+            f"🔄 Scanare structurală activă (16 perechi)\n"
+            f"🛡 Risk Sentinel: <b>ACTIV</b> — Risc 5% per trade\n"
+            f"📊 Auto-restart: enabled\n"
+            f"📈 State tracking: active"
         )
         return self.send_message(message.strip(), parse_mode="HTML")
 
@@ -788,13 +770,11 @@ class TelegramNotifier:
 
         # ── HEADER ──
         report = (
-            f"ФорексГод.АИ\n"
-            f"🏛 ГЛИТЧ ИН МАТРИКС | MARKET_REPORT\n"
+            f"<b>ФорексГод.АИ</b>\n"
+            f"🏛 <b>ГЛИТЧ ИН МАТРИКС | MARKET_REPORT</b>\n"
             f"{sep}\n"
-            f"\n"
-            f"✅ SCANARE COMPLETĂ\n"
-            f"\n"
-            f"📈 CONTEXT PORTOFOLIU\n"
+            f"✅ <b>SCANARE COMPLETĂ</b>\n\n"
+            f"📈 <b>CONTEXT PORTOFOLIU</b>\n"
             f"• Perechi analizate: {total_pairs}\n"
             f"• Monitorizare activă: {monitoring_count}\n"
             f"• Poziții deschise: {open_positions}\n"
@@ -804,13 +784,15 @@ class TelegramNotifier:
 
         # ── SETUP-URI ──
         if setup_symbols:
-            report += "\n🎯 SETUP-URI DETECTATE (Daily Bias)\n\n"
+            report += "🎯 <b>SETUP-URI DETECTATE (Daily Bias)</b>\n"
             for sym_info in setup_symbols:
                 symbol = sym_info.get('symbol', '?')
                 direction = str(sym_info.get('direction', '?')).lower()
                 raw_strat = str(sym_info.get('strategy', 'UNKNOWN')).upper()
                 if raw_strat == 'CONTINUITY':
                     raw_strat = 'CONTINUATION'
+                # Strip _counter_w1 suffix for display, keep core strategy name
+                raw_strat = raw_strat.replace('_COUNTER_W1', '')
                 h4_locked = sym_info.get('h4_structure_locked', sym_info.get('h4_bias_locked', True))
                 if not h4_locked:
                     dot = "🔵"
@@ -826,19 +808,18 @@ class TelegramNotifier:
 
         # ── STATUS ──
         if deep_sleep_active and deep_sleep_until:
-            report += f"{sep}\n😴 Status: DEEP SLEEP ACTIVE\n• Wake: {deep_sleep_until}\n"
+            report += f"{sep}\n😴 <b>Status: DEEP SLEEP ACTIVE</b>\n• Wake: {deep_sleep_until}\n"
         else:
             report += f"{sep}\n⚡ Status: ACTIV — Monitoring live\n"
 
-        # Trimitere cu retry — fără semnătură automată (o adăugăm manual mai jos)
-        # Semnătura ALL CAPS conform spec
+        # Semnătura ALL CAPS oficială
         footer = (
             f"{sep}\n"
-            f"🔱 AUTHORED BY ФОРЕКСГОД 🔱\n"
+            f"🔱 AUTHORED BY <b>ФорексГод</b> 🔱\n"
             f"{sep}\n"
-            f"🏛 ГЛИТЧ ИН МАТРИКС 🏛"
+            f"🏛 <b>ГЛИТЧ ИН МАТРИКС</b> 🏛"
         )
-        full_report = report.rstrip() + "\n\n" + footer
+        full_report = report.rstrip() + "\n" + footer
 
         success = self.send_message(full_report.strip(), parse_mode="HTML", add_signature=False)
         if not success:
