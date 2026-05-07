@@ -638,15 +638,16 @@ class MultiTFRadar:
         print(f"   Price: {result.current_price:.5f}")
         
         if not result.daily_zone_validated:
+            pip_sz = 0.01 if 'JPY' in result.symbol or 'XTI' in result.symbol else 0.0001
             if result.current_price > result.daily_fvg_top:
-                dist = (result.current_price - result.daily_fvg_top)
-                dist_pips = dist / 0.01 if 'JPY' in result.symbol else dist / 0.0001
-                direction_txt = f"ABOVE FVG by {dist_pips:.0f} pips"
+                dist_pips = (result.current_price - result.daily_fvg_top) / pip_sz
+                direction_txt = f"ABOVE FVG — {dist_pips:.0f} pips to top of zone"
             else:
-                dist = (result.daily_fvg_bottom - result.current_price)
-                dist_pips = dist / 0.01 if 'JPY' in result.symbol else dist / 0.0001
-                direction_txt = f"BELOW FVG by {dist_pips:.0f} pips"
-            print(f"\n⏳ Price NOT in Daily FVG ({direction_txt}) - Waiting for pullback")
+                dist_pips = (result.daily_fvg_bottom - result.current_price) / pip_sz
+                direction_txt = f"BELOW FVG — {dist_pips:.0f} pips to bottom of zone"
+            print(f"\n\u23f3 WAITING DAILY FVG: {direction_txt}")
+            print(f"   Daily FVG: [{result.daily_fvg_bottom:.5f} - {result.daily_fvg_top:.5f}]")
+            print(f"   Entry target: {result.daily_entry:.5f}")
             print("\n" + "="*80)
             print(f"🎯 [VERDICT]: {result.verdict}")
             print("="*80)
@@ -763,14 +764,18 @@ class MultiTFRadar:
         # Print summary header
         print("\n" + "="*80)
         symbols_list = " | ".join([f"{s.get('symbol','?')} {s.get('direction','?')}" for s in setups])
-        print(f"📋 LOADED {len(setups)} SETUP(S): {symbols_list}")
+        print(f"📋 LOADED {len(setups)} SETUP(S) FROM monitoring_setups.json")
+        print(f"   {symbols_list}")
         print("="*80)
         
+        ok_count = 0
+        err_count = 0
         # Run multi-TF analysis
         for setup in setups:
             try:
                 result = self.analyze_setup(setup)
                 self.print_result(result)
+                ok_count += 1
             except Exception as e:
                 sym = setup.get('symbol', 'UNKNOWN')
                 print(f"\n{'='*80}")
@@ -778,6 +783,9 @@ class MultiTFRadar:
                 import traceback
                 traceback.print_exc()
                 print("="*80 + "\n")
+                err_count += 1
+        
+        print(f"\n✅ Scan complete: {ok_count} analyzed | ❌ {err_count} errors\n")
     
     def watch_mode(self, interval: int, symbol: Optional[str] = None, all_setups: bool = False):
         """Run scan in watch mode with auto-refresh"""
