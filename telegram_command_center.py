@@ -869,8 +869,7 @@ class TelegramCommandCenter:
                 message += "  ⚠️ Unknown\n\n"
             
             # ═══ SECTION 8: NEWS TODAY (synced with upcoming_news.json) ═══
-            message += "<b>📰 NEWS TODAY:</b>
-"
+            message += "<b>📰 NEWS TODAY:</b>\n"
             try:
                 news_file = Path(__file__).parent.resolve() / 'data' / 'upcoming_news.json'
                 if news_file.exists():
@@ -898,27 +897,18 @@ class TelegramCommandCenter:
                     high_remaining = sum(1 for e in remaining_today if e.get('impact', '').upper() == 'HIGH')
                     med_remaining = sum(1 for e in remaining_today if e.get('impact', '').upper() in ('MEDIUM', 'MED'))
                     if remaining_today:
-                        message += f"  🔴 HIGH: <code>{high_remaining}</code> | 🟠 MED: <code>{med_remaining}</code>
-"
+                        message += f"  🔴 HIGH: <code>{high_remaining}</code> | 🟠 MED: <code>{med_remaining}</code>\n"
                         remaining_today.sort(key=lambda x: x.get('_time', '23:59'))
                         next_ev = remaining_today[0]
                         flag_map = {'USD':'🇺🇸','EUR':'��🇺','GBP':'🇬🇧','JPY':'🇯🇵','AUD':'🇦🇺','NZD':'🇳🇿','CAD':'🇨🇦','CHF':'🇨🇭'}
                         next_flag = flag_map.get(next_ev.get('currency', ''), '🏴')
-                        message += f"  ➡️ Next: {next_flag} <b>{next_ev.get('currency','?')}</b> {next_ev.get('event','?')} @ <code>{next_ev.get('_time','?')} UTC</code>
-
-"
+                        message += f"  ➡️ Next: {next_flag} <b>{next_ev.get('currency','?')}</b> {next_ev.get('event','?')} @ <code>{next_ev.get('_time','?')} UTC</code>\n\n"
                     else:
-                        message += "  ✅ Niciun eveniment rămas azi
-
-"
+                        message += "  ✅ Niciun eveniment rămas azi\n\n"
                 else:
-                    message += "  ℹ️ upcoming_news.json indisponibil
-
-"
+                    message += "  ℹ️ upcoming_news.json indisponibil\n\n"
             except Exception as _e:
-                message += f"  ⚠️ News error: <code>{str(_e)[:60]}</code>
-
-"
+                message += f"  ⚠️ News error: <code>{str(_e)[:60]}</code>\n\n"
             
             message += f"{UNIVERSAL_SEPARATOR}\n<b>🎯 VERDICT:</b> {'😴 DEEP SLEEP' if (Path(__file__).parent.resolve() / 'data' / 'deep_sleep_state.json').exists() else '✅ OPERATIONAL'}"
             
