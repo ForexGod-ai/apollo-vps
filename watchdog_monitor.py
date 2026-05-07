@@ -212,11 +212,40 @@ class WatchdogMonitor:
             
             logger.info(f"🚀 Starting {process_info['name']}...")
             
+            # 🔥 V4.3 FIX: Clear stale PID lock files before starting
+            # Prevents "DUPLICATE INSTANCE" false positive after crash/reboot
+            process_stem = process_name.replace('.py', '')
+            lock_candidates = [
+                self.base_path / f"process_{process_stem}.lock",
+                self.base_path / f"{process_stem}.lock",
+            ]
+            for lock_path in lock_candidates:
+                if lock_path.exists():
+                    try:
+                        pid_in_lock = int(lock_path.read_text().strip() or '0')
+                        import psutil as _psutil
+                        if pid_in_lock and _psutil.pid_exists(pid_in_lock):
+                            try:
+                                proc = _psutil.Process(pid_in_lock)
+                                if process_stem in ' '.join(proc.cmdline()):
+                                    logger.info(f"⏭️  Process already running (PID {pid_in_lock}), skipping lock clear")
+                                    pid_in_lock = 0  # Don't remove — it's legitimately running
+                            except (_psutil.NoSuchProcess, _psutil.AccessDenied):
+                                pass
+                        if pid_in_lock:
+                            lock_path.unlink()
+                            logger.warning(f"🧹 Removed stale lock: {lock_path.name} (old PID {pid_in_lock})")
+                    except Exception as _le:
+                        try:
+                            lock_path.unlink()
+                            logger.warning(f"🧹 Removed unreadable lock: {lock_path.name}")
+                        except Exception:
+                            pass
+            
             # V8.0 VPS-READY: Redirect stdout/stderr to log files (NOT DEVNULL!)
             # Critical for forensics: if a process crashes, we have the output
             log_dir = self.base_path / "logs"
             log_dir.mkdir(exist_ok=True)
-            process_stem = process_name.replace('.py', '')
             stdout_log = open(log_dir / f"{process_stem}_stdout.log", 'a')
             stderr_log = open(log_dir / f"{process_stem}_stderr.log", 'a')
             
