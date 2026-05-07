@@ -837,78 +837,88 @@ class TelegramCommandCenter:
             except Exception:
                 message += "  ⚠️ Data unavailable\n\n"
             
-            # ═══ SECTION 7: NEXT 4H SCAN ═══
-            message += "<b>⏰ NEXT 4H SCAN:</b>\n"
+            # ═══ SECTION 7: NEXT AUTO SCAN (Mon/Wed/Fri 07:00 Bucharest = 05:00 UTC) ═══
+            message += "<b>🤖 NEXT AUTO SCAN:</b>\n"
             try:
-                current_hour = now.hour
-                next_4h = [0, 4, 8, 12, 16, 20]
-                next_h = None
-                for h in next_4h:
-                    if h > current_hour:
-                        next_h = h
+                SCAN_DAYS = {0, 2, 4}  # Mon=0, Wed=2, Fri=4
+                SCAN_HOUR_UTC = 5      # 07:00 Bucharest = 05:00 UTC (summer) / 06:00 UTC (winter)
+                days_ro = {0: 'Luni', 1: 'Marți', 2: 'Miercuri', 3: 'Joi', 4: 'Vineri', 5: 'Sâmbătă', 6: 'Duminică'}
+                # Find next scan day
+                next_scan_dt = None
+                for offset in range(1, 8):
+                    candidate = (now + timedelta(days=offset)).replace(hour=SCAN_HOUR_UTC, minute=0, second=0, microsecond=0)
+                    if candidate.weekday() in SCAN_DAYS:
+                        next_scan_dt = candidate
                         break
-                if next_h is None:
-                    next_close = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+                # Also check today if scan hour not yet passed
+                today_scan = now.replace(hour=SCAN_HOUR_UTC, minute=0, second=0, microsecond=0)
+                if now.weekday() in SCAN_DAYS and now < today_scan:
+                    next_scan_dt = today_scan
+                if next_scan_dt:
+                    remaining_scan = next_scan_dt - now
+                    hours_left = remaining_scan.total_seconds() / 3600
+                    day_name = days_ro[next_scan_dt.weekday()]
+                    if hours_left < 24:
+                        message += f"  📅 <b>{day_name}</b> <code>07:00 EET</code> — în <code>{hours_left:.1f}h</code>\n\n"
+                    else:
+                        days_left = hours_left / 24
+                        message += f"  📅 <b>{day_name}</b> <code>07:00 EET</code> — în <code>{days_left:.1f} zile</code>\n\n"
                 else:
-                    next_close = now.replace(hour=next_h, minute=0, second=0, microsecond=0)
-                remaining = next_close - now
-                hours_left = remaining.total_seconds() / 3600
-                message += f"  <code>{next_close.strftime('%H:%M UTC')}</code> ({hours_left:.1f}h)\n\n"
+                    message += "  ⚠️ Unknown\n\n"
             except Exception:
                 message += "  ⚠️ Unknown\n\n"
             
             # ═══ SECTION 8: NEWS TODAY (synced with upcoming_news.json) ═══
-            message += "<b>📰 NEWS TODAY:</b>\n"
+            message += "<b>📰 NEWS TODAY:</b>
+"
             try:
                 news_file = Path(__file__).parent.resolve() / 'data' / 'upcoming_news.json'
                 if news_file.exists():
                     with open(news_file, 'r') as f:
-                        news_data = json.load(f)
-                    
+                        raw = json.load(f)
+                    if isinstance(raw, list):
+                        all_events = raw
+                    elif isinstance(raw, dict):
+                        all_events = raw.get('events', raw.get('data', []))
+                    else:
+                        all_events = []
                     today_str = now.strftime('%Y-%m-%d')
-                    all_events = news_data.get('events', [])
-                    
-                    # Filter: today's events that haven't happened yet
                     remaining_today = []
                     for ev in all_events:
-                        if ev.get('date') == today_str:
-                            ev_time = ev.get('time', '23:59')
+                        ev_datetime = ev.get('datetime', '')
+                        ev_date = ev.get('date', ev_datetime[:10] if ev_datetime else '')
+                        ev_time = ev.get('time', ev_datetime[11:16] if len(ev_datetime) > 10 else '23:59')
+                        if ev_date == today_str:
                             try:
                                 ev_hour, ev_min = map(int, ev_time.split(':'))
                                 if ev_hour > now.hour or (ev_hour == now.hour and ev_min > now.minute):
-                                    remaining_today.append(ev)
+                                    remaining_today.append({**ev, '_time': ev_time})
                             except Exception:
-                                remaining_today.append(ev)  # Include if can't parse
-                    
-                    high_remaining = sum(1 for e in remaining_today if e.get('impact') == 'High')
-                    med_remaining = sum(1 for e in remaining_today if e.get('impact') == 'Medium')
-                    
+                                remaining_today.append({**ev, '_time': ev_time})
+                    high_remaining = sum(1 for e in remaining_today if e.get('impact', '').upper() == 'HIGH')
+                    med_remaining = sum(1 for e in remaining_today if e.get('impact', '').upper() in ('MEDIUM', 'MED'))
                     if remaining_today:
-                        message += f"  🔴 HIGH: <code>{high_remaining}</code> | 🟠 MED: <code>{med_remaining}</code>\n"
-                        # Show next upcoming event
-                        remaining_today.sort(key=lambda x: x.get('time', '23:59'))
+                        message += f"  🔴 HIGH: <code>{high_remaining}</code> | 🟠 MED: <code>{med_remaining}</code>
+"
+                        remaining_today.sort(key=lambda x: x.get('_time', '23:59'))
                         next_ev = remaining_today[0]
-                        next_flag = {'USD':'🇺🇸','EUR':'🇪🇺','GBP':'🇬🇧','JPY':'🇯🇵','AUD':'🇦🇺','NZD':'🇳🇿','CAD':'🇨🇦','CHF':'🇨🇭'}.get(next_ev.get('currency',''), '🏴')
-                        message += f"  ➡️ Next: {next_flag} <b>{next_ev.get('currency','?')}</b> {next_ev.get('event','?')} @ <code>{next_ev.get('time','?')} UTC</code>\n"
+                        flag_map = {'USD':'🇺🇸','EUR':'��🇺','GBP':'🇬🇧','JPY':'🇯🇵','AUD':'🇦🇺','NZD':'🇳🇿','CAD':'🇨🇦','CHF':'🇨🇭'}
+                        next_flag = flag_map.get(next_ev.get('currency', ''), '🏴')
+                        message += f"  ➡️ Next: {next_flag} <b>{next_ev.get('currency','?')}</b> {next_ev.get('event','?')} @ <code>{next_ev.get('_time','?')} UTC</code>
+
+"
                     else:
-                        message += "  ✅ No remaining events today\n"
-                    
-                    # Show data freshness
-                    last_updated = news_data.get('last_updated', 'unknown')
-                    if last_updated != 'unknown':
-                        try:
-                            upd_time = datetime.fromisoformat(last_updated)
-                            age_h = (now - upd_time).total_seconds() / 3600
-                            freshness = '✅' if age_h < 12 else '⚠️'
-                            message += f"  {freshness} Data age: <code>{age_h:.1f}h</code>\n\n"
-                        except Exception:
-                            message += f"  ℹ️ Updated: <code>{last_updated[:16]}</code>\n\n"
-                    else:
-                        message += "\n"
+                        message += "  ✅ Niciun eveniment rămas azi
+
+"
                 else:
-                    message += "  ⚠️ upcoming_news.json not found\n\n"
-            except Exception:
-                message += "  ⚠️ Error reading news data\n\n"
+                    message += "  ℹ️ upcoming_news.json indisponibil
+
+"
+            except Exception as _e:
+                message += f"  ⚠️ News error: <code>{str(_e)[:60]}</code>
+
+"
             
             message += f"{UNIVERSAL_SEPARATOR}\n<b>🎯 VERDICT:</b> {'😴 DEEP SLEEP' if (Path(__file__).parent.resolve() / 'data' / 'deep_sleep_state.json').exists() else '✅ OPERATIONAL'}"
             
