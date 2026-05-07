@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-🛡️ WATCHDOG MONITOR V4.1 - 7 MONITORS (COMPLETE PROTECTION)
+🛡️ WATCHDOG MONITOR V4.3 - 9 MONITORS (COMPLETE PROTECTION)
 ────────────────
 🔱 AUTHORED BY ФорексГод 🔱
 🏛️ Глитч Ин Матрикс 🏛️
@@ -151,6 +151,14 @@ class WatchdogMonitor:
                 'last_restart': None,
                 'state': 'unknown',
                 'last_notification': 0
+            },
+            'multi_tf_radar.py': {
+                'name': 'Multi-TF Radar',
+                'command': [self.python_path, 'multi_tf_radar.py', '--watch', '--interval', '30'],
+                'restart_count': 0,
+                'last_restart': None,
+                'state': 'unknown',
+                'last_notification': 0
             }
         }
         
@@ -162,7 +170,7 @@ class WatchdogMonitor:
         self.telegram_token = os.getenv('TELEGRAM_BOT_TOKEN')
         self.telegram_chat_id = os.getenv('TELEGRAM_CHAT_ID')
         
-        logger.info("🛡️ Watchdog Monitor V4.2 - 9 MONITORS (+ Auto Scanner Mon/Wed/Fri + Dashboard)")
+        logger.info("🛡️ Watchdog Monitor V4.3 - 9 MONITORS (+ Multi-TF Radar 30s sync + Auto Scanner Mon/Wed/Fri + Dashboard)")
         logger.info(f"⏱️  Check interval: {check_interval}s")
         logger.info(f"🔇 Notification cooldown: {self.notification_cooldown}s (15 min) | FAILED: {self.failed_restart_cooldown}s (60 min)")
         logger.info(f"🐍 Python: {self.python_path}")
@@ -577,7 +585,7 @@ def main():
     """Entry point"""
     import argparse
     
-    parser = argparse.ArgumentParser(description='Watchdog Monitor V4.0 - 6 Monitors (Complete Protection)')
+    parser = argparse.ArgumentParser(description='Watchdog Monitor V4.3 - 9 Monitors (Complete Protection)')
     parser.add_argument('--interval', type=int, default=60,
                         help='Check interval in seconds (default: 60)')
     parser.add_argument('--live', action='store_true',
