@@ -698,7 +698,7 @@ class TelegramNotifier:
 
         # Header
         message = (
-            f"🏛 ГЛИТЧ ИН МАТРИКС | MARKET_REPORT\n"
+            f"🏛 MARKET_REPORT\n"
             f"{sep}\n"
             f"✅ SCANARE COMPLETĂ\n"
             f"📈 CONTEXT PORTOFOLIU\n"
@@ -771,7 +771,7 @@ class TelegramNotifier:
         # ── HEADER ──
         report = (
             f"<b>ФорексГод.АИ</b>\n"
-            f"🏛 <b>ГЛИТЧ ИН МАТРИКС | MARKET_REPORT</b>\n"
+            f"🏛 <b>MARKET_REPORT</b>\n"
             f"{sep}\n"
             f"✅ <b>SCANARE COMPLETĂ</b>\n\n"
             f"📈 <b>CONTEXT PORTOFOLIU</b>\n"
