@@ -320,7 +320,104 @@ class TelegramCommandCenter:
         except Exception as e:
             logger.error(f"❌ Stats command error: {e}")
             return f"❌ <b>Error:</b> {str(e)}"
-    
+
+    def handle_weekly_command(self):
+        """📈 Handle /weekly command - Show full weekly trading report (last 7 days)"""
+        try:
+            week_ago = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
+            week_start = (datetime.now() - timedelta(days=7)).strftime('%d %b')
+            week_end = datetime.now().strftime('%d %b %Y')
+
+            total = wins = losses = 0
+            total_pnl = 0.0
+            best_trade = worst_trade = None
+
+            # ── Sursa 1: trade_history.json (live cBot data) ──
+            trade_history_file = Path(__file__).parent.resolve() / 'trade_history.json'
+            if trade_history_file.exists():
+                with open(trade_history_file, 'r', encoding='utf-8') as f:
+                    th = json.load(f)
+                for trade in th.get('closed_trades', []):
+                    ct = trade.get('close_time', '')
+                    if not ct or ct[:10] < week_ago:
+                        continue
+                    profit = float(trade.get('profit', 0))
+                    total += 1
+                    total_pnl += profit
+                    if profit > 0:
+                        wins += 1
+                    else:
+                        losses += 1
+                    if best_trade is None or profit > best_trade:
+                        best_trade = profit
+                    if worst_trade is None or profit < worst_trade:
+                        worst_trade = profit
+            else:
+                # ── Sursa 2: SQLite fallback ──
+                if self.db_path.exists():
+                    conn = sqlite3.connect(self.db_path)
+                    cursor = conn.cursor()
+                    cursor.execute("""
+                        SELECT
+                            COUNT(*),
+                            SUM(CASE WHEN profit > 0 THEN 1 ELSE 0 END),
+                            SUM(CASE WHEN profit < 0 THEN 1 ELSE 0 END),
+                            SUM(profit),
+                            MAX(profit),
+                            MIN(profit)
+                        FROM closed_trades
+                        WHERE DATE(close_time, 'localtime') >= ?
+                    """, (week_ago,))
+                    row = cursor.fetchone()
+                    conn.close()
+                    if row and row[0]:
+                        total = row[0] or 0
+                        wins = row[1] or 0
+                        losses = row[2] or 0
+                        total_pnl = row[3] or 0.0
+                        best_trade = row[4]
+                        worst_trade = row[5]
+
+            win_rate = (wins / total * 100) if total > 0 else 0
+            avg_pnl = (total_pnl / total) if total > 0 else 0.0
+            pnl_emoji = "🔥" if total_pnl > 0 else ("💥" if total_pnl < 0 else "⚪")
+            wr_emoji = "✅" if win_rate >= 50 else "⚠️"
+
+            message = (
+                f"<b>📈 WEEKLY REPORT</b>\n"
+                f"{UNIVERSAL_SEPARATOR}\n"
+                f"<b>📅 {week_start} — {week_end}</b>\n"
+                f"{UNIVERSAL_SEPARATOR}\n"
+                f"{pnl_emoji} <b>Total P&amp;L</b>\n"
+                f"<code>${total_pnl:+.2f}</code>\n\n"
+                f"📋 <b>Trades</b>\n"
+                f"<code>{total}</code> executate\n\n"
+                f"✅ <b>Wins</b> / ❌ <b>Losses</b>\n"
+                f"<code>{wins}</code> • <code>{losses}</code>\n\n"
+                f"{wr_emoji} <b>Win Rate</b>\n"
+                f"<code>{win_rate:.1f}%</code>\n\n"
+                f"💵 <b>Profit Mediu / Trade</b>\n"
+                f"<code>${avg_pnl:+.2f}</code>\n"
+            )
+            if best_trade is not None:
+                message += (
+                    f"\n🏆 <b>Best Trade</b>\n"
+                    f"<code>${best_trade:+.2f}</code>\n"
+                    f"💣 <b>Worst Trade</b>\n"
+                    f"<code>${worst_trade:+.2f}</code>\n"
+                )
+            message += (
+                f"{UNIVERSAL_SEPARATOR}\n"
+                f"🔱 AUTHORED BY <b>ФорексГод</b> 🔱\n"
+                f"{UNIVERSAL_SEPARATOR}\n"
+                f"🏛 <b>ГЛИТЧ ИН МАТРИКС</b> 🏛"
+            )
+            return message
+
+        except Exception as e:
+            logger.error(f"❌ Weekly command error: {e}")
+            return f"❌ <b>Error:</b> {str(e)}"
+
     def _load_broker_positions(self) -> dict:
         """
         Load REAL positions from active_positions.json (written by cBot sync).
@@ -1450,6 +1547,8 @@ class TelegramCommandCenter:
                 response = self.handle_killall_command()
             elif command == '/resume':
                 response = self.handle_resume_command()
+            elif command == '/weekly':
+                response = self.handle_weekly_command()
             elif command == '/news':
                 response = self.handle_news_command()
             elif command == '/rates':
@@ -1460,6 +1559,7 @@ class TelegramCommandCenter:
                     f"{UNIVERSAL_SEPARATOR}\n\n"
                     f"<b>📊 Trading:</b>\n"
                     f"<code>/stats</code> — Daily trading statistics\n"
+                    f"<code>/weekly</code> — Weekly report (7 zile: P&L, WR, best/worst)\n"
                     f"<code>/active</code> — Live open positions\n"
                     f"<code>/monitoring</code> — Active setup watchlist\n"
                     f"<code>/btcusd</code> — Quick BTCUSD analysis\n\n"

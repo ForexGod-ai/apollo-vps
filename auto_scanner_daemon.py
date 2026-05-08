@@ -37,8 +37,14 @@ SCAN_MINUTE = 0         # :00
 SCAN_DAYS = {0, 2, 4}  # Monday=0, Wednesday=2, Friday=4
 CHECK_INTERVAL = 60     # Verifică la fiecare 60 secunde
 
+# ── Weekly Report: Vineri 23:59 EET (după închiderea pieței Forex) ──
+WEEKLY_REPORT_HOUR = 23
+WEEKLY_REPORT_MINUTE = 59
+WEEKLY_REPORT_DAY = 4  # Friday
+
 BASE_DIR = Path(__file__).parent
 LAST_SCAN_FILE = BASE_DIR / "data" / "last_auto_scan.json"
+LAST_WEEKLY_REPORT_FILE = BASE_DIR / "data" / "last_weekly_report.json"
 
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
@@ -216,6 +222,145 @@ def run_auto_scan():
     return scan_ok
 
 
+# ━━━ WEEKLY REPORT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+def get_last_weekly_report_date() -> str:
+    """Citește data ultimului weekly report trimis"""
+    try:
+        if LAST_WEEKLY_REPORT_FILE.exists():
+            with open(LAST_WEEKLY_REPORT_FILE, 'r') as f:
+                data = json.load(f)
+                return data.get('last_weekly_report_date', '')
+    except Exception:
+        pass
+    return ''
+
+
+def save_last_weekly_report_date(report_date: str):
+    """Salvează data ultimului weekly report trimis"""
+    try:
+        LAST_WEEKLY_REPORT_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(LAST_WEEKLY_REPORT_FILE, 'w') as f:
+            json.dump({
+                'last_weekly_report_date': report_date,
+                'last_weekly_report_timestamp': datetime.now().isoformat(),
+                'updated_by': 'auto_scanner_daemon.py'
+            }, f, indent=2)
+    except Exception as e:
+        logger.warning(f"Could not save weekly report date: {e}")
+
+
+def send_weekly_report():
+    """Construieste și trimite Weekly Report pe Telegram — rulat Vineri 23:59 EET"""
+    import sqlite3
+    from pathlib import Path as _Path
+
+    now = get_bucharest_time()
+    week_ago = (now - __import__('datetime').timedelta(days=7)).strftime('%Y-%m-%d')
+    week_start_label = (now - __import__('datetime').timedelta(days=7)).strftime('%d %b')
+    week_end_label = now.strftime('%d %b %Y')
+
+    _sep = "──────────────────"
+    total = wins = losses = 0
+    total_pnl = 0.0
+    best_trade = worst_trade = None
+
+    # ── Sursa 1: trade_history.json ──
+    trade_history_file = BASE_DIR / 'trade_history.json'
+    sourced_from = None
+    if trade_history_file.exists():
+        try:
+            with open(trade_history_file, 'r', encoding='utf-8') as f:
+                th = json.load(f)
+            for trade in th.get('closed_trades', []):
+                ct = trade.get('close_time', '')
+                if not ct or ct[:10] < week_ago:
+                    continue
+                profit = float(trade.get('profit', 0))
+                total += 1
+                total_pnl += profit
+                if profit > 0:
+                    wins += 1
+                else:
+                    losses += 1
+                if best_trade is None or profit > best_trade:
+                    best_trade = profit
+                if worst_trade is None or profit < worst_trade:
+                    worst_trade = profit
+            sourced_from = 'trade_history.json'
+        except Exception as e:
+            logger.warning(f"[WeeklyReport] trade_history.json error: {e}")
+
+    # ── Sursa 2: SQLite fallback ──
+    if sourced_from is None:
+        db_path = BASE_DIR / 'data' / 'trades.db'
+        if db_path.exists():
+            try:
+                conn = sqlite3.connect(str(db_path))
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT
+                        COUNT(*),
+                        SUM(CASE WHEN profit > 0 THEN 1 ELSE 0 END),
+                        SUM(CASE WHEN profit < 0 THEN 1 ELSE 0 END),
+                        SUM(profit),
+                        MAX(profit),
+                        MIN(profit)
+                    FROM closed_trades
+                    WHERE DATE(close_time, 'localtime') >= ?
+                """, (week_ago,))
+                row = cursor.fetchone()
+                conn.close()
+                if row and row[0]:
+                    total = row[0] or 0
+                    wins = row[1] or 0
+                    losses = row[2] or 0
+                    total_pnl = row[3] or 0.0
+                    best_trade = row[4]
+                    worst_trade = row[5]
+                sourced_from = 'trades.db'
+            except Exception as e:
+                logger.warning(f"[WeeklyReport] SQLite error: {e}")
+
+    win_rate = (wins / total * 100) if total > 0 else 0
+    avg_pnl = (total_pnl / total) if total > 0 else 0.0
+    pnl_emoji = "🔥" if total_pnl > 0 else ("💥" if total_pnl < 0 else "⚪")
+    wr_emoji = "✅" if win_rate >= 50 else "⚠️"
+
+    message = (
+        f"<b>ФорексГод.АИ</b>\n"
+        f"📈 <b>WEEKLY REPORT — VINERI</b>\n"
+        f"{_sep}\n"
+        f"<b>📅 {week_start_label} — {week_end_label}</b>\n"
+        f"{_sep}\n"
+        f"{pnl_emoji} <b>Total P&amp;L</b>\n"
+        f"<code>${total_pnl:+.2f}</code>\n\n"
+        f"📋 <b>Trades executate</b>\n"
+        f"<code>{total}</code>\n\n"
+        f"✅ <b>Wins</b> / ❌ <b>Losses</b>\n"
+        f"<code>{wins}</code> • <code>{losses}</code>\n\n"
+        f"{wr_emoji} <b>Win Rate</b>\n"
+        f"<code>{win_rate:.1f}%</code>\n\n"
+        f"💵 <b>Profit Mediu / Trade</b>\n"
+        f"<code>${avg_pnl:+.2f}</code>\n"
+    )
+    if best_trade is not None:
+        message += (
+            f"\n🏆 <b>Best Trade</b>\n"
+            f"<code>${best_trade:+.2f}</code>\n"
+            f"💣 <b>Worst Trade</b>\n"
+            f"<code>${worst_trade:+.2f}</code>\n"
+        )
+    message += (
+        f"{_sep}\n"
+        f"🔱 AUTHORED BY <b>ФорексГод</b> 🔱\n"
+        f"{_sep}\n"
+        f"🏛 <b>ГЛИТЧ ИН МАТРИКС</b> 🏛"
+    )
+
+    logger.success(f"[WeeklyReport] Sending — {total} trades, P&L ${total_pnl:+.2f}, WR {win_rate:.1f}%")
+    send_telegram(message)
+
+
 # ━━━ MAIN LOOP ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 def main():
     parser = argparse.ArgumentParser(description='Auto Scanner Daemon - Mon/Wed/Fri 07:00 Bucharest')
@@ -289,6 +434,18 @@ def main():
             is_scan_day = weekday in SCAN_DAYS
             is_scan_time = (now.hour == scan_hour) and (now.minute == scan_minute)
             already_scanned_today = (get_last_scan_date() == today_str)
+
+            # ── Weekly Report: Vineri 23:59 EET ──────────────────────────────
+            is_weekly_report_time = (
+                weekday == WEEKLY_REPORT_DAY
+                and now.hour == WEEKLY_REPORT_HOUR
+                and now.minute == WEEKLY_REPORT_MINUTE
+            )
+            already_sent_weekly = (get_last_weekly_report_date() == today_str)
+            if is_weekly_report_time and not already_sent_weekly:
+                logger.info(f"[WEEKLY] Vineri 23:59 — trimit Weekly Report...")
+                save_last_weekly_report_date(today_str)
+                send_weekly_report()
 
             if is_scan_day and is_scan_time and not already_scanned_today:
                 logger.info(f"[TRIGGER] {DAY_NAMES[weekday]} {now.strftime('%H:%M')} — SCAN START!")
