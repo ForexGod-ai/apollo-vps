@@ -119,7 +119,7 @@ def run_auto_scan():
     logger.success(f"[AUTO SCAN] TRIGGER - {day_name} {timestamp}")
     logger.success(f"{'='*60}")
 
-    _sep = "────────────────────────"
+    _sep = "──────────────────"
     send_telegram(
         f"<b>ФорексГод.АИ</b>\n"
         f"⏰ <b>AUTO SCAN PORNIT</b>\n"
@@ -168,7 +168,7 @@ def run_auto_scan():
                 logger.error(f"STDOUT (last 1500 chars):\n{stdout_snippet}")
             # ✅ Send error details to Telegram so user can diagnose from phone
             error_preview = stderr_snippet or stdout_snippet or 'No output captured'
-            _sep = "────────────────────────"
+            _sep = "──────────────────"
             send_telegram(
                 f"❌ <b>SCAN ERROR (code {result.returncode})</b>\n"
                 f"{_sep}\n"
@@ -184,7 +184,7 @@ def run_auto_scan():
     # ── Finish notification ──────────────────────────────
     finish_time = get_bucharest_time().strftime('%H:%M:%S')
     if scan_ok:
-        _sep = "────────────────────────"
+        _sep = "──────────────────"
         logger.success(f"[AUTO SCAN] COMPLETED successfully at {finish_time}")
         send_telegram(
             f"<b>ФорексГод.АИ</b>\n"
@@ -262,7 +262,7 @@ def main():
 
     # ── Startup Telegram notification ───────────────────
     next_days = [DAY_NAMES[d] for d in sorted(SCAN_DAYS)]
-    _sep = "────────────────"
+    _sep = "──────────────────"
     send_telegram(
         f"⏰ <b>AUTO SCANNER DAEMON ONLINE</b>\n"
         f"{_sep}\n"

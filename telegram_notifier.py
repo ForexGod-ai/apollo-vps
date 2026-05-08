@@ -24,7 +24,7 @@ load_dotenv()
 # 16-line symmetrical footer on EVERY message, no exceptions.
 # Branding = FOOTER ONLY. Never header. Clean & institutional.
 # ════════════════════════════════════════
-UNIVERSAL_SEPARATOR = "────────────────────────"  # EXACTLY 24 chars — INSTITUTIONAL SYMMETRIC
+UNIVERSAL_SEPARATOR = "──────────────────"  # 18 chars — matches signature width
 SEPARATOR_LENGTH = 24  # Enforced rule: Name-aligned width
 # ════════════════════════════════════════
 
