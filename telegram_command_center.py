@@ -406,12 +406,7 @@ class TelegramCommandCenter:
                     f"💣 <b>Worst Trade</b>\n"
                     f"<code>${worst_trade:+.2f}</code>\n"
                 )
-            message += (
-                f"{UNIVERSAL_SEPARATOR}\n"
-                f"🔱 AUTHORED BY <b>ФорексГод</b> 🔱\n"
-                f"{UNIVERSAL_SEPARATOR}\n"
-                f"🏛 <b>ГЛИТЧ ИН МАТРИКС</b> 🏛"
-            )
+            message += UNIVERSAL_SEPARATOR
             return message
 
         except Exception as e:

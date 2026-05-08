@@ -350,12 +350,7 @@ def send_weekly_report():
             f"💣 <b>Worst Trade</b>\n"
             f"<code>${worst_trade:+.2f}</code>\n"
         )
-    message += (
-        f"{_sep}\n"
-        f"🔱 AUTHORED BY <b>ФорексГод</b> 🔱\n"
-        f"{_sep}\n"
-        f"🏛 <b>ГЛИТЧ ИН МАТРИКС</b> 🏛"
-    )
+    message += _sep
 
     logger.success(f"[WeeklyReport] Sending — {total} trades, P&L ${total_pnl:+.2f}, WR {win_rate:.1f}%")
     send_telegram(message)
