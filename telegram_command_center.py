@@ -59,7 +59,7 @@ logger.add(
 )
 
 # Universal separator - EXACTLY 18 characters for alignment
-UNIVERSAL_SEPARATOR = "──────────────────"
+UNIVERSAL_SEPARATOR = "────────────────"
 
 
 def acquire_pid_lock(lock_file: Path) -> bool:
@@ -294,7 +294,7 @@ class TelegramCommandCenter:
 
             # 📦 COMPACT VERTICAL LAYOUT (Dashboard Sniper)
             message = f"""<b>📊 DAILY STATS</b>
-──────────────────
+────────────────
 <b>📅 {datetime.now().strftime('%d %b %Y')}</b>
 
 {profit_emoji} <b>Net Profit</b>
@@ -311,7 +311,7 @@ class TelegramCommandCenter:
 
 💵 <b>Avg P/L</b>
 <code>${avg_profit:+.2f}</code>
-──────────────────"""
+────────────────"""
 
             message += f"""\n<b>📈 WEEKLY (7d)</b>\n\n{weekly_emoji} <b>Profit</b>\n<code>${weekly_profit:+.2f}</code>\n\n📋 <b>Trades</b>\n<code>{weekly_trades}</code>"""
 
@@ -1073,7 +1073,7 @@ class TelegramCommandCenter:
 
             message = (
                 f"₿ <b>BTCUSD QUICK ANALYSIS</b>\n"
-                f"──────────────────\n\n"
+                f"────────────────\n\n"
                 f"{dir_emoji} <b>{direction}</b> | {status} | {strategy}\n"
                 f"📅 Setup: <code>{date_display}</code>\n\n"
                 f"💰 Entry: <code>${entry:,.2f}</code> — {entry_status}\n"

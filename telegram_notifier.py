@@ -24,7 +24,7 @@ load_dotenv()
 # 16-line symmetrical footer on EVERY message, no exceptions.
 # Branding = FOOTER ONLY. Never header. Clean & institutional.
 # ════════════════════════════════════════
-UNIVERSAL_SEPARATOR = "──────────────────"  # 18 chars — matches signature width
+UNIVERSAL_SEPARATOR = "────────────────"  # 16 chars — matches signature width
 SEPARATOR_LENGTH = 24  # Enforced rule: Name-aligned width
 # ════════════════════════════════════════
 
@@ -1016,7 +1016,7 @@ class TelegramNotifier:
 💰 *DAILY PERFORMANCE REPORT*
 {datetime.now().strftime('%Y-%m-%d')} • {datetime.now().strftime('%A')}
 
-──────────────────
+────────────────
 📊 *ACCOUNT SUMMARY:*
 
 💵 Balance: `${balance:,.2f}`
@@ -1026,7 +1026,7 @@ class TelegramNotifier:
 📊 Margin: `${margin_used:,.2f}` used ({margin_used/balance*100:.1f}%)
 🔓 Free: `${free_margin:,.2f}`
 
-──────────────────
+────────────────
 🎯 *TODAY'S PERFORMANCE:*
 """
             
