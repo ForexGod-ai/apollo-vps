@@ -17,7 +17,7 @@ import time
 import subprocess
 import argparse
 from pathlib import Path
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from loguru import logger
 from dotenv import load_dotenv
 
@@ -252,11 +252,10 @@ def save_last_weekly_report_date(report_date: str):
 def send_weekly_report():
     """Construieste și trimite Weekly Report pe Telegram — rulat Vineri 23:59 EET"""
     import sqlite3
-    from pathlib import Path as _Path
 
     now = get_bucharest_time()
-    week_ago = (now - __import__('datetime').timedelta(days=7)).strftime('%Y-%m-%d')
-    week_start_label = (now - __import__('datetime').timedelta(days=7)).strftime('%d %b')
+    week_ago = (now - timedelta(days=7)).strftime('%Y-%m-%d')
+    week_start_label = (now - timedelta(days=7)).strftime('%d %b')
     week_end_label = now.strftime('%d %b %Y')
 
     _sep = "────────────────"
@@ -362,6 +361,7 @@ def main():
     parser.add_argument('--scan-hour', type=int, default=SCAN_HOUR, help='Ora scanului (default: 7)')
     parser.add_argument('--scan-minute', type=int, default=SCAN_MINUTE, help='Minutul scanului (default: 0)')
     parser.add_argument('--run-now', action='store_true', help='Ruleaza scanul imediat (test mode)')
+    parser.add_argument('--weekly-now', action='store_true', help='Trimite Weekly Report imediat (manual trigger)')
     args = parser.parse_args()
 
     scan_hour = args.scan_hour
@@ -398,6 +398,15 @@ def main():
         today_str = date.today().isoformat()
         save_last_scan_date(today_str)
         logger.info("[--run-now] Done. Exiting.")
+        return
+
+    # ── Weekly now mode (manual trigger) ─────────────────
+    if args.weekly_now:
+        logger.warning("[--weekly-now] Manual trigger! Sending Weekly Report immediately...")
+        send_weekly_report()
+        today_str = date.today().isoformat()
+        save_last_weekly_report_date(today_str)
+        logger.info("[--weekly-now] Done. Exiting.")
         return
 
     # ── Startup Telegram notification ───────────────────
