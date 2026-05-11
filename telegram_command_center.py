@@ -121,9 +121,9 @@ class TelegramCommandCenter:
         # ADMIN_ID = ID-ul tău Telegram — singurul cu acces la comenzile critice
         self.admin_id = self.authorized_user_id
         # Comenzi PUBLIC — oricine din grup poate folosi
-        self.PUBLIC_COMMANDS = {'/monitoring', '/stats', '/weekly', '/help', '/status'}
+        self.PUBLIC_COMMANDS = {'/monitoring', '/stats', '/weekly', '/help', '/status', '/news', '/rates', '/btcusd'}
         # Comenzi ADMIN ONLY — restricționate strict
-        self.ADMIN_COMMANDS  = {'/killall', '/resume', '/active', '/btcusd', '/news', '/rates'}
+        self.ADMIN_COMMANDS  = {'/killall', '/resume', '/active'}
         
         # V8.1: Path alignment — resolve relative to script location, not CWD
         script_dir = Path(__file__).parent.resolve()
@@ -1601,6 +1601,9 @@ class TelegramCommandCenter:
                         f"<code>/stats</code> — Statistici zilnice trading\n"
                         f"<code>/weekly</code> — Raport săptămânal P&amp;L\n"
                         f"<code>/status</code> — Stare tehnică sistem\n"
+                        f"<code>/btcusd</code> — Analiză rapidă BTCUSD\n"
+                        f"<code>/news</code> — 🚨 Next HIGH IMPACT events\n"
+                        f"<code>/rates</code> — 🏦 Ratele băncilor centrale\n"
                         f"<code>/help</code> — Această listă\n"
                     )
             else:
