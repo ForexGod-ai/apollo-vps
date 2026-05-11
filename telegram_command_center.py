@@ -117,6 +117,13 @@ class TelegramCommandCenter:
         self.bot_token = os.getenv('TELEGRAM_BOT_TOKEN', '')
         self.chat_id = os.getenv('TELEGRAM_CHAT_ID', '')
         self.authorized_user_id = int(os.getenv('TELEGRAM_USER_ID', '0'))
+        # ── V11.5 ACCESS CONTROL ──────────────────────────────────────────
+        # ADMIN_ID = ID-ul tău Telegram — singurul cu acces la comenzile critice
+        self.admin_id = self.authorized_user_id
+        # Comenzi PUBLIC — oricine din grup poate folosi
+        self.PUBLIC_COMMANDS = {'/monitoring', '/stats', '/weekly', '/help', '/status'}
+        # Comenzi ADMIN ONLY — restricționate strict
+        self.ADMIN_COMMANDS  = {'/killall', '/resume', '/active', '/btcusd', '/news', '/rates'}
         
         # V8.1: Path alignment — resolve relative to script location, not CWD
         script_dir = Path(__file__).parent.resolve()
@@ -207,14 +214,14 @@ class TelegramCommandCenter:
         try:
             url = f"https://api.telegram.org/bot{self.bot_token}/sendMessage"
             
-            # ═══ V10.4 SOVEREIGN SIGNATURE — 16-Line Symmetry ═══
+            # ═══ V11.5 SOVEREIGN SIGNATURE — 16-char separator, ALL CAPS ═══
             sep = "────────────────"  # 16 chars
             branded_text = (
                 f"{text}\n\n"
-                f"  {sep}\n"
-                f"  🔱 AUTHORED BY <b>ФорексГод</b> 🔱\n"
-                f"  {sep}\n"
-                f"  🏛️  <b>Глитч Ин Матрикс</b>  🏛️"
+                f"{sep}\n"
+                f"🔱 AUTHORED BY <b>ФорексГод</b> 🔱\n"
+                f"{sep}\n"
+                f"🏛 <b>ГЛИТЧ ИН МАТРИКС</b> 🏛"
             )
             
             payload = {
@@ -1508,70 +1515,102 @@ class TelegramCommandCenter:
             return f"❌ <b>RATES ERROR:</b> {str(e)}"
 
     def process_command(self, message_obj):
-        """Process incoming command"""
+        """
+        V11.5 ACCESS CONTROL — Ierarhie PUBLIC vs ADMIN
+
+        🔓 PUBLIC  → /monitoring /stats /weekly /help /status
+        🔐 ADMIN   → /killall /resume /active /btcusd /news /rates
+        """
         try:
-            # Check authorization
             from_user = message_obj.get('from', {})
-            user_id = from_user.get('id')
-            
-            if user_id != self.authorized_user_id:
-                logger.warning(f"⚠️ Unauthorized command attempt from user {user_id}")
-                return
-            
-            text = message_obj.get('text', '').strip()
-            
+            user_id   = from_user.get('id')
+            text      = message_obj.get('text', '').strip()
+
             if not text.startswith('/'):
                 return
-            
+
             command = text.split()[0].lower()
-            
-            logger.info(f"📥 Processing command: {command}")
-            
-            # Route command
+            is_admin = (user_id == self.admin_id)
+
+            logger.info(f"📥 cmd={command} user={user_id} admin={is_admin}")
+
+            # ── ACCES RESTRICȚIONAT: comandă ADMIN apelată de non-admin ──
+            if command in self.ADMIN_COMMANDS and not is_admin:
+                logger.warning(f"🔐 ACCES REFUZAT: user={user_id} a încercat {command}")
+                self.send_message(
+                    f"⚠️ <b>ACCES RESTRICȚIONAT.</b>\n\n"
+                    f"Comanda <code>{command}</code> este rezervată exclusiv administratorului."
+                )
+                return
+
+            # ── Comenzi necunoscute: ignoră silenţios dacă non-admin ──
+            known = self.PUBLIC_COMMANDS | self.ADMIN_COMMANDS
+            if command not in known and not is_admin:
+                return  # non-admin vede un command necunoscut → ignorăm
+
+            # ── ROUTING ──────────────────────────────────────────────────
             if command == '/stats':
                 response = self.handle_stats_command()
+            elif command == '/weekly':
+                response = self.handle_weekly_command()
             elif command == '/monitoring':
                 response = self.handle_monitoring_command()
             elif command == '/status':
                 response = self.handle_status_command()
-            elif command == '/btcusd':
-                response = self.handle_btcusd_command()
             elif command == '/active':
                 response = self.handle_active_command()
+            elif command == '/btcusd':
+                response = self.handle_btcusd_command()
             elif command == '/killall':
                 response = self.handle_killall_command()
             elif command == '/resume':
                 response = self.handle_resume_command()
-            elif command == '/weekly':
-                response = self.handle_weekly_command()
             elif command == '/news':
                 response = self.handle_news_command()
             elif command == '/rates':
                 response = self.handle_rates_command()
             elif command == '/help':
-                response = (
-                    f"<b>🎮 COMMAND CENTER V11.5</b>\n"
-                    f"{UNIVERSAL_SEPARATOR}\n\n"
-                    f"<b>📊 Trading:</b>\n"
-                    f"<code>/stats</code> — Daily trading statistics\n"
-                    f"<code>/weekly</code> — Weekly report (7 zile: P&L, WR, best/worst)\n"
-                    f"<code>/active</code> — Live open positions\n"
-                    f"<code>/monitoring</code> — Active setup watchlist\n"
-                    f"<code>/btcusd</code> — Quick BTCUSD analysis\n\n"
-                    f"<b>📰 Market Intel:</b>\n"
-                    f"<code>/news</code> — 🚨 Next 3 High Impact events this week\n"
-                    f"<code>/rates</code> — 🏦 Central bank rates + carry pairs\n\n"
-                    f"<b>⚙️ System:</b>\n"
-                    f"<code>/status</code> — System health check\n"
-                    f"<code>/killall</code> — 🚨 Close ALL positions + 24h lockdown\n"
-                    f"<code>/resume</code> — 🔱 Wake from deep sleep + restart trading\n"
-                    f"<code>/help</code> — Show this message"
-                )
+                sep = UNIVERSAL_SEPARATOR
+                if is_admin:
+                    # ADMIN vede toate comenzile
+                    response = (
+                        f"<b>🎮 COMMAND CENTER V11.5</b>\n"
+                        f"{sep}\n\n"
+                        f"🔓 <b>PUBLIC</b>\n"
+                        f"<code>/monitoring</code> — Setup-uri pândite active\n"
+                        f"<code>/stats</code> — Statistici zilnice trading\n"
+                        f"<code>/weekly</code> — Raport 7 zile (P&amp;L, WR, best/worst)\n"
+                        f"<code>/status</code> — Health check sistem\n"
+                        f"<code>/help</code> — Această listă\n\n"
+                        f"{sep}\n\n"
+                        f"🔐 <b>ADMIN ONLY</b>\n"
+                        f"<code>/active</code> — Poziții deschise live\n"
+                        f"<code>/btcusd</code> — Analiză rapidă BTCUSD\n"
+                        f"<code>/news</code> — 🚨 Next 5 HIGH IMPACT events\n"
+                        f"<code>/rates</code> — 🏦 Ratele băncilor centrale\n"
+                        f"<code>/killall</code> — 🚨 Închide TOT + 24h lockdown\n"
+                        f"<code>/resume</code> — 🔱 Ieșire deep sleep + restart\n"
+                    )
+                else:
+                    # PUBLIC vede doar comenzile disponibile pentru ei
+                    response = (
+                        f"<b>🎮 COMMAND CENTER V11.5</b>\n"
+                        f"{sep}\n\n"
+                        f"🔓 <b>COMENZI DISPONIBILE</b>\n"
+                        f"<code>/monitoring</code> — Setup-uri pândite active\n"
+                        f"<code>/stats</code> — Statistici zilnice trading\n"
+                        f"<code>/weekly</code> — Raport săptămânal P&amp;L\n"
+                        f"<code>/status</code> — Stare tehnică sistem\n"
+                        f"<code>/help</code> — Această listă\n"
+                    )
             else:
-                response = f"❌ <b>Unknown command:</b> <code>{command}</code>\n\nUse <code>/help</code> for available commands."
-            
+                if is_admin:
+                    response = f"❌ <b>Unknown command:</b> <code>{command}</code>\n\nUse <code>/help</code> for available commands."
+                else:
+                    return  # non-admin + comandă necunoscută → ignorăm
+
             self.send_message(response)
-            
+
         except Exception as e:
             logger.error(f"❌ Command processing error: {e}")
     
