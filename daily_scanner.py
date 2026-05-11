@@ -471,22 +471,22 @@ class DailyScanner:
                         else:
                             tg_prefix = "👁️ MONITORING (PÂNDĂ)"
 
-                        # Skip repeat alert for re-evaluated MONITORING setups (no status change)
+                        # V15.2: Trimite chart pentru TOATE setup-urile valide (inclusiv re-evaluate)
+                        # Re-evaluate primesc prefix diferit pt claritate in Telegram
                         if is_reevaluation and setup_status == 'MONITORING':
-                            print(f"   ⏭️ Skipping repeat alert for {symbol} [RE-EVAL MONITORING — already notified]")
-                        else:
-                            print(f"   📸 {tg_prefix} — Generez chart pentru {symbol}...")
-                            try:
-                                self.telegram.send_setup_alert(
-                                    setup=setup,
-                                    df_daily=df_daily,
-                                    df_4h=df_4h,
-                                    df_1h=df_1h,
-                                    charts_mode='daily_only'  # V15.0: Silent Scan — doar Daily chart la scanare
-                                )
-                                print(f"   ✅ Chart trimis pe Telegram: {symbol} [{tg_prefix}] [DAILY ONLY]")
-                            except Exception as e:
-                                print(f"   ⚠️ Failed to send charts: {e}")
+                            tg_prefix = "🔄 RE-EVALUAT (PÂNDĂ)"
+                        print(f"   📸 {tg_prefix} — Generez chart pentru {symbol}...")
+                        try:
+                            self.telegram.send_setup_alert(
+                                setup=setup,
+                                df_daily=df_daily,
+                                df_4h=df_4h,
+                                df_1h=df_1h,
+                                charts_mode='daily_only'  # V15.0: Silent Scan — doar Daily chart la scanare
+                            )
+                            print(f"   ✅ Chart trimis pe Telegram: {symbol} [{tg_prefix}] [DAILY ONLY]")
+                        except Exception as e:
+                            print(f"   ⚠️ Failed to send charts: {e}")
                     
                     print(f"✓ {symbol} adăugat în raportul de dimineață [{setup_status}]")
                 else:
@@ -577,6 +577,10 @@ class DailyScanner:
         truly_new_setups   = [s for s in all_active_setups if s.symbol not in open_position_symbols]
         active_with_position = [s for s in all_active_setups if s.symbol in open_position_symbols]
 
+        # V15.2 Option A: Breakdown corect — brand_new vs re_evaluated (era deja in monitoring)
+        brand_new_setups   = [s for s in all_active_setups if s.symbol not in monitoring_symbols]
+        re_evaluated_setups = [s for s in all_active_setups if s.symbol in monitoring_symbols]
+
         # SAVE first, then show final summary
         save_monitoring_setups(all_active_setups)
         
@@ -599,8 +603,8 @@ class DailyScanner:
         print(f"✅ Scan Complete!")
         print(f"📊 Total Pairs Scanned: {len(self.pairs)}")
         print(f"🆕 New Setups Found: {len(setups_found)}")
-        print(f"    └─ Truly New (no position): {len(truly_new_setups)}")
-        print(f"    └─ Re-detected (has position): {len(active_with_position)}")
+        print(f"    └─ Brand New (never in monitoring): {len(brand_new_setups)}")
+        print(f"    └─ Re-evaluated (already in monitoring): {len(re_evaluated_setups)}")
         print(f"📋 Total Active Tracking:")
         print(f"    └─ Saved in Monitoring: {final_monitoring_count}")
         print(f"    └─ Open Positions: {len(all_open_positions)}")
@@ -647,8 +651,8 @@ class DailyScanner:
                 self.telegram.send_scan_report(
                     total_pairs=len(self.pairs),
                     new_setups_found=len(setups_found),
-                    truly_new=len(truly_new_setups),
-                    re_detected=len(active_with_position),
+                    truly_new=len(brand_new_setups),
+                    re_detected=len(re_evaluated_setups),
                     monitoring_count=final_monitoring_count,
                     open_positions=len(all_open_positions),
                     deep_sleep_active=deep_sleep_active,
