@@ -970,6 +970,7 @@ class TelegramCommandCenter:
             # ═══ SECTION 8: NEWS TODAY (synced with upcoming_news.json) ═══
             message += "<b>📰 NEWS TODAY:</b>\n"
             try:
+                from datetime import timezone as _tz
                 news_file = Path(__file__).parent.resolve() / 'data' / 'upcoming_news.json'
                 if news_file.exists():
                     with open(news_file, 'r') as f:
@@ -980,30 +981,45 @@ class TelegramCommandCenter:
                         all_events = raw.get('events', raw.get('data', []))
                     else:
                         all_events = []
-                    today_str = now.strftime('%Y-%m-%d')
-                    remaining_today = []
+                    now_utc = datetime.now(_tz.utc)
+                    today_str = now_utc.strftime('%Y-%m-%d')
+                    # ✅ V11.6 FIX: filter ALL future events (not just today) — so after today's news pass, show tomorrow's
+                    future_events = []
                     for ev in all_events:
-                        ev_datetime = ev.get('datetime', '')
+                        ev_datetime = ev.get('datetime', ev.get('datetime_utc', ''))
                         ev_date = ev.get('date', ev_datetime[:10] if ev_datetime else '')
                         ev_time = ev.get('time', ev_datetime[11:16] if len(ev_datetime) > 10 else '23:59')
-                        if ev_date == today_str:
-                            try:
-                                ev_hour, ev_min = map(int, ev_time.split(':'))
-                                if ev_hour > now.hour or (ev_hour == now.hour and ev_min > now.minute):
-                                    remaining_today.append({**ev, '_time': ev_time})
-                            except Exception:
-                                remaining_today.append({**ev, '_time': ev_time})
+                        if not ev_date:
+                            continue
+                        try:
+                            ev_hour, ev_min = map(int, ev_time.split(':')[:2])
+                            ev_dt = datetime(
+                                int(ev_date[:4]), int(ev_date[5:7]), int(ev_date[8:10]),
+                                ev_hour, ev_min, tzinfo=_tz.utc
+                            )
+                            if ev_dt > now_utc:
+                                future_events.append({**ev, '_time': ev_time, '_date': ev_date, '_dt': ev_dt})
+                        except Exception:
+                            pass
+                    # Count today's remaining HIGH/MED
+                    remaining_today = [e for e in future_events if e['_date'] == today_str]
                     high_remaining = sum(1 for e in remaining_today if e.get('impact', '').upper() == 'HIGH')
                     med_remaining = sum(1 for e in remaining_today if e.get('impact', '').upper() in ('MEDIUM', 'MED'))
+                    flag_map = {'USD':'🇺🇸','EUR':'🇪🇺','GBP':'🇬🇧','JPY':'🇯🇵','AUD':'🇦🇺','NZD':'🇳🇿','CAD':'🇨🇦','CHF':'🇨🇭'}
                     if remaining_today:
                         message += f"  🔴 HIGH: <code>{high_remaining}</code> | 🟠 MED: <code>{med_remaining}</code>\n"
-                        remaining_today.sort(key=lambda x: x.get('_time', '23:59'))
-                        next_ev = remaining_today[0]
-                        flag_map = {'USD':'🇺🇸','EUR':'��🇺','GBP':'🇬🇧','JPY':'🇯🇵','AUD':'🇦🇺','NZD':'🇳🇿','CAD':'🇨🇦','CHF':'🇨🇭'}
+                        next_ev = sorted(remaining_today, key=lambda x: x['_dt'])[0]
                         next_flag = flag_map.get(next_ev.get('currency', ''), '🏴')
                         message += f"  ➡️ Next: {next_flag} <b>{next_ev.get('currency','?')}</b> {next_ev.get('event','?')} @ <code>{next_ev.get('_time','?')} UTC</code>\n\n"
+                    elif future_events:
+                        # All today's news passed — show next upcoming event (tomorrow or later)
+                        message += f"  ✅ Niciun eveniment rămas azi\n"
+                        next_ev = sorted(future_events, key=lambda x: x['_dt'])[0]
+                        next_flag = flag_map.get(next_ev.get('currency', ''), '🏴')
+                        next_day = next_ev['_dt'].strftime('%a %d %b')
+                        message += f"  ➡️ Următor: {next_flag} <b>{next_ev.get('currency','?')}</b> {next_ev.get('event','?')} @ <code>{next_ev.get('_time','?')} UTC {next_day}</code>\n\n"
                     else:
-                        message += "  ✅ Niciun eveniment rămas azi\n\n"
+                        message += "  ✅ Niciun eveniment programat în săptămâna curentă\n\n"
                 else:
                     message += "  ℹ️ upcoming_news.json indisponibil\n\n"
             except Exception as _e:
