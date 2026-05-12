@@ -510,6 +510,29 @@ class WatchdogMonitor:
         except Exception as e:
             logger.error(f"❌ Midnight auto-resume error: {e}")
 
+    def _check_daily_news_fetch(self):
+        """Run news_fetcher.py once per day at 05:00 UTC to refresh upcoming_news.json"""
+        try:
+            from datetime import timezone
+            now_utc = datetime.now(timezone.utc)
+            today = now_utc.strftime('%Y-%m-%d')
+            # Only run once per day, at 05:00 UTC (±1 min window)
+            if now_utc.hour == 5 and now_utc.minute == 0:
+                last_fetch_date = getattr(self, '_last_news_fetch_date', '')
+                if last_fetch_date != today:
+                    self._last_news_fetch_date = today
+                    logger.info("📰 Running news_fetcher.py (daily 05:00 UTC sync)...")
+                    import subprocess
+                    result = subprocess.Popen(
+                        [self.python_path, 'news_fetcher.py'],
+                        cwd=str(self.base_path),
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL
+                    )
+                    logger.info(f"📰 news_fetcher.py started (PID {result.pid})")
+        except Exception as e:
+            logger.error(f"❌ Daily news fetch error: {e}")
+
     def run(self):
         """Main monitoring loop"""
         logger.info("\n" + "="*60)
@@ -571,6 +594,9 @@ class WatchdogMonitor:
 
                 # V10.6: Midnight auto-resume at 00:05 UTC
                 self._check_midnight_auto_resume()
+
+                # ✅ V11.6: Daily news fetch at 05:00 UTC (updates upcoming_news.json)
+                self._check_daily_news_fetch()
 
                 # ✅ V10.9 NEWS HEARTBEAT: Log news monitor status every 5 checks
                 if iteration % 5 == 0:
