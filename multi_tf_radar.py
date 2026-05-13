@@ -276,13 +276,14 @@ class MultiTFRadar:
                 )
             
             # Detect FVG created by CHoCH
-            fvg_list = smc_detector.detect_fvg(
+            # detect_fvg() returns a single FVG object or None (not a list)
+            latest_fvg = smc_detector.detect_fvg(
                 df,
                 choch=latest_choch,
                 current_price=current_price
             )
             
-            if not fvg_list:
+            if not latest_fvg:
                 # CHoCH detected but no FVG yet
                 return TimeframeAnalysis(
                     timeframe=timeframe_display,
@@ -299,8 +300,6 @@ class MultiTFRadar:
                     status=PullbackStatus.WAITING_1H_PULLBACK if timeframe == "H1" else PullbackStatus.WAITING_4H_PULLBACK
                 )
             
-            # Get latest FVG
-            latest_fvg = fvg_list[-1]
             fvg_top = latest_fvg.top
             fvg_bottom = latest_fvg.bottom
             fvg_entry = (fvg_top + fvg_bottom) / 2.0
