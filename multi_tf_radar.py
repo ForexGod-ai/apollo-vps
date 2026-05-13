@@ -620,9 +620,23 @@ class MultiTFRadar:
             
             # Atomic write: scrie în fișier temporar, apoi rename
             # Previne coruperea JSON-ului dacă două procese scriu simultan
+            import numpy as _np
+
+            def _json_safe(obj):
+                """Convertește numpy types și alte tipuri non-serializabile la Python native."""
+                if isinstance(obj, (_np.bool_,)):
+                    return bool(obj)
+                if isinstance(obj, (_np.integer,)):
+                    return int(obj)
+                if isinstance(obj, (_np.floating,)):
+                    return float(obj)
+                if isinstance(obj, (_np.ndarray,)):
+                    return obj.tolist()
+                raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
+
             tmp_path = 'monitoring_setups.json.tmp'
             with open(tmp_path, 'w', encoding='utf-8') as f:
-                json.dump(data, f, indent=2)
+                json.dump(data, f, indent=2, default=_json_safe)
             import os as _os
             _os.replace(tmp_path, 'monitoring_setups.json')
             
