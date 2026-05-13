@@ -4373,17 +4373,23 @@ class SMCDetector:
                 print(f"   ✅ LIQUIDITY SWEEP CONFIRMED: +{confidence_boost} confidence")
         
         # 📊 V4.0 PREMIUM/DISCOUNT FILTER (Faza 1)
-        # Don't buy in premium, don't sell in discount
+        # ✅ V15.2 FIX: Skip P/D filter pentru REVERSAL — CHoCH + FVG deja confirmă structural.
+        # Filtrul P/D se bazează pe lumânarea Daily curentă (range mic) → pentru REVERSAL
+        # prețul e într-un pullback și apare în "DISCOUNT" pe lumânarea zilei, deși macro e premium.
+        # Ex: BTCUSD pullback bearish la 80k — lumânarea zilei mică → 25% = DISCOUNT → REJECT greșit.
+        # REVERSAL = CHoCH a confirmat schimbarea de trend → P/D pe lumânarea zilei e irelevant.
+        # P/D rămâne ACTIV doar pentru CONTINUATION (trend urmărit, intri la nivelul corect).
         # ✅ V10.8: Skip for MOMENTUM entries (breakout = intrăm la BOS break, P/D irrelevant)
         _is_momentum = hasattr(fvg, 'is_momentum_entry') and fvg.is_momentum_entry
-        if not skip_fvg_quality and not _is_momentum:
+        _is_reversal = (strategy_type == 'reversal')
+        if not skip_fvg_quality and not _is_momentum and not _is_reversal:
             premium_discount = self.calculate_premium_discount(
                 df_daily=df_daily,
                 current_price=current_price,
                 debug=debug
             )
             
-            # FILTER: Reject trades in wrong zones
+            # FILTER: Reject trades in wrong zones (CONTINUATION only)
             if current_trend == 'bullish' and premium_discount['zone'] == 'PREMIUM':
                 if debug:
                     print(f"\n❌ REJECTED: Buying in PREMIUM zone ({premium_discount['percentage']:.1f}%)")
@@ -4395,6 +4401,8 @@ class SMCDetector:
                     print(f"\n❌ REJECTED: Selling in DISCOUNT zone ({premium_discount['percentage']:.1f}%)")
                     print(f"   Too high risk - price at bottom 30% of daily range")
                 return None
+        elif _is_reversal and debug:
+            print(f"\n✅ [V15.2] REVERSAL strategy — P/D daily candle filter SKIPPED (CHoCH+FVG confirmă structural)")
         elif _is_momentum and debug:
             print(f"\n⚡ MOMENTUM ENTRY: Skipping P/D daily filter (breakout — P/D ignored)")
         
