@@ -118,7 +118,11 @@ class SMCDetector:
         Reguli:
           • W1 BULLISH  — ultimul BOS body-close în sus (prețul a închis cu corpul DEASUPRA unui High anterior)
           • W1 BEARISH  — ultimul BOS body-close în jos  (prețul a închis cu corpul SUB un Low anterior)
-          • W1 NEUTRAL  — niciun BOS confirmat recent (ultimele 20 bare)
+          • W1 NEUTRAL  — niciun BOS confirmat recent (ultimele 40 bare)
+
+        V15.3 FIX: Folosim detect_choch_and_bos() pe W1 — același algoritm structural ca pe Daily.
+        Metoda veche (iterare manuală BOS) detecta BOS-ul bullish din rally-ul vechi ca "cel mai recent"
+        și ignora CHoCH-ul bearish care a inversat trendul. Acum: ultimul semnal structural = bias corect.
 
         Returnează dict:
             {
@@ -133,62 +137,32 @@ class SMCDetector:
             if df_w1 is None or len(df_w1) < 10:
                 return {'bias': 'NEUTRAL', 'last_bos_direction': None, 'last_bos_price': None, 'last_bos_bar_idx': None}
 
-            df = df_w1.copy().reset_index(drop=True)
-            # [W1 BODY CLOSE RULE] — body = interval [open, close], ignorăm wick-urile
-            body_high = df[['open', 'close']].max(axis=1)
-            body_low  = df[['open', 'close']].min(axis=1)
+            # ✅ V15.3: Folosim detect_choch_and_bos pe W1 — același algoritm structural ca pe Daily
+            # Metoda veche găsea BOS bullish din rally-ul precedent și ignora CHoCH-ul bearish mai recent
+            w1_chochs, w1_bos_list = self.detect_choch_and_bos(df_w1)
 
-            lookback = min(20, len(df) - 1)  # ultimele 20 bare W1 (~5 luni)
-            last_bos_direction = None
-            last_bos_price = None
-            last_bos_bar_idx = None
+            latest_w1_choch = w1_chochs[-1] if w1_chochs else None
+            latest_w1_bos   = w1_bos_list[-1] if w1_bos_list else None
 
-            # Parcurgem de la cel mai recent spre trecut
-            for i in range(len(df) - 1, max(len(df) - lookback - 1, 5), -1):
-                current_body_high = body_high.iloc[i]
-                current_body_low  = body_low.iloc[i]
+            # Determinăm ultimul semnal structural (CHoCH sau BOS)
+            last_signal = None
+            if latest_w1_choch and latest_w1_bos:
+                last_signal = latest_w1_choch if latest_w1_choch.index > latest_w1_bos.index else latest_w1_bos
+            elif latest_w1_choch:
+                last_signal = latest_w1_choch
+            elif latest_w1_bos:
+                last_signal = latest_w1_bos
 
-                # Caută cel mai recent swing High/Low din bare anterioare (fereastra 5)
-                window_start = max(0, i - 10)
-                window_end   = i - 1
-                if window_end < window_start:
-                    continue
+            if last_signal is None:
+                return {'bias': 'NEUTRAL', 'last_bos_direction': None, 'last_bos_price': None, 'last_bos_bar_idx': None}
 
-                prev_highs = body_high.iloc[window_start:window_end + 1]
-                prev_lows  = body_low.iloc[window_start:window_end + 1]
-
-                if prev_highs.empty or prev_lows.empty:
-                    continue
-
-                swing_high = prev_highs.max()
-                swing_low  = prev_lows.min()
-
-                # [W1 BODY CLOSE RULE] BOS BULLISH: corpul lumânării curente se închide DEASUPRA swing High
-                if current_body_high > swing_high and current_body_low > swing_low * 0.995:
-                    last_bos_direction = 'bullish'
-                    last_bos_price = float(swing_high)
-                    last_bos_bar_idx = i
-                    break
-
-                # [W1 BODY CLOSE RULE] BOS BEARISH: corpul lumânării curente se închide SUB swing Low
-                if current_body_low < swing_low and current_body_high < swing_high * 1.005:
-                    last_bos_direction = 'bearish'
-                    last_bos_price = float(swing_low)
-                    last_bos_bar_idx = i
-                    break
-
-            if last_bos_direction == 'bullish':
-                bias = 'BULLISH'
-            elif last_bos_direction == 'bearish':
-                bias = 'BEARISH'
-            else:
-                bias = 'NEUTRAL'
+            bias = 'BULLISH' if last_signal.direction == 'bullish' else 'BEARISH'
 
             return {
                 'bias': bias,
-                'last_bos_direction': last_bos_direction,
-                'last_bos_price': last_bos_price,
-                'last_bos_bar_idx': last_bos_bar_idx,
+                'last_bos_direction': last_signal.direction,
+                'last_bos_price': float(last_signal.break_price),
+                'last_bos_bar_idx': last_signal.index,
             }
         except Exception as e:
             print(f"⚠️ [W1 BIAS] Error: {e}")
