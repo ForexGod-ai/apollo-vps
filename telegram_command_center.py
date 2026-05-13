@@ -852,8 +852,18 @@ class TelegramCommandCenter:
                 script_dir = Path(__file__).parent.resolve()
                 mon_file = script_dir / 'monitoring_setups.json'
                 if mon_file.exists():
-                    with open(mon_file, 'r') as f:
-                        setups = json.load(f).get('setups', [])
+                    with open(mon_file, 'r', encoding='utf-8') as f:
+                        raw = f.read().strip()
+                    if not raw:
+                        setups = []
+                    else:
+                        data = json.loads(raw)
+                        if isinstance(data, dict):
+                            setups = data.get('setups', [])
+                        elif isinstance(data, list):
+                            setups = data
+                        else:
+                            setups = []
                     active = sum(1 for s in setups if s.get('status') == 'ACTIVE')
                     monitoring = sum(1 for s in setups if s.get('status') == 'MONITORING')
                     choch_waiting = sum(1 for s in setups if s.get('status') == 'MONITORING' and not s.get('choch_1h_detected', False))
