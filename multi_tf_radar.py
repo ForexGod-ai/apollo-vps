@@ -618,8 +618,13 @@ class MultiTFRadar:
             else:
                 data = setups
             
-            with open('monitoring_setups.json', 'w', encoding='utf-8') as f:
+            # Atomic write: scrie în fișier temporar, apoi rename
+            # Previne coruperea JSON-ului dacă două procese scriu simultan
+            tmp_path = 'monitoring_setups.json.tmp'
+            with open(tmp_path, 'w', encoding='utf-8') as f:
                 json.dump(data, f, indent=2)
+            import os as _os
+            _os.replace(tmp_path, 'monitoring_setups.json')
             
             logger.debug(f"💾 monitoring_setups.json updated with radar data")
         
