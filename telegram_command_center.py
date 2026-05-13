@@ -489,10 +489,22 @@ class TelegramCommandCenter:
             if not self.monitoring_file.exists():
                 return "❌ <b>No monitoring setups found!</b>\n\n<code>monitoring_setups.json</code> missing."
             
-            with open(self.monitoring_file, 'r') as f:
-                data = json.load(f)
+            try:
+                with open(self.monitoring_file, 'r', encoding='utf-8') as f:
+                    raw = f.read().strip()
+                if not raw:
+                    data = {}
+                else:
+                    data = json.loads(raw)
+            except (json.JSONDecodeError, ValueError):
+                data = {}
             
-            setups = data.get('setups', [])
+            if isinstance(data, list):
+                setups = data
+            elif isinstance(data, dict):
+                setups = data.get('setups', [])
+            else:
+                setups = []
             
             # ─── LOAD REAL BROKER POSITIONS ───
             broker = self._load_broker_positions()
