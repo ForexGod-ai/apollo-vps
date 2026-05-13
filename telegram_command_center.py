@@ -865,12 +865,12 @@ class TelegramCommandCenter:
                         sym = s.get('symbol', '?')
                         stype = s.get('strategy_type', '').upper()
                         locked = s.get('strategy_locked', False)
-                        if stype in ('REVERSAL',):
+                        if 'REVERSAL' in stype:
                             tag = 'REV'
-                        elif stype in ('CONTINUATION', 'CONTINUITY'):
+                        elif 'CONTINUATION' in stype or 'CONTINUITY' in stype:
                             tag = 'CNT'
                         else:
-                            tag = '?'
+                            tag = stype[:3] if stype else '?'
                         lock_icon = '🔒' if locked else '🔓'
                         return f"• {sym} [{tag}-{lock_icon}]"
                     mon_syms = [s for s in setups if s.get('status') == 'MONITORING']
