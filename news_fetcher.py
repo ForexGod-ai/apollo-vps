@@ -9,9 +9,9 @@ Automatically downloads HIGH + MEDIUM impact economic events every day.
 Runs at 05:00 UTC via launchd — populates data/upcoming_news.json.
 
 Data Sources (in priority order):
-  1. Trading Economics public API (free, no key)
-  2. ForexFactory RSS fallback
-  3. Manual economic_calendar.json as last resort
+    1. Manual economic_calendar.json (authoritative)
+    2. ForexFactory mirror fallback
+    3. Trading Economics API fallback
 
 NO TRADE BLOCKING — information only.
 The news_reminder_engine.py reads the output file for 15-min alerts.
@@ -76,7 +76,7 @@ COUNTRY_TO_CURRENCY = {
 
 def fetch_forexfactory_mirror(days_ahead: int = 7) -> List[Dict]:
     """
-    Source #1 (PRIMARY): ForexFactory calendar via faireconomy.media free JSON mirror.
+    Source #2 (fallback): ForexFactory calendar via faireconomy.media free JSON mirror.
     No API key, no Selenium, no Cloudflare — just clean JSON.
     Returns this week + next week events.
     """
@@ -255,11 +255,11 @@ def fetch_trading_economics(days_ahead: int = 7) -> List[Dict]:
 
 def fetch_from_manual_calendar(days_ahead: int = 7) -> List[Dict]:
     """
-    Source #2 (Fallback): Load from local economic_calendar.json.
+    Source #1 (PRIMARY): Load from local economic_calendar.json.
     Uses the manually curated monthly sections.
     """
     try:
-        logger.info("📖 [Source 2] Loading from manual economic_calendar.json...")
+        logger.info("📖 [Source 1] Loading from manual economic_calendar.json...")
 
         if not CALENDAR_FILE.exists():
             logger.warning("⚠️ economic_calendar.json not found")
@@ -445,28 +445,32 @@ def main():
 
     all_events = []
 
-    # Source 1 (PRIMARY): ForexFactory mirror — free, no key, reliable
-    ff_events = fetch_forexfactory_mirror(days_ahead=args.days)
-    if ff_events:
-        all_events.extend(ff_events)
-        logger.info(f"✅ ForexFactory mirror: {len(ff_events)} events")
-    else:
-        logger.warning("⚠️ ForexFactory mirror: 0 events")
-
-    # Source 2: Trading Economics API (may need API key)
-    if not ff_events:
-        te_events = fetch_trading_economics(days_ahead=args.days)
-        if te_events:
-            all_events.extend(te_events)
-            logger.info(f"✅ Trading Economics: {len(te_events)} events")
-        else:
-            logger.warning("⚠️ Trading Economics: 0 events (API down or needs key)")
-
-    # Source 3: Manual calendar fallback (always check for extra events)
+    # Source 1 (PRIMARY): Manual calendar (authoritative schedule)
     manual_events = fetch_from_manual_calendar(days_ahead=args.days)
     if manual_events:
         all_events.extend(manual_events)
-        logger.info(f"✅ Manual Calendar: {len(manual_events)} events")
+        logger.info(f"✅ Manual Calendar (primary): {len(manual_events)} events")
+    else:
+        logger.warning("⚠️ Manual Calendar: 0 events for selected window")
+
+    # Source 2 (fallback): ForexFactory mirror (used only when manual calendar is empty)
+    ff_events = []
+    if not manual_events:
+        ff_events = fetch_forexfactory_mirror(days_ahead=args.days)
+        if ff_events:
+            all_events.extend(ff_events)
+            logger.info(f"✅ ForexFactory mirror (fallback): {len(ff_events)} events")
+        else:
+            logger.warning("⚠️ ForexFactory mirror: 0 events")
+
+    # Source 3 (fallback): Trading Economics API (used only when previous sources are empty)
+    if not manual_events and not ff_events:
+        te_events = fetch_trading_economics(days_ahead=args.days)
+        if te_events:
+            all_events.extend(te_events)
+            logger.info(f"✅ Trading Economics (fallback): {len(te_events)} events")
+        else:
+            logger.warning("⚠️ Trading Economics: 0 events (API down or needs key)")
 
     if not all_events:
         logger.error("❌ NO EVENTS from any source! Check API connectivity.")
