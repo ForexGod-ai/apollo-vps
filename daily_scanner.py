@@ -355,13 +355,17 @@ class DailyScanner:
                     h4_direction = setup.h4_choch.direction if hasattr(setup, 'h4_choch') and setup.h4_choch else None
 
                     if d1_direction and h4_direction and h4_direction != d1_direction:
-                        # 4H CHoCH este opus D1 → retracement intern, nu confirmare
+                        # ✅ V13.1 FIX: 4H CHoCH opus D1 = PULLBACK activ, NU anulăm setup-ul!
+                        # Ex: D1 bearish + H4 CHoCH bullish = bounce/pullback normal.
+                        # Păstrăm setup-ul ca MONITORING și așteptăm CHoCH H4 în direcția D1.
+                        # (V13.0 vechi: anula complet → pierdea setup-uri perfecte de sell/buy)
                         h4_label = "SELL" if h4_direction == 'bearish' else "BUY"
                         d1_label  = "SELL" if d1_direction == 'bearish' else "BUY"
-                        print(f"⛔ [V13.0 SNIPER MISALIGNED] {symbol}: 4H CHoCH={h4_label} dar D1={d1_label} — "
-                              f"4H CHoCH {h4_direction.upper()} în D1 {d1_direction.upper()} = retracement intern. "
-                              f"Așteptăm CHoCH {d1_label} pe 4H din FVG Daily.")
-                        setup = None
+                        print(f"⏳ [V13.1 PULLBACK ACTIV] {symbol}: 4H CHoCH={h4_label} (pullback) în D1={d1_label} — "
+                              f"Setup MONITORING: așteptăm CHoCH {d1_label} pe 4H din FVG Daily.")
+                        # Marchează H4 CHoCH ca pullback și resetează la None — radar va detecta CHoCH-ul corect
+                        setup.h4_choch = None
+                        setup.status = 'MONITORING'
                     elif d1_direction and h4_direction and h4_direction == d1_direction:
                         d1_label = "SELL" if d1_direction == 'bearish' else "BUY"
                         print(f"✅ [V13.0 SNIPER ALIGNED] {symbol}: 4H CHoCH {h4_direction.upper()} = aliniat cu D1 {d1_direction.upper()} → {d1_label} valid")
