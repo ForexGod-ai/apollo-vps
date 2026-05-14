@@ -137,10 +137,12 @@ def fetch_forexfactory_mirror(days_ahead: int = 7) -> List[Dict]:
             if not date_str:
                 continue
 
-            # Parse ISO date: "2026-03-11T13:30:00-04:00"
+            # Parse ISO date: "2026-03-11T13:30:00-04:00" or "2026-03-11T13:30:00+00:00"
             try:
                 event_dt = datetime.fromisoformat(date_str)
-                # Convert to UTC
+                # V15.6 FIX: if naive (no tzinfo), assume UTC — don't let VPS local timezone corrupt the offset
+                if event_dt.tzinfo is None:
+                    event_dt = event_dt.replace(tzinfo=timezone.utc)
                 event_dt_utc = event_dt.astimezone(timezone.utc)
             except Exception:
                 continue

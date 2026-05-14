@@ -524,7 +524,7 @@ class WatchdogMonitor:
                     logger.info("📰 Running news_fetcher.py (daily 05:00 UTC sync)...")
                     import subprocess
                     result = subprocess.Popen(
-                        [self.python_path, 'news_fetcher.py'],
+                        [self.python_path, 'news_fetcher.py', '--days', '14'],
                         cwd=str(self.base_path),
                         stdout=subprocess.DEVNULL,
                         stderr=subprocess.DEVNULL
