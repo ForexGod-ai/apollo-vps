@@ -1601,8 +1601,14 @@ class SetupExecutorMonitor:
             # 🚀 DYNAMIC FREQUENCY: Count how many setups are "IN ZONE" (CHoCH detected + close to entry)
             in_zone_count = 0
             for s in setups:
-                if s.get('status') in ['MONITORING', 'READY'] and s.get('choch_1h_detected', False):
-                    in_zone_count += 1
+                if s.get('status') in ['MONITORING', 'READY']:
+                    # V15.5 FIX: include și confirmarea 4H în contorul in_zone
+                    # anterior: verifica doar choch_1h_detected → setup-uri cu DOAR 4H confirmat
+                    # nu intrau în AGGRESSIVE MODE (5s interval) → execuție întârziată cu până la 30s
+                    has_1h = s.get('choch_1h_detected', False) or s.get('radar_1h_choch_detected', False)
+                    has_4h = s.get('radar_4h_choch_detected', False)
+                    if has_1h or has_4h:
+                        in_zone_count += 1
             
             if in_zone_count > 0:
                 # ⚡ AGGRESSIVE MODE: Setups in zone → check every 5 seconds
@@ -1768,16 +1774,25 @@ class SetupExecutorMonitor:
                         # Priority 1: Use 1H FVG from radar (if available)
                         # Priority 2: Fall back to V3.2 Pullback Strategy (Fibo 50%)
                         
-                        use_radar_data = setup.get('radar_1h_choch_detected', False)
-                        logger.debug(f"🔍 {symbol}: Entry 1 logic - use_radar_data={use_radar_data}")
+                        # V15.5 FIX: use_radar_data = True dacă ORICARE dintre 1H SAU 4H are CHoCH confirmat
+                        # BUG anterior: verifica DOAR radar_1h_choch_detected → dacă doar 4H confirma,
+                        # use_radar_data=False → _check_radar_entry() cu logica 4H nu era apelată niciodată
+                        # → USDCAD 4H CHoCH clar vizibil dar executorul intra pe Fibo fallback ignorând 4H
+                        radar_1h_ok = bool(setup.get('radar_1h_choch_detected', False))
+                        radar_4h_ok = bool(setup.get('radar_4h_choch_detected', False))
+                        use_radar_data = radar_1h_ok or radar_4h_ok
+                        radar_source = ("1H+4H" if radar_1h_ok and radar_4h_ok else
+                                        "1H" if radar_1h_ok else
+                                        "4H" if radar_4h_ok else "NONE")
+                        logger.debug(f"🔍 {symbol}: Entry 1 logic - use_radar_data={use_radar_data} (source={radar_source})")
                         
                         if use_radar_data:
-                            # 🎯 SNIPER MODE: Use 1H FVG from multi_tf_radar.py
-                            logger.info(f"🎯 {symbol}: SNIPER MODE activated - checking radar data...")
+                            # 🎯 SNIPER MODE: Use 1H/4H FVG from multi_tf_radar.py
+                            logger.info(f"🎯 {symbol}: SNIPER MODE activated [{radar_source}] - checking radar data...")
                             result = self._check_radar_entry(setup, df_1h, symbol)
                         else:
                             # 🔄 FALLBACK: Use V3.2 Pullback Strategy (Fibo 50%)
-                            logger.info(f"🔄 {symbol}: FALLBACK MODE - using Fibo 50% logic...")
+                            logger.info(f"🔄 {symbol}: FALLBACK MODE - using Fibo 50% logic (no radar confirmation yet)...")
                             result = self._check_pullback_entry(setup, df_1h, symbol)
                         
                         if result['action'] == 'CHOCH_1H_DETECTED':
