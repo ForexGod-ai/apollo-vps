@@ -485,8 +485,9 @@ def main():
     if save_events(unique_events):
         logger.info(f"💾 Output: {OUTPUT_FILE}")
 
-    # Send Telegram summary
-    send_sync_summary(unique_events)
+    # NOTE: Telegram summary intentionally disabled — sync is silent.
+    # News are visible via /status (NEWS TODAY section) + 15-min reminders.
+    # send_sync_summary(unique_events)  ← disabled V15.4
 
     logger.info("=" * 60)
     logger.info("✅ NEWS FETCHER V10.0 — SYNC COMPLETE")
