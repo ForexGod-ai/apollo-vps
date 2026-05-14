@@ -128,6 +128,18 @@ from signal_cache import (
 )
 
 
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# V16.3 EQUILIBRIUM BUFFER
+# Toleranță directională față de nivelul 50% Equilibrium al impulsului CHoCH.
+# Scop: permite execuția chiar dacă prețul nu a atins exact fibo_50,
+#       ci a fost cu până la 3 pips deasupra EQ (LONG) / sub EQ (SHORT).
+# Formula pip:
+#   JPY: EQUILIBRIUM_BUFFER_PIPS * 0.01
+#   Standard forex: EQUILIBRIUM_BUFFER_PIPS * 0.0001
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+EQUILIBRIUM_BUFFER_PIPS = 3
+
+
 class SetupExecutorMonitor:
     """🔥 AGGRESSIVE EXECUTIONER - Instant MONITORING→EXECUTE transition"""
     
@@ -1196,6 +1208,17 @@ class SetupExecutorMonitor:
                 tolerance = 0.01 * tolerance_pips  # JPY uses 2 decimals
             else:
                 tolerance = 0.0001 * tolerance_pips  # Standard forex (4 decimals)
+
+            # V16.3 EQUILIBRIUM BUFFER: 3 pips directional tolerance față de fibo_50
+            # LONG: acceptăm low-uri până la (fibo_50 + eq_buffer) — prețul nu a coborât exact la EQ
+            # SHORT: acceptăm high-uri până la (fibo_50 - eq_buffer) — prețul nu a urcat exact la EQ
+            if 'BTC' in symbol.upper() or 'ETH' in symbol.upper() or 'CRYPTO' in symbol.upper():
+                eq_buffer = fibo_50 * 0.0005  # ~0.05% pentru crypto
+            elif 'JPY' in symbol.upper():
+                eq_buffer = EQUILIBRIUM_BUFFER_PIPS * 0.01
+            else:
+                eq_buffer = EQUILIBRIUM_BUFFER_PIPS * 0.0001
+            logger.debug(f"   📏 [V16.3 EQ BUFFER] {symbol}: ±{EQUILIBRIUM_BUFFER_PIPS} pips = {eq_buffer:.5f} | fibo_50={fibo_50:.5f}")
             
             # V4.3 FIX-011: Check fibo_timeframe to scan correct timeframe
             # If Fibo calculated from 4H swing → scan 4H candles
@@ -1230,22 +1253,30 @@ class SetupExecutorMonitor:
             touch_price = None
             
             if direction == 'sell':
-                # For SELL: check if any HIGH in last 20 candles touched Fibo 50%
+                # For SELL: pullback UP — HIGH trebuie să atingă sau să depășească (fibo_50 - eq_buffer)
+                # V16.3: acceptăm high-uri cu până la 3 pips SUB fibo_50 (atingere incompletă)
+                sell_trigger = fibo_50 - eq_buffer
                 for idx, candle in last_candles.iterrows():
-                    price_diff = abs(candle['high'] - fibo_50)
-                    if price_diff <= tolerance:
+                    if candle['high'] >= sell_trigger:
                         pullback_detected = True
                         touch_price = candle['high']
-                        logger.success(f"   🎯 {symbol}: SELL pullback detected on {fibo_tf}! HIGH {touch_price:.5f} touched Fibo 50% {fibo_50:.5f}")
+                        diff_pips = abs(candle['high'] - fibo_50) / (0.01 if 'JPY' in symbol.upper() else 0.0001)
+                        logger.success(f"   🎯 {symbol}: SELL pullback detected on {fibo_tf}! "
+                                       f"HIGH {touch_price:.5f} >= EQ trigger {sell_trigger:.5f} "
+                                       f"(fibo_50={fibo_50:.5f}, diff={diff_pips:.1f}p)")
                         break
             else:
-                # For BUY: check if any LOW in last 20 candles touched Fibo 50%
+                # For BUY: pullback DOWN — LOW trebuie să atingă sau să coboare sub (fibo_50 + eq_buffer)
+                # V16.3: acceptăm low-uri cu până la 3 pips DEASUPRA fibo_50 (atingere incompletă)
+                buy_trigger = fibo_50 + eq_buffer
                 for idx, candle in last_candles.iterrows():
-                    price_diff = abs(candle['low'] - fibo_50)
-                    if price_diff <= tolerance:
+                    if candle['low'] <= buy_trigger:
                         pullback_detected = True
                         touch_price = candle['low']
-                        logger.success(f"   🎯 {symbol}: BUY pullback detected on {fibo_tf}! LOW {touch_price:.5f} touched Fibo 50% {fibo_50:.5f}")
+                        diff_pips = abs(candle['low'] - fibo_50) / (0.01 if 'JPY' in symbol.upper() else 0.0001)
+                        logger.success(f"   🎯 {symbol}: BUY pullback detected on {fibo_tf}! "
+                                       f"LOW {touch_price:.5f} <= EQ trigger {buy_trigger:.5f} "
+                                       f"(fibo_50={fibo_50:.5f}, diff={diff_pips:.1f}p)")
                         break
             
             if pullback_detected:
