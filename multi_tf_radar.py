@@ -140,12 +140,12 @@ class MultiTFRadar:
         
         self.smc_4h = SMCDetector(
             swing_lookback=5,
-            atr_multiplier=1.2  # Standard for 4H higher confidence
+            atr_multiplier=1.0  # V15.4: relaxed from 1.2→1.0 — avoid missing clear 4H CHoCH
         )
         
         print("🎯 SMC Detectors initialized:")
         print("   - 1H: ATR 0.8x (SNIPER mode)")
-        print("   - 4H: ATR 1.2x (HIGH CONFIDENCE mode)")
+        print("   - 4H: ATR 1.0x (HIGH CONFIDENCE mode — V15.4)")
     
     def get_current_price(self, symbol: str) -> Optional[float]:
         """Get current price from cTrader"""
@@ -293,7 +293,57 @@ class MultiTFRadar:
             )
             
             if not latest_fvg:
-                # CHoCH detected but no FVG yet
+                # V15.4 FIBO FALLBACK: CHoCH detectat dar FVG nu există sau a fost consumat.
+                # Calculăm zona Fibonacci 40-60% din impulsul CHoCH ca fallback entry zone sintetică.
+                # Aceasta previne ratarea intrărilor clare (ex: USDCAD 4H CHoCH vizibil dar FVG absent)
+                try:
+                    # Găsim swing-ul rupt de CHoCH (swing_broken.price) și CHoCH break_price
+                    swing_broken_price = float(latest_choch.swing_broken.price)
+                    choch_break_price = float(latest_choch.break_price)
+                    impulse_size = abs(choch_break_price - swing_broken_price)
+                    if impulse_size > 0:
+                        if choch_direction == 'bullish':
+                            # LONG: pullback DOWN la 40-60% din impuls
+                            fib60 = choch_break_price - impulse_size * 0.40  # top zone
+                            fib40 = choch_break_price - impulse_size * 0.60  # bottom zone
+                        else:
+                            # SHORT: pullback UP la 40-60% din impuls
+                            fib60 = choch_break_price + impulse_size * 0.60  # top zone
+                            fib40 = choch_break_price + impulse_size * 0.40  # bottom zone
+                        fvg_top_synth = max(fib40, fib60)
+                        fvg_bottom_synth = min(fib40, fib60)
+                        fvg_entry_synth = (fvg_top_synth + fvg_bottom_synth) / 2.0
+                        in_fvg_synth = fvg_bottom_synth <= current_price <= fvg_top_synth
+                        pip_size_synth = 0.01 if 'JPY' in symbol.upper() else 0.0001
+                        if in_fvg_synth:
+                            dist_synth = 0.0
+                            status_synth = PullbackStatus.EXECUTE_NOW_1H if timeframe == "H1" else PullbackStatus.EXECUTE_NOW_4H
+                        else:
+                            if choch_direction == 'bullish':
+                                dist_synth = abs(current_price - fvg_top_synth) / pip_size_synth
+                            else:
+                                dist_synth = abs(fvg_bottom_synth - current_price) / pip_size_synth
+                            status_synth = PullbackStatus.WAITING_1H_PULLBACK if timeframe == "H1" else PullbackStatus.WAITING_4H_PULLBACK
+                        print(f"  ⚡ [V15.4 FIBO FALLBACK] No FVG found — using Fibo 40-60% synthetic zone")
+                        print(f"     Impulse: {swing_broken_price:.5f} → {choch_break_price:.5f} ({impulse_size/pip_size_synth:.1f} pips)")
+                        print(f"     Synthetic FVG: [{fvg_bottom_synth:.5f} - {fvg_top_synth:.5f}] | In zone: {in_fvg_synth}")
+                        return TimeframeAnalysis(
+                            timeframe=timeframe_display,
+                            choch_detected=True,
+                            choch_direction=choch_direction,
+                            choch_time=choch_time_str,
+                            choch_price=choch_price,
+                            fvg_detected=True,
+                            fvg_top=fvg_top_synth,
+                            fvg_bottom=fvg_bottom_synth,
+                            fvg_entry=fvg_entry_synth,
+                            in_fvg=in_fvg_synth,
+                            distance_to_fvg_pips=dist_synth,
+                            status=status_synth
+                        )
+                except Exception as _fib_err:
+                    print(f"  ⚠️ [V15.4 FIBO FALLBACK] Error computing synthetic zone: {_fib_err}")
+                # Dacă fallback-ul eșuează, rămânem în WAITING
                 return TimeframeAnalysis(
                     timeframe=timeframe_display,
                     choch_detected=True,
@@ -472,7 +522,7 @@ class MultiTFRadar:
         )
         
         # Analyze 4H
-        print("\n🔎 [4H] HIGH CONFIDENCE SCAN (ATR 1.2x)...")
+        print("\n🔎 [4H] HIGH CONFIDENCE SCAN (ATR 1.0x — V15.4)...")
         tf_4h = self.analyze_timeframe(
             symbol=symbol,
             timeframe="H4",
@@ -706,7 +756,7 @@ class MultiTFRadar:
         
         # 4H Analysis
         print("\n" + "─"*80)
-        print("💎 [4H] HIGH CONFIDENCE ANALYSIS (ATR 1.2x)")
+        print("💎 [4H] HIGH CONFIDENCE ANALYSIS (ATR 1.0x — V15.4)")
         print("─"*80)
         print(f"   Status: {result.tf_4h.status.value}")
         
