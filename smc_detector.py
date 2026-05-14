@@ -1050,50 +1050,81 @@ class SMCDetector:
             
             all_fvgs = unfilled_fvgs
         
-        # 🔥 V16 FIX (B3): CHIRURGICAL FVG SELECTION
-        # VECHI (buggy): closest FVG to current_price — selecta FVG vechi/irelevant
-        # NOU: Primul FVG valid format DUPĂ CHoCH, în zona de 40-70% din impulsul CHoCH
-        #      (Discount pentru BUY, Premium pentru SELL)
-        # Logica: FVG-ul generat chiar de impulsul CHoCH este POI-ul optim.
-        # Un FVG vechi mai aproape de preț ție de structură anterioară — irelevant.
-        if all_fvgs:
+        # ═══════════════════════════════════════════════════════════════════
+        # 🎯 V16.1 PREMIUM/DISCOUNT FVG SELECTION — Ierarhia Daily Bias
+        # ═══════════════════════════════════════════════════════════════════
+        #
+        # PRINCIPIU: Impulsul de referință = mișcarea care a produs CHoCH-ul.
+        # Definit între swing_broken.price (origine) și break_price (confirmare ruptura).
+        # Equilibrium (50%) = mijlocul acestui impuls = frontiera Discount/Premium.
+        #
+        # REGULI P/D ARRAY:
+        #   Daily LONG  → Cumpărăm NUMAI din Discount (sub 50% al impulsului)
+        #                 Ignorăm orice FVG aflat în Premium (deasupra 50%)
+        #   Daily SHORT → Vindem NUMAI din Premium (peste 50% al impulsului)
+        #                 Ignorăm orice FVG aflat în Discount (sub 50%)
+        #
+        # SELECȚIE FINALĂ (dacă există mai multe FVG-uri valide în zona corectă):
+        #   1. Cel mai PROASPĂT (ultimul format = index maxim) — evităm FVG-uri uzate
+        #   2. Dacă egalitate de prospețime → cel mai MARE (gap maxim) = mai mult lichiditate
+        #
+        # FALLBACK → None: niciun FVG valid în zona P/D → Fibo 50% Fallback activat
+        # ═══════════════════════════════════════════════════════════════════
+        if not all_fvgs:
+            return None
+
+        # ── STEP 1: Calculează Equilibrium (50%) din impulsul CHoCH ──────────
+        equilibrium = None
+        swing_broken_price = None
+        choch_break_price = None
+        impulse_size = 0.0
+
+        if hasattr(choch, 'swing_broken') and hasattr(choch, 'break_price'):
+            try:
+                swing_broken_price = float(choch.swing_broken.price)
+                choch_break_price = float(choch.break_price)
+                impulse_size = abs(choch_break_price - swing_broken_price)
+                equilibrium = (swing_broken_price + choch_break_price) / 2.0
+            except Exception:
+                pass
+
+        # ── STEP 2: Filtrare prin P/D Array ──────────────────────────────────
+        pd_valid_fvgs = []
+        if equilibrium is not None and impulse_size > 0:
+            for fvg in all_fvgs:
+                if orderflow_direction == 'bullish':
+                    # LONG: Discount = FVG cu middle SUB Equilibrium (sub 50%)
+                    if fvg.middle < equilibrium:
+                        pd_valid_fvgs.append(fvg)
+                else:
+                    # SHORT: Premium = FVG cu middle PESTE Equilibrium (peste 50%)
+                    if fvg.middle > equilibrium:
+                        pd_valid_fvgs.append(fvg)
+
+        # ── STEP 3: Dacă există FVG-uri în zona P/D validă ───────────────────
+        if pd_valid_fvgs:
+            # Preferăm FVG-uri formate DUPĂ CHoCH (impuls proaspăt)
             choch_idx = choch.index if hasattr(choch, 'index') else 0
-            # Step 1: Preferăm FVG-uri formate DUPĂ CHoCH (impuls proaspăt)
-            post_choch_fvgs = [f for f in all_fvgs if f.index >= choch_idx]
-            
-            if post_choch_fvgs:
-                # Step 2: Căutăm FVG-uri în zona Discount/Premium (40-70% din impuls)
-                swing_broken_price = float(choch.swing_broken.price) if hasattr(choch, 'swing_broken') else None
-                choch_break_price = float(choch.break_price) if hasattr(choch, 'break_price') else None
-                
-                if swing_broken_price is not None and choch_break_price is not None:
-                    impulse_size = abs(choch_break_price - swing_broken_price)
-                    if impulse_size > 0:
-                        if orderflow_direction == 'bullish':
-                            # BUY: Discount = 40-70% retragere sub CHoCH break_price
-                            zone_top = choch_break_price - impulse_size * 0.30   # 30% retragere
-                            zone_bottom = choch_break_price - impulse_size * 0.70  # 70% retragere
-                        else:
-                            # SELL: Premium = 40-70% retragere deasupra CHoCH break_price
-                            zone_bottom = choch_break_price + impulse_size * 0.30
-                            zone_top = choch_break_price + impulse_size * 0.70
-                        
-                        # Filtrăm FVG-urile în zona Discount/Premium
-                        zone_fvgs = [f for f in post_choch_fvgs if zone_bottom <= f.middle <= zone_top]
-                        
-                        if zone_fvgs:
-                            # Primul FVG cronologic în zonă (cel format cel mai aproape de CHoCH)
-                            zone_fvgs.sort(key=lambda f: f.index)
-                            return zone_fvgs[0]
-                
-                # Fallback: primul FVG post-CHoCH (cronologic), indiferent de zonă
-                post_choch_fvgs.sort(key=lambda f: f.index)
-                return post_choch_fvgs[0]
-            
-            # Fallback final: niciun FVG post-CHoCH — cel mai aproape de preț (comportament anterior)
-            all_fvgs.sort(key=lambda fvg: abs(fvg.middle - current_price))
-            return all_fvgs[0]
-        
+            post_choch = [f for f in pd_valid_fvgs if f.index >= choch_idx]
+            candidates = post_choch if post_choch else pd_valid_fvgs
+
+            # Criteriu 1: cel mai PROASPĂT (index maxim = format cel mai recent)
+            # Criteriu 2: la egalitate de index → cel mai MARE (gap maxim)
+            candidates.sort(key=lambda f: (f.index, f.top - f.bottom), reverse=True)
+            selected = candidates[0]
+
+            print(f"  ✅ [V16.1 P/D FVG] {'Discount' if orderflow_direction == 'bullish' else 'Premium'} "
+                  f"FVG @ {selected.bottom:.5f}-{selected.top:.5f} "
+                  f"| EQ={equilibrium:.5f} | Index={selected.index}")
+            return selected
+
+        # ── FALLBACK → None (activează Fibo 50% Fallback din analyze_timeframe) ──
+        # Nu există FVG valid în zona P/D corectă.
+        # Returnăm None explicit pentru a lăsa sistemul să folosească
+        # nivelul de Equilibrium (50%) al impulsului ca entry direct.
+        print(f"  ⚠️ [V16.1 P/D FVG] Niciun FVG în zona "
+              f"{'Discount' if orderflow_direction == 'bullish' else 'Premium'} "
+              f"(EQ={equilibrium:.5f if equilibrium else 'N/A'}) → Fibo 50% Fallback activat")
         return None
 
     # ─── V9.0: Blocul orfan detect_choch_and_bos (fără def) + duplicatul V6.0 eliminate ───
