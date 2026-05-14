@@ -89,6 +89,9 @@ class TimeframeAnalysis:
     in_fvg: bool
     distance_to_fvg_pips: float
     status: PullbackStatus
+    # V16.2: 50% Equilibrium al impulsului CHoCH (frontiera Discount/Premium)
+    # LONG = Discount = sub EQ  |  SHORT = Premium = peste EQ
+    equilibrium: Optional[float] = None
 
 
 @dataclass
@@ -289,6 +292,20 @@ class MultiTFRadar:
                     status=PullbackStatus.WAITING_1H_CHOCH if timeframe == "H1" else PullbackStatus.WAITING_4H_CHOCH
                 )
             
+            # ── V16.2: Calcul Equilibrium (50% EQ) din impulsul CHoCH ─────────
+            # Utilizat în P/D Array validation în _check_radar_entry().
+            # Stocat în setup ca radar_1h_eq / radar_4h_eq.
+            choch_equilibrium = None
+            try:
+                _sbp = float(latest_choch.swing_broken.price)
+                _cbp = float(latest_choch.break_price)
+                choch_equilibrium = (_sbp + _cbp) / 2.0
+                pip_size_eq = 0.01 if 'JPY' in symbol.upper() else 0.0001
+                print(f"  📐 [V16.2 EQ] {timeframe_display} Impulse: {_sbp:.5f} → {_cbp:.5f} | "
+                      f"EQ={choch_equilibrium:.5f} ({abs(_cbp - _sbp)/pip_size_eq:.1f} pips)")
+            except Exception:
+                pass
+
             # Detect FVG created by CHoCH
             # detect_fvg() returns a single FVG object or None (not a list)
             latest_fvg = smc_detector.detect_fvg(
@@ -329,9 +346,12 @@ class MultiTFRadar:
                             else:
                                 dist_synth = abs(fvg_bottom_synth - current_price) / pip_size_synth
                             status_synth = PullbackStatus.WAITING_1H_PULLBACK if timeframe == "H1" else PullbackStatus.WAITING_4H_PULLBACK
+                        # V16.2: Fibo Fallback folosește 50% EQ exact (centrul zonei sintetice)
+                        # choch_equilibrium calculat mai sus din același impuls
+                        eq_for_synth = choch_equilibrium if choch_equilibrium else fvg_entry_synth
                         print(f"  ⚡ [V15.4 FIBO FALLBACK] No FVG found — using Fibo 40-60% synthetic zone")
                         print(f"     Impulse: {swing_broken_price:.5f} → {choch_break_price:.5f} ({impulse_size/pip_size_synth:.1f} pips)")
-                        print(f"     Synthetic FVG: [{fvg_bottom_synth:.5f} - {fvg_top_synth:.5f}] | In zone: {in_fvg_synth}")
+                        print(f"     Synthetic FVG: [{fvg_bottom_synth:.5f} - {fvg_top_synth:.5f}] | EQ={eq_for_synth:.5f} | In zone: {in_fvg_synth}")
                         return TimeframeAnalysis(
                             timeframe=timeframe_display,
                             choch_detected=True,
@@ -344,7 +364,8 @@ class MultiTFRadar:
                             fvg_entry=fvg_entry_synth,
                             in_fvg=in_fvg_synth,
                             distance_to_fvg_pips=dist_synth,
-                            status=status_synth
+                            status=status_synth,
+                            equilibrium=eq_for_synth
                         )
                 except Exception as _fib_err:
                     print(f"  ⚠️ [V15.4 FIBO FALLBACK] Error computing synthetic zone: {_fib_err}")
@@ -361,7 +382,8 @@ class MultiTFRadar:
                     fvg_entry=None,
                     in_fvg=False,
                     distance_to_fvg_pips=0.0,
-                    status=PullbackStatus.WAITING_1H_PULLBACK if timeframe == "H1" else PullbackStatus.WAITING_4H_PULLBACK
+                    status=PullbackStatus.WAITING_1H_PULLBACK if timeframe == "H1" else PullbackStatus.WAITING_4H_PULLBACK,
+                    equilibrium=choch_equilibrium
                 )
             
             fvg_top = latest_fvg.top
@@ -411,7 +433,8 @@ class MultiTFRadar:
                 fvg_entry=fvg_entry,
                 in_fvg=in_fvg,
                 distance_to_fvg_pips=distance_to_fvg_pips,
-                status=status
+                status=status,
+                equilibrium=choch_equilibrium
             )
         
         except Exception as e:
@@ -655,6 +678,9 @@ class MultiTFRadar:
                         setup['radar_1h_fvg_top'] = None
                         setup['radar_1h_fvg_bottom'] = None
                         setup['radar_1h_fvg_entry'] = None
+                    # V16.2: 50% Equilibrium al impulsului 1H CHoCH (frontiera P/D Array)
+                    if result.tf_1h.equilibrium is not None:
+                        setup['radar_1h_eq'] = result.tf_1h.equilibrium
                     
                     setup['radar_1h_status'] = result.tf_1h.status.value
                     
@@ -677,6 +703,9 @@ class MultiTFRadar:
                         setup['radar_4h_fvg_top'] = None
                         setup['radar_4h_fvg_bottom'] = None
                         setup['radar_4h_fvg_entry'] = None
+                    # V16.2: 50% Equilibrium al impulsului 4H CHoCH (frontiera P/D Array)
+                    if result.tf_4h.equilibrium is not None:
+                        setup['radar_4h_eq'] = result.tf_4h.equilibrium
                     
                     setup['radar_4h_status'] = result.tf_4h.status.value
                     

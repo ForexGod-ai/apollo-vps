@@ -753,23 +753,30 @@ class SetupExecutorMonitor:
         radar_4h_fvg_entry = setup.get('radar_4h_fvg_entry')
         radar_4h_choch_price = setup.get('radar_4h_choch_price')
         
-        # Check Premium/Discount validation
+        # ━━━ V16.2 P/D ARRAY VALIDATION — 50% Equilibrium strict ━━━━━━━━━━━━
+        # REGULA SMC: FVG valid NUMAI dacă se află în zona corectă față de EQ al impulsului.
+        # EQ = 50% din distanța swing_broken.price → break_price (calculat în multi_tf_radar.py).
+        # LONG → Discount = FVG sub EQ  |  SHORT → Premium = FVG peste EQ
+        # Fallback la choch_price dacă EQ nu este salvat (setup vechi fără V16.2).
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         if radar_1h_in_fvg and radar_1h_fvg_entry and radar_1h_choch_price:
-            # Validate Premium/Discount zone
+            # Folosim EQ salvat; fallback la choch_price (mai permisiv, dar corect ca direcție)
+            radar_1h_eq = setup.get('radar_1h_eq') or radar_1h_choch_price
             if direction == 'buy':
-                # For LONG: FVG should be in DISCOUNT (below CHoCH)
-                zone_valid = radar_1h_fvg_entry < radar_1h_choch_price
+                # LONG: FVG trebuie în DISCOUNT (middle sub 50% EQ al impulsului)
+                zone_valid = radar_1h_fvg_entry < radar_1h_eq
                 zone_type = "DISCOUNT"
             else:
-                # For SHORT: FVG should be in PREMIUM (above CHoCH)
-                zone_valid = radar_1h_fvg_entry > radar_1h_choch_price
+                # SHORT: FVG trebuie în PREMIUM (middle peste 50% EQ al impulsului)
+                zone_valid = radar_1h_fvg_entry > radar_1h_eq
                 zone_type = "PREMIUM"
             
             if not zone_valid:
-                logger.warning(f"⚠️  {symbol}: 1H FVG not in {zone_type} zone - skipping entry")
+                logger.warning(f"⚠️  {symbol}: 1H FVG @ {radar_1h_fvg_entry:.5f} nu este în zona "
+                               f"{zone_type} (EQ={radar_1h_eq:.5f}) — setup invalid, skip entry")
                 return {
                     'action': 'KEEP_MONITORING',
-                    'reason': f'1H FVG not in {zone_type} zone (invalid setup)'
+                    'reason': f'[V16.2 P/D] 1H FVG @ {radar_1h_fvg_entry:.5f} nu este în {zone_type} (EQ={radar_1h_eq:.5f})'
                 }
             
             # 🎯 EXECUTE SNIPER ENTRY (1H FVG)
@@ -809,19 +816,21 @@ class SetupExecutorMonitor:
             }
         
         elif radar_4h_in_fvg and radar_4h_fvg_entry and radar_4h_choch_price:
-            # Validate Premium/Discount zone for 4H
+            # V16.2 P/D Array: 50% EQ strict pentru 4H FVG
+            radar_4h_eq = setup.get('radar_4h_eq') or radar_4h_choch_price
             if direction == 'buy':
-                zone_valid = radar_4h_fvg_entry < radar_4h_choch_price
+                zone_valid = radar_4h_fvg_entry < radar_4h_eq
                 zone_type = "DISCOUNT"
             else:
-                zone_valid = radar_4h_fvg_entry > radar_4h_choch_price
+                zone_valid = radar_4h_fvg_entry > radar_4h_eq
                 zone_type = "PREMIUM"
             
             if not zone_valid:
-                logger.warning(f"⚠️  {symbol}: 4H FVG not in {zone_type} zone - skipping entry")
+                logger.warning(f"⚠️  {symbol}: 4H FVG @ {radar_4h_fvg_entry:.5f} nu este în zona "
+                               f"{zone_type} (EQ={radar_4h_eq:.5f}) — setup invalid, skip entry")
                 return {
                     'action': 'KEEP_MONITORING',
-                    'reason': f'4H FVG not in {zone_type} zone (invalid setup)'
+                    'reason': f'[V16.2 P/D] 4H FVG @ {radar_4h_fvg_entry:.5f} nu este în {zone_type} (EQ={radar_4h_eq:.5f})'
                 }
             
             # 💎 EXECUTE HIGH CONFIDENCE ENTRY (4H FVG)
