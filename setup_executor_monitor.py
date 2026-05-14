@@ -430,7 +430,7 @@ class SetupExecutorMonitor:
                 f"  {sep}\n"
                 f"  🔱 AUTHORED BY <b>ФорексГод</b> 🔱\n"
                 f"  {sep}\n"
-                f"  🏛️  <b>Глитч Ин Матрикс</b>  🏛️"
+                f"  🏛 <b>ГЛИТЧ ИН МАТРИКС</b> 🏛"
             )
             url = f"https://api.telegram.org/bot{self._telegram_token}/sendMessage"
             requests.post(url, json={
@@ -663,7 +663,7 @@ class SetupExecutorMonitor:
                         f"  {sep}\n"
                         f"  🔱 AUTHORED BY <b>ФорексГод</b> 🔱\n"
                         f"  {sep}\n"
-                        f"  🏛️  <b>Глитч Ин Матрикс</b>  🏛️"
+                        f"  🏛 <b>ГЛИТЧ ИН МАТРИКС</b> 🏛"
                     )
                     url = f"https://api.telegram.org/bot{self._telegram_token}/sendMessage"
                     requests.post(url, json={
@@ -907,17 +907,37 @@ class SetupExecutorMonitor:
             fvg_bottom = h4_sync_bottom
             logger.debug(f"   🎯 {symbol}: Using 4H SYNC FVG for entry: {fvg_bottom:.5f} - {fvg_top:.5f}")
         else:
-            # Fix #4: Daily FVG este DOAR Zonă de Alertă — NU zonă de execuție.
-            # BLOCĂM fallback-ul la Daily FVG. Fără 4H sync FVG confirmat,
-            # așteptăm ca V14.2 să detecteze CHoCH 4H și să genereze FVG-ul precis.
-            logger.info(
-                f"   ⏳ [Fix #4 NO-DAILY-FALLBACK] {symbol}: Lipsă 4H sync FVG — "
-                f"Daily FVG blocat ca zonă de entry. Așteptăm CHoCH 4H să genereze FVG precis."
-            )
-            return {
-                'action': 'KEEP_MONITORING',
-                'reason': 'Fix#4: Daily FVG = alertă only. Așteptăm 4H CHoCH + 4H sync FVG pentru entry precis.'
-            }
+            # V16 FIX (B5): Dacă h4_sync_fvg absent, încearcă radar_4h_fvg (scris de multi_tf_radar)
+            radar_4h_top = float(setup.get('radar_4h_fvg_top') or 0)
+            radar_4h_bottom = float(setup.get('radar_4h_fvg_bottom') or 0)
+            radar_1h_top = float(setup.get('radar_1h_fvg_top') or 0)
+            radar_1h_bottom = float(setup.get('radar_1h_fvg_bottom') or 0)
+            
+            if radar_4h_top > 0 and radar_4h_bottom > 0:
+                fvg_top = radar_4h_top
+                fvg_bottom = radar_4h_bottom
+                logger.info(f"   ⚡ [V16 B5 RADAR-4H FALLBACK] {symbol}: h4_sync_fvg absent → folosim radar_4h_fvg: {fvg_bottom:.5f} - {fvg_top:.5f}")
+                # Persistăm pentru iterațiile viitoare
+                setup['h4_sync_fvg_top'] = fvg_top
+                setup['h4_sync_fvg_bottom'] = fvg_bottom
+            elif radar_1h_top > 0 and radar_1h_bottom > 0:
+                fvg_top = radar_1h_top
+                fvg_bottom = radar_1h_bottom
+                logger.info(f"   ⚡ [V16 B5 RADAR-1H FALLBACK] {symbol}: h4_sync_fvg absent → folosim radar_1h_fvg: {fvg_bottom:.5f} - {fvg_top:.5f}")
+                setup['h4_sync_fvg_top'] = fvg_top
+                setup['h4_sync_fvg_bottom'] = fvg_bottom
+            else:
+                # Fix #4: Daily FVG este DOAR Zonă de Alertă — NU zonă de execuție.
+                # BLOCĂM fallback-ul la Daily FVG. Fără 4H sync FVG confirmat,
+                # așteptăm ca V14.2 să detecteze CHoCH 4H și să genereze FVG-ul precis.
+                logger.info(
+                    f"   ⏳ [Fix #4 NO-DAILY-FALLBACK] {symbol}: Lipsă h4_sync_fvg și radar FVG — "
+                    f"Daily FVG blocat ca zonă de entry. Așteptăm CHoCH 4H să genereze FVG precis."
+                )
+                return {
+                    'action': 'KEEP_MONITORING',
+                    'reason': 'Fix#4: Daily FVG = alertă only. Lipsă h4_sync_fvg + radar FVG — așteptăm CHoCH 4H.'
+                }
         # ━━━ END FVG ZONE (Fix #4) ━━━
         
         # ━━━ V14.2 4H ALIGNMENT LOCK — Fix #12 (Daily Bias → 4H CHoCH → Execute) ━━━

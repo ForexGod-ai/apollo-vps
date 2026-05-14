@@ -1050,11 +1050,49 @@ class SMCDetector:
             
             all_fvgs = unfilled_fvgs
         
-        # 🔥 V8.1: PROXIMITY SELECTION - Return FVG closest to current price (most relevant)
+        # 🔥 V16 FIX (B3): CHIRURGICAL FVG SELECTION
+        # VECHI (buggy): closest FVG to current_price — selecta FVG vechi/irelevant
+        # NOU: Primul FVG valid format DUPĂ CHoCH, în zona de 40-70% din impulsul CHoCH
+        #      (Discount pentru BUY, Premium pentru SELL)
+        # Logica: FVG-ul generat chiar de impulsul CHoCH este POI-ul optim.
+        # Un FVG vechi mai aproape de preț ție de structură anterioară — irelevant.
         if all_fvgs:
-            # Sort by distance to current price (ascending)
+            choch_idx = choch.index if hasattr(choch, 'index') else 0
+            # Step 1: Preferăm FVG-uri formate DUPĂ CHoCH (impuls proaspăt)
+            post_choch_fvgs = [f for f in all_fvgs if f.index >= choch_idx]
+            
+            if post_choch_fvgs:
+                # Step 2: Căutăm FVG-uri în zona Discount/Premium (40-70% din impuls)
+                swing_broken_price = float(choch.swing_broken.price) if hasattr(choch, 'swing_broken') else None
+                choch_break_price = float(choch.break_price) if hasattr(choch, 'break_price') else None
+                
+                if swing_broken_price is not None and choch_break_price is not None:
+                    impulse_size = abs(choch_break_price - swing_broken_price)
+                    if impulse_size > 0:
+                        if orderflow_direction == 'bullish':
+                            # BUY: Discount = 40-70% retragere sub CHoCH break_price
+                            zone_top = choch_break_price - impulse_size * 0.30   # 30% retragere
+                            zone_bottom = choch_break_price - impulse_size * 0.70  # 70% retragere
+                        else:
+                            # SELL: Premium = 40-70% retragere deasupra CHoCH break_price
+                            zone_bottom = choch_break_price + impulse_size * 0.30
+                            zone_top = choch_break_price + impulse_size * 0.70
+                        
+                        # Filtrăm FVG-urile în zona Discount/Premium
+                        zone_fvgs = [f for f in post_choch_fvgs if zone_bottom <= f.middle <= zone_top]
+                        
+                        if zone_fvgs:
+                            # Primul FVG cronologic în zonă (cel format cel mai aproape de CHoCH)
+                            zone_fvgs.sort(key=lambda f: f.index)
+                            return zone_fvgs[0]
+                
+                # Fallback: primul FVG post-CHoCH (cronologic), indiferent de zonă
+                post_choch_fvgs.sort(key=lambda f: f.index)
+                return post_choch_fvgs[0]
+            
+            # Fallback final: niciun FVG post-CHoCH — cel mai aproape de preț (comportament anterior)
             all_fvgs.sort(key=lambda fvg: abs(fvg.middle - current_price))
-            return all_fvgs[0]  # Closest FVG to current price
+            return all_fvgs[0]
         
         return None
 
@@ -1092,7 +1130,7 @@ class SMCDetector:
         for i, (swing_type, swing) in enumerate(all_swings):
             # Look for price breaks AFTER this swing point
             break_start = swing.index + 1
-            break_end = min(swing.index + 20, len(df))  # Look 20 candles ahead
+            break_end = min(swing.index + 40, len(df))  # V16 FIX (B6): 20→40 bare — prinde CHoCH-uri lente
             
             if break_end <= break_start:
                 continue

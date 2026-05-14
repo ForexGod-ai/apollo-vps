@@ -208,8 +208,13 @@ class MultiTFRadar:
         """
         timeframe_display = "1H" if timeframe == "H1" else "4H"
         
+        # V16 FIX (B2): Extindere orizont vizual
+        # 1H: 400 bare = ~16 zile → CHoCH < 10h invizibil acum acoperit
+        # 4H: 200 bare = ~33 zile → CHoCH < 40h acum detectabil
+        num_bars = 400 if timeframe == "H1" else 200
+        
         # Download data
-        df = self.get_historical_data(symbol, timeframe, 100)
+        df = self.get_historical_data(symbol, timeframe, num_bars)
         
         if df is None or df.empty:
             return TimeframeAnalysis(
@@ -455,51 +460,75 @@ class MultiTFRadar:
         if current_price is None:
             current_price = daily_entry
         
-        # Validate Daily zone
-        daily_zone_validated = daily_fvg_bottom <= current_price <= daily_fvg_top
+        # V16 FIX (B1): Daily zone — toleranță 5 pips dacă h4_locked activ
+        # Odată ce 4H CHoCH a confirmat, permitem prețului să "respire" ±5 pips
+        # în afara zonei fără a reseta scanul LTF
+        pip_size_daily = 0.01 if 'JPY' in symbol.upper() else 0.0001
+        h4_already_locked = bool(setup_data.get('h4_locked') or setup_data.get('h4_structure_locked'))
+        daily_buffer = pip_size_daily * 5 if h4_already_locked else 0.0
+        
+        daily_zone_validated = (
+            (daily_fvg_bottom - daily_buffer) <= current_price <= (daily_fvg_top + daily_buffer)
+        )
         
         if not daily_zone_validated:
-            # Price not in Daily FVG - skip multi-TF analysis
-            return MultiTFResult(
-                symbol=symbol,
-                direction=direction,
-                daily_zone_validated=False,
-                daily_fvg_top=daily_fvg_top,
-                daily_fvg_bottom=daily_fvg_bottom,
-                daily_entry=daily_entry,
-                current_price=current_price,
-                tf_1h=TimeframeAnalysis(
-                    timeframe="1H",
-                    choch_detected=False,
-                    choch_direction=None,
-                    choch_time=None,
-                    choch_price=None,
-                    fvg_detected=False,
-                    fvg_top=None,
-                    fvg_bottom=None,
-                    fvg_entry=None,
-                    in_fvg=False,
-                    distance_to_fvg_pips=0.0,
-                    status=PullbackStatus.WAITING_DAILY_FVG
-                ),
-                tf_4h=TimeframeAnalysis(
-                    timeframe="4H",
-                    choch_detected=False,
-                    choch_direction=None,
-                    choch_time=None,
-                    choch_price=None,
-                    fvg_detected=False,
-                    fvg_top=None,
-                    fvg_bottom=None,
-                    fvg_entry=None,
-                    in_fvg=False,
-                    distance_to_fvg_pips=0.0,
-                    status=PullbackStatus.WAITING_DAILY_FVG
-                ),
-                execution_ready=False,
-                verdict="⏳ WAITING FOR DAILY FVG ENTRY",
-                priority_timeframe=None
-            )
+            # V16 FIX (B4): Persistenta stare READY — daca h4_locked si ultima atingere < 12H
+            last_in_fvg_time_str = setup_data.get('last_in_fvg_time')
+            if h4_already_locked and last_in_fvg_time_str:
+                try:
+                    from datetime import timezone as _tz_check
+                    last_in_fvg_dt = datetime.fromisoformat(last_in_fvg_time_str.replace('Z', '+00:00'))
+                    if last_in_fvg_dt.tzinfo is None:
+                        last_in_fvg_dt = last_in_fvg_dt.replace(tzinfo=_tz_check.utc)
+                    elapsed_h = (datetime.now(_tz_check.utc) - last_in_fvg_dt).total_seconds() / 3600
+                    if elapsed_h < 12:
+                        print(f"  ⏳ [V16 PERSIST] {symbol}: h4_locked + last in_fvg {elapsed_h:.1f}h ago — continuam scan LTF (< 12H window)")
+                        daily_zone_validated = True  # persist
+                except Exception:
+                    pass
+            
+            if not daily_zone_validated:
+                # Price not in Daily FVG - skip multi-TF analysis
+                return MultiTFResult(
+                    symbol=symbol,
+                    direction=direction,
+                    daily_zone_validated=False,
+                    daily_fvg_top=daily_fvg_top,
+                    daily_fvg_bottom=daily_fvg_bottom,
+                    daily_entry=daily_entry,
+                    current_price=current_price,
+                    tf_1h=TimeframeAnalysis(
+                        timeframe="1H",
+                        choch_detected=False,
+                        choch_direction=None,
+                        choch_time=None,
+                        choch_price=None,
+                        fvg_detected=False,
+                        fvg_top=None,
+                        fvg_bottom=None,
+                        fvg_entry=None,
+                        in_fvg=False,
+                        distance_to_fvg_pips=0.0,
+                        status=PullbackStatus.WAITING_DAILY_FVG
+                    ),
+                    tf_4h=TimeframeAnalysis(
+                        timeframe="4H",
+                        choch_detected=False,
+                        choch_direction=None,
+                        choch_time=None,
+                        choch_price=None,
+                        fvg_detected=False,
+                        fvg_top=None,
+                        fvg_bottom=None,
+                        fvg_entry=None,
+                        in_fvg=False,
+                        distance_to_fvg_pips=0.0,
+                        status=PullbackStatus.WAITING_DAILY_FVG
+                    ),
+                    execution_ready=False,
+                    verdict="⏳ WAITING FOR DAILY FVG ENTRY",
+                    priority_timeframe=None
+                )
         
         # Price in Daily FVG - analyze both timeframes
         required_direction = 'bullish' if direction == 'LONG' else 'bearish'
@@ -650,6 +679,14 @@ class MultiTFRadar:
                         setup['radar_4h_fvg_entry'] = None
                     
                     setup['radar_4h_status'] = result.tf_4h.status.value
+                    
+                    # V16 FIX (B4): Salvăm timestamp-ul ultimei atingeri FVG pentru persistență
+                    if result.tf_1h.in_fvg or result.tf_4h.in_fvg:
+                        setup['last_in_fvg_time'] = datetime.now().isoformat()
+                    
+                    # V16 FIX (B4): Propagăm h4_locked din executor în radar
+                    if result.tf_4h.choch_detected:
+                        setup['h4_locked'] = True
                     
                     # 🏆 PRIORITY & EXECUTION STATUS
                     setup['radar_priority_timeframe'] = result.priority_timeframe
