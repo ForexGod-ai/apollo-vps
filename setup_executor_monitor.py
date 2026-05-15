@@ -879,17 +879,19 @@ class SetupExecutorMonitor:
             }
         
         else:
-            # Not in FVG yet - keep monitoring
+            # V16.4 FIX BUG#1: CHoCH radar confirmat, dar prețul NU este in FVG momentan.
+            # VECHI (bug): returnăm KEEP_MONITORING → Fibo pullback nu era NICIODATĂ verificat.
+            # NOU: returnăm acțiunea specială RADAR_CHOCH_NO_FVG → executorul cade pe _check_pullback_entry.
             radar_1h_distance = setup.get('radar_1h_distance_pips', 999)
             radar_4h_distance = setup.get('radar_4h_distance_pips', 999)
             
             if radar_1h_distance < radar_4h_distance:
-                reason = f'Waiting for 1H pullback ({radar_1h_distance:.1f} pips away)'
+                reason = f'Preț nu este în FVG 1H ({radar_1h_distance:.1f} pips away) — verificăm Fibo 50% fallback'
             else:
-                reason = f'Waiting for 4H pullback ({radar_4h_distance:.1f} pips away)'
+                reason = f'Preț nu este în FVG 4H ({radar_4h_distance:.1f} pips away) — verificăm Fibo 50% fallback'
             
             return {
-                'action': 'KEEP_MONITORING',
+                'action': 'RADAR_CHOCH_NO_FVG',
                 'reason': reason
             }
     
@@ -984,7 +986,7 @@ class SetupExecutorMonitor:
                     confirmed_4h, valid_4h_lock, lock_reason = get_4h_body_close_confirmation(
                         df_4h=df_4h_lock,
                         daily_trend=expected_direction,
-                        max_age_candles=48,
+                        max_age_candles=200,  # V16.4 FIX BUG#2: 48→200 bare (era 8 zile — respingea CHoCH structurale valide mai vechi)
                         debug=False,
                         detector=self.smc_detector  # Fix #5c: reutilizăm instanța existentă
                     )
@@ -1768,7 +1770,7 @@ class SetupExecutorMonitor:
                                 h4_chochs_rc, _ = self.smc_detector.detect_choch_and_bos(df_4h_recheck)
                                 h4_still_valid = False
                                 for h4rc in reversed(h4_chochs_rc):
-                                    if (len(df_4h_recheck) - 1 - h4rc.index) > 48:  # V10.8: 12→48 bare (era prea strict)
+                                    if (len(df_4h_recheck) - 1 - h4rc.index) > 200:  # V16.4 FIX BUG#4: 48→200 bare
                                         continue
                                     if h4rc.direction != expected_dir_rc:
                                         continue
@@ -1850,6 +1852,12 @@ class SetupExecutorMonitor:
                             # 🎯 SNIPER MODE: Use 1H/4H FVG from multi_tf_radar.py
                             logger.info(f"🎯 {symbol}: SNIPER MODE activated [{radar_source}] - checking radar data...")
                             result = self._check_radar_entry(setup, df_1h, symbol)
+                            
+                            # V16.4 FIX BUG#3: CHoCH radar confirmat dar preț NU în FVG
+                            # → nu bloca în KEEP_MONITORING — verifică Fibo 50% pullback
+                            if result.get('action') == 'RADAR_CHOCH_NO_FVG':
+                                logger.info(f"🔄 {symbol}: [V16.4] Radar CHoCH dar fără FVG activ — fallback pe Fibo 50% pullback scan")
+                                result = self._check_pullback_entry(setup, df_1h, symbol)
                         else:
                             # 🔄 FALLBACK: Use V3.2 Pullback Strategy (Fibo 50%)
                             logger.info(f"🔄 {symbol}: FALLBACK MODE - using Fibo 50% logic (no radar confirmation yet)...")
