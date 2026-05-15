@@ -169,6 +169,14 @@ class SMCDetector:
 
             bias = 'BULLISH' if last_signal.direction == 'bullish' else 'BEARISH'
 
+            # V17.2 DEBUG — afișează ce swing-uri au fost găsite pe W1 (ultimele 80 bare)
+            signal_type_str = 'CHoCH' if last_signal in (w1_chochs or []) else 'BOS'
+            all_chochs_info = [(f"CHoCH {c.direction} @{c.break_price:.5f} bar{c.index}") for c in (w1_chochs or [])]
+            all_bos_info    = [(f"BOS {b.direction} @{b.break_price:.5f} bar{b.index}") for b in (w1_bos_list or [])]
+            print(f"   🔍 [W1 BIAS DEBUG] CHoCH-uri găsite ({len(w1_chochs or [])}): {all_chochs_info}")
+            print(f"   🔍 [W1 BIAS DEBUG] BOS-uri găsite ({len(w1_bos_list or [])}): {all_bos_info}")
+            print(f"   🔍 [W1 BIAS DEBUG] Semnal final: {signal_type_str} {last_signal.direction.upper()} @{last_signal.break_price:.5f} → BIAS={bias}")
+
             return {
                 'bias': bias,
                 'last_bos_direction': last_signal.direction,
