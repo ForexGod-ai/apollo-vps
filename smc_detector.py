@@ -140,12 +140,17 @@ class SMCDetector:
             # ✅ V15.3: Folosim detect_choch_and_bos pe W1 — același algoritm structural ca pe Daily
             # Metoda veche găsea BOS bullish din rally-ul precedent și ignora CHoCH-ul bearish mai recent
             #
-            # V17.1 FIX W1 BIAS: Nu mai folosim self (atr_multiplier=0.3 calibrat pt Daily/4H).
-            # Pe Weekly swing-urile sunt ~5x mai mari → detectorul standard găsea zeci de BOS-uri mici
-            # și returna ultimul BOS bullish minor ca "cel mai recent" ignorând CHoCH bearish major.
-            # Fix: detector dedicat W1 cu atr_multiplier=1.2 — filtrează doar swing-uri structurale majore.
-            w1_detector = SMCDetector(swing_lookback=self.swing_lookback, atr_multiplier=1.2)
-            w1_chochs, w1_bos_list = w1_detector.detect_choch_and_bos(df_w1)
+            # V17.2 FIX W1 BIAS — body-only, same algorithm, window corect:
+            # Problema reală: cu 300 bare W1, FRACTAL_WINDOW=10 (hardcodat) face că cel mai recent
+            # swing detectabil e bara[-11] = 11 săptămâni în urmă, iar macro_lookback=150 bare = 3 ani
+            # → prev_trend se inițializa din rally-ul bullish 2022-2025, nu din structura recentă.
+            # Fix: folosim doar ultimele 80 bare W1 (~1.5 ani) — FRACTAL_WINDOW=10 detectează
+            # swing-uri până la bara[-11] din fereastră = swing-uri recente de ~11 săptămâni.
+            # Body-only și algoritmul rămân IDENTICI cu toate celelalte TF-uri.
+            # Detector separat = fără conflict de cache cu self (care procesează Daily/4H).
+            df_w1_recent = df_w1.iloc[-80:].copy().reset_index(drop=True)
+            w1_detector = SMCDetector(swing_lookback=self.swing_lookback, atr_multiplier=self.atr_multiplier)
+            w1_chochs, w1_bos_list = w1_detector.detect_choch_and_bos(df_w1_recent)
 
             latest_w1_choch = w1_chochs[-1] if w1_chochs else None
             latest_w1_bos   = w1_bos_list[-1] if w1_bos_list else None
