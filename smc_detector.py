@@ -1423,6 +1423,128 @@ class SMCDetector:
         self._swing_highs_cache[_cache_key] = swing_highs
         return swing_highs
 
+    def detect_structure_bos_driven(self, df: pd.DataFrame) -> Tuple[List[SwingPoint], List[SwingPoint]]:
+        """🎯 V18.0 BOS-DRIVEN SWING DETECTION — ФорексГод
+
+        FILOZOFIE: Un swing high/low devine VALID retroactiv când piața îl confirmă
+        prin body close opus. Nu numărăm bare stânga/dreapta — piața decide.
+
+        ALGORITM în 2 pași:
+        Pas 1 — ZigZag 1-bar: găsim TOATE punctele de întoarcere locale
+                 body_high[i] > body_high[i-1] AND body_high[i] >= body_high[i+1] = pivot HIGH
+                 body_low[i]  < body_low[i-1]  AND body_low[i]  <= body_low[i+1]  = pivot LOW
+                 (1 bară confirmare = piața s-a întors)
+
+        Pas 2 — Structural filtering: din pivoti, păstrăm doar cei STRUCTURALI
+                 High structural = pivot high care a fost RUPt CU BODY (BOS confirmat)
+                 Low structural  = ultimul HL / LL înainte de acel BOS
+
+        REZULTAT: swinguri structurale reale, identice cu lectura manuală SMC.
+        """
+        if df is None or len(df) < 4:
+            return [], []
+
+        body_highs = df[['open', 'close']].max(axis=1).values
+        body_lows  = df[['open', 'close']].min(axis=1).values
+        times = df.index if not isinstance(df.index, pd.RangeIndex) else list(range(len(df)))
+
+        # ── PAS 1: ZigZag — găsim toți pivotii locali (1-bar confirmare) ──
+        raw_pivots = []  # list of ('high'/'low', idx, price)
+
+        for i in range(1, len(df) - 1):
+            bh_prev, bh_curr, bh_next = body_highs[i-1], body_highs[i], body_highs[i+1]
+            bl_prev, bl_curr, bl_next = body_lows[i-1],  body_lows[i],  body_lows[i+1]
+
+            is_pivot_high = (bh_curr >= bh_prev) and (bh_curr >= bh_next)
+            is_pivot_low  = (bl_curr <= bl_prev) and (bl_curr <= bl_next)
+
+            if is_pivot_high and not is_pivot_low:
+                raw_pivots.append(('high', i, bh_curr))
+            elif is_pivot_low and not is_pivot_high:
+                raw_pivots.append(('low', i, bl_curr))
+            # Dacă ambele (inside bar extremes) — îl ignorăm, prea ambiguu
+
+        if len(raw_pivots) < 2:
+            return [], []
+
+        # ── PAS 2: Curățăm zigzag-ul — alternare strict high/low ──
+        # Dacă avem 2 high-uri consecutive, păstrăm cel mai înalt. La fel pentru low.
+        clean_pivots = [raw_pivots[0]]
+        for pt in raw_pivots[1:]:
+            last = clean_pivots[-1]
+            if pt[0] == last[0]:
+                # Același tip — păstrăm extremul
+                if pt[0] == 'high' and pt[2] > last[2]:
+                    clean_pivots[-1] = pt
+                elif pt[0] == 'low' and pt[2] < last[2]:
+                    clean_pivots[-1] = pt
+            else:
+                clean_pivots.append(pt)
+
+        # ── PAS 3: Din pivoti curați, identificăm swing-urile structurale ──
+        # Un swing high e structural dacă un pivot high ulterior îl depășește (BOS bullish)
+        # Un swing low e structural dacă un pivot low ulterior îl coboară (BOS bearish)
+        swing_highs: List[SwingPoint] = []
+        swing_lows:  List[SwingPoint] = []
+
+        if len(clean_pivots) < 3:
+            # Prea puțini pivoti — returnăm ce avem
+            for ptype, pidx, pprice in clean_pivots:
+                sp = SwingPoint(index=pidx, price=pprice, swing_type=ptype,
+                                candle_time=times[pidx])
+                if ptype == 'high':
+                    swing_highs.append(sp)
+                else:
+                    swing_lows.append(sp)
+            return swing_highs, swing_lows
+
+        # Grupăm highs și lows separat pentru comparație High-vs-High, Low-vs-Low
+        pivot_highs = [(pidx, pprice) for ptype, pidx, pprice in clean_pivots if ptype == 'high']
+        pivot_lows  = [(pidx, pprice) for ptype, pidx, pprice in clean_pivots if ptype == 'low']
+
+        # Marcam highs structurale (cele rupte de un high ulterior = BOS bullish)
+        # Primul high e mereu structural (referință inițială)
+        structural_high_indices = set()
+        if pivot_highs:
+            structural_high_indices.add(pivot_highs[0][0])
+            last_high_price = pivot_highs[0][1]
+            for i in range(1, len(pivot_highs)):
+                pidx, pprice = pivot_highs[i]
+                if pprice > last_high_price:
+                    # BOS bullish — high-ul anterior devine structural
+                    structural_high_indices.add(pivot_highs[i-1][0])
+                    last_high_price = pprice
+                # Ultimul high e mereu structural (referință curentă)
+            structural_high_indices.add(pivot_highs[-1][0])
+
+        # Marcam lows structurale (cele rupte de un low ulterior = BOS bearish)
+        structural_low_indices = set()
+        if pivot_lows:
+            structural_low_indices.add(pivot_lows[0][0])
+            last_low_price = pivot_lows[0][1]
+            for i in range(1, len(pivot_lows)):
+                pidx, pprice = pivot_lows[i]
+                if pprice < last_low_price:
+                    # BOS bearish — low-ul anterior devine structural
+                    structural_low_indices.add(pivot_lows[i-1][0])
+                    last_low_price = pprice
+            structural_low_indices.add(pivot_lows[-1][0])
+
+        # Construim listele finale
+        for ptype, pidx, pprice in clean_pivots:
+            if ptype == 'high' and pidx in structural_high_indices:
+                swing_highs.append(SwingPoint(
+                    index=pidx, price=pprice, swing_type='high',
+                    candle_time=times[pidx]
+                ))
+            elif ptype == 'low' and pidx in structural_low_indices:
+                swing_lows.append(SwingPoint(
+                    index=pidx, price=pprice, swing_type='low',
+                    candle_time=times[pidx]
+                ))
+
+        return swing_highs, swing_lows
+
     def detect_swing_lows(self, df: pd.DataFrame) -> List[SwingPoint]:
         """🎯 GLITCH IN MATRIX - MACRO SWING DETECTION V9.0
 
@@ -1511,8 +1633,8 @@ class SMCDetector:
 
         chochs = []
         bos_list = []
-        swing_highs = self.detect_swing_highs(df)
-        swing_lows = self.detect_swing_lows(df)
+        # V18.0: BOS-driven swing detection — retroactiv, fara FW hardcodat
+        swing_highs, swing_lows = self.detect_structure_bos_driven(df)
         
         if len(swing_highs) < 2 or len(swing_lows) < 2:
             return chochs, bos_list
@@ -1592,28 +1714,18 @@ class SMCDetector:
                         ))
                         prev_trend = 'bullish'
                     elif prev_trend == 'bearish':
-                        # CHoCH bullish: validăm că structura anterioară era bearish
-                        # 🔥 V10.5 FIX: OR in loc de AND — în reversale bruște (pump +20%+)
-                        # nu se formează LH înainte de HH, deci nu putem cere ambele condiții.
-                        # Suficient: fie LL anterior (trend bearish confirmat) SAU LH anterior.
-                        # PLUS: fallback pentru pump mare (>10%) față de prev_high = CHoCH garantat.
-                        recent_highs = [s for s in swing_highs if s.index <= swing.index][-3:]
-                        recent_lows  = [s for s in swing_lows  if s.index <= swing.index][-3:]
-                        lh_pattern = len(recent_highs) >= 2 and recent_highs[-1].price < recent_highs[-2].price
-                        ll_pattern = len(recent_lows)  >= 2 and recent_lows[-1].price  < recent_lows[-2].price
-                        # Fallback: pump masiv față de prev_high (>10%) = reversal violent confirmat
-                        big_pump = prev_high.price > 0 and (swing.price - prev_high.price) / prev_high.price > 0.10
-                        if lh_pattern or ll_pattern or big_pump:
-                            chochs.append(CHoCH(
-                                index=swing.index,
-                                direction='bullish',
-                                break_price=swing.price,
-                                previous_trend='bearish',
-                                candle_time=swing.candle_time,
-                                swing_broken=prev_high
-                            ))
-                            prev_trend = 'bullish'
-                        # ELSE: mic pullback în trend bearish — nu e CHoCH
+                        # V18.0: Swing-urile sunt deja structurale (BOS-driven)
+                        # Nu mai avem nevoie de lh/ll pattern validation extra
+                        # Un HH dupa un trend bearish = CHoCH bullish confirmat
+                        chochs.append(CHoCH(
+                            index=swing.index,
+                            direction='bullish',
+                            break_price=swing.price,
+                            previous_trend='bearish',
+                            candle_time=swing.candle_time,
+                            swing_broken=prev_high
+                        ))
+                        prev_trend = 'bullish'
                     else:  # prev_trend == 'bullish'
                         # BOS bullish: continuare trend
                         bos_list.append(BOS(
@@ -1646,28 +1758,17 @@ class SMCDetector:
                         ))
                         prev_trend = 'bearish'
                     elif prev_trend == 'bullish':
-                        # CHoCH bearish: validăm că structura anterioară era bullish
-                        # 🔥 V10.5 FIX: OR in loc de AND — în reversale bruște (crash -20%+)
-                        # nu se formează HL înainte de LL, deci nu putem cere ambele condiții.
-                        # Suficient: fie HH anterior (trend bullish confirmat) SAU HL anterior.
-                        # PLUS: fallback pentru drop mare (>10%) față de prev_low = CHoCH garantat.
-                        recent_highs = [s for s in swing_highs if s.index <= swing.index][-3:]
-                        recent_lows  = [s for s in swing_lows  if s.index <= swing.index][-3:]
-                        hh_pattern = len(recent_highs) >= 2 and recent_highs[-1].price > recent_highs[-2].price
-                        hl_pattern = len(recent_lows)  >= 2 and recent_lows[-1].price  > recent_lows[-2].price
-                        # Fallback: drop masiv față de prev_low (>10%) = reversal violent confirmat
-                        big_drop = prev_low.price > 0 and (prev_low.price - swing.price) / prev_low.price > 0.10
-                        if hh_pattern or hl_pattern or big_drop:
-                            chochs.append(CHoCH(
-                                index=swing.index,
-                                direction='bearish',
-                                break_price=swing.price,
-                                previous_trend='bullish',
-                                candle_time=swing.candle_time,
-                                swing_broken=prev_low
-                            ))
-                            prev_trend = 'bearish'
-                        # ELSE: mic pullback în trend bullish — nu e CHoCH
+                        # V18.0: Un LL dupa trend bullish = CHoCH bearish confirmat
+                        # Swing-urile BOS-driven sunt deja structurale — fara validare extra
+                        chochs.append(CHoCH(
+                            index=swing.index,
+                            direction='bearish',
+                            break_price=swing.price,
+                            previous_trend='bullish',
+                            candle_time=swing.candle_time,
+                            swing_broken=prev_low
+                        ))
+                        prev_trend = 'bearish'
                     else:  # prev_trend == 'bearish'
                         # BOS bearish: continuare trend
                         bos_list.append(BOS(
