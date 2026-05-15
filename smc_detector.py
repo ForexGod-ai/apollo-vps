@@ -5441,7 +5441,8 @@ def get_4h_body_close_confirmation(
     daily_trend: str,
     max_age_candles: int = 48,
     debug: bool = False,
-    detector: "SMCDetector" = None  # Fix #5c: injectează instanță existentă (evită re-creare)
+    detector: "SMCDetector" = None,  # Fix #5c: injectează instanță existentă (evită re-creare)
+    allow_bos: bool = False  # V17: True pentru continuity — BOS acceptat ca confirmare
 ) -> tuple:
     """
     🔱 V10.6 FUNCȚIE UNIFICATĂ 4H CONFIRMARE — același creier pentru scanner + monitor.
@@ -5450,7 +5451,10 @@ def get_4h_body_close_confirmation(
     Dacă nu e furnizat, creează unul nou (backward-compatible).
     Swing-urile sunt calculate pe df_4h furnizat — citite din cache de apelant.
 
-    Returnează (True, choch, reason) dacă există CHoCH 4H cu body close valid.
+    V17: allow_bos=True (continuity) — include BOS ca confirmare validă alături de CHoCH.
+    Reversal păstrează CHoCH strict.
+
+    Returnează (True, choch_sau_bos, reason) dacă există CHoCH/BOS 4H cu body close valid.
     Returnează (False, None, reason) altfel.
     """
     try:
@@ -5458,11 +5462,16 @@ def get_4h_body_close_confirmation(
         # Fix #5c: reutilizăm detectorul injectat dacă există, altfel creem unul nou
         if detector is None:
             detector = SMCDetector()  # backward-compat: atr_multiplier=0.3 (V10.6 default)
-        h4_chochs, _ = detector.detect_choch_and_bos(df_4h)
+        h4_chochs, h4_bos_list = detector.detect_choch_and_bos(df_4h)
+        # V17: pentru continuity includem BOS ca sursă validă de confirmare
+        if allow_bos and h4_bos_list:
+            candidates = sorted(list(h4_chochs) + list(h4_bos_list), key=lambda x: x.index)
+        else:
+            candidates = list(h4_chochs)
 
         expected_direction = daily_trend  # 'bullish' sau 'bearish'
 
-        for h4ch in reversed(h4_chochs):
+        for h4ch in reversed(candidates):
             # Verificare vârstă
             choch_age = len(df_4h) - 1 - h4ch.index
             if choch_age > max_age_candles:
@@ -5500,8 +5509,9 @@ def get_4h_body_close_confirmation(
                 print(f"   ✅ V10.6 4H BODY CLOSE CONFIRMED: {reason}")
             return True, h4ch, reason
 
-        # Niciun CHoCH valid găsit
-        reason = f"Nu există CHoCH 4H {expected_direction.upper()} cu body close în ultimele {max_age_candles} bare"
+        # Niciun CHoCH/BOS valid găsit
+        signal_type = "CHoCH/BOS" if allow_bos else "CHoCH"
+        reason = f"Nu există {signal_type} 4H {expected_direction.upper()} cu body close în ultimele {max_age_candles} bare"
         if debug:
             print(f"   ❌ V10.6 4H: {reason}")
         return False, None, reason

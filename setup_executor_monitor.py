@@ -998,9 +998,10 @@ class SetupExecutorMonitor:
                     confirmed_4h, valid_4h_lock, lock_reason = get_4h_body_close_confirmation(
                         df_4h=df_4h_lock,
                         daily_trend=expected_direction,
-                        max_age_candles=200,  # V16.4 FIX BUG#2: 48→200 bare (era 8 zile — respingea CHoCH structurale valide mai vechi)
+                        max_age_candles=200,  # V16.4 FIX BUG#2: 48→200 bare
                         debug=False,
-                        detector=self.smc_detector  # Fix #5c: reutilizăm instanța existentă
+                        detector=self.smc_detector,  # Fix #5c: reutilizăm instanța existentă
+                        allow_bos=(strategy_type == 'continuation')  # V17: continuity acceptă BOS pe 4H
                     )
 
                     if confirmed_4h and valid_4h_lock:
@@ -1056,7 +1057,98 @@ class SetupExecutorMonitor:
             except Exception as e:
                 logger.warning(f"   ⚠️ [V14.2] 4H check eșuat pentru {symbol}: {e}")
         # ━━━ END V14.2 4H ALIGNMENT LOCK ━━━
-        
+
+        # ━━━ V17: 4H PULLBACK ENTRY — bypass 1H CHoCH complet ━━━━━━━━━━━━━━━━━━━━
+        # Strategia corectă SMC:
+        #   Daily bias confirmă direcția + zona de pullback (FVG/OB)
+        #   4H CHoCH body close confirmă că pullback-ul s-a terminat
+        #   Așteptăm pullback pe 4H în FVG-ul CHoCH-ului 4H → EXECUTE
+        #   SL = ultimul swing point 4H anterior CHoCH | TP = setup['take_profit'] (Daily target)
+        # Nu mai căutăm 1H CHoCH — 4H CHoCH este suficient ca trigger principal.
+        h4_sync_fvg_top = setup.get('h4_sync_fvg_top')
+        h4_sync_fvg_bottom = setup.get('h4_sync_fvg_bottom')
+
+        if h4_locked and h4_sync_fvg_top and h4_sync_fvg_bottom:
+            fvg_top_4h = float(h4_sync_fvg_top)
+            fvg_bottom_4h = float(h4_sync_fvg_bottom)
+            fvg_mid_4h = (fvg_top_4h + fvg_bottom_4h) / 2
+
+            try:
+                df_4h_v17 = self._get_cached_data(symbol, "H4", 225)
+                if df_4h_v17 is not None and not df_4h_v17.empty:
+                    last_candles_4h = df_4h_v17.tail(20)
+                    pullback_4h_detected = False
+                    touch_price_4h = None
+
+                    for idx, candle in last_candles_4h.iterrows():
+                        if direction == 'buy':
+                            # BUY: pullback jos → LOW intră în FVG bullish (sub fvg_top)
+                            if candle['low'] <= fvg_top_4h:
+                                pullback_4h_detected = True
+                                touch_price_4h = candle['low']
+                                break
+                        else:
+                            # SELL: pullback sus → HIGH intră în FVG bearish (peste fvg_bottom)
+                            if candle['high'] >= fvg_bottom_4h:
+                                pullback_4h_detected = True
+                                touch_price_4h = candle['high']
+                                break
+
+                    if pullback_4h_detected:
+                        # SL structural pe 4H — ultimul swing anterior CHoCH
+                        sl_price_v17 = None
+                        try:
+                            df_4h_sl_v17 = self._get_cached_data(symbol, "H4", 100)
+                            if df_4h_sl_v17 is not None:
+                                sl_buf_v17 = 0.01 * self.pullback_config['sl_buffer_pips'] if 'JPY' in symbol.upper() \
+                                    else 0.0001 * self.pullback_config['sl_buffer_pips']
+                                if 'BTC' in symbol.upper() or 'ETH' in symbol.upper():
+                                    sl_buf_v17 = fvg_mid_4h * 0.005
+                                if direction == 'buy':
+                                    swings_sl_v17 = self.smc_detector.detect_swing_lows(df_4h_sl_v17)
+                                    if swings_sl_v17:
+                                        sl_price_v17 = swings_sl_v17[-1].price - sl_buf_v17
+                                        logger.info(f"   🛡️ [V17 SL] {symbol}: SL @ 4H swing low {swings_sl_v17[-1].price:.5f} - buf = {sl_price_v17:.5f}")
+                                else:
+                                    swings_sl_v17 = self.smc_detector.detect_swing_highs(df_4h_sl_v17)
+                                    if swings_sl_v17:
+                                        sl_price_v17 = swings_sl_v17[-1].price + sl_buf_v17
+                                        logger.info(f"   🛡️ [V17 SL] {symbol}: SL @ 4H swing high {swings_sl_v17[-1].price:.5f} + buf = {sl_price_v17:.5f}")
+                        except Exception as sl_v17_err:
+                            logger.warning(f"   ⚠️ [V17 SL] {symbol}: {sl_v17_err}")
+
+                        if sl_price_v17 is None:
+                            sl_buf_fb = 0.01 * self.pullback_config['sl_buffer_pips'] * 2 if 'JPY' in symbol.upper() \
+                                else 0.0001 * self.pullback_config['sl_buffer_pips'] * 2
+                            sl_price_v17 = (fvg_bottom_4h - sl_buf_fb) if direction == 'buy' else (fvg_top_4h + sl_buf_fb)
+                            logger.warning(f"   ⚠️ [V17 SL FALLBACK] {symbol}: SL fallback la FVG edge: {sl_price_v17:.5f}")
+
+                        diff_pips_v17 = abs(touch_price_4h - fvg_mid_4h) / (0.01 if 'JPY' in symbol.upper() else 0.0001)
+                        logger.success(f"   🎯 [V17] {symbol}: 4H pullback în CHoCH FVG! touch={touch_price_4h:.5f} "
+                                       f"FVG=[{fvg_bottom_4h:.5f}-{fvg_top_4h:.5f}] entry={fvg_mid_4h:.5f} diff={diff_pips_v17:.1f}p")
+
+                        return {
+                            'action': 'EXECUTE_ENTRY1',
+                            'entry_price': fvg_mid_4h,
+                            'stop_loss': sl_price_v17,
+                            'choch_timestamp': setup.get('h4_lock_time', datetime.now(timezone.utc).isoformat()),
+                            'fibo_data': {
+                                'fibo_50': fvg_mid_4h,
+                                'swing_range': abs(fvg_top_4h - fvg_bottom_4h) / (0.01 if 'JPY' in symbol.upper() else 0.0001),
+                                'fibo_timeframe': '4H'
+                            },
+                            'reason': f'🔥 [V17] 4H CHoCH + pullback 4H în FVG (diff={diff_pips_v17:.1f}p)'
+                        }
+                    else:
+                        logger.info(f"   ⏳ [V17] {symbol}: 4H CHoCH confirmat | așteptăm pullback 4H în FVG [{fvg_bottom_4h:.5f} - {fvg_top_4h:.5f}]")
+                        return {
+                            'action': 'KEEP_MONITORING',
+                            'reason': f'[V17] 4H CHoCH confirmat → așteptăm pullback 4H în FVG [{fvg_bottom_4h:.5f}-{fvg_top_4h:.5f}]'
+                        }
+            except Exception as v17_err:
+                logger.warning(f"   ⚠️ [V17] {symbol}: Eroare 4H pullback scan: {v17_err} — fallback la 1H path")
+        # ━━━ END V17 ━━━
+
         # Check if CHoCH already detected
         choch_detected = setup.get('choch_1h_detected', False)
         choch_timestamp = setup.get('choch_1h_timestamp')
@@ -1126,13 +1218,14 @@ class SetupExecutorMonitor:
             break_timestamp = df_h1.index[break_idx]
             break_price = matching_break.break_price
             
-            # V4.0: Get 4H and Daily data for REVERSAL strategies
+            # V4.0: Get 4H and Daily data for Fibo calculation
+            # V17: AMBELE strategy_type folosesc 4H/Daily data — continuity are și ea 4H CHoCH
             strategy_type = setup.get('strategy_type', 'continuation')
             
-            # Fetch 4H and Daily data if needed for REVERSAL
+            # Fetch 4H and Daily data — ambele tipuri de setup au nevoie de Fibo 4H
             df_4h_fibo = None
             df_daily_fibo = None
-            if strategy_type == 'reversal':
+            if True:  # V17: era: strategy_type == 'reversal' — acum ambele tipuri
                 try:
                     df_4h_fibo = self._get_cached_data(symbol, "H4", 225)
                     df_daily_fibo = self._get_cached_data(symbol, "D1", 100)
@@ -2242,10 +2335,12 @@ class SetupExecutorMonitor:
                            f"(lots={lots:.3f} sl={sl_pips:.1f}p bal={balance:.0f})")
 
         # ── Guard 4: D1 Bias → 4H CHoCH aliniere confirmată ────────────────────
-        h4_locked = setup.get('h4_bias_locked', False)
+        # V17 FIX BUG#9: h4_bias_locked nu există — cheia corectă este h4_structure_locked
+        # Fallback la h4_bias_locked pentru backward-compat cu setup-uri vechi
+        h4_locked = setup.get('h4_structure_locked', False) or setup.get('h4_bias_locked', False)
         strategy_type = setup.get('strategy_type', '').upper()
         if not h4_locked:
-            return False, (f"Guard#4 h4_bias_locked=False — CHoCH 4H neconfirmat "
+            return False, (f"Guard#4 h4_structure_locked=False — CHoCH 4H neconfirmat "
                            f"pentru strategie {strategy_type or 'UNKNOWN'}")
         if strategy_type not in ('REVERSAL', 'CONTINUITY', 'CONTINUATION'):
             return False, (f"Guard#4 strategy_type='{strategy_type}' necunoscut "
