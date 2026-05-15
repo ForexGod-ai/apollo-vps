@@ -714,8 +714,10 @@ class MultiTFRadar:
                         setup['last_in_fvg_time'] = datetime.now().isoformat()
                     
                     # V16 FIX (B4): Propagăm h4_locked din executor în radar
+                    # V16.5 FIX BUG#5: executor citește 'h4_structure_locked', nu 'h4_locked' — scriem ambele
                     if result.tf_4h.choch_detected:
                         setup['h4_locked'] = True
+                        setup['h4_structure_locked'] = True  # V16.5: cheia pe care o citește setup_executor_monitor
                     
                     # 🏆 PRIORITY & EXECUTION STATUS
                     setup['radar_priority_timeframe'] = result.priority_timeframe

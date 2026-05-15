@@ -772,9 +772,15 @@ class SetupExecutorMonitor:
         # Fallback la choch_price dacă EQ nu este salvat (setup vechi fără V16.2).
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         if radar_1h_in_fvg and radar_1h_fvg_entry and radar_1h_choch_price:
-            # Folosim EQ salvat; fallback la choch_price (mai permisiv, dar corect ca direcție)
-            radar_1h_eq = setup.get('radar_1h_eq') or radar_1h_choch_price
-            if direction == 'buy':
+            # V16.5 FIX BUG#7: Nu mai folosim choch_price ca fallback EQ — valori complet diferite!
+            # choch_price = close-ul lumânării CHoCH ≠ 50% EQ al impulsului
+            # Dacă radar_1h_eq lipsește (setup pre-V16.2) → skip P/D check, permite execuția
+            radar_1h_eq = setup.get('radar_1h_eq')  # None = EQ nedisponibil
+            if radar_1h_eq is None:
+                logger.info(f"   ℹ️ {symbol}: [V16.5] radar_1h_eq absent (setup pre-V16.2) — skip P/D check, permit execuție SNIPER")
+                zone_valid = True
+                zone_type = "UNKNOWN"
+            elif direction == 'buy':
                 # LONG: FVG trebuie în DISCOUNT (middle sub 50% EQ al impulsului)
                 zone_valid = radar_1h_fvg_entry < radar_1h_eq
                 zone_type = "DISCOUNT"
@@ -828,12 +834,18 @@ class SetupExecutorMonitor:
             }
         
         elif radar_4h_in_fvg and radar_4h_fvg_entry and radar_4h_choch_price:
-            # V16.2 P/D Array: 50% EQ strict pentru 4H FVG
-            radar_4h_eq = setup.get('radar_4h_eq') or radar_4h_choch_price
-            if direction == 'buy':
+            # V16.5 FIX BUG#7: idem 1H — nu folosim choch_price ca fallback EQ pentru 4H
+            radar_4h_eq = setup.get('radar_4h_eq')
+            if radar_4h_eq is None:
+                logger.info(f"   ℹ️ {symbol}: [V16.5] radar_4h_eq absent (setup pre-V16.2) — skip P/D check, permit execuție 4H")
+                zone_valid = True
+                zone_type = "UNKNOWN"
+            elif direction == 'buy':
                 zone_valid = radar_4h_fvg_entry < radar_4h_eq
                 zone_type = "DISCOUNT"
             else:
+                zone_valid = radar_4h_fvg_entry > radar_4h_eq
+                zone_type = "PREMIUM"
                 zone_valid = radar_4h_fvg_entry > radar_4h_eq
                 zone_type = "PREMIUM"
             
@@ -1857,6 +1869,19 @@ class SetupExecutorMonitor:
                             # → nu bloca în KEEP_MONITORING — verifică Fibo 50% pullback
                             if result.get('action') == 'RADAR_CHOCH_NO_FVG':
                                 logger.info(f"🔄 {symbol}: [V16.4] Radar CHoCH dar fără FVG activ — fallback pe Fibo 50% pullback scan")
+                                # V16.5 FIX BUG#5+6: Propagă confirmările radar în setup
+                                # Altfel executorul re-validează independent cu ATR diferit → poate eșua
+                                if setup.get('radar_4h_choch_detected'):
+                                    setup['h4_structure_locked'] = True     # Trust radar 4H — skip re-validation
+                                    setups[i]['h4_structure_locked'] = True
+                                    logger.info(f"   ✅ [V16.5 BUG#5] {symbol}: h4_structure_locked=True propagat din radar")
+                                # V16.5 FIX BUG#8: Propagă și 1H CHoCH din radar
+                                if setup.get('radar_1h_choch_detected') and not setup.get('choch_1h_detected'):
+                                    setup['choch_1h_detected'] = True
+                                    setup['choch_1h_timestamp'] = setup.get('radar_1h_choch_time', datetime.now(timezone.utc).isoformat())
+                                    setups[i]['choch_1h_detected'] = True
+                                    setups[i]['choch_1h_timestamp'] = setup['choch_1h_timestamp']
+                                    logger.info(f"   ✅ [V16.5 BUG#8] {symbol}: choch_1h_detected=True propagat din radar")
                                 result = self._check_pullback_entry(setup, df_1h, symbol)
                         else:
                             # 🔄 FALLBACK: Use V3.2 Pullback Strategy (Fibo 50%)
