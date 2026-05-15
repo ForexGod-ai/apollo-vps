@@ -137,51 +137,88 @@ class SMCDetector:
             if df_w1 is None or len(df_w1) < 10:
                 return {'bias': 'NEUTRAL', 'last_bos_direction': None, 'last_bos_price': None, 'last_bos_bar_idx': None}
 
-            # ✅ V15.3: Folosim detect_choch_and_bos pe W1 — același algoritm structural ca pe Daily
-            # Metoda veche găsea BOS bullish din rally-ul precedent și ignora CHoCH-ul bearish mai recent
+            # V17.4 FIX W1 BIAS — detecție cu fereastră mică (3 bare) pe ultimele 30 bare W1
             #
-            # V17.2 FIX W1 BIAS — body-only, same algorithm, window corect:
-            # Problema reală: cu 300 bare W1, FRACTAL_WINDOW=10 (hardcodat) face că cel mai recent
-            # swing detectabil e bara[-11] = 11 săptămâni în urmă, iar macro_lookback=150 bare = 3 ani
-            # → prev_trend se inițializa din rally-ul bullish 2022-2025, nu din structura recentă.
-            # Fix: folosim doar ultimele 80 bare W1 (~1.5 ani) — FRACTAL_WINDOW=10 detectează
-            # swing-uri până la bara[-11] din fereastră = swing-uri recente de ~11 săptămâni.
-            # Body-only și algoritmul rămân IDENTICI cu toate celelalte TF-uri.
-            # Detector separat = fără conflict de cache cu self (care procesează Daily/4H).
-            df_w1_recent = df_w1.iloc[-80:].copy().reset_index(drop=True)
-            w1_detector = SMCDetector(swing_lookback=self.swing_lookback, atr_multiplier=self.atr_multiplier)
-            w1_chochs, w1_bos_list = w1_detector.detect_choch_and_bos(df_w1_recent)
+            # Problema fundamentală: FRACTAL_WINDOW=10 (hardcodat în detect_swing_highs/lows)
+            # face ca ultimul swing detectabil să fie bara[-11] = acum 11 săptămâni.
+            # CHoCH-ul bearish recent din ultimele 10 săptămâni cade exact în blind spot.
+            # Fix: căutăm swing-uri cu fereastră de 3 bare pe ultimele 30 bare W1
+            # — suficient pentru a prinde structura recentă, body-only identic cu tot sistemul.
+            # Algoritmul: HH+HL pe ultimele 5 swing-uri = BULLISH, LH+LL = BEARISH.
+            # CHoCH > BOS ca prioritate dacă același index sau mai recent.
 
-            latest_w1_choch = w1_chochs[-1] if w1_chochs else None
-            latest_w1_bos   = w1_bos_list[-1] if w1_bos_list else None
+            df_w1_last = df_w1.iloc[-30:].copy().reset_index(drop=True)
+            body_highs = df_w1_last[['open', 'close']].max(axis=1)
+            body_lows  = df_w1_last[['open', 'close']].min(axis=1)
+            FW = 3  # fractal window 3 bare — detectează swing-uri din ultimele 3 săptămâni
 
-            # Determinăm ultimul semnal structural (CHoCH sau BOS)
-            last_signal = None
-            if latest_w1_choch and latest_w1_bos:
-                last_signal = latest_w1_choch if latest_w1_choch.index > latest_w1_bos.index else latest_w1_bos
-            elif latest_w1_choch:
-                last_signal = latest_w1_choch
-            elif latest_w1_bos:
-                last_signal = latest_w1_bos
+            w1_swing_highs = []
+            w1_swing_lows  = []
+            for i in range(FW, len(df_w1_last) - FW):
+                bh = body_highs.iloc[i]
+                bl = body_lows.iloc[i]
+                if all(bh > body_highs.iloc[i - j] for j in range(1, FW + 1)) and \
+                   all(bh > body_highs.iloc[i + j] for j in range(1, FW + 1)):
+                    w1_swing_highs.append((i, bh))
+                if all(bl < body_lows.iloc[i - j] for j in range(1, FW + 1)) and \
+                   all(bl < body_lows.iloc[i + j] for j in range(1, FW + 1)):
+                    w1_swing_lows.append((i, bl))
 
-            if last_signal is None:
+            if len(w1_swing_highs) < 2 or len(w1_swing_lows) < 2:
+                # Fallback: structura din ultimele 10 bare — compară ultimul high vs antepenultimul
+                recent_highs = [(i, body_highs.iloc[i]) for i in range(len(df_w1_last) - 10, len(df_w1_last))]
+                recent_lows  = [(i, body_lows.iloc[i])  for i in range(len(df_w1_last) - 10, len(df_w1_last))]
+                max_h = max(recent_highs, key=lambda x: x[1])
+                min_l = min(recent_lows,  key=lambda x: x[1])
+                # Nu avem suficiente date
+                print(f"   🔍 [W1 BIAS DEBUG] Insuficiente swing-uri (H:{len(w1_swing_highs)} L:{len(w1_swing_lows)}) → NEUTRAL")
                 return {'bias': 'NEUTRAL', 'last_bos_direction': None, 'last_bos_price': None, 'last_bos_bar_idx': None}
 
-            bias = 'BULLISH' if last_signal.direction == 'bullish' else 'BEARISH'
+            # Ultimele 5 swing-uri highs și lows
+            last_highs = w1_swing_highs[-5:]
+            last_lows  = w1_swing_lows[-5:]
 
-            # V17.2 DEBUG — afișează ce swing-uri au fost găsite pe W1 (ultimele 80 bare)
-            signal_type_str = 'CHoCH' if last_signal in (w1_chochs or []) else 'BOS'
-            all_chochs_info = [(f"CHoCH {c.direction} @{c.break_price:.5f} bar{c.index}") for c in (w1_chochs or [])]
-            all_bos_info    = [(f"BOS {b.direction} @{b.break_price:.5f} bar{b.index}") for b in (w1_bos_list or [])]
-            print(f"   🔍 [W1 BIAS DEBUG] CHoCH-uri găsite ({len(w1_chochs or [])}): {all_chochs_info}")
-            print(f"   🔍 [W1 BIAS DEBUG] BOS-uri găsite ({len(w1_bos_list or [])}): {all_bos_info}")
-            print(f"   🔍 [W1 BIAS DEBUG] Semnal final: {signal_type_str} {last_signal.direction.upper()} @{last_signal.break_price:.5f} → BIAS={bias}")
+            # Structura: HH+HL = bullish, LH+LL = bearish
+            hh = last_highs[-1][1] > last_highs[-2][1]  # Higher High
+            lh = last_highs[-1][1] < last_highs[-2][1]  # Lower High
+            hl = last_lows[-1][1]  > last_lows[-2][1]   # Higher Low
+            ll = last_lows[-1][1]  < last_lows[-2][1]   # Lower Low
+
+            # Cel mai recent semnal structural: comparăm indexul ultimului high vs ultimul low
+            last_high_idx, last_high_price = last_highs[-1]
+            last_low_idx,  last_low_price  = last_lows[-1]
+
+            if lh and ll:
+                bias = 'BEARISH'
+                signal_price = last_highs[-1][1]
+                signal_idx   = last_high_idx
+            elif hh and hl:
+                bias = 'BULLISH'
+                signal_price = last_lows[-1][1]
+                signal_idx   = last_low_idx
+            elif lh or ll:
+                # Cel puțin un semnal bearish
+                bias = 'BEARISH'
+                signal_price = last_highs[-1][1]
+                signal_idx   = last_high_idx
+            elif hh or hl:
+                bias = 'BULLISH'
+                signal_price = last_lows[-1][1]
+                signal_idx   = last_low_idx
+            else:
+                bias = 'NEUTRAL'
+                signal_price = 0.0
+                signal_idx   = 0
+
+            print(f"   🔍 [W1 BIAS DEBUG] Swing Highs (FW3): {[(i, round(p,5)) for i,p in last_highs]}")
+            print(f"   🔍 [W1 BIAS DEBUG] Swing Lows  (FW3): {[(i, round(p,5)) for i,p in last_lows]}")
+            print(f"   🔍 [W1 BIAS DEBUG] HH={hh} LH={lh} HL={hl} LL={ll} → BIAS={bias}")
 
             return {
                 'bias': bias,
-                'last_bos_direction': last_signal.direction,
-                'last_bos_price': float(last_signal.break_price),
-                'last_bos_bar_idx': last_signal.index,
+                'last_bos_direction': bias.lower() if bias != 'NEUTRAL' else None,
+                'last_bos_price': float(signal_price) if bias != 'NEUTRAL' else None,
+                'last_bos_bar_idx': signal_idx if bias != 'NEUTRAL' else None,
             }
         except Exception as e:
             print(f"⚠️ [W1 BIAS] Error: {e}")
