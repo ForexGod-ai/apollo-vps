@@ -88,10 +88,12 @@ class TradeSetup:
 
 
 class SMCDetector:
-    def __init__(self, swing_lookback: int = 5, atr_multiplier: float = 0.3):
+    def __init__(self, swing_lookback: int = 10, atr_multiplier: float = 0.3):
         # ── V9.0 LOOKBACK ADAPTIV: base_lookback e ancora, lookback real calculat dinamic ──
-        self.base_lookback = swing_lookback          # ancora (5 candle default)
-        self.swing_lookback = swing_lookback         # runtime (suprascris de _adaptive_lookback)
+        # V17.5: default=10 (restaurat) — inainte FW era hardcodat la 10 pentru Daily/4H/1H.
+        # W1 detector este creat explicit cu SMCDetector(swing_lookback=3) in calculate_w1_bias.
+        self.base_lookback = swing_lookback          # ancora (10 candle default)
+        self.swing_lookback = swing_lookback         # runtime — folosit ca FRACTAL_WINDOW in detect_swing_*
         self.atr_multiplier = atr_multiplier         # ✅ V10.6: ATR ultra-relaxat (1.2→0.3) — Body Close Rule
         # Track FVG zones with trade count for ALL pairs (UNIVERSAL anti-overtrading)
         # Format: {symbol: [(top, bottom, date, trade_count), ...]}
@@ -3303,15 +3305,31 @@ class SMCDetector:
                 strategy_type = 'reversal'
                 current_trend = latest_choch.direction
             else:
-                # BOS is latest — verificăm dacă e în direcție opusă CHoCH-ului (= pullback)
-                # ━━━ V11.9 FIX: BOS opus CHoCH-ului = pullback, CHoCH rămâne bias master ━━━
+                # BOS is latest — V17.6 SMART V11.9: cauta cel mai recent BOS post-CHoCH
+                # in aceeasi directie ca CHoCH → confirmare CONTINUATION
                 if latest_choch and latest_bos and latest_bos.direction != latest_choch.direction:
-                    # BOS bullish după CHoCH bearish (sau invers) = mișcare corectivă, IGNORAT
-                    if debug:
-                        print(f"✅ V11.9 PULLBACK BOS IGNORED: BOS {latest_bos.direction.upper()} opus CHoCH {latest_choch.direction.upper()} — CHoCH rămâne BIAS MASTER")
-                    latest_signal = latest_choch
-                    strategy_type = 'reversal'
-                    current_trend = latest_choch.direction
+                    # Cel mai recent BOS e opus CHoCH — dar poate exista un BOS mai vechi (post-CHoCH)
+                    # in aceeasi directie (= departure dupa retest)
+                    post_choch_same_dir = [
+                        b for b in daily_bos_list
+                        if b.index > latest_choch.index and b.direction == latest_choch.direction
+                    ]
+                    if post_choch_same_dir:
+                        # Exista BOS in directia CHoCH dupa CHoCH → CONTINUATION
+                        # (scenariul: CHoCH bullish → retest BOS bearish → departure BOS bullish)
+                        departure_bos = post_choch_same_dir[-1]  # cel mai recent
+                        if debug:
+                            print(f"✅ V17.6 CONTINUATION: CHoCH {latest_choch.direction.upper()} + departure BOS {departure_bos.direction.upper()} @{departure_bos.break_price:.5f} bar{departure_bos.index} (retest BOS {latest_bos.direction.upper()} ignorat)")
+                        latest_signal = departure_bos
+                        strategy_type = 'continuation'
+                        current_trend = latest_choch.direction
+                    else:
+                        # Niciun BOS in directia CHoCH post-CHoCH → e doar pullback
+                        if debug:
+                            print(f"✅ V11.9 PULLBACK BOS IGNORED: BOS {latest_bos.direction.upper()} opus CHoCH {latest_choch.direction.upper()} — CHoCH rămâne BIAS MASTER")
+                        latest_signal = latest_choch
+                        strategy_type = 'reversal'
+                        current_trend = latest_choch.direction
                 else:
                     # BOS în aceeași direcție cu CHoCH sau fără CHoCH → CONTINUATION validă
                     if debug and latest_bos:
@@ -3329,16 +3347,28 @@ class SMCDetector:
                 strategy_type = 'reversal'
                 current_trend = latest_choch.direction
             else:
-                # BOS mai recent — verificăm dacă e în direcție opusă CHoCH-ului (= pullback)
-                # ━━━ V11.9 FIX: BOS opus CHoCH = pullback corectiv, CHoCH rămâne bias master ━━━
+                # BOS mai recent — V17.6 SMART V11.9
                 if latest_bos.direction != latest_choch.direction:
-                    # BOS bullish după CHoCH bearish (sau invers) = mișcare corectivă
-                    # CHoCH rămâne semnalul principal — setăm REVERSAL în direcția CHoCH
-                    if debug:
-                        print(f"✅ V11.9 PULLBACK BOS IGNORED (std): BOS {latest_bos.direction.upper()} opus CHoCH {latest_choch.direction.upper()} — CHoCH rămâne BIAS MASTER")
-                    latest_signal = latest_choch
-                    strategy_type = 'reversal'
-                    current_trend = latest_choch.direction
+                    # BOS opus CHoCH — dar verificam daca exista BOS post-CHoCH in aceeasi directie
+                    post_choch_same_dir = [
+                        b for b in daily_bos_list
+                        if b.index > latest_choch.index and b.direction == latest_choch.direction
+                    ]
+                    if post_choch_same_dir:
+                        # CHoCH + retest + departure BOS in aceeasi directie → CONTINUATION
+                        departure_bos = post_choch_same_dir[-1]
+                        if debug:
+                            print(f"✅ V17.6 CONTINUATION (std): CHoCH {latest_choch.direction.upper()} + departure BOS @{departure_bos.break_price:.5f} bar{departure_bos.index}")
+                        latest_signal = departure_bos
+                        strategy_type = 'continuation'
+                        current_trend = latest_choch.direction
+                    else:
+                        # Doar pullback — CHoCH rămâne master
+                        if debug:
+                            print(f"✅ V11.9 PULLBACK BOS IGNORED (std): BOS {latest_bos.direction.upper()} opus CHoCH {latest_choch.direction.upper()} — CHoCH rămâne BIAS MASTER")
+                        latest_signal = latest_choch
+                        strategy_type = 'reversal'
+                        current_trend = latest_choch.direction
                 else:
                     # BOS în aceeași direcție cu CHoCH → CONTINUATION validă
                     latest_signal = latest_bos
