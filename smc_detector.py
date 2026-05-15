@@ -1633,8 +1633,10 @@ class SMCDetector:
 
         chochs = []
         bos_list = []
-        # V18.0: BOS-driven swing detection — retroactiv, fara FW hardcodat
-        swing_highs, swing_lows = self.detect_structure_bos_driven(df)
+        # V18.0 detect_structure_bos_driven pastrat ca functie separata pentru testare
+        # Productie: folosim in continuare detect_swing_highs/lows (FW=10, stabil)
+        swing_highs = self.detect_swing_highs(df)
+        swing_lows = self.detect_swing_lows(df)
         
         if len(swing_highs) < 2 or len(swing_lows) < 2:
             return chochs, bos_list
@@ -1714,18 +1716,24 @@ class SMCDetector:
                         ))
                         prev_trend = 'bullish'
                     elif prev_trend == 'bearish':
-                        # V18.0: Swing-urile sunt deja structurale (BOS-driven)
-                        # Nu mai avem nevoie de lh/ll pattern validation extra
-                        # Un HH dupa un trend bearish = CHoCH bullish confirmat
-                        chochs.append(CHoCH(
-                            index=swing.index,
-                            direction='bullish',
-                            break_price=swing.price,
-                            previous_trend='bearish',
-                            candle_time=swing.candle_time,
-                            swing_broken=prev_high
-                        ))
-                        prev_trend = 'bullish'
+                        # CHoCH bullish: validăm că structura anterioară era bearish
+                        # 🔥 V10.5 FIX: OR in loc de AND — în reversale bruște (pump +20%+)
+                        recent_highs = [s for s in swing_highs if s.index <= swing.index][-3:]
+                        recent_lows  = [s for s in swing_lows  if s.index <= swing.index][-3:]
+                        lh_pattern = len(recent_highs) >= 2 and recent_highs[-1].price < recent_highs[-2].price
+                        ll_pattern = len(recent_lows)  >= 2 and recent_lows[-1].price  < recent_lows[-2].price
+                        big_pump = prev_high.price > 0 and (swing.price - prev_high.price) / prev_high.price > 0.10
+                        if lh_pattern or ll_pattern or big_pump:
+                            chochs.append(CHoCH(
+                                index=swing.index,
+                                direction='bullish',
+                                break_price=swing.price,
+                                previous_trend='bearish',
+                                candle_time=swing.candle_time,
+                                swing_broken=prev_high
+                            ))
+                            prev_trend = 'bullish'
+                        # ELSE: mic pullback în trend bearish — nu e CHoCH
                     else:  # prev_trend == 'bullish'
                         # BOS bullish: continuare trend
                         bos_list.append(BOS(
@@ -1758,17 +1766,24 @@ class SMCDetector:
                         ))
                         prev_trend = 'bearish'
                     elif prev_trend == 'bullish':
-                        # V18.0: Un LL dupa trend bullish = CHoCH bearish confirmat
-                        # Swing-urile BOS-driven sunt deja structurale — fara validare extra
-                        chochs.append(CHoCH(
-                            index=swing.index,
-                            direction='bearish',
-                            break_price=swing.price,
-                            previous_trend='bullish',
-                            candle_time=swing.candle_time,
-                            swing_broken=prev_low
-                        ))
-                        prev_trend = 'bearish'
+                        # CHoCH bearish: validăm că structura anterioară era bullish
+                        # 🔥 V10.5 FIX: OR in loc de AND — în reversale bruște (crash -20%+)
+                        recent_highs = [s for s in swing_highs if s.index <= swing.index][-3:]
+                        recent_lows  = [s for s in swing_lows  if s.index <= swing.index][-3:]
+                        hh_pattern = len(recent_highs) >= 2 and recent_highs[-1].price > recent_highs[-2].price
+                        hl_pattern = len(recent_lows)  >= 2 and recent_lows[-1].price  > recent_lows[-2].price
+                        big_drop = prev_low.price > 0 and (prev_low.price - swing.price) / prev_low.price > 0.10
+                        if hh_pattern or hl_pattern or big_drop:
+                            chochs.append(CHoCH(
+                                index=swing.index,
+                                direction='bearish',
+                                break_price=swing.price,
+                                previous_trend='bullish',
+                                candle_time=swing.candle_time,
+                                swing_broken=prev_low
+                            ))
+                            prev_trend = 'bearish'
+                        # ELSE: mic pullback în trend bullish — nu e CHoCH
                     else:  # prev_trend == 'bearish'
                         # BOS bearish: continuare trend
                         bos_list.append(BOS(
