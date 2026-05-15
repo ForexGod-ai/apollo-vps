@@ -137,88 +137,48 @@ class SMCDetector:
             if df_w1 is None or len(df_w1) < 10:
                 return {'bias': 'NEUTRAL', 'last_bos_direction': None, 'last_bos_price': None, 'last_bos_bar_idx': None}
 
-            # V17.4 FIX W1 BIAS — detecție cu fereastră mică (3 bare) pe ultimele 30 bare W1
-            #
-            # Problema fundamentală: FRACTAL_WINDOW=10 (hardcodat în detect_swing_highs/lows)
-            # face ca ultimul swing detectabil să fie bara[-11] = acum 11 săptămâni.
-            # CHoCH-ul bearish recent din ultimele 10 săptămâni cade exact în blind spot.
-            # Fix: căutăm swing-uri cu fereastră de 3 bare pe ultimele 30 bare W1
-            # — suficient pentru a prinde structura recentă, body-only identic cu tot sistemul.
-            # Algoritmul: HH+HL pe ultimele 5 swing-uri = BULLISH, LH+LL = BEARISH.
-            # CHoCH > BOS ca prioritate dacă același index sau mai recent.
+            # V17.5 FIX W1 BIAS — FRACTAL_WINDOW dinamic, nu mai e hardcodat:
+            # swing_lookback=3 → fereastra de 3 bare pe fiecare parte → detecteaza
+            # swing-uri pana la bara[-4] = acum 4 saptamani → prinde CHoCH bearish recent.
+            # Body-only identic cu tot sistemul. Detector separat = fara conflict cache.
+            df_w1_recent = df_w1.iloc[-60:].copy().reset_index(drop=True)
+            w1_detector = SMCDetector(swing_lookback=3, atr_multiplier=self.atr_multiplier)
+            w1_chochs, w1_bos_list = w1_detector.detect_choch_and_bos(df_w1_recent)
 
-            df_w1_last = df_w1.iloc[-30:].copy().reset_index(drop=True)
-            body_highs = df_w1_last[['open', 'close']].max(axis=1)
-            body_lows  = df_w1_last[['open', 'close']].min(axis=1)
-            FW = 3  # fractal window 3 bare — detectează swing-uri din ultimele 3 săptămâni
+            latest_w1_choch = w1_chochs[-1] if w1_chochs else None
+            latest_w1_bos   = w1_bos_list[-1] if w1_bos_list else None
 
-            w1_swing_highs = []
-            w1_swing_lows  = []
-            for i in range(FW, len(df_w1_last) - FW):
-                bh = body_highs.iloc[i]
-                bl = body_lows.iloc[i]
-                if all(bh > body_highs.iloc[i - j] for j in range(1, FW + 1)) and \
-                   all(bh > body_highs.iloc[i + j] for j in range(1, FW + 1)):
-                    w1_swing_highs.append((i, bh))
-                if all(bl < body_lows.iloc[i - j] for j in range(1, FW + 1)) and \
-                   all(bl < body_lows.iloc[i + j] for j in range(1, FW + 1)):
-                    w1_swing_lows.append((i, bl))
+            last_signal = None
+            last_signal_type = 'BOS'
+            if latest_w1_choch and latest_w1_bos:
+                if latest_w1_choch.index >= latest_w1_bos.index:
+                    last_signal = latest_w1_choch
+                    last_signal_type = 'CHoCH'
+                else:
+                    last_signal = latest_w1_bos
+            elif latest_w1_choch:
+                last_signal = latest_w1_choch
+                last_signal_type = 'CHoCH'
+            elif latest_w1_bos:
+                last_signal = latest_w1_bos
 
-            if len(w1_swing_highs) < 2 or len(w1_swing_lows) < 2:
-                # Fallback: structura din ultimele 10 bare — compară ultimul high vs antepenultimul
-                recent_highs = [(i, body_highs.iloc[i]) for i in range(len(df_w1_last) - 10, len(df_w1_last))]
-                recent_lows  = [(i, body_lows.iloc[i])  for i in range(len(df_w1_last) - 10, len(df_w1_last))]
-                max_h = max(recent_highs, key=lambda x: x[1])
-                min_l = min(recent_lows,  key=lambda x: x[1])
-                # Nu avem suficiente date
-                print(f"   🔍 [W1 BIAS DEBUG] Insuficiente swing-uri (H:{len(w1_swing_highs)} L:{len(w1_swing_lows)}) → NEUTRAL")
+            if last_signal is None:
+                print(f"   🔍 [W1 BIAS DEBUG] 0 CHoCH + 0 BOS detectate pe W1 60 bare → NEUTRAL")
                 return {'bias': 'NEUTRAL', 'last_bos_direction': None, 'last_bos_price': None, 'last_bos_bar_idx': None}
 
-            # Ultimele 5 swing-uri highs și lows
-            last_highs = w1_swing_highs[-5:]
-            last_lows  = w1_swing_lows[-5:]
+            bias = 'BULLISH' if last_signal.direction == 'bullish' else 'BEARISH'
 
-            # Structura: HH+HL = bullish, LH+LL = bearish
-            hh = last_highs[-1][1] > last_highs[-2][1]  # Higher High
-            lh = last_highs[-1][1] < last_highs[-2][1]  # Lower High
-            hl = last_lows[-1][1]  > last_lows[-2][1]   # Higher Low
-            ll = last_lows[-1][1]  < last_lows[-2][1]   # Lower Low
-
-            # Cel mai recent semnal structural: comparăm indexul ultimului high vs ultimul low
-            last_high_idx, last_high_price = last_highs[-1]
-            last_low_idx,  last_low_price  = last_lows[-1]
-
-            if lh and ll:
-                bias = 'BEARISH'
-                signal_price = last_highs[-1][1]
-                signal_idx   = last_high_idx
-            elif hh and hl:
-                bias = 'BULLISH'
-                signal_price = last_lows[-1][1]
-                signal_idx   = last_low_idx
-            elif lh or ll:
-                # Cel puțin un semnal bearish
-                bias = 'BEARISH'
-                signal_price = last_highs[-1][1]
-                signal_idx   = last_high_idx
-            elif hh or hl:
-                bias = 'BULLISH'
-                signal_price = last_lows[-1][1]
-                signal_idx   = last_low_idx
-            else:
-                bias = 'NEUTRAL'
-                signal_price = 0.0
-                signal_idx   = 0
-
-            print(f"   🔍 [W1 BIAS DEBUG] Swing Highs (FW3): {[(i, round(p,5)) for i,p in last_highs]}")
-            print(f"   🔍 [W1 BIAS DEBUG] Swing Lows  (FW3): {[(i, round(p,5)) for i,p in last_lows]}")
-            print(f"   🔍 [W1 BIAS DEBUG] HH={hh} LH={lh} HL={hl} LL={ll} → BIAS={bias}")
+            all_chochs_info = [f"CHoCH {c.direction} @{c.break_price:.5f} bar{c.index}" for c in w1_chochs]
+            all_bos_info    = [f"BOS {b.direction} @{b.break_price:.5f} bar{b.index}" for b in w1_bos_list]
+            print(f"   🔍 [W1 BIAS DEBUG] CHoCH ({len(w1_chochs)}): {all_chochs_info}")
+            print(f"   🔍 [W1 BIAS DEBUG] BOS   ({len(w1_bos_list)}): {all_bos_info}")
+            print(f"   🔍 [W1 BIAS DEBUG] Semnal final: {last_signal_type} {last_signal.direction.upper()} @{last_signal.break_price:.5f} → BIAS={bias}")
 
             return {
                 'bias': bias,
-                'last_bos_direction': bias.lower() if bias != 'NEUTRAL' else None,
-                'last_bos_price': float(signal_price) if bias != 'NEUTRAL' else None,
-                'last_bos_bar_idx': signal_idx if bias != 'NEUTRAL' else None,
+                'last_bos_direction': last_signal.direction,
+                'last_bos_price': float(last_signal.break_price),
+                'last_bos_bar_idx': last_signal.index,
             }
         except Exception as e:
             print(f"⚠️ [W1 BIAS] Error: {e}")
@@ -1418,20 +1378,18 @@ class SMCDetector:
         if _cache_key in self._swing_highs_cache:
             return self._swing_highs_cache[_cache_key]
 
-        # ✅ V11.2 FRACTAL WINDOW 10: fereastra fixă de 10 bare fiecare parte
-        # Vrem MUNȚII, nu mușuroaiele — doar maxime cu 10 bare confirmare bilaterală
-        # Înlocuiește lookback-ul adaptiv (5-25) care detecta false micro-swinguri
-        FRACTAL_WINDOW = 10
+        # V17.5: FRACTAL_WINDOW dinamic din self.swing_lookback (nu mai e hardcodat 10)
+        # Default 10 pentru 1H/4H/Daily; W1 foloseste detector cu swing_lookback=3
+        FRACTAL_WINDOW = max(2, self.swing_lookback)
         lookback = FRACTAL_WINDOW
-        self.swing_lookback = lookback
 
-        # 🛡️ SAFETY CHECK: minimum 21 bare pentru fractal window 10
+        # 🛡️ SAFETY CHECK: minimum (FW*2)+1 bare
         if len(df) < (FRACTAL_WINDOW * 2) + 1:
             return []
 
         # 🔥 ATR pentru prominence filtering (păstrat ca sanity check secundar)
         atr = self.calculate_atr(df)
-        # V11.2: prominence 0.0 — Fractal Window 10 e filtrul principal, nu ATR
+        # V11.2: prominence 0.0 — Fractal Window e filtrul principal, nu ATR
         prominence_threshold = 0.0
 
         swing_highs = []
@@ -1441,8 +1399,6 @@ class SMCDetector:
         for i in range(FRACTAL_WINDOW, len(df) - FRACTAL_WINDOW):
             current_high = body_highs.iloc[i]
 
-            # V11.2 FRACTAL WINDOW 10: toate cele 10 bare stânga + 10 bare dreapta
-            # trebuie să fie STRICT mai mici decât vârful curent (body-to-body)
             left_check = all(
                 current_high > body_highs.iloc[i - j]
                 for j in range(1, FRACTAL_WINDOW + 1)
@@ -1453,7 +1409,7 @@ class SMCDetector:
             )
 
             if left_check and right_check:
-                # ✅ Swing valid — a dominat 10 bare în ambele direcții = MUNTE REAL
+                # ✅ Swing valid — a dominat FRACTAL_WINDOW bare în ambele direcții
                 swing_highs.append(SwingPoint(
                     index=i,
                     price=current_high,
@@ -1482,18 +1438,15 @@ class SMCDetector:
         if _cache_key in self._swing_lows_cache:
             return self._swing_lows_cache[_cache_key]
 
-        # ✅ V11.2 FRACTAL WINDOW 10: fereastra fixă de 10 bare fiecare parte
-        # Vrem VĂILE REALE, nu denivelerile mici — doar minime cu 10 bare confirmare bilaterală
-        FRACTAL_WINDOW = 10
+        # V17.5: FRACTAL_WINDOW dinamic din self.swing_lookback (nu mai e hardcodat 10)
+        FRACTAL_WINDOW = max(2, self.swing_lookback)
         lookback = FRACTAL_WINDOW
-        self.swing_lookback = lookback
 
-        # 🛡️ SAFETY CHECK: minimum 21 bare
+        # 🛡️ SAFETY CHECK
         if len(df) < (FRACTAL_WINDOW * 2) + 1:
             return []
 
         atr = self.calculate_atr(df)
-        # V11.2: prominence 0.0 — Fractal Window 10 e filtrul principal
         prominence_threshold = 0.0
 
         swing_lows = []
@@ -1503,8 +1456,6 @@ class SMCDetector:
         for i in range(FRACTAL_WINDOW, len(df) - FRACTAL_WINDOW):
             current_low = body_lows.iloc[i]
 
-            # V11.2 FRACTAL WINDOW 10: toate cele 10 bare stânga + 10 bare dreapta
-            # trebuie să fie STRICT mai mari decât groapa curentă (body-to-body)
             left_check = all(
                 current_low < body_lows.iloc[i - j]
                 for j in range(1, FRACTAL_WINDOW + 1)
@@ -1515,7 +1466,7 @@ class SMCDetector:
             )
 
             if left_check and right_check:
-                # ✅ Swing valid — a dominat 10 bare în ambele direcții = VALE REALĂ
+                # ✅ Swing valid — a dominat FRACTAL_WINDOW bare în ambele direcții
                 swing_lows.append(SwingPoint(
                     index=i,
                     price=current_low,
