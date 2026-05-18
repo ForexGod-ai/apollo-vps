@@ -357,10 +357,24 @@ class SetupExecutorMonitor:
                 logger.debug(f"😴 Deep Sleep deja activ — ignorăm apel duplicat ({reason})")
                 return
         now = datetime.now(timezone.utc)
-        # Wake up at 00:05 UTC next day (+5min safety buffer for daily state reset)
-        tomorrow_0005 = (now + timedelta(days=1)).replace(
-            hour=0, minute=5, second=0, microsecond=0
-        )
+        # V19.6.5 FIX: Wake la 00:05 ora României (EEST = UTC+3, EET = UTC+2)
+        # Folosim pytz dacă e disponibil, altfel hardcodăm UTC+3 (EEST mai-oct)
+        try:
+            import pytz
+            ro_tz = pytz.timezone('Europe/Bucharest')
+            now_ro = datetime.now(ro_tz)
+            tomorrow_ro = (now_ro + timedelta(days=1)).replace(
+                hour=0, minute=5, second=0, microsecond=0
+            )
+            tomorrow_0005 = tomorrow_ro.astimezone(timezone.utc)
+        except Exception:
+            # Fallback: UTC+3 (EEST vara)
+            ro_offset = timedelta(hours=3)
+            now_ro_naive = datetime.now(timezone.utc) + ro_offset
+            tomorrow_ro_naive = (now_ro_naive + timedelta(days=1)).replace(
+                hour=0, minute=5, second=0, microsecond=0
+            )
+            tomorrow_0005 = tomorrow_ro_naive.replace(tzinfo=timezone.utc) - ro_offset
         self.deep_sleep_until = tomorrow_0005
         remaining_h = (tomorrow_0005 - now).total_seconds() / 3600
         

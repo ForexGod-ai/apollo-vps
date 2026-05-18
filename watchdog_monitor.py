@@ -438,6 +438,20 @@ class WatchdogMonitor:
             wake_str = state.get('wake_time', '')
             stored_reason = state.get('reason', 'Unknown')
             wake_display = wake_str[:16] if wake_str else '?'
+            # V19.6.5: afișăm ora în fusul orar românesc
+            try:
+                from datetime import timezone as _tz, timedelta as _td
+                import pytz as _pytz
+                _wt = datetime.fromisoformat(wake_str)
+                _ro = _pytz.timezone('Europe/Bucharest')
+                wake_display = _wt.astimezone(_ro).strftime('%H:%M (ora României)')
+            except Exception:
+                try:
+                    from datetime import timedelta as _td2
+                    _wt2 = datetime.fromisoformat(wake_str)
+                    wake_display = (_wt2 + _td2(hours=3)).strftime('%H:%M (ora României)')
+                except Exception:
+                    pass  # rămâne wake_str[:16]
 
             # V19.6.4 FIX: sanitize reason — dacă conține procent aberant (>100%) înlocuim
             import re as _re

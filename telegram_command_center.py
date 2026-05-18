@@ -944,9 +944,18 @@ class TelegramCommandCenter:
                         wake_time = datetime.fromisoformat(wake_str)
                         if wake_time > now:
                             remaining_h = (wake_time - now).total_seconds() / 3600
+                            # V19.6.5: afișăm ora în fusul orar românesc (EEST=UTC+3)
+                            try:
+                                import pytz as _pytz
+                                _ro_tz = _pytz.timezone('Europe/Bucharest')
+                                wake_ro = wake_time.astimezone(_ro_tz)
+                                wake_display = wake_ro.strftime('%H:%M (ora României)')
+                            except Exception:
+                                wake_ro_naive = wake_time + timedelta(hours=3)
+                                wake_display = wake_ro_naive.strftime('%H:%M (ora României)')
                             message += f"  🔴 <b>SLEEPING</b> — {remaining_h:.1f}h remaining\n"
                             message += f"  Reason: <i>{_real_reason}</i>\n"
-                            message += f"  Wake: <code>{wake_time.strftime('%H:%M UTC')}</code>\n\n"
+                            message += f"  Wake: <code>{wake_display}</code>\n\n"
                         else:
                             message += "  ✅ ACTIVE (sleep expired)\n\n"
                     else:
