@@ -436,8 +436,16 @@ class WatchdogMonitor:
             with open(sleep_file, 'r') as f:
                 state = json.load(f)
             wake_str = state.get('wake_time', '')
-            reason = state.get('reason', 'Unknown')
+            stored_reason = state.get('reason', 'Unknown')
             wake_display = wake_str[:16] if wake_str else '?'
+
+            # V19.6.4 FIX: sanitize reason — dacă conține procent aberant (>100%) înlocuim
+            import re as _re
+            _pct_m = _re.search(r'\(([\-\d\.]+)%\)', stored_reason)
+            if _pct_m and abs(float(_pct_m.group(1))) > 100:
+                reason = "Daily loss limit reached — auto Deep Sleep"
+            else:
+                reason = stored_reason
 
             msg = (
                 f"🚨 <b>SYSTEM ACTIVE BUT TRADING IS LOCKED</b>\n\n"

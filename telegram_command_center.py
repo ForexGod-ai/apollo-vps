@@ -918,18 +918,34 @@ class TelegramCommandCenter:
             message += "<b>😴 DEEP SLEEP:</b>\n"
             try:
                 sleep_file = Path(__file__).parent.resolve() / 'data' / 'deep_sleep_state.json'
-                _limit_hit = 'pnl_pct' in dir() or True  # folosim variabilele din Section 3
                 if sleep_file.exists():
                     with open(sleep_file, 'r') as f:
                         sleep_state = json.load(f)
                     wake_str = sleep_state.get('wake_time', '')
-                    reason = sleep_state.get('reason', 'Unknown')
+                    stored_reason = sleep_state.get('reason', 'Unknown')
+                    # V19.6.4 FIX: sanitizează reason-ul stocat — poate conține % greşit
+                    # (ex: -4358% din bug-ul balance=1 în V19.6.2)
+                    # Înlocuim cu P/L real deja calculat în Section 3
+                    import re as _re
+                    _pct_match = _re.search(r'\(([\-\d\.]+)%\)', stored_reason)
+                    if _pct_match:
+                        _stored_pct = float(_pct_match.group(1))
+                        # Dacă procentul stocat e aberant (>100% sau <-100%), înlocuim cu real
+                        if abs(_stored_pct) > 100:
+                            try:
+                                _real_reason = f"Daily loss limit reached ({pnl_pct:+.1f}%) — auto Deep Sleep"
+                            except NameError:
+                                _real_reason = "Daily loss limit reached — auto Deep Sleep"
+                        else:
+                            _real_reason = stored_reason
+                    else:
+                        _real_reason = stored_reason
                     if wake_str:
                         wake_time = datetime.fromisoformat(wake_str)
                         if wake_time > now:
                             remaining_h = (wake_time - now).total_seconds() / 3600
                             message += f"  🔴 <b>SLEEPING</b> — {remaining_h:.1f}h remaining\n"
-                            message += f"  Reason: <i>{reason}</i>\n"
+                            message += f"  Reason: <i>{_real_reason}</i>\n"
                             message += f"  Wake: <code>{wake_time.strftime('%H:%M UTC')}</code>\n\n"
                         else:
                             message += "  ✅ ACTIVE (sleep expired)\n\n"
