@@ -350,6 +350,12 @@ class SetupExecutorMonitor:
         Instead: SLEEP until the limit resets at midnight UTC.
         Impact: 77,760 HTTP calls/day → ZERO.
         """
+        # V19.6.2 FIX: guard — dacă deja în Deep Sleep, nu mai scriem/trimitem din nou
+        if self.deep_sleep_until is not None:
+            now_check = datetime.now(timezone.utc)
+            if self.deep_sleep_until > now_check:
+                logger.debug(f"😴 Deep Sleep deja activ — ignorăm apel duplicat ({reason})")
+                return
         now = datetime.now(timezone.utc)
         # Wake up at 00:05 UTC next day (+5min safety buffer for daily state reset)
         tomorrow_0005 = (now + timedelta(days=1)).replace(
@@ -1914,7 +1920,19 @@ class SetupExecutorMonitor:
                                 _rm = getattr(self.executor, 'risk_manager', None)
                                 if _rm is not None:
                                     _pnl = _rm.get_daily_pnl()
-                                    _bal = _pnl.get('balance', 1)
+                                    # V19.6.3 FIX: balance NU e în dict-ul get_daily_pnl()
+                                    # citim din trade_history.json (același pattern ca Risk Manager)
+                                    _bal = float(os.getenv('ACCOUNT_BALANCE', 1336))
+                                    try:
+                                        _th_path_ds = Path(__file__).parent / 'trade_history.json'
+                                        if _th_path_ds.exists():
+                                            with open(_th_path_ds, 'r', encoding='utf-8') as _tf_ds:
+                                                _th_ds = json.load(_tf_ds)
+                                            _live_bal_ds = float(_th_ds.get('account', {}).get('balance', 0))
+                                            if _live_bal_ds > 0:
+                                                _bal = _live_bal_ds
+                                    except Exception:
+                                        pass
                                     _loss_pct = (_pnl.get('total_pnl', 0) / _bal * 100) if _bal > 0 else 0
                                     _limit = getattr(_rm, 'max_daily_loss_pct', 10.0)
                                     if _loss_pct <= -_limit:
