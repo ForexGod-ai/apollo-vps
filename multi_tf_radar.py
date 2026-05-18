@@ -887,20 +887,12 @@ class MultiTFRadar:
             return
         
         if symbol:
-            # ═══════════════════════════════════════════════════════════════
-            # 🚨 [TEST INJECTOR V18.1] — inject fake setup dacă simbolul e GBPNZD și lipsește din JSON
-            # ═══════════════════════════════════════════════════════════════
-            if symbol.upper() == 'GBPNZD' and not any(s.get('symbol') == symbol for s in setups):
-                print(f"\n⚠️  No setup found for {symbol} — 🚨 TEST INJECTOR: creez setup fake GBPNZD!\n")
-                setups = [{'symbol': 'GBPNZD', 'direction': 'sell', 'entry_price': 2.2000, 'stop_loss': 2.2030, 'take_profit': 2.1940}]
-            else:
-                # Scan specific symbol
-                target_setups = [s for s in setups if s.get('symbol') == symbol]
-                if not target_setups:
-                    print(f"\n⚠️  No setup found for {symbol}\n")
-                    return
-                setups = target_setups
-            # ═══════════════════════════════════════════════════════════════
+            # Scan specific symbol
+            target_setups = [s for s in setups if s.get('symbol') == symbol]
+            if not target_setups:
+                print(f"\n⚠️  No setup found for {symbol}\n")
+                return
+            setups = target_setups
         # else: scan all setups (default behavior — no filtering needed)
         
         # Print summary header
@@ -914,78 +906,6 @@ class MultiTFRadar:
         err_count = 0
         # Run multi-TF analysis
         for setup in setups:
-            # ═══════════════════════════════════════════════════════════════
-            # 🚨 [TEST INJECTOR V18.1] — LIVE FIRE TEST — TEMPORAR — STERGE DUPA TEST
-            # ═══════════════════════════════════════════════════════════════
-            if setup.get('symbol', '').upper() == 'GBPNZD':
-                try:
-                    _live_price = self._get_current_price(setup.get('symbol', 'GBPNZD'))
-                except Exception:
-                    _live_price = setup.get('entry_price', 2.2000)
-                print("\n" + "🚨"*20)
-                print("🚨 [TEST INJECTOR V18.1] FORȚARE SEMNAL SELL GBPNZD - TRIMITERE CĂTRE EXECUTOR!")
-                print(f"🚨 Live Price: {_live_price:.5f} | SL: {_live_price + 0.0030:.5f} | TP: {_live_price - 0.0060:.5f}")
-                print("🚨"*20 + "\n")
-                setup['direction'] = 'sell'
-                setup['daily_zone_validated'] = True
-                setup['h4_structure_locked'] = True
-                setup['EXECUTE_NOW'] = True
-                setup['stop_loss'] = round(_live_price + 0.0030, 5)
-                setup['take_profit'] = round(_live_price - 0.0060, 5)
-                setup['radar_4h_fvg_entry'] = _live_price
-                # Salvează direct în monitoring_setups.json
-                try:
-                    with open('monitoring_setups.json', 'r', encoding='utf-8') as _f:
-                        _ms_data = json.load(_f)
-                    _ms_list = _ms_data.get('setups', _ms_data) if isinstance(_ms_data, dict) else _ms_data
-                    _gbp_found = False
-                    for _i, _s in enumerate(_ms_list):
-                        if _s.get('symbol', '').upper() == 'GBPNZD':
-                            _ms_list[_i].update({
-                                'direction': 'sell',
-                                'daily_zone_validated': True,
-                                'h4_structure_locked': True,
-                                'EXECUTE_NOW': True,
-                                'stop_loss': setup['stop_loss'],
-                                'take_profit': setup['take_profit'],
-                                'radar_4h_fvg_entry': _live_price,
-                                'status': 'MONITORING',
-                                'entry1_filled': False,
-                            })
-                            _gbp_found = True
-                            break
-                    if not _gbp_found:
-                        # Nu există GBPNZD în JSON — îl adăugăm noi
-                        _ms_list.append({
-                            'symbol': 'GBPNZD',
-                            'direction': 'sell',
-                            'entry_price': _live_price,
-                            'stop_loss': setup['stop_loss'],
-                            'take_profit': setup['take_profit'],
-                            'radar_4h_fvg_entry': _live_price,
-                            'daily_zone_validated': True,
-                            'h4_structure_locked': True,
-                            'EXECUTE_NOW': True,
-                            'status': 'MONITORING',
-                            'entry1_filled': False,
-                            'strategy_type': 'reversal',
-                        })
-                        print("✅ [TEST INJECTOR] GBPNZD ADĂUGAT în monitoring_setups.json cu EXECUTE_NOW=True")
-                    if isinstance(_ms_data, dict):
-                        _ms_data['setups'] = _ms_list
-                        _out = _ms_data
-                    else:
-                        _out = _ms_list
-                    with open('monitoring_setups.json', 'w', encoding='utf-8') as _f:
-                        json.dump(_out, _f, indent=2, ensure_ascii=False)
-                    print("✅ [TEST INJECTOR] monitoring_setups.json SCRIS CU EXECUTE_NOW=True")
-                except Exception as _e:
-                    print(f"⚠️ [TEST INJECTOR] Eroare scriere JSON: {_e}")
-                ok_count += 1
-                continue
-            # ═══════════════════════════════════════════════════════════════
-            # END TEST INJECTOR — STERGE BLOCUL DE SUS DUPA VERIFICARE
-            # ═══════════════════════════════════════════════════════════════
             try:
                 result = self.analyze_setup(setup)
                 self.print_result(result)
