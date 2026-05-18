@@ -941,18 +941,29 @@ class TelegramCommandCenter:
                     else:
                         _real_reason = stored_reason
                     if wake_str:
-                        wake_time = datetime.fromisoformat(wake_str)
+                        wake_time_raw = datetime.fromisoformat(wake_str)
+                        # V19.6.7 FIX: RECALCULĂM wake_time la 00:05 RO — nu ne încredem
+                        # în valoarea stocată (poate fi veche, scrisă de cod UTC-based)
+                        try:
+                            import pytz as _pytz
+                            _ro_tz = _pytz.timezone('Europe/Bucharest')
+                            _now_ro = datetime.now(_ro_tz)
+                            _target_ro = _now_ro.replace(hour=0, minute=5, second=0, microsecond=0)
+                            if _now_ro >= _target_ro:
+                                _target_ro = _target_ro + timedelta(days=1)
+                            wake_time = _target_ro.astimezone(timezone.utc)
+                            wake_display = _target_ro.strftime('%H:%M (ora României)')
+                        except Exception:
+                            # Fallback: UTC+3
+                            _ro_off = timedelta(hours=3)
+                            _now_ro_n = now + _ro_off
+                            _tgt = _now_ro_n.replace(hour=0, minute=5, second=0, microsecond=0)
+                            if _now_ro_n >= _tgt:
+                                _tgt = _tgt + timedelta(days=1)
+                            wake_time = (_tgt - _ro_off).replace(tzinfo=timezone.utc)
+                            wake_display = '00:05 (ora României)'
                         if wake_time > now:
                             remaining_h = (wake_time - now).total_seconds() / 3600
-                            # V19.6.5: afișăm ora în fusul orar românesc (EEST=UTC+3)
-                            try:
-                                import pytz as _pytz
-                                _ro_tz = _pytz.timezone('Europe/Bucharest')
-                                wake_ro = wake_time.astimezone(_ro_tz)
-                                wake_display = wake_ro.strftime('%H:%M (ora României)')
-                            except Exception:
-                                wake_ro_naive = wake_time + timedelta(hours=3)
-                                wake_display = wake_ro_naive.strftime('%H:%M (ora României)')
                             message += f"  🔴 <b>SLEEPING</b> — {remaining_h:.1f}h remaining\n"
                             message += f"  Reason: <i>{_real_reason}</i>\n"
                             message += f"  Wake: <code>{wake_display}</code>\n\n"
