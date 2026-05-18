@@ -393,24 +393,11 @@ class MultiTFRadar:
             # Check if price in FVG
             in_fvg = fvg_bottom <= current_price <= fvg_top
             
-            # 🚫 V6.1 BLACKOUT HOUR FILTER: Block signals during high-risk hours
-            # Hour 10:00 UTC has <10% win rate - block all EXECUTE_NOW signals
-            current_hour_utc = datetime.utcnow().hour
-            
             # Calculate distance to FVG
             if in_fvg:
                 distance_to_fvg_pips = 0.0
-                
-                # Check if in blackout hour
-                if current_hour_utc == 10:
-                    # BLOCK execution during 10:00 UTC
-                    print(f"🚫 BLACKOUT HOUR (10:00 UTC): Signal BLOCKED (Win Rate <10%)")
-                    print(f"   Current Hour: {current_hour_utc}:00 UTC")
-                    print(f"   Action: Waiting for next hour to execute")
-                    status = PullbackStatus.WAITING_1H_PULLBACK if timeframe == "H1" else PullbackStatus.WAITING_4H_PULLBACK
-                else:
-                    # Safe hour - allow execution
-                    status = PullbackStatus.EXECUTE_NOW_1H if timeframe == "H1" else PullbackStatus.EXECUTE_NOW_4H
+                # V18: Blackout hour filter eliminat complet — sistemul execută 24/7 fără restricții de timp
+                status = PullbackStatus.EXECUTE_NOW_1H if timeframe == "H1" else PullbackStatus.EXECUTE_NOW_4H
             else:
                 if required_direction == 'bullish':
                     # For LONG: need to pull back DOWN to FVG
@@ -483,75 +470,68 @@ class MultiTFRadar:
         if current_price is None:
             current_price = daily_entry
         
-        # V16 FIX (B1): Daily zone — toleranță 5 pips dacă h4_locked activ
-        # Odată ce 4H CHoCH a confirmat, permitem prețului să "respire" ±5 pips
-        # în afara zonei fără a reseta scanul LTF
+        # ━━━ V18: STRUCTURAL GATE — price valid while above SL (LONG) or below SL (SHORT) ━━━
+        # Precedenta gate (daily_fvg_bottom <= price <= daily_fvg_top) bloca scanul 4H
+        # când prețul era în zona Daily de cerere (sub FVG CHoCH) — exact unde ar trebui să intrăm.
+        # NOUA REGULĂ: Prețul este valid (setup activ) cât timp nu a invalidat structura (nu a atins SL).
+        # LONG: stop_loss <= current_price <= daily_fvg_top
+        # SHORT: daily_fvg_bottom <= current_price <= stop_loss
         pip_size_daily = 0.01 if 'JPY' in symbol.upper() else 0.0001
-        h4_already_locked = bool(setup_data.get('h4_locked') or setup_data.get('h4_structure_locked'))
-        daily_buffer = pip_size_daily * 5 if h4_already_locked else 0.0
+        stop_loss_daily = float(setup_data.get('stop_loss', 0))
         
-        daily_zone_validated = (
-            (daily_fvg_bottom - daily_buffer) <= current_price <= (daily_fvg_top + daily_buffer)
-        )
+        if direction == 'LONG':
+            if stop_loss_daily > 0:
+                daily_zone_validated = stop_loss_daily <= current_price <= daily_fvg_top
+            else:
+                daily_zone_validated = current_price <= daily_fvg_top
+        else:  # SHORT
+            if stop_loss_daily > 0:
+                daily_zone_validated = daily_fvg_bottom <= current_price <= stop_loss_daily
+            else:
+                daily_zone_validated = current_price >= daily_fvg_bottom
         
         if not daily_zone_validated:
-            # V16 FIX (B4): Persistenta stare READY — daca h4_locked si ultima atingere < 12H
-            last_in_fvg_time_str = setup_data.get('last_in_fvg_time')
-            if h4_already_locked and last_in_fvg_time_str:
-                try:
-                    from datetime import timezone as _tz_check
-                    last_in_fvg_dt = datetime.fromisoformat(last_in_fvg_time_str.replace('Z', '+00:00'))
-                    if last_in_fvg_dt.tzinfo is None:
-                        last_in_fvg_dt = last_in_fvg_dt.replace(tzinfo=_tz_check.utc)
-                    elapsed_h = (datetime.now(_tz_check.utc) - last_in_fvg_dt).total_seconds() / 3600
-                    if elapsed_h < 12:
-                        print(f"  ⏳ [V16 PERSIST] {symbol}: h4_locked + last in_fvg {elapsed_h:.1f}h ago — continuam scan LTF (< 12H window)")
-                        daily_zone_validated = True  # persist
-                except Exception:
-                    pass
-            
-            if not daily_zone_validated:
-                # Price not in Daily FVG - skip multi-TF analysis
-                return MultiTFResult(
-                    symbol=symbol,
-                    direction=direction,
-                    daily_zone_validated=False,
-                    daily_fvg_top=daily_fvg_top,
-                    daily_fvg_bottom=daily_fvg_bottom,
-                    daily_entry=daily_entry,
-                    current_price=current_price,
-                    tf_1h=TimeframeAnalysis(
-                        timeframe="1H",
-                        choch_detected=False,
-                        choch_direction=None,
-                        choch_time=None,
-                        choch_price=None,
-                        fvg_detected=False,
-                        fvg_top=None,
-                        fvg_bottom=None,
-                        fvg_entry=None,
-                        in_fvg=False,
-                        distance_to_fvg_pips=0.0,
-                        status=PullbackStatus.WAITING_DAILY_FVG
-                    ),
-                    tf_4h=TimeframeAnalysis(
-                        timeframe="4H",
-                        choch_detected=False,
-                        choch_direction=None,
-                        choch_time=None,
-                        choch_price=None,
-                        fvg_detected=False,
-                        fvg_top=None,
-                        fvg_bottom=None,
-                        fvg_entry=None,
-                        in_fvg=False,
-                        distance_to_fvg_pips=0.0,
-                        status=PullbackStatus.WAITING_DAILY_FVG
-                    ),
-                    execution_ready=False,
-                    verdict="⏳ WAITING FOR DAILY FVG ENTRY",
-                    priority_timeframe=None
-                )
+            # Price invalidated structurally (below SL) — stop multi-TF analysis
+            return MultiTFResult(
+                symbol=symbol,
+                direction=direction,
+                daily_zone_validated=False,
+                daily_fvg_top=daily_fvg_top,
+                daily_fvg_bottom=daily_fvg_bottom,
+                daily_entry=daily_entry,
+                current_price=current_price,
+                tf_1h=TimeframeAnalysis(
+                    timeframe="1H",
+                    choch_detected=False,
+                    choch_direction=None,
+                    choch_time=None,
+                    choch_price=None,
+                    fvg_detected=False,
+                    fvg_top=None,
+                    fvg_bottom=None,
+                    fvg_entry=None,
+                    in_fvg=False,
+                    distance_to_fvg_pips=0.0,
+                    status=PullbackStatus.WAITING_DAILY_FVG
+                ),
+                tf_4h=TimeframeAnalysis(
+                    timeframe="4H",
+                    choch_detected=False,
+                    choch_direction=None,
+                    choch_time=None,
+                    choch_price=None,
+                    fvg_detected=False,
+                    fvg_top=None,
+                    fvg_bottom=None,
+                    fvg_entry=None,
+                    in_fvg=False,
+                    distance_to_fvg_pips=0.0,
+                    status=PullbackStatus.WAITING_DAILY_FVG
+                ),
+                execution_ready=False,
+                verdict="⏳ PRICE BELOW SL — SETUP STRUCTURALLY INVALIDATED",
+                priority_timeframe=None
+            )
         
         # Price in Daily FVG - analyze both timeframes
         required_direction = 'bullish' if direction == 'LONG' else 'bearish'
@@ -724,6 +704,15 @@ class MultiTFRadar:
                     setup['radar_execution_ready'] = result.execution_ready
                     setup['radar_verdict'] = result.verdict
                     setup['radar_last_scan'] = datetime.now().isoformat()
+                    
+                    # V18: EXECUTE_NOW — cheia supremă de execuție
+                    # Setată True când Radarul confirmă CHoCH 4H + preț în FVG (execution_ready)
+                    # setup_executor_monitor.py o citește și execută direct, fără re-validări
+                    if result.execution_ready:
+                        setup['EXECUTE_NOW'] = True
+                        logger.success(f"🔥 [V18 EXECUTE_NOW] {result.symbol}: Semnal complet confirmat → EXECUTE_NOW=True")
+                    else:
+                        setup.pop('EXECUTE_NOW', None)
                     
                     setups[i] = setup
                     logger.success(f"✅ Synced radar data to monitoring_setups.json for {result.symbol}")

@@ -3411,14 +3411,25 @@ class SMCDetector:
             # V10.3 gatea EURJPY (3 BOS bearish) chiar dacă CHoCH bullish era valid. FIX definitiv.
             # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
             if latest_choch and latest_bos and latest_choch.index > latest_bos.index:
-                # ✅ V10.7: CHoCH este mai recent decât BOS → REVERSAL IMEDIAT (fără Strong H/L gate)
-                if debug:
-                    print(f"✅ V10.7 REVERSAL BYPASS: CHoCH @ idx {latest_choch.index} > BOS @ idx {latest_bos.index}")
-                    print(f"   CHoCH {latest_choch.direction.upper()} @ {latest_choch.break_price:.5f} — REVERSAL CONFIRMAT (Body Close implicit)")
-                    print(f"   BOS Dominance ({consecutive_bos_count}x {dominant_bos_direction.upper()}) IGNORATĂ pentru REVERSAL\n")
+                # ━━━ V18: CLASIFICARE CORECTĂ CONTINUITY vs REVERSAL ━━━
+                # REGULA COLONELULUI:
+                #   CHoCH în ACEEAȘI direcție ca ultimul BOS anterior = CONTINUITY
+                #   (pullback în trend dominant s-a terminat, CHoCH = reluarea trendului)
+                #   CHoCH OPUS ultimului BOS anterior = REVERSAL
+                #   (structura trendului s-a inversat cu body close)
+                _pre_choch_bos = [b for b in daily_bos_list if b.index < latest_choch.index]
+                _prior_bos_dir = _pre_choch_bos[-1].direction if _pre_choch_bos else None
+                
+                if _prior_bos_dir and _prior_bos_dir == latest_choch.direction:
+                    strategy_type = 'continuation'
+                    if debug:
+                        print(f"✅ V18 CONTINUITY: CHoCH {latest_choch.direction.upper()} aliniată cu BOS anterior {_prior_bos_dir.upper()} → CONTINUITY (pullback completat, trendul continuă)")
+                else:
+                    strategy_type = 'reversal'
+                    if debug:
+                        print(f"✅ V18 REVERSAL: CHoCH {latest_choch.direction.upper()} opus BOS anterior {_prior_bos_dir} → REVERSAL (schimbare structurală de trend)")
                 
                 latest_signal = latest_choch
-                strategy_type = 'reversal'
                 current_trend = latest_choch.direction
             else:
                 # BOS is latest — V17.6 SMART V11.9: cauta cel mai recent BOS post-CHoCH
@@ -3458,9 +3469,22 @@ class SMCDetector:
         elif latest_choch and latest_bos:
             # Both exist - use the more recent one
             if latest_choch.index > latest_bos.index:
-                # CHoCH mai recent → REVERSAL
+                # ━━━ V18: CLASIFICARE CORECTĂ — nu mai e hardcodat 'reversal' ━━━
+                # Dacă CHoCH e în ACEEAȘI direcție ca ultimul BOS anterior → CONTINUITY
+                # (trendul era deja în acea direcție — CHoCH = terminarea pullback-ului)
+                _pre_choch_bos_std = [b for b in daily_bos_list if b.index < latest_choch.index]
+                _prior_bos_dir_std = _pre_choch_bos_std[-1].direction if _pre_choch_bos_std else None
+                
+                if _prior_bos_dir_std and _prior_bos_dir_std == latest_choch.direction:
+                    strategy_type = 'continuation'
+                    if debug:
+                        print(f"✅ V18 CONTINUITY (std): CHoCH {latest_choch.direction.upper()} aliniată cu BOS anterior {_prior_bos_dir_std.upper()} → CONTINUITY")
+                else:
+                    strategy_type = 'reversal'
+                    if debug:
+                        print(f"✅ V18 REVERSAL (std): CHoCH {latest_choch.direction.upper()} opus BOS anterior {_prior_bos_dir_std} → REVERSAL")
+                
                 latest_signal = latest_choch
-                strategy_type = 'reversal'
                 current_trend = latest_choch.direction
             else:
                 # BOS mai recent — V17.6 SMART V11.9

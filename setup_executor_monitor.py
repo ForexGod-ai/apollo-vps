@@ -1953,7 +1953,27 @@ class SetupExecutorMonitor:
                                         "4H" if radar_4h_ok else "NONE")
                         logger.debug(f"🔍 {symbol}: Entry 1 logic - use_radar_data={use_radar_data} (source={radar_source})")
                         
-                        if use_radar_data:
+                        # ━━━ V18: EXECUTE_NOW — cheia supremă scrisă de Radar ━━━━━━━━━━━━━━━━━━
+                        # Dacă Radarul a confirmat 4H CHoCH în zona Daily validă și prețul e în FVG,
+                        # sărim TOATE re-validările locale și executăm direct, necondiționat.
+                        # setup_executor_monitor nu mai face propria validare structurală.
+                        if setup.get('EXECUTE_NOW') == True:
+                            _en_entry = (
+                                setup.get('radar_4h_fvg_entry') or
+                                setup.get('radar_1h_fvg_entry') or
+                                setup.get('entry_price', 0)
+                            )
+                            logger.success(f"🔥 [V18 EXECUTE_NOW] {symbol}: Radar cheia supremă detectată → execuție directă @ {_en_entry:.5f}")
+                            result = {
+                                'action': 'EXECUTE_ENTRY1',
+                                'entry_price': _en_entry,
+                                'stop_loss': setup.get('stop_loss', 0),
+                                'reason': '🔥 [V18 EXECUTE_NOW] 4H CHoCH confirmat în zona Daily — execuție necondiționată',
+                                'entry_type': 'EXECUTE_NOW',
+                                'choch_timestamp': setup.get('radar_4h_choch_time', datetime.now(timezone.utc).isoformat()),
+                                'fibo_data': {}
+                            }
+                        elif use_radar_data:
                             # 🎯 SNIPER MODE: Use 1H/4H FVG from multi_tf_radar.py
                             logger.info(f"🎯 {symbol}: SNIPER MODE activated [{radar_source}] - checking radar data...")
                             result = self._check_radar_entry(setup, df_1h, symbol)
