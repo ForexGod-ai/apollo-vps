@@ -708,6 +708,7 @@ class TelegramCommandCenter:
                 'news_reminder_engine.py': '🔔 News Alerts',
                 'auto_scanner_daemon.py': '🔍 Auto Scanner',
                 'dashboard_server.py': '🌐 Dashboard',
+                'multi_tf_radar.py': '📡 Multi-TF Radar',
             }
             
             # V10.5 FIX: On Windows, psutil cannot read cmdline of Hidden processes
