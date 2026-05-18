@@ -255,8 +255,34 @@ class MultiTFRadar:
                     status=PullbackStatus.WAITING_1H_CHOCH if timeframe == "H1" else PullbackStatus.WAITING_4H_CHOCH
                 )
             
-            # Get latest CHoCH
-            latest_choch = choch_list[-1]
+            # Get latest CHoCH IN THE CORRECT DIRECTION
+            # V18.3 FIX: Nu mai luăm choch_list[-1] orb — dacă ultimul CHoCH e counter-trend,
+            # respingeam tot chiar dacă există un CHoCH valid în direcția corectă mai devreme.
+            # NOUA REGULĂ: filtrăm choch_list pe required_direction, luăm ultimul match.
+            aligned_chochs = [c for c in choch_list if c.direction == required_direction]
+            
+            if not aligned_chochs:
+                # Nu există niciun CHoCH în direcția corectă
+                # Log ce directie are ultimul CHoCH pentru debug
+                _last_dir = choch_list[-1].direction if choch_list else 'none'
+                print(f"⚠️  [{timeframe_display}] No {required_direction.upper()} CHoCH found")
+                print(f"   Latest CHoCH found: {_last_dir.upper()} — counter-trend, ignored")
+                return TimeframeAnalysis(
+                    timeframe=timeframe_display,
+                    choch_detected=False,
+                    choch_direction=_last_dir,
+                    choch_time=None,
+                    choch_price=None,
+                    fvg_detected=False,
+                    fvg_top=None,
+                    fvg_bottom=None,
+                    fvg_entry=None,
+                    in_fvg=False,
+                    distance_to_fvg_pips=0.0,
+                    status=PullbackStatus.WAITING_1H_CHOCH if timeframe == "H1" else PullbackStatus.WAITING_4H_CHOCH
+                )
+            
+            latest_choch = aligned_chochs[-1]
             choch_direction = latest_choch.direction
             choch_index = latest_choch.index
             
@@ -269,28 +295,8 @@ class MultiTFRadar:
                 choch_time_str = "Unknown"
                 choch_price = None
             
-            # V6.1 DIRECTION ALIGNMENT: Daily Direction == LTF CHoCH Direction
-            # If Daily is SELL and 1H gives CHoCH Buy, REJECT the signal
-            if choch_direction != required_direction:
-                print(f"⚠️  WAITING FOR {required_direction.upper()} ALIGNMENT ON {timeframe_display}")
-                print(f"   Daily Direction: {required_direction.upper()}")
-                print(f"   {timeframe_display} CHoCH: {choch_direction.upper()}")
-                print(f"   🔒 Signal REJECTED - Not aligned with Daily bias")
-                
-                return TimeframeAnalysis(
-                    timeframe=timeframe_display,
-                    choch_detected=False,  # Mark as not detected since it's counter-trend
-                    choch_direction=choch_direction,
-                    choch_time=choch_time_str,
-                    choch_price=choch_price,
-                    fvg_detected=False,
-                    fvg_top=None,
-                    fvg_bottom=None,
-                    fvg_entry=None,
-                    in_fvg=False,
-                    distance_to_fvg_pips=0.0,
-                    status=PullbackStatus.WAITING_1H_CHOCH if timeframe == "H1" else PullbackStatus.WAITING_4H_CHOCH
-                )
+            # V18.3: direction alignment este garantat — am filtrat deja pe required_direction
+            # Blocul vechi de reject nu mai e necesar
             
             # ── V16.2: Calcul Equilibrium (50% EQ) din impulsul CHoCH ─────────
             # Utilizat în P/D Array validation în _check_radar_entry().
