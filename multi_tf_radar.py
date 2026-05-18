@@ -887,12 +887,20 @@ class MultiTFRadar:
             return
         
         if symbol:
-            # Scan specific symbol
-            target_setups = [s for s in setups if s.get('symbol') == symbol]
-            if not target_setups:
-                print(f"\n⚠️  No setup found for {symbol}\n")
-                return
-            setups = target_setups
+            # ═══════════════════════════════════════════════════════════════
+            # 🚨 [TEST INJECTOR V18.1] — inject fake setup dacă simbolul e GBPNZD și lipsește din JSON
+            # ═══════════════════════════════════════════════════════════════
+            if symbol.upper() == 'GBPNZD' and not any(s.get('symbol') == symbol for s in setups):
+                print(f"\n⚠️  No setup found for {symbol} — 🚨 TEST INJECTOR: creez setup fake GBPNZD!\n")
+                setups = [{'symbol': 'GBPNZD', 'direction': 'sell', 'entry_price': 2.2000, 'stop_loss': 2.2030, 'take_profit': 2.1940}]
+            else:
+                # Scan specific symbol
+                target_setups = [s for s in setups if s.get('symbol') == symbol]
+                if not target_setups:
+                    print(f"\n⚠️  No setup found for {symbol}\n")
+                    return
+                setups = target_setups
+            # ═══════════════════════════════════════════════════════════════
         # else: scan all setups (default behavior — no filtering needed)
         
         # Print summary header
