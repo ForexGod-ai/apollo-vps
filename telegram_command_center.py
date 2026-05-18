@@ -688,11 +688,19 @@ class TelegramCommandCenter:
         try:
             from datetime import timezone
             now = datetime.now(timezone.utc)
-            
+            # V19.6.9: Afișează ora României în header-ul /status
+            try:
+                import pytz as _pytz_hdr
+                _ro_tz_hdr = _pytz_hdr.timezone('Europe/Bucharest')
+                _now_ro_hdr = now.astimezone(_ro_tz_hdr)
+                _time_header = _now_ro_hdr.strftime('%d %b %Y, %H:%M:%S (ora României)')
+            except Exception:
+                _time_header = (now + timedelta(hours=3)).strftime('%d %b %Y, %H:%M:%S (ora României)')
+
             message = (
                 f"<b>🔧 SYSTEM STATUS — V10.4</b>\n"
                 f"{UNIVERSAL_SEPARATOR}\n\n"
-                f"⏰ {now.strftime('%d %b %Y, %H:%M:%S')} UTC\n\n"
+                f"⏰ {_time_header}\n\n"
             )
             
             # ═══ SECTION 1: MONITORS ═══
