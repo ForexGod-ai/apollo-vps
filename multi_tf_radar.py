@@ -269,7 +269,7 @@ class MultiTFRadar:
                 and c.index >= len(df) - LOOKBACK_BARS
             ]
 
-            # Pas 2: Dacă nu există CHoCH, verificăm BOS aliniat (confirmare continuare structură)
+            # Pas 2: Dacă nu există CHoCH în 100 bare, verificăm BOS aliniat în fereastră
             use_bos_as_choch = False
             bos_used = None
             if not aligned_chochs:
@@ -283,6 +283,42 @@ class MultiTFRadar:
                     bos_used = aligned_bos[-1]
                     bars_ago = len(df) - bos_used.index
                     print(f"  ✅ [{timeframe_display} SCAN] {symbol} | Aliniere Găsită: BOS {required_direction.upper()} la indexul -{bars_ago} | STATUS: VALIDATED ✅ (BOS ca confirmare)")
+
+            # ━━━ V19.1 FIX A: FALLBACK FULL-DATASET ━━━
+            # Dacă nu există nimic în fereastra de 100 bare, căutăm în TOATĂ seria de date.
+            # Regula: cel mai recent CHoCH/BOS aliniat din orice perioadă este valid,
+            # cu condiția să nu fi fost URMAT de un CHoCH în sens opus (invalidare structurală).
+            # Un micro-pullback counter-trend NU invalidează un CHoCH major anterior.
+            if not aligned_chochs and not use_bos_as_choch:
+                all_aligned_chochs = [
+                    c for c in choch_list
+                    if c.direction == required_direction
+                ]
+                if all_aligned_chochs:
+                    candidate = all_aligned_chochs[-1]  # cel mai recent aliniat
+                    # Verificăm dacă există un CHoCH counter-trend DUPĂ candidat
+                    counter_after = [
+                        c for c in choch_list
+                        if c.direction != required_direction
+                        and c.index > candidate.index
+                    ]
+                    if not counter_after:
+                        # Niciun CHoCH invalidant după cel valid — structura e intactă
+                        aligned_chochs = [candidate]
+                        bars_ago = len(df) - candidate.index
+                        print(f"  ✅ [{timeframe_display} SCAN] {symbol} | Aliniere Găsită (full-dataset): CHoCH {required_direction.upper()} la -{bars_ago} bare | STATUS: VALIDATED ✅")
+                    else:
+                        # Există CHoCH counter-trend DUPĂ cel aliniat — verificăm BOS ca salvare
+                        all_aligned_bos = [
+                            b for b in bos_list
+                            if b.direction == required_direction
+                            and b.index > counter_after[-1].index  # BOS aliniat DUPĂ ultimul counter-trend
+                        ]
+                        if all_aligned_bos:
+                            use_bos_as_choch = True
+                            bos_used = all_aligned_bos[-1]
+                            bars_ago = len(df) - bos_used.index
+                            print(f"  ✅ [{timeframe_display} SCAN] {symbol} | Aliniere Găsită (BOS post-counter): BOS {required_direction.upper()} la -{bars_ago} bare | STATUS: VALIDATED ✅")
 
             if not aligned_chochs and not use_bos_as_choch:
                 _last_dir = choch_list[-1].direction if choch_list else 'none'
@@ -342,8 +378,9 @@ class MultiTFRadar:
                 _cbp = float(latest_choch.break_price)
                 choch_equilibrium = (_sbp + _cbp) / 2.0
                 pip_size_eq = 0.01 if 'JPY' in symbol.upper() else 0.0001
+                _eq_str = f"{choch_equilibrium:.5f}" if choch_equilibrium is not None else "N/A"
                 print(f"  📐 [V16.2 EQ] {timeframe_display} Impulse: {_sbp:.5f} → {_cbp:.5f} | "
-                      f"EQ={choch_equilibrium:.5f} ({abs(_cbp - _sbp)/pip_size_eq:.1f} pips)")
+                      f"EQ={_eq_str} ({abs(_cbp - _sbp)/pip_size_eq:.1f} pips)")
             except Exception:
                 pass
 
@@ -967,6 +1004,7 @@ class MultiTFRadar:
                 traceback.print_exc()
                 print("="*80 + "\n")
                 err_count += 1
+                continue  # V19.1 Fix C: izolare erori — continuăm cu paritatea următoare
         
         print(f"\n✅ Scan complete: {ok_count} analyzed | ❌ {err_count} errors\n")
     
