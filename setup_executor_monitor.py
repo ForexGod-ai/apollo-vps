@@ -319,22 +319,73 @@ class SetupExecutorMonitor:
     
     # ━━━ V9.3 DEEP SLEEP ENGINE ━━━
     
+    @staticmethod
+    def _next_0005_ro() -> datetime:
+        """
+        V19.6.7: Calculează NEXT 00:05 în fusul orar Europe/Bucharest (EEST/EET).
+        Dacă acum e înainte de 00:05 RO → returnează azi la 00:05 RO (convertit UTC).
+        Dacă acum e după 00:05 RO → returnează mâine la 00:05 RO (convertit UTC).
+        """
+        try:
+            import pytz
+            ro_tz = pytz.timezone('Europe/Bucharest')
+            now_ro = datetime.now(ro_tz)
+            target_ro = now_ro.replace(hour=0, minute=5, second=0, microsecond=0)
+            if now_ro >= target_ro:
+                # Am trecut de 00:05 azi — next target e mâine
+                target_ro = target_ro + timedelta(days=1)
+            return target_ro.astimezone(timezone.utc)
+        except Exception:
+            # Fallback hardcodat EEST (UTC+3)
+            ro_offset = timedelta(hours=3)
+            now_ro_naive = datetime.now(timezone.utc) + ro_offset
+            target_naive = now_ro_naive.replace(hour=0, minute=5, second=0, microsecond=0)
+            if now_ro_naive >= target_naive:
+                target_naive = target_naive + timedelta(days=1)
+            return (target_naive - ro_offset).replace(tzinfo=timezone.utc)
+
     def _load_deep_sleep_state(self):
         """Load Deep Sleep state from disk (survives restarts)"""
         try:
             if self.deep_sleep_state_file.exists():
                 with open(self.deep_sleep_state_file, 'r', encoding='utf-8') as f:
                     state = json.load(f)
-                wake_time_str = state.get('wake_time')
-                if wake_time_str:
-                    wake_time = datetime.fromisoformat(wake_time_str)
-                    if wake_time > datetime.now(timezone.utc):
-                        self.deep_sleep_until = wake_time
-                        remaining_h = (wake_time - datetime.now(timezone.utc)).total_seconds() / 3600
-                        logger.warning(f"😴 DEEP SLEEP RESTORED from disk — {remaining_h:.1f}h remaining until {wake_time.strftime('%H:%M UTC')}")
-                    else:
-                        logger.info("🌅 Deep Sleep state expired — system is ACTIVE")
-                        self.deep_sleep_state_file.unlink(missing_ok=True)
+
+                # Manual lockdown (/killall) — nu recalcula, respectă wake_time manual
+                if state.get('lockdown'):
+                    wake_time_str = state.get('wake_time')
+                    if wake_time_str:
+                        wake_time = datetime.fromisoformat(wake_time_str)
+                        if wake_time > datetime.now(timezone.utc):
+                            self.deep_sleep_until = wake_time
+                    return
+
+                # V19.6.7 FIX: RECALCULEAZĂ MEREU wake_time la 00:05 ora României
+                # Nu ne încredem niciodată în valoarea stocată — poate fi scrisă de cod vechi (UTC-based)
+                wake_time = self._next_0005_ro()
+                now_utc = datetime.now(timezone.utc)
+
+                if wake_time > now_utc:
+                    self.deep_sleep_until = wake_time
+                    remaining_h = (wake_time - now_utc).total_seconds() / 3600
+                    try:
+                        import pytz
+                        ro_tz = pytz.timezone('Europe/Bucharest')
+                        wake_ro = wake_time.astimezone(ro_tz)
+                        wake_label = wake_ro.strftime('%H:%M (ora României)')
+                    except Exception:
+                        wake_label = '00:05 (ora României)'
+                    logger.warning(f"😴 DEEP SLEEP RESTORED — {remaining_h:.1f}h until {wake_label}")
+                    # Suprascrie fișierul cu wake_time corectat (elimină valori vechi greșite)
+                    state['wake_time'] = wake_time.isoformat()
+                    try:
+                        with open(self.deep_sleep_state_file, 'w', encoding='utf-8') as f:
+                            json.dump(state, f, indent=2)
+                    except Exception:
+                        pass
+                else:
+                    logger.info("🌅 Deep Sleep state expired — system is ACTIVE")
+                    self.deep_sleep_state_file.unlink(missing_ok=True)
         except Exception as e:
             logger.error(f"⚠️  Error loading Deep Sleep state: {e}")
     
@@ -357,24 +408,8 @@ class SetupExecutorMonitor:
                 logger.debug(f"😴 Deep Sleep deja activ — ignorăm apel duplicat ({reason})")
                 return
         now = datetime.now(timezone.utc)
-        # V19.6.5 FIX: Wake la 00:05 ora României (EEST = UTC+3, EET = UTC+2)
-        # Folosim pytz dacă e disponibil, altfel hardcodăm UTC+3 (EEST mai-oct)
-        try:
-            import pytz
-            ro_tz = pytz.timezone('Europe/Bucharest')
-            now_ro = datetime.now(ro_tz)
-            tomorrow_ro = (now_ro + timedelta(days=1)).replace(
-                hour=0, minute=5, second=0, microsecond=0
-            )
-            tomorrow_0005 = tomorrow_ro.astimezone(timezone.utc)
-        except Exception:
-            # Fallback: UTC+3 (EEST vara)
-            ro_offset = timedelta(hours=3)
-            now_ro_naive = datetime.now(timezone.utc) + ro_offset
-            tomorrow_ro_naive = (now_ro_naive + timedelta(days=1)).replace(
-                hour=0, minute=5, second=0, microsecond=0
-            )
-            tomorrow_0005 = tomorrow_ro_naive.replace(tzinfo=timezone.utc) - ro_offset
+        # V19.6.7 FIX: Folosește _next_0005_ro() — calcul corect indiferent de ora curentă
+        tomorrow_0005 = self._next_0005_ro()
         self.deep_sleep_until = tomorrow_0005
         remaining_h = (tomorrow_0005 - now).total_seconds() / 3600
         
@@ -395,13 +430,19 @@ class SetupExecutorMonitor:
         logger.warning(f"   Impact: ALL scanning paused — zero HTTP calls, zero CPU")
         
         # Send ONE Telegram notification
+        try:
+            import pytz
+            ro_tz = pytz.timezone('Europe/Bucharest')
+            wake_ro_label = tomorrow_0005.astimezone(ro_tz).strftime('%H:%M (ora României)')
+        except Exception:
+            wake_ro_label = '00:05 (ora României)'
         self._send_deep_sleep_telegram(
             f"😴 <b>DEEP SLEEP ACTIVATED</b>\n\n"
             f"Reason: <i>{reason}</i>\n"
-            f"Wake-up: <code>{tomorrow_0005.strftime('%Y-%m-%d %H:%M')} UTC</code>\n"
+            f"Wake-up: <code>{wake_ro_label}</code>\n"
             f"Duration: <code>{remaining_h:.1f}h</code>\n\n"
             f"⚡ All scanning PAUSED — zero resource usage\n"
-            f"🌅 Auto-resume at 00:05 UTC (new trading day)"
+            f"🌅 Auto-resume la 00:05 ora României (new trading day)"
         )
     
     def _check_deep_sleep(self) -> bool:

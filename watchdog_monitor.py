@@ -482,12 +482,20 @@ class WatchdogMonitor:
         At 00:05 UTC, check if deep_sleep_state.json has expired.
         If wake_time has passed, delete the file and send SYSTEM AWAKENED.
         """
+        # V19.6.7 FIX: Trigger la 00:05 ora României (EEST/EET), NU la 00:05 UTC
+        try:
+            import pytz
+            ro_tz = pytz.timezone('Europe/Bucharest')
+            now_ro = datetime.now(ro_tz)
+        except Exception:
+            from datetime import timezone, timedelta
+            now_ro = datetime.now(timezone.utc) + timedelta(hours=3)  # EEST fallback
         now_utc = datetime.utcnow()
-        # Only run in the 00:05–00:06 UTC window
-        if not (now_utc.hour == 0 and now_utc.minute == 5):
+        # Only run in the 00:05–00:06 Romania window
+        if not (now_ro.hour == 0 and now_ro.minute == 5):
             return
-        # Deduplicate — only once per day
-        today = now_utc.date().isoformat()
+        # Deduplicate — only once per day (based on Romanian date)
+        today = now_ro.date().isoformat()
         if getattr(self, '_last_midnight_resume_date', '') == today:
             return
 
@@ -503,7 +511,7 @@ class WatchdogMonitor:
             if lockdown:
                 # Manual /killall lockdown — do NOT auto-resume, just warn
                 msg = (
-                    f"⚠️ <b>00:05 UTC — MANUAL LOCKDOWN STILL ACTIVE</b>\n\n"
+                    f"⚠️ <b>00:05 (ora României) — MANUAL LOCKDOWN STILL ACTIVE</b>\n\n"
                     f"🛌 System remains in LOCKDOWN (triggered by /killall)\n"
                     f"🔑 Send <code>/resume</code> to unlock trading manually."
                 )
@@ -520,14 +528,14 @@ class WatchdogMonitor:
                     sleep_file.unlink()
                     msg = (
                         f"🔱 <b>SYSTEM AWAKENED</b>\n\n"
-                        f"✅ Daily reset at 00:05 UTC\n"
+                        f"✅ Daily reset la 00:05 (ora României)\n"
                         f"🔄 <b>BIAS SYNC STARTING...</b>\n"
                         f"📊 Daily loss counter: <b>RESET</b>\n"
-                        f"⏰ Time: <code>{now_utc.strftime('%Y-%m-%d 00:05 UTC')}</code>\n\n"
+                        f"⏰ Time: <code>{now_ro.strftime('%Y-%m-%d %H:%M')} (ora României)</code>\n\n"
                         f"⚠️ Scanner will re-evaluate all pairs on next 4H candle close."
                     )
                     self.send_telegram_alert(msg)
-                    logger.info("🔱 Midnight auto-resume: deep sleep cleared at 00:05 UTC")
+                    logger.info("🔱 Midnight auto-resume: deep sleep cleared at 00:05 (ora României)")
             self._last_midnight_resume_date = today
         except Exception as e:
             logger.error(f"❌ Midnight auto-resume error: {e}")
