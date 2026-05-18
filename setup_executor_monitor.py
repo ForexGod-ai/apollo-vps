@@ -1837,6 +1837,44 @@ class SetupExecutorMonitor:
                 logger.debug(f"{zone_emoji} Processing {symbol} (in_zone={in_zone})")
                 
                 try:
+                    # ━━━ V18: EXECUTE_NOW — PRE-FETCH CHECK ━━━━━━━━━━━━━━━━━━━━━━━━━
+                    # Dacă Radarul a pus EXECUTE_NOW=True, nu avem nevoie de date D1/4H/1H
+                    # pentru validare structurală — executăm direct cu SL/TP din JSON.
+                    if setup.get('EXECUTE_NOW') == True and not setup.get('entry1_filled', False):
+                        _en_entry = (
+                            setup.get('radar_4h_fvg_entry') or
+                            setup.get('radar_1h_fvg_entry') or
+                            setup.get('entry_price', 0)
+                        )
+                        _sl = setup.get('stop_loss', 0)
+                        _tp = setup.get('take_profit', 0)
+                        logger.success(f"🔥 [V18 EXECUTE_NOW PRE-FETCH] {symbol}: Execuție directă fără fetch date @ {_en_entry:.5f} SL={_sl:.5f} TP={_tp:.5f}")
+                        _en_comment = f"D1_EXECUTE_NOW_V18_{setup.get('direction','').upper()}_E1"
+                        success = self.executor.execute_trade(
+                            symbol=symbol,
+                            direction=setup.get('direction', 'buy'),
+                            entry_price=_en_entry,
+                            stop_loss=_sl,
+                            take_profit=_tp,
+                            lot_size=0.01,
+                            comment=_en_comment,
+                            status='READY'
+                        )
+                        if success:
+                            setups[i]['entry1_filled'] = True
+                            setups[i]['entry1_price'] = _en_entry
+                            setups[i]['entry1_time'] = datetime.now(timezone.utc).isoformat()
+                            setups[i]['status'] = 'ACTIVE'
+                            setups[i]['EXECUTE_NOW'] = False
+                            updated = True
+                            logger.success(f"✅ [EXECUTE_NOW] {symbol} entry executat cu succes!")
+                        else:
+                            logger.error(f"❌ [EXECUTE_NOW] {symbol} execuție respinsă de Risk Manager")
+                            setups[i]['EXECUTE_NOW'] = False
+                            updated = True
+                        continue
+                    # ━━━ END V18 PRE-FETCH CHECK ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
                     # V9.3 CACHED FETCH: D1=4h cache, H4=30m cache, H1=5m cache
                     df_daily = self._get_cached_data(symbol, "D1", 100)
                     df_4h = self._get_cached_data(symbol, "H4", 225)
