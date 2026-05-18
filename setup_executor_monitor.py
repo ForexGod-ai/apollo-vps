@@ -2072,20 +2072,25 @@ class SetupExecutorMonitor:
                                     logger.info(f"✅ [Fix #6 RR OK] {symbol}: RR_Real=1:{_rr_real:.2f} ≥ 1:4 — execuție permisă")
                             # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-                            # ━━━ Fix #7: SL ULTIMATUM BARRIER — max 100 pips hard cap ━━━
+                            # ━━━ Fix #7: SL ULTIMATUM BARRIER — max pips hard cap ━━━
+                            # V18: cap ridicat la 150 pips (SL structural poate fi 80-130p legitim)
+                            # EXECUTE_NOW sare complet — SL-ul vine din structura Daily (Generalul)
                             _pip_sz = 0.01 if 'JPY' in symbol.upper() else 0.0001
                             _sl_entry = result.get('entry_price', setup.get('entry_price', 0))
                             _sl_val = result.get('stop_loss', setup.get('stop_loss', 0))
-                            if _sl_entry and _sl_val:
+                            _is_execute_now = result.get('entry_type') == 'EXECUTE_NOW'
+                            if _sl_entry and _sl_val and not _is_execute_now:
                                 _sl_pips = abs(_sl_entry - _sl_val) / _pip_sz
-                                if _sl_pips > 100:
-                                    logger.critical(f"🚨 [Fix #7 SL ULTIMATUM] {symbol}: SL={_sl_pips:.1f} pips > 100 — BLOCAT DEFINITIV. Setup → EXPIRED.")
+                                if _sl_pips > 150:
+                                    logger.critical(f"🚨 [Fix #7 SL ULTIMATUM] {symbol}: SL={_sl_pips:.1f} pips > 150 — BLOCAT DEFINITIV. Setup → EXPIRED.")
                                     setups[i]['status'] = 'EXPIRED'
-                                    setups[i]['expired_reason'] = f'SL={_sl_pips:.1f} pips > 100 hard cap'
+                                    setups[i]['expired_reason'] = f'SL={_sl_pips:.1f} pips > 150 hard cap'
                                     updated = True
                                     continue
                                 else:
-                                    logger.info(f"✅ [Fix #7 SL OK] {symbol}: SL={_sl_pips:.1f} pips ≤ 100 — execuție permisă")
+                                    logger.info(f"✅ [Fix #7 SL OK] {symbol}: SL={_sl_pips:.1f} pips ≤ 150 — execuție permisă")
+                            elif _is_execute_now:
+                                logger.info(f"✅ [Fix #7 SKIP — EXECUTE_NOW] {symbol}: SL structural acceptat direct")
                             # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
                             # 🔥🔥🔥 AGGRESSIVE EXECUTION - INSTANT SIGNALS.JSON WRITE!
@@ -2362,7 +2367,9 @@ class SetupExecutorMonitor:
         if not h4_locked:
             return False, (f"Guard#4 h4_structure_locked=False — CHoCH 4H neconfirmat "
                            f"pentru strategie {strategy_type or 'UNKNOWN'}")
-        if strategy_type not in ('REVERSAL', 'CONTINUITY', 'CONTINUATION'):
+        # V18: acceptăm și 'continuation_counter_w1', 'reversal_counter_w1' (tagged de daily_scanner cu W1 bias)
+        _st_base = strategy_type.split('_')[0] if strategy_type else ''
+        if _st_base not in ('REVERSAL', 'CONTINUITY', 'CONTINUATION'):
             return False, (f"Guard#4 strategy_type='{strategy_type}' necunoscut "
                            f"— setup posibil stale sau corupt")
 
