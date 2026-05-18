@@ -142,7 +142,7 @@ class MultiTFRadar:
         )
         
         self.smc_4h = SMCDetector(
-            swing_lookback=5,
+            swing_lookback=8,   # V19: più context structural pe 4H (5→8)
             atr_multiplier=1.0  # V15.4: relaxed from 1.2→1.0 — avoid missing clear 4H CHoCH
         )
         
@@ -155,7 +155,7 @@ class MultiTFRadar:
         try:
             import requests
             response = requests.get(
-                f"http://localhost:8767/price",
+                f"http://localhost:8010/price",  # V19 FIX #5: port corect MarketDataProvider
                 params={"symbol": symbol},
                 timeout=2
             )
@@ -211,10 +211,10 @@ class MultiTFRadar:
         """
         timeframe_display = "1H" if timeframe == "H1" else "4H"
         
-        # V16 FIX (B2): Extindere orizont vizual
-        # 1H: 400 bare = ~16 zile → CHoCH < 10h invizibil acum acoperit
-        # 4H: 200 bare = ~33 zile → CHoCH < 40h acum detectabil
-        num_bars = 400 if timeframe == "H1" else 200
+        # V19 FIX #3: Extindere orizont vizual
+        # 1H: 400 bare = ~16 zile → CHoCH < 10h acoperit
+        # 4H: 300 bare = ~50 zile → CHoCH major Daily acoperit complet
+        num_bars = 400 if timeframe == "H1" else 300
         
         # Download data
         df = self.get_historical_data(symbol, timeframe, num_bars)
@@ -255,17 +255,38 @@ class MultiTFRadar:
                     status=PullbackStatus.WAITING_1H_CHOCH if timeframe == "H1" else PullbackStatus.WAITING_4H_CHOCH
                 )
             
-            # Get latest CHoCH IN THE CORRECT DIRECTION
-            # V18.3 FIX: Nu mai luăm choch_list[-1] orb — dacă ultimul CHoCH e counter-trend,
-            # respingeam tot chiar dacă există un CHoCH valid în direcția corectă mai devreme.
-            # NOUA REGULĂ: filtrăm choch_list pe required_direction, luăm ultimul match.
-            aligned_chochs = [c for c in choch_list if c.direction == required_direction]
-            
+            # ━━━ V19 FIX #2: LOOKBACK ARRAY WINDOW (100 bare) + BOS ca confirmare ━━━
+            # Problema veche: choch_list[-1] orb = un micro-pullback de 3-4 lumânări
+            # reseta prev_trend și marca CHoCH-ul major ca "counter-trend, ignored".
+            # NOUA REGULĂ: scanăm ultimele LOOKBACK_BARS bare pentru CHoCH/BOS aliniat.
+            # Micro-CHoCH counter-trend DUPĂ un CHoCH major valid = ignorat complet.
+            LOOKBACK_BARS = 100
+
+            # Pas 1: CHoCH aliniat în fereastra de 100 bare
+            aligned_chochs = [
+                c for c in choch_list
+                if c.direction == required_direction
+                and c.index >= len(df) - LOOKBACK_BARS
+            ]
+
+            # Pas 2: Dacă nu există CHoCH, verificăm BOS aliniat (confirmare continuare structură)
+            use_bos_as_choch = False
+            bos_used = None
             if not aligned_chochs:
-                # Nu există niciun CHoCH în direcția corectă
-                # Log ce directie are ultimul CHoCH pentru debug
+                aligned_bos = [
+                    b for b in bos_list
+                    if b.direction == required_direction
+                    and b.index >= len(df) - LOOKBACK_BARS
+                ]
+                if aligned_bos:
+                    use_bos_as_choch = True
+                    bos_used = aligned_bos[-1]
+                    bars_ago = len(df) - bos_used.index
+                    print(f"  ✅ [{timeframe_display} SCAN] {symbol} | Aliniere Găsită: BOS {required_direction.upper()} la indexul -{bars_ago} | STATUS: VALIDATED ✅ (BOS ca confirmare)")
+
+            if not aligned_chochs and not use_bos_as_choch:
                 _last_dir = choch_list[-1].direction if choch_list else 'none'
-                print(f"⚠️  [{timeframe_display}] No {required_direction.upper()} CHoCH found")
+                print(f"⚠️  [{timeframe_display}] No {required_direction.upper()} CHoCH/BOS found în ultimele {LOOKBACK_BARS} bare")
                 print(f"   Latest CHoCH found: {_last_dir.upper()} — counter-trend, ignored")
                 return TimeframeAnalysis(
                     timeframe=timeframe_display,
@@ -281,8 +302,22 @@ class MultiTFRadar:
                     distance_to_fvg_pips=0.0,
                     status=PullbackStatus.WAITING_1H_CHOCH if timeframe == "H1" else PullbackStatus.WAITING_4H_CHOCH
                 )
-            
-            latest_choch = aligned_chochs[-1]
+
+            if use_bos_as_choch and bos_used is not None:
+                # Construim un CHoCH sintetic din BOS pentru a putea extrage FVG
+                from smc_detector import CHoCH as _CHoCH
+                latest_choch = _CHoCH(
+                    index=bos_used.index,
+                    direction=bos_used.direction,
+                    break_price=bos_used.break_price,
+                    previous_trend=required_direction,
+                    candle_time=bos_used.candle_time,
+                    swing_broken=bos_used.swing_broken
+                )
+            else:
+                latest_choch = aligned_chochs[-1]
+                bars_ago = len(df) - latest_choch.index
+                print(f"  ✅ [{timeframe_display} SCAN] {symbol} | Aliniere Găsită: CHoCH {required_direction.upper()} la indexul -{bars_ago} în urmă cu {bars_ago} bare | STATUS: VALIDATED ✅")
             choch_direction = latest_choch.direction
             choch_index = latest_choch.index
             
@@ -476,25 +511,33 @@ class MultiTFRadar:
         if current_price is None:
             current_price = daily_entry
         
-        # ━━━ V18: STRUCTURAL GATE — price valid while above SL (LONG) or below SL (SHORT) ━━━
-        # Precedenta gate (daily_fvg_bottom <= price <= daily_fvg_top) bloca scanul 4H
-        # când prețul era în zona Daily de cerere (sub FVG CHoCH) — exact unde ar trebui să intrăm.
-        # NOUA REGULĂ: Prețul este valid (setup activ) cât timp nu a invalidat structura (nu a atins SL).
-        # LONG: stop_loss <= current_price <= daily_fvg_top
-        # SHORT: daily_fvg_bottom <= current_price <= stop_loss
+        # ━━━ V19 FIX #1: STRUCTURAL GATE relaxat ━━━
+        # V18 citea rigid 'stop_loss' → daily_scanner salvează sub 'sl' sau 'stop_loss_price'
+        # → stop_loss_daily = 0 mereu → gate FALSE în plin pullback valid → scan 4H blocat.
+        # NOUA REGULĂ: citim din toate cheile posibile + buffer 10 pips toleranță.
+        # Dacă SL lipsește complet → setup activ (nu invalidăm fără dovadă).
         pip_size_daily = 0.01 if 'JPY' in symbol.upper() else 0.0001
-        stop_loss_daily = float(setup_data.get('stop_loss', 0))
-        
+        stop_loss_daily = float(
+            setup_data.get('sl') or
+            setup_data.get('stop_loss_price') or
+            setup_data.get('stop_loss') or 0
+        )
+        sl_buffer = pip_size_daily * 10  # 10 pips toleranță
+
         if direction == 'LONG':
             if stop_loss_daily > 0:
-                daily_zone_validated = stop_loss_daily <= current_price <= daily_fvg_top
+                # Valid cât timp prețul nu a spart SL-ul (cu buffer 10 pips)
+                daily_zone_validated = current_price > (stop_loss_daily - sl_buffer)
             else:
-                daily_zone_validated = current_price <= daily_fvg_top
+                # Fără SL setat = nu invalidăm, lăsăm scanul să ruleze
+                daily_zone_validated = True
         else:  # SHORT
             if stop_loss_daily > 0:
-                daily_zone_validated = daily_fvg_bottom <= current_price <= stop_loss_daily
+                # Valid cât timp prețul nu a spart SL-ul în sus (cu buffer 10 pips)
+                daily_zone_validated = current_price < (stop_loss_daily + sl_buffer)
             else:
-                daily_zone_validated = current_price >= daily_fvg_bottom
+                # Fără SL setat = nu invalidăm
+                daily_zone_validated = True
         
         if not daily_zone_validated:
             # Price invalidated structurally (below SL) — stop multi-TF analysis
