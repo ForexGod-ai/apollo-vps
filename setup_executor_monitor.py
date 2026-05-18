@@ -1848,15 +1848,47 @@ class SetupExecutorMonitor:
                         )
                         _sl = setup.get('stop_loss', 0)
                         _tp = setup.get('take_profit', 0)
-                        logger.success(f"🔥 [V18 EXECUTE_NOW PRE-FETCH] {symbol}: Execuție directă fără fetch date @ {_en_entry:.5f} SL={_sl:.5f} TP={_tp:.5f}")
-                        _en_comment = f"D1_EXECUTE_NOW_V18_{setup.get('direction','').upper()}_E1"
+
+                        # ━━━ V19.6 FIX: CALCUL DINAMIC LOT 5% RISC (înlocuiește 0.01 hardcodat) ━━━
+                        _pip_size_en = 0.01 if 'JPY' in symbol.upper() else 0.0001
+                        _pip_value_en = 8.33 if 'JPY' in symbol.upper() else 10.0  # USD per pip per lot standard
+                        _sl_pips_en = abs(_en_entry - _sl) / _pip_size_en if _sl and _en_entry else 0.0
+
+                        # Citim balanța live din trade_history.json (același pattern ca Risk Manager)
+                        _balance_en = float(os.getenv('ACCOUNT_BALANCE', 1336))
+                        try:
+                            _th_path_en = Path(__file__).parent / 'trade_history.json'
+                            if _th_path_en.exists():
+                                with open(_th_path_en, 'r', encoding='utf-8') as _tf_en:
+                                    _th_en = json.load(_tf_en)
+                                _live_bal_en = float(_th_en.get('account', {}).get('balance', 0))
+                                if _live_bal_en > 0:
+                                    _balance_en = _live_bal_en
+                        except Exception:
+                            pass  # fallback la ACCOUNT_BALANCE din .env
+
+                        if _sl_pips_en > 0:
+                            _risk_budget_en = _balance_en * 0.05
+                            _lot_size_en = _risk_budget_en / (_sl_pips_en * _pip_value_en)
+                            _lot_size_en = round(_lot_size_en, 2)
+                            _lot_size_en = max(0.01, min(_lot_size_en, 10.0))  # clamp: 0.01–10.0
+                        else:
+                            _lot_size_en = 0.01  # fallback doar dacă SL lipsește complet
+                            logger.warning(f"⚠️ [V19.6 LOT CALC] {symbol}: SL=0 sau Entry=0 — fallback lot 0.01")
+
+                        logger.success(
+                            f"🔥 [V18 EXECUTE_NOW PRE-FETCH] {symbol}: Execuție directă @ {_en_entry:.5f} "
+                            f"SL={_sl:.5f} TP={_tp:.5f} | SL={_sl_pips_en:.1f}p | "
+                            f"Bal={_balance_en:.0f}$ | Risk=5% | Lots={_lot_size_en:.2f}"
+                        )
+                        _en_comment = f"D1_EXECUTE_NOW_V19.6_{setup.get('direction','').upper()}_E1"
                         success = self.executor.execute_trade(
                             symbol=symbol,
                             direction=setup.get('direction', 'buy'),
                             entry_price=_en_entry,
                             stop_loss=_sl,
                             take_profit=_tp,
-                            lot_size=0.01,
+                            lot_size=_lot_size_en,  # V19.6: calcul dinamic 5% risc
                             comment=_en_comment,
                             status='READY'
                         )

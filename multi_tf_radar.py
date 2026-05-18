@@ -95,6 +95,8 @@ class TimeframeAnalysis:
     # V19.4 FIX #3: scan_error propagation — previne suprascrierea FVG valid cu None
     scan_error: bool = False
     scan_error_msg: str = ""
+    # V19.6 FIX #3: transparență sursă zonă — structural FVG vs. Fibo sintetic
+    fvg_source: str = "structural"  # "structural" | "fibo_fallback"
 
 
 @dataclass
@@ -482,7 +484,8 @@ class MultiTFRadar:
                             in_fvg=in_fvg_synth,
                             distance_to_fvg_pips=dist_synth,
                             status=status_synth,
-                            equilibrium=eq_for_synth
+                            equilibrium=eq_for_synth,
+                            fvg_source="fibo_fallback"  # V19.6: transparență sursă
                         )
                 except Exception as _fib_err:
                     print(f"  ⚠️ [V15.4 FIBO FALLBACK] Error computing synthetic zone: {_fib_err}")
@@ -511,6 +514,8 @@ class MultiTFRadar:
             in_fvg = fvg_bottom <= current_price <= fvg_top
             
             # Calculate distance to FVG
+            # V19.6 FIX #2: pip_size dinamic — corectează bug-ul JPY (x100 cosmetic)
+            _pip_size_dist = 0.01 if 'JPY' in symbol.upper() else 0.0001
             if in_fvg:
                 distance_to_fvg_pips = 0.0
                 # V18: Blackout hour filter eliminat complet — sistemul execută 24/7 fără restricții de timp
@@ -518,11 +523,11 @@ class MultiTFRadar:
             else:
                 if required_direction == 'bullish':
                     # For LONG: need to pull back DOWN to FVG
-                    distance_to_fvg_pips = abs(current_price - fvg_top) * 10000
+                    distance_to_fvg_pips = abs(current_price - fvg_top) / _pip_size_dist
                 else:
                     # For SHORT: need to pull back UP to FVG
-                    distance_to_fvg_pips = abs(fvg_bottom - current_price) * 10000
-                
+                    distance_to_fvg_pips = abs(fvg_bottom - current_price) / _pip_size_dist
+
                 status = PullbackStatus.WAITING_1H_PULLBACK if timeframe == "H1" else PullbackStatus.WAITING_4H_PULLBACK
             
             return TimeframeAnalysis(
@@ -707,6 +712,7 @@ class MultiTFRadar:
             setup['radar_1h_fvg_entry'] = result.tf_1h.fvg_entry
             setup['radar_1h_in_fvg'] = result.tf_1h.in_fvg
             setup['radar_1h_distance_pips'] = result.tf_1h.distance_to_fvg_pips
+            setup['radar_1h_fvg_source'] = result.tf_1h.fvg_source  # V19.6: "structural" | "fibo_fallback"
             setup.pop('radar_1h_scan_error', None)
         else:
             setup['radar_1h_fvg_top'] = None
@@ -739,6 +745,7 @@ class MultiTFRadar:
             setup['radar_4h_fvg_entry'] = result.tf_4h.fvg_entry
             setup['radar_4h_in_fvg'] = result.tf_4h.in_fvg
             setup['radar_4h_distance_pips'] = result.tf_4h.distance_to_fvg_pips
+            setup['radar_4h_fvg_source'] = result.tf_4h.fvg_source  # V19.6: "structural" | "fibo_fallback"
             setup.pop('radar_4h_scan_error', None)
         else:
             setup['radar_4h_fvg_top'] = None
