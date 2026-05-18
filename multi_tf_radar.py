@@ -255,79 +255,75 @@ class MultiTFRadar:
                     status=PullbackStatus.WAITING_1H_CHOCH if timeframe == "H1" else PullbackStatus.WAITING_4H_CHOCH
                 )
             
-            # ━━━ V19 FIX #2: LOOKBACK ARRAY WINDOW (100 bare) + BOS ca confirmare ━━━
-            # Problema veche: choch_list[-1] orb = un micro-pullback de 3-4 lumânări
-            # reseta prev_trend și marca CHoCH-ul major ca "counter-trend, ignored".
-            # NOUA REGULĂ: scanăm ultimele LOOKBACK_BARS bare pentru CHoCH/BOS aliniat.
-            # Micro-CHoCH counter-trend DUPĂ un CHoCH major valid = ignorat complet.
+            # ━━━ V19.2: STRUCTURAL ALIGNMENT — 4-STEP CASCADE, ZERO COUNTER-TREND REJECTION ━━━
+            # REGULA ABSOLUTĂ: Dacă există CEL PUȚIN UN CHoCH sau BOS în direcția biasului Daily
+            # în ORICE punct din seria de date → ALIGNED = VALIDATED.
+            # Mișcările counter-trend (micro-pullback 4H/1H) = zgomot normal într-un pullback Daily.
+            # NU invalidăm structura pe baza ultimului semnal de pe grafic.
             LOOKBACK_BARS = 100
 
-            # Pas 1: CHoCH aliniat în fereastra de 100 bare
+            use_bos_as_choch = False
+            bos_used = None
+
+            # PAS 1: CHoCH aliniat în fereastra de 100 bare (prioritate maximă — semnal recent)
             aligned_chochs = [
                 c for c in choch_list
                 if c.direction == required_direction
                 and c.index >= len(df) - LOOKBACK_BARS
             ]
+            if aligned_chochs:
+                bars_ago = len(df) - aligned_chochs[-1].index
+                print(f"  ✅ [{timeframe_display} SCAN] {symbol} | CHoCH {required_direction.upper()} în fereastra 100 bare la -{bars_ago} bare | VALIDATED ✅")
+                sys.stdout.flush()
 
-            # Pas 2: Dacă nu există CHoCH în 100 bare, verificăm BOS aliniat în fereastră
-            use_bos_as_choch = False
-            bos_used = None
+            # PAS 2: BOS aliniat în fereastra de 100 bare
             if not aligned_chochs:
-                aligned_bos = [
+                aligned_bos_window = [
                     b for b in bos_list
                     if b.direction == required_direction
                     and b.index >= len(df) - LOOKBACK_BARS
                 ]
-                if aligned_bos:
+                if aligned_bos_window:
                     use_bos_as_choch = True
-                    bos_used = aligned_bos[-1]
+                    bos_used = aligned_bos_window[-1]
                     bars_ago = len(df) - bos_used.index
-                    print(f"  ✅ [{timeframe_display} SCAN] {symbol} | Aliniere Găsită: BOS {required_direction.upper()} la indexul -{bars_ago} | STATUS: VALIDATED ✅ (BOS ca confirmare)")
+                    print(f"  ✅ [{timeframe_display} SCAN] {symbol} | BOS {required_direction.upper()} în fereastra 100 bare la -{bars_ago} bare | VALIDATED ✅ (BOS confirmare)")
+                    sys.stdout.flush()
 
-            # ━━━ V19.1 FIX A: FALLBACK FULL-DATASET ━━━
-            # Dacă nu există nimic în fereastra de 100 bare, căutăm în TOATĂ seria de date.
-            # Regula: cel mai recent CHoCH/BOS aliniat din orice perioadă este valid,
-            # cu condiția să nu fi fost URMAT de un CHoCH în sens opus (invalidare structurală).
-            # Un micro-pullback counter-trend NU invalidează un CHoCH major anterior.
+            # PAS 3: FALLBACK FULL-DATASET CHoCH — ignorăm COMPLET orice counter-trend
+            # Luăm cel mai recent CHoCH aliniat din TOATĂ seria, indiferent ce micro-pullback a urmat
             if not aligned_chochs and not use_bos_as_choch:
                 all_aligned_chochs = [
                     c for c in choch_list
                     if c.direction == required_direction
                 ]
                 if all_aligned_chochs:
-                    candidate = all_aligned_chochs[-1]  # cel mai recent aliniat
-                    # Verificăm dacă există un CHoCH counter-trend DUPĂ candidat
-                    counter_after = [
-                        c for c in choch_list
-                        if c.direction != required_direction
-                        and c.index > candidate.index
-                    ]
-                    if not counter_after:
-                        # Niciun CHoCH invalidant după cel valid — structura e intactă
-                        aligned_chochs = [candidate]
-                        bars_ago = len(df) - candidate.index
-                        print(f"  ✅ [{timeframe_display} SCAN] {symbol} | Aliniere Găsită (full-dataset): CHoCH {required_direction.upper()} la -{bars_ago} bare | STATUS: VALIDATED ✅")
-                    else:
-                        # Există CHoCH counter-trend DUPĂ cel aliniat — verificăm BOS ca salvare
-                        all_aligned_bos = [
-                            b for b in bos_list
-                            if b.direction == required_direction
-                            and b.index > counter_after[-1].index  # BOS aliniat DUPĂ ultimul counter-trend
-                        ]
-                        if all_aligned_bos:
-                            use_bos_as_choch = True
-                            bos_used = all_aligned_bos[-1]
-                            bars_ago = len(df) - bos_used.index
-                            print(f"  ✅ [{timeframe_display} SCAN] {symbol} | Aliniere Găsită (BOS post-counter): BOS {required_direction.upper()} la -{bars_ago} bare | STATUS: VALIDATED ✅")
+                    aligned_chochs = [all_aligned_chochs[-1]]  # cel mai recent aliniat — definitiv valid
+                    bars_ago = len(df) - all_aligned_chochs[-1].index
+                    print(f"  ✅ [{timeframe_display} SCAN] {symbol} | CHoCH {required_direction.upper()} full-dataset la -{bars_ago} bare | VALIDATED ✅ (counter-trend ignorat)")
+                    sys.stdout.flush()
 
+            # PAS 4: FALLBACK FULL-DATASET BOS
             if not aligned_chochs and not use_bos_as_choch:
-                _last_dir = choch_list[-1].direction if choch_list else 'none'
-                print(f"⚠️  [{timeframe_display}] No {required_direction.upper()} CHoCH/BOS found în ultimele {LOOKBACK_BARS} bare")
-                print(f"   Latest CHoCH found: {_last_dir.upper()} — counter-trend, ignored")
+                all_aligned_bos = [
+                    b for b in bos_list
+                    if b.direction == required_direction
+                ]
+                if all_aligned_bos:
+                    use_bos_as_choch = True
+                    bos_used = all_aligned_bos[-1]
+                    bars_ago = len(df) - bos_used.index
+                    print(f"  ✅ [{timeframe_display} SCAN] {symbol} | BOS {required_direction.upper()} full-dataset la -{bars_ago} bare | VALIDATED ✅")
+                    sys.stdout.flush()
+
+            # TRULY NOTHING — nicio structură aliniată în toți cei {len(df)} bari descărcați
+            if not aligned_chochs and not use_bos_as_choch:
+                print(f"  ⚠️  [{timeframe_display}] Nicio structură {required_direction.upper()} găsită în {len(df)} bare disponibile — WAITING")
+                sys.stdout.flush()
                 return TimeframeAnalysis(
                     timeframe=timeframe_display,
                     choch_detected=False,
-                    choch_direction=_last_dir,
+                    choch_direction=None,
                     choch_time=None,
                     choch_price=None,
                     fvg_detected=False,
@@ -352,8 +348,6 @@ class MultiTFRadar:
                 )
             else:
                 latest_choch = aligned_chochs[-1]
-                bars_ago = len(df) - latest_choch.index
-                print(f"  ✅ [{timeframe_display} SCAN] {symbol} | Aliniere Găsită: CHoCH {required_direction.upper()} la indexul -{bars_ago} în urmă cu {bars_ago} bare | STATUS: VALIDATED ✅")
             choch_direction = latest_choch.direction
             choch_index = latest_choch.index
             
@@ -381,6 +375,7 @@ class MultiTFRadar:
                 _eq_str = f"{choch_equilibrium:.5f}" if choch_equilibrium is not None else "N/A"
                 print(f"  📐 [V16.2 EQ] {timeframe_display} Impulse: {_sbp:.5f} → {_cbp:.5f} | "
                       f"EQ={_eq_str} ({abs(_cbp - _sbp)/pip_size_eq:.1f} pips)")
+                sys.stdout.flush()
             except Exception:
                 pass
 
@@ -427,9 +422,11 @@ class MultiTFRadar:
                         # V16.2: Fibo Fallback folosește 50% EQ exact (centrul zonei sintetice)
                         # choch_equilibrium calculat mai sus din același impuls
                         eq_for_synth = choch_equilibrium if choch_equilibrium else fvg_entry_synth
+                        _eq_synth_str = f"{eq_for_synth:.5f}" if eq_for_synth is not None else "N/A"
                         print(f"  ⚡ [V15.4 FIBO FALLBACK] No FVG found — using Fibo 40-60% synthetic zone")
                         print(f"     Impulse: {swing_broken_price:.5f} → {choch_break_price:.5f} ({impulse_size/pip_size_synth:.1f} pips)")
-                        print(f"     Synthetic FVG: [{fvg_bottom_synth:.5f} - {fvg_top_synth:.5f}] | EQ={eq_for_synth:.5f} | In zone: {in_fvg_synth}")
+                        print(f"     Synthetic FVG: [{fvg_bottom_synth:.5f} - {fvg_top_synth:.5f}] | EQ={_eq_synth_str} | In zone: {in_fvg_synth}")
+                        sys.stdout.flush()
                         return TimeframeAnalysis(
                             timeframe=timeframe_display,
                             choch_detected=True,
@@ -503,7 +500,10 @@ class MultiTFRadar:
             )
         
         except Exception as e:
+            import traceback
             print(f"⚠️  Error analyzing {timeframe} for {symbol}: {e}")
+            traceback.print_exc()
+            sys.stdout.flush()
             return TimeframeAnalysis(
                 timeframe=timeframe_display,
                 choch_detected=False,
@@ -987,24 +987,31 @@ class MultiTFRadar:
         print(f"📋 LOADED {len(setups)} SETUP(S) FROM monitoring_setups.json")
         print(f"   {symbols_list}")
         print("="*80)
+        sys.stdout.flush()
         
         ok_count = 0
         err_count = 0
         # Run multi-TF analysis
         for setup in setups:
+            sym = setup.get('symbol', 'UNKNOWN')
+            direction_label = setup.get('direction', '?').upper()
+            # V19.2 Fix 1+2: print inițializare per paritate + flush imediat
+            print(f"\n🔄 [RADAR INIȚIALIZAT] Pornire descărcare date și analiză istorică pentru: {sym} {direction_label}...")
+            sys.stdout.flush()
             try:
                 result = self.analyze_setup(setup)
                 self.print_result(result)
+                sys.stdout.flush()
                 ok_count += 1
             except Exception as e:
-                sym = setup.get('symbol', 'UNKNOWN')
+                import traceback
                 print(f"\n{'='*80}")
                 print(f"❌ ERROR ANALYZING {sym}: {e}")
-                import traceback
                 traceback.print_exc()
                 print("="*80 + "\n")
+                sys.stdout.flush()
                 err_count += 1
-                continue  # V19.1 Fix C: izolare erori — continuăm cu paritatea următoare
+                continue  # V19.2: izolare erori — continuăm cu paritatea următoare
         
         print(f"\n✅ Scan complete: {ok_count} analyzed | ❌ {err_count} errors\n")
     
