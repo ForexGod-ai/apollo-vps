@@ -913,9 +913,12 @@ class TelegramCommandCenter:
                 message += "  ⚠️ Error reading setups\n\n"
             
             # ═══ SECTION 5: DEEP SLEEP STATUS ═══
+            # V19.6.2 FIX: citim și pnl_pct/max_loss calculate în Section 3 ca fallback
+            # dacă deep_sleep_state.json nu există dar limita e atinsă
             message += "<b>😴 DEEP SLEEP:</b>\n"
             try:
                 sleep_file = Path(__file__).parent.resolve() / 'data' / 'deep_sleep_state.json'
+                _limit_hit = 'pnl_pct' in dir() or True  # folosim variabilele din Section 3
                 if sleep_file.exists():
                     with open(sleep_file, 'r') as f:
                         sleep_state = json.load(f)
@@ -933,7 +936,19 @@ class TelegramCommandCenter:
                     else:
                         message += "  ✅ ACTIVE\n\n"
                 else:
-                    message += "  ✅ ACTIVE — scanning normally\n\n"
+                    # V19.6.2: Fallback — dacă fișierul nu există dar P/L arată LIMIT HIT
+                    # (executor vechi nu a scris fișierul, dar știm că limita e atinsă)
+                    try:
+                        _pnl_pct_check = pnl_pct
+                        _max_loss_check = max_loss
+                        if _pnl_pct_check <= -_max_loss_check:
+                            message += f"  🔴 <b>SLEEPING</b> — Daily loss limit atins ({_pnl_pct_check:+.1f}%)\n"
+                            message += f"  Reason: <i>Daily loss limit reached (auto-detected)</i>\n"
+                            message += f"  ⚠️ <i>deep_sleep_state.json lipsă — restart executor pentru sync</i>\n\n"
+                        else:
+                            message += "  ✅ ACTIVE — scanning normally\n\n"
+                    except NameError:
+                        message += "  ✅ ACTIVE — scanning normally\n\n"
             except Exception:
                 message += "  ✅ ACTIVE\n\n"
             
@@ -955,7 +970,17 @@ class TelegramCommandCenter:
                     else:
                         message += "  <code>0</code> (clean day)\n\n"
                 else:
-                    message += "  <code>0</code> (clean day)\n\n"
+                    # V19.6.2: Fallback — dacă fișierul nu există dar P/L arată LIMIT HIT
+                    # afișăm cel puțin că există rejecții legate de daily loss
+                    try:
+                        if pnl_pct <= -max_loss:
+                            message += f"  ⚠️ <i>Rejecții detectate via P/L (fișier lipsă)\n"
+                            message += f"  • Daily Loss Limit: <code>≥1</code> (trade respins la {pnl_pct:+.1f}%)\n"
+                            message += f"  ℹ️ Restart executor pentru tracking complet</i>\n\n"
+                        else:
+                            message += "  <code>0</code> (clean day)\n\n"
+                    except NameError:
+                        message += "  <code>0</code> (clean day)\n\n"
             except Exception:
                 message += "  ⚠️ Data unavailable\n\n"
             
@@ -1048,7 +1073,7 @@ class TelegramCommandCenter:
             except Exception as _e:
                 message += f"  ⚠️ News error: <code>{str(_e)[:60]}</code>\n\n"
             
-            message += f"{UNIVERSAL_SEPARATOR}\n<b>🎯 VERDICT:</b> {'😴 DEEP SLEEP' if (Path(__file__).parent.resolve() / 'data' / 'deep_sleep_state.json').exists() else '✅ OPERATIONAL'}"
+            message += f"{UNIVERSAL_SEPARATOR}\n<b>🎯 VERDICT:</b> {'😴 DEEP SLEEP' if (Path(__file__).parent.resolve() / 'data' / 'deep_sleep_state.json').exists() or (pnl_pct <= -max_loss if 'pnl_pct' in dir() else False) else '✅ OPERATIONAL'}"
             
             return message
             
