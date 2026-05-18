@@ -938,6 +938,7 @@ class MultiTFRadar:
                     with open('monitoring_setups.json', 'r', encoding='utf-8') as _f:
                         _ms_data = json.load(_f)
                     _ms_list = _ms_data.get('setups', _ms_data) if isinstance(_ms_data, dict) else _ms_data
+                    _gbp_found = False
                     for _i, _s in enumerate(_ms_list):
                         if _s.get('symbol', '').upper() == 'GBPNZD':
                             _ms_list[_i].update({
@@ -948,7 +949,28 @@ class MultiTFRadar:
                                 'stop_loss': setup['stop_loss'],
                                 'take_profit': setup['take_profit'],
                                 'radar_4h_fvg_entry': _live_price,
+                                'status': 'MONITORING',
+                                'entry1_filled': False,
                             })
+                            _gbp_found = True
+                            break
+                    if not _gbp_found:
+                        # Nu există GBPNZD în JSON — îl adăugăm noi
+                        _ms_list.append({
+                            'symbol': 'GBPNZD',
+                            'direction': 'sell',
+                            'entry_price': _live_price,
+                            'stop_loss': setup['stop_loss'],
+                            'take_profit': setup['take_profit'],
+                            'radar_4h_fvg_entry': _live_price,
+                            'daily_zone_validated': True,
+                            'h4_structure_locked': True,
+                            'EXECUTE_NOW': True,
+                            'status': 'MONITORING',
+                            'entry1_filled': False,
+                            'strategy_type': 'reversal',
+                        })
+                        print("✅ [TEST INJECTOR] GBPNZD ADĂUGAT în monitoring_setups.json cu EXECUTE_NOW=True")
                     if isinstance(_ms_data, dict):
                         _ms_data['setups'] = _ms_list
                         _out = _ms_data
@@ -956,7 +978,7 @@ class MultiTFRadar:
                         _out = _ms_list
                     with open('monitoring_setups.json', 'w', encoding='utf-8') as _f:
                         json.dump(_out, _f, indent=2, ensure_ascii=False)
-                    print("✅ [TEST INJECTOR] monitoring_setups.json ACTUALIZAT CU EXECUTE_NOW=True")
+                    print("✅ [TEST INJECTOR] monitoring_setups.json SCRIS CU EXECUTE_NOW=True")
                 except Exception as _e:
                     print(f"⚠️ [TEST INJECTOR] Eroare scriere JSON: {_e}")
                 ok_count += 1
