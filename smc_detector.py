@@ -1140,9 +1140,10 @@ class SMCDetector:
         # Nu există FVG valid în zona P/D corectă.
         # Returnăm None explicit pentru a lăsa sistemul să folosească
         # nivelul de Equilibrium (50%) al impulsului ca entry direct.
+        _eq_display = f"{equilibrium:.5f}" if equilibrium else "N/A"
         print(f"  ⚠️ [V16.1 P/D FVG] Niciun FVG în zona "
               f"{'Discount' if orderflow_direction == 'bullish' else 'Premium'} "
-              f"(EQ={equilibrium:.5f if equilibrium else 'N/A'}) → Fibo 50% Fallback activat")
+              f"(EQ={_eq_display}) → Fibo 50% Fallback activat")
         return None
 
     # ─── V9.0: Blocul orfan detect_choch_and_bos (fără def) + duplicatul V6.0 eliminate ───

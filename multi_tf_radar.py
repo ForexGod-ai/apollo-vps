@@ -416,6 +416,28 @@ class MultiTFRadar:
                     swing_broken_price = float(latest_choch.swing_broken.price)
                     choch_break_price = float(latest_choch.break_price)
                     impulse_size = abs(choch_break_price - swing_broken_price)
+                    # V19.4 FIX — Guard impuls 0 pips: date corupte sau tick duplicat din cBot.
+                    # NU activăm Fibo Fallback pe impuls nul → returnăm WAITING curat.
+                    if impulse_size <= 0:
+                        pip_size_guard = 0.01 if 'JPY' in symbol.upper() else 0.0001
+                        print(f"  ⚠️ [RADAR GUARD] Impuls invalid de 0 pips detectat pentru {symbol}. "
+                              f"Se păstrează starea de WAITING fără activare fallback.")
+                        sys.stdout.flush()
+                        return TimeframeAnalysis(
+                            timeframe=timeframe_display,
+                            choch_detected=True,
+                            choch_direction=choch_direction,
+                            choch_time=choch_time_str,
+                            choch_price=choch_price,
+                            fvg_detected=False,
+                            fvg_top=None,
+                            fvg_bottom=None,
+                            fvg_entry=None,
+                            in_fvg=False,
+                            distance_to_fvg_pips=0.0,
+                            status=PullbackStatus.WAITING_1H_PULLBACK if timeframe == "H1" else PullbackStatus.WAITING_4H_PULLBACK,
+                            equilibrium=choch_equilibrium
+                        )
                     if impulse_size > 0:
                         if choch_direction == 'bullish':
                             # LONG: pullback DOWN la 40-60% din impuls
