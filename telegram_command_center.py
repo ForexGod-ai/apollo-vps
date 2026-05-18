@@ -977,7 +977,21 @@ class TelegramCommandCenter:
                     try:
                         _pnl_pct_check = pnl_pct
                         _max_loss_check = max_loss
-                        if _pnl_pct_check <= -_max_loss_check:
+                        # V19.6.8: Verifică dacă user-ul a dat /resume manual azi
+                        # Dacă da, nu mai arăta SLEEPING pe baza P/L
+                        _resumed_today = False
+                        try:
+                            _resume_file = Path(__file__).parent.resolve() / 'data' / 'system_resumed.json'
+                            if _resume_file.exists():
+                                import json as _jj
+                                _rm = _jj.loads(_resume_file.read_text())
+                                _resumed_at = datetime.fromisoformat(_rm.get('resumed_at', ''))
+                                # Considerat valid dacă a fost azi (UTC)
+                                if _resumed_at.date() == datetime.now(timezone.utc).date():
+                                    _resumed_today = True
+                        except Exception:
+                            pass
+                        if _pnl_pct_check <= -_max_loss_check and not _resumed_today:
                             message += f"  🔴 <b>SLEEPING</b> — Daily loss limit atins ({_pnl_pct_check:+.1f}%)\n"
                             message += f"  Reason: <i>Daily loss limit reached (auto-detected)</i>\n"
                             message += f"  ⚠️ <i>deep_sleep_state.json lipsă — restart executor pentru sync</i>\n\n"
@@ -1384,21 +1398,39 @@ class TelegramCommandCenter:
             script_dir = Path(__file__).parent.resolve()
             sleep_file = script_dir / 'data' / 'deep_sleep_state.json'
 
+            # Ora României pentru afișare
+            try:
+                import pytz as _pytz
+                _ro_tz = _pytz.timezone('Europe/Bucharest')
+                _now_ro = datetime.now(_ro_tz)
+                _time_label = _now_ro.strftime('%H:%M (ora României)')
+            except Exception:
+                _time_label = datetime.now(timezone.utc).strftime('%H:%M UTC')
+
             if sleep_file.exists():
                 sleep_file.unlink()
-                msg = (
-                    f"🔱 <b>SYSTEM AWAKENED</b>\n\n"
-                    f"✅ Deep sleep cleared manually\n"
-                    f"🔄 <b>BIAS SYNC STARTING...</b>\n"
-                    f"⏰ Time: <code>{datetime.now(timezone.utc).strftime('%H:%M UTC')}</code>\n\n"
-                    f"⚠️ Watchdog will restart all processes within 60s."
-                )
-            else:
-                msg = (
-                    f"✅ <b>SYSTEM ALREADY ACTIVE</b>\n\n"
-                    f"No deep sleep state found.\n"
-                    f"Trading is operational."
-                )
+
+            # V19.6.8: Scrie marker de resume manual — /status îl verifică ca să nu
+            # mai afișeze SLEEPING pe baza P/L când user-ul a ieșit manual din deep sleep
+            try:
+                resume_marker = script_dir / 'data' / 'system_resumed.json'
+                resume_marker.parent.mkdir(parents=True, exist_ok=True)
+                import json as _json
+                with open(resume_marker, 'w') as _f:
+                    _json.dump({
+                        'resumed_at': datetime.now(timezone.utc).isoformat(),
+                        'resumed_by': 'manual /resume'
+                    }, _f)
+            except Exception:
+                pass
+
+            msg = (
+                f"🔱 <b>SYSTEM AWAKENED</b>\n\n"
+                f"✅ Deep sleep cleared manually\n"
+                f"🔄 <b>BIAS SYNC STARTING...</b>\n"
+                f"⏰ Time: <code>{_time_label}</code>\n\n"
+                f"⚠️ Watchdog will restart all processes within 60s."
+            )
             logger.info("🔱 /resume executed — deep sleep cleared")
             return msg
 
