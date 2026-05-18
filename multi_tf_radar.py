@@ -92,6 +92,9 @@ class TimeframeAnalysis:
     # V16.2: 50% Equilibrium al impulsului CHoCH (frontiera Discount/Premium)
     # LONG = Discount = sub EQ  |  SHORT = Premium = peste EQ
     equilibrium: Optional[float] = None
+    # V19.4 FIX #3: scan_error propagation — previne suprascrierea FVG valid cu None
+    scan_error: bool = False
+    scan_error_msg: str = ""
 
 
 @dataclass
@@ -239,7 +242,9 @@ class MultiTFRadar:
             # Detect CHoCH and BOS
             choch_list, bos_list = smc_detector.detect_choch_and_bos(df)
             
-            if not choch_list:
+            # V19.4 FIX #2: returnăm WAITING doar dacă AMBELE liste sunt goale.
+            # Dacă există BOS valid în direcția biasului, cascade-ul trebuie să ruleze (PAS 2/4).
+            if not choch_list and not bos_list:
                 return TimeframeAnalysis(
                     timeframe=timeframe_display,
                     choch_detected=False,
@@ -266,11 +271,13 @@ class MultiTFRadar:
             bos_used = None
 
             # PAS 1: CHoCH aliniat în fereastra de 100 bare (prioritate maximă — semnal recent)
-            aligned_chochs = [
-                c for c in choch_list
-                if c.direction == required_direction
-                and c.index >= len(df) - LOOKBACK_BARS
-            ]
+            # V19.4 FIX #1: sorted garantat după index cronologic — elimină selecție counter-trend rezidual
+            aligned_chochs = sorted(
+                [c for c in choch_list
+                 if c.direction == required_direction
+                 and c.index >= len(df) - LOOKBACK_BARS],
+                key=lambda x: x.index
+            )
             if aligned_chochs:
                 bars_ago = len(df) - aligned_chochs[-1].index
                 print(f"  ✅ [{timeframe_display} SCAN] {symbol} | CHoCH {required_direction.upper()} în fereastra 100 bare la -{bars_ago} bare | VALIDATED ✅")
@@ -278,11 +285,13 @@ class MultiTFRadar:
 
             # PAS 2: BOS aliniat în fereastra de 100 bare
             if not aligned_chochs:
-                aligned_bos_window = [
-                    b for b in bos_list
-                    if b.direction == required_direction
-                    and b.index >= len(df) - LOOKBACK_BARS
-                ]
+                # V19.4 FIX #1: sorted — cel mai recent BOS în fereastră la [-1]
+                aligned_bos_window = sorted(
+                    [b for b in bos_list
+                     if b.direction == required_direction
+                     and b.index >= len(df) - LOOKBACK_BARS],
+                    key=lambda x: x.index
+                )
                 if aligned_bos_window:
                     use_bos_as_choch = True
                     bos_used = aligned_bos_window[-1]
@@ -293,10 +302,11 @@ class MultiTFRadar:
             # PAS 3: FALLBACK FULL-DATASET CHoCH — ignorăm COMPLET orice counter-trend
             # Luăm cel mai recent CHoCH aliniat din TOATĂ seria, indiferent ce micro-pullback a urmat
             if not aligned_chochs and not use_bos_as_choch:
-                all_aligned_chochs = [
-                    c for c in choch_list
-                    if c.direction == required_direction
-                ]
+                # V19.4 FIX #1: sorted — [-1] va fi garantat cel mai RECENT CHoCH aliniat din toată seria
+                all_aligned_chochs = sorted(
+                    [c for c in choch_list if c.direction == required_direction],
+                    key=lambda x: x.index
+                )
                 if all_aligned_chochs:
                     aligned_chochs = [all_aligned_chochs[-1]]  # cel mai recent aliniat — definitiv valid
                     bars_ago = len(df) - all_aligned_chochs[-1].index
@@ -305,10 +315,11 @@ class MultiTFRadar:
 
             # PAS 4: FALLBACK FULL-DATASET BOS
             if not aligned_chochs and not use_bos_as_choch:
-                all_aligned_bos = [
-                    b for b in bos_list
-                    if b.direction == required_direction
-                ]
+                # V19.4 FIX #1: sorted — [-1] va fi garantat cel mai RECENT BOS din toată seria
+                all_aligned_bos = sorted(
+                    [b for b in bos_list if b.direction == required_direction],
+                    key=lambda x: x.index
+                )
                 if all_aligned_bos:
                     use_bos_as_choch = True
                     bos_used = all_aligned_bos[-1]
@@ -513,6 +524,8 @@ class MultiTFRadar:
             print(f"⚠️  Error analyzing {timeframe} for {symbol}: {e}")
             traceback.print_exc()
             sys.stdout.flush()
+            # V19.4 FIX #3: scan_error=True propagat în JSON → Executor nu va folosi date corupte
+            # Valorile FVG anterioare valabile din JSON sunt PĂSTRATE (nu suprascrise cu None)
             return TimeframeAnalysis(
                 timeframe=timeframe_display,
                 choch_detected=False,
@@ -525,7 +538,9 @@ class MultiTFRadar:
                 fvg_entry=None,
                 in_fvg=False,
                 distance_to_fvg_pips=0.0,
-                status=PullbackStatus.WAITING_1H_CHOCH if timeframe == "H1" else PullbackStatus.WAITING_4H_CHOCH
+                status=PullbackStatus.WAITING_1H_CHOCH if timeframe == "H1" else PullbackStatus.WAITING_4H_CHOCH,
+                scan_error=True,
+                scan_error_msg=str(e)
             )
     
     def analyze_setup(self, setup_data: Dict, save_to_json: bool = True) -> MultiTFResult:
@@ -553,9 +568,14 @@ class MultiTFRadar:
         daily_fvg_bottom = float(setup_data.get('fvg_bottom', daily_entry))
         
         # Get current price
+        # V19.4 FIX #4: prețul live este IMPERATIV — nu existe fallback silențios la daily_entry.
+        # Dacă portul 8010 nu răspunde → RuntimeError explicit, prins de run_scan cu `continue`.
         current_price = self.get_current_price(symbol)
         if current_price is None:
-            current_price = daily_entry
+            raise RuntimeError(
+                f"Preț indisponibil pentru {symbol} — portul 8010 nu răspunde. "
+                f"Verifică MarketDataProvider cBot pe VPS."
+            )
         
         # ━━━ V19 FIX #1: STRUCTURAL GATE relaxat ━━━
         # V18 citea rigid 'stop_loss' → daily_scanner salvează sub 'sl' sau 'stop_loss_price'
@@ -688,6 +708,163 @@ class MultiTFRadar:
         
         return result
     
+    def _update_setup_with_radar(self, setup: Dict, result: 'MultiTFResult') -> None:
+        """
+        V19.4: Pure in-memory update of a single setup dict with radar results.
+        Shared by both _sync_to_monitoring_setups (single) and _batch_sync (batch).
+        FIX #3: scan_error guard — nu suprascrie FVG valid cu None dacă analiza a crapat.
+        FIX #5: Direction matching non-case-sensitive.
+        """
+        # 🎯 1H RADAR DATA
+        if result.tf_1h.choch_detected:
+            setup['radar_1h_choch_detected'] = True
+            setup['radar_1h_choch_direction'] = result.tf_1h.choch_direction
+            setup['radar_1h_choch_time'] = result.tf_1h.choch_time
+            setup['radar_1h_choch_price'] = result.tf_1h.choch_price
+        else:
+            setup['radar_1h_choch_detected'] = False
+
+        if result.tf_1h.scan_error:
+            # V19.4 FIX #3: crash silențios detectat — semnalizăm în JSON dar PĂSTRĂM FVG anterior
+            setup['radar_1h_scan_error'] = True
+            setup['radar_1h_scan_error_msg'] = result.tf_1h.scan_error_msg
+        elif result.tf_1h.fvg_detected:
+            setup['radar_1h_fvg_top'] = result.tf_1h.fvg_top
+            setup['radar_1h_fvg_bottom'] = result.tf_1h.fvg_bottom
+            setup['radar_1h_fvg_entry'] = result.tf_1h.fvg_entry
+            setup['radar_1h_in_fvg'] = result.tf_1h.in_fvg
+            setup['radar_1h_distance_pips'] = result.tf_1h.distance_to_fvg_pips
+            setup.pop('radar_1h_scan_error', None)
+        else:
+            setup['radar_1h_fvg_top'] = None
+            setup['radar_1h_fvg_bottom'] = None
+            setup['radar_1h_fvg_entry'] = None
+            setup.pop('radar_1h_scan_error', None)
+
+        # V16.2: 50% Equilibrium al impulsului 1H CHoCH (frontiera P/D Array)
+        if result.tf_1h.equilibrium is not None:
+            setup['radar_1h_eq'] = result.tf_1h.equilibrium
+
+        setup['radar_1h_status'] = result.tf_1h.status.value
+
+        # 💎 4H RADAR DATA
+        if result.tf_4h.choch_detected:
+            setup['radar_4h_choch_detected'] = True
+            setup['radar_4h_choch_direction'] = result.tf_4h.choch_direction
+            setup['radar_4h_choch_time'] = result.tf_4h.choch_time
+            setup['radar_4h_choch_price'] = result.tf_4h.choch_price
+        else:
+            setup['radar_4h_choch_detected'] = False
+
+        if result.tf_4h.scan_error:
+            # V19.4 FIX #3: crash silențios detectat — semnalizăm în JSON dar PĂSTRĂM FVG anterior
+            setup['radar_4h_scan_error'] = True
+            setup['radar_4h_scan_error_msg'] = result.tf_4h.scan_error_msg
+        elif result.tf_4h.fvg_detected:
+            setup['radar_4h_fvg_top'] = result.tf_4h.fvg_top
+            setup['radar_4h_fvg_bottom'] = result.tf_4h.fvg_bottom
+            setup['radar_4h_fvg_entry'] = result.tf_4h.fvg_entry
+            setup['radar_4h_in_fvg'] = result.tf_4h.in_fvg
+            setup['radar_4h_distance_pips'] = result.tf_4h.distance_to_fvg_pips
+            setup.pop('radar_4h_scan_error', None)
+        else:
+            setup['radar_4h_fvg_top'] = None
+            setup['radar_4h_fvg_bottom'] = None
+            setup['radar_4h_fvg_entry'] = None
+            setup.pop('radar_4h_scan_error', None)
+
+        # V16.2: 50% Equilibrium al impulsului 4H CHoCH (frontiera P/D Array)
+        if result.tf_4h.equilibrium is not None:
+            setup['radar_4h_eq'] = result.tf_4h.equilibrium
+
+        setup['radar_4h_status'] = result.tf_4h.status.value
+
+        # V16 FIX (B4): Salvăm timestamp-ul ultimei atingeri FVG pentru persistență
+        if result.tf_1h.in_fvg or result.tf_4h.in_fvg:
+            setup['last_in_fvg_time'] = datetime.now().isoformat()
+
+        # V16 FIX (B4): Propagăm h4_locked din executor în radar
+        # V16.5 FIX BUG#5: executor citește 'h4_structure_locked', nu 'h4_locked' — scriem ambele
+        if result.tf_4h.choch_detected:
+            setup['h4_locked'] = True
+            setup['h4_structure_locked'] = True
+
+        # 🏆 PRIORITY & EXECUTION STATUS
+        setup['radar_priority_timeframe'] = result.priority_timeframe
+        setup['radar_execution_ready'] = result.execution_ready
+        setup['radar_verdict'] = result.verdict
+        setup['radar_last_scan'] = datetime.now().isoformat()
+
+        # V18: EXECUTE_NOW — cheia supremă de execuție
+        if result.execution_ready:
+            setup['EXECUTE_NOW'] = True
+            logger.success(f"🔥 [V18 EXECUTE_NOW] {result.symbol}: Semnal complet confirmat → EXECUTE_NOW=True")
+        else:
+            setup.pop('EXECUTE_NOW', None)
+
+    def _batch_sync_to_monitoring_setups(
+        self,
+        data: dict,
+        results: list
+    ) -> None:
+        """
+        V19.4 FIX #5: O singură citire JSON + o singură scriere pentru TOATE cele 7 parități.
+        Elimină blocajele I/O de 7 citiri/scrieri secvențiale pe fiecare ciclu de 30s.
+        Primește `data` deja încărcat din run_scan și o listă de tuple (setup, result).
+        """
+        try:
+            if isinstance(data, dict):
+                setups = data.get("setups", [])
+            elif isinstance(data, list):
+                setups = data
+            else:
+                logger.error("⚠️ _batch_sync: format JSON nerecunoscut")
+                return
+
+            matched_count = 0
+            for _original_setup, result in results:
+                # V19.4 FIX #5: direction matching non-case-sensitive
+                result_dir = result.direction.upper()
+                for i, setup in enumerate(setups):
+                    setup_dir = setup.get('direction', '').upper()
+                    matches_sell = (result_dir == 'SHORT' and setup_dir == 'SELL')
+                    matches_buy  = (result_dir == 'LONG'  and setup_dir == 'BUY')
+                    matches_direct = (result_dir == setup_dir)
+                    if setup.get('symbol') == result.symbol and (matches_sell or matches_buy or matches_direct):
+                        self._update_setup_with_radar(setup, result)
+                        setups[i] = setup
+                        matched_count += 1
+                        break
+
+            if isinstance(data, dict):
+                data['setups'] = setups
+                data['last_updated'] = datetime.now().isoformat()
+            else:
+                data = setups
+
+            import numpy as _np
+
+            def _json_safe(obj):
+                if isinstance(obj, (_np.bool_,)):    return bool(obj)
+                if isinstance(obj, (_np.integer,)):  return int(obj)
+                if isinstance(obj, (_np.floating,)): return float(obj)
+                if isinstance(obj, (_np.ndarray,)):  return obj.tolist()
+                raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
+
+            tmp_path = 'monitoring_setups.json.tmp'
+            with open(tmp_path, 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=2, default=_json_safe)
+            import os as _os
+            _os.replace(tmp_path, 'monitoring_setups.json')
+            logger.success(
+                f"💾 [BATCH SYNC V19.4] monitoring_setups.json actualizat — "
+                f"{matched_count}/{len(results)} parități sincronizate într-o singură scriere"
+            )
+            sys.stdout.flush()
+
+        except Exception as e:
+            logger.error(f"⚠️ _batch_sync_to_monitoring_setups error: {e}")
+
     def _sync_to_monitoring_setups(self, original_setup: Dict, result: MultiTFResult):
         """
         🔥 CRITICAL: Write radar analysis back to monitoring_setups.json
@@ -713,89 +890,17 @@ class MultiTFRadar:
             
             for i, setup in enumerate(setups):
                 logger.debug(f"  Checking setup {i}: {setup.get('symbol')} {setup.get('direction')}")
-                
-                # Match direction: sell↔SHORT, buy↔LONG
+
+                # V19.4 FIX #5: direction matching non-case-sensitive (.upper() pe ambele)
                 setup_direction = setup.get('direction', '').upper()
-                matches_sell = (result.direction == 'SHORT' and setup_direction == 'SELL')
-                matches_buy = (result.direction == 'LONG' and setup_direction == 'BUY')
-                
-                if setup.get('symbol') == result.symbol and (matches_sell or matches_buy):
-                    
-                    # 🎯 1H RADAR DATA
-                    if result.tf_1h.choch_detected:
-                        setup['radar_1h_choch_detected'] = True
-                        setup['radar_1h_choch_direction'] = result.tf_1h.choch_direction
-                        setup['radar_1h_choch_time'] = result.tf_1h.choch_time
-                        setup['radar_1h_choch_price'] = result.tf_1h.choch_price
-                    else:
-                        setup['radar_1h_choch_detected'] = False
-                    
-                    if result.tf_1h.fvg_detected:
-                        setup['radar_1h_fvg_top'] = result.tf_1h.fvg_top
-                        setup['radar_1h_fvg_bottom'] = result.tf_1h.fvg_bottom
-                        setup['radar_1h_fvg_entry'] = result.tf_1h.fvg_entry
-                        setup['radar_1h_in_fvg'] = result.tf_1h.in_fvg
-                        setup['radar_1h_distance_pips'] = result.tf_1h.distance_to_fvg_pips
-                    else:
-                        setup['radar_1h_fvg_top'] = None
-                        setup['radar_1h_fvg_bottom'] = None
-                        setup['radar_1h_fvg_entry'] = None
-                    # V16.2: 50% Equilibrium al impulsului 1H CHoCH (frontiera P/D Array)
-                    if result.tf_1h.equilibrium is not None:
-                        setup['radar_1h_eq'] = result.tf_1h.equilibrium
-                    
-                    setup['radar_1h_status'] = result.tf_1h.status.value
-                    
-                    # 💎 4H RADAR DATA
-                    if result.tf_4h.choch_detected:
-                        setup['radar_4h_choch_detected'] = True
-                        setup['radar_4h_choch_direction'] = result.tf_4h.choch_direction
-                        setup['radar_4h_choch_time'] = result.tf_4h.choch_time
-                        setup['radar_4h_choch_price'] = result.tf_4h.choch_price
-                    else:
-                        setup['radar_4h_choch_detected'] = False
-                    
-                    if result.tf_4h.fvg_detected:
-                        setup['radar_4h_fvg_top'] = result.tf_4h.fvg_top
-                        setup['radar_4h_fvg_bottom'] = result.tf_4h.fvg_bottom
-                        setup['radar_4h_fvg_entry'] = result.tf_4h.fvg_entry
-                        setup['radar_4h_in_fvg'] = result.tf_4h.in_fvg
-                        setup['radar_4h_distance_pips'] = result.tf_4h.distance_to_fvg_pips
-                    else:
-                        setup['radar_4h_fvg_top'] = None
-                        setup['radar_4h_fvg_bottom'] = None
-                        setup['radar_4h_fvg_entry'] = None
-                    # V16.2: 50% Equilibrium al impulsului 4H CHoCH (frontiera P/D Array)
-                    if result.tf_4h.equilibrium is not None:
-                        setup['radar_4h_eq'] = result.tf_4h.equilibrium
-                    
-                    setup['radar_4h_status'] = result.tf_4h.status.value
-                    
-                    # V16 FIX (B4): Salvăm timestamp-ul ultimei atingeri FVG pentru persistență
-                    if result.tf_1h.in_fvg or result.tf_4h.in_fvg:
-                        setup['last_in_fvg_time'] = datetime.now().isoformat()
-                    
-                    # V16 FIX (B4): Propagăm h4_locked din executor în radar
-                    # V16.5 FIX BUG#5: executor citește 'h4_structure_locked', nu 'h4_locked' — scriem ambele
-                    if result.tf_4h.choch_detected:
-                        setup['h4_locked'] = True
-                        setup['h4_structure_locked'] = True  # V16.5: cheia pe care o citește setup_executor_monitor
-                    
-                    # 🏆 PRIORITY & EXECUTION STATUS
-                    setup['radar_priority_timeframe'] = result.priority_timeframe
-                    setup['radar_execution_ready'] = result.execution_ready
-                    setup['radar_verdict'] = result.verdict
-                    setup['radar_last_scan'] = datetime.now().isoformat()
-                    
-                    # V18: EXECUTE_NOW — cheia supremă de execuție
-                    # Setată True când Radarul confirmă CHoCH 4H + preț în FVG (execution_ready)
-                    # setup_executor_monitor.py o citește și execută direct, fără re-validări
-                    if result.execution_ready:
-                        setup['EXECUTE_NOW'] = True
-                        logger.success(f"🔥 [V18 EXECUTE_NOW] {result.symbol}: Semnal complet confirmat → EXECUTE_NOW=True")
-                    else:
-                        setup.pop('EXECUTE_NOW', None)
-                    
+                result_direction = result.direction.upper()
+                matches_sell   = (result_direction == 'SHORT' and setup_direction == 'SELL')
+                matches_buy    = (result_direction == 'LONG'  and setup_direction == 'BUY')
+                matches_direct = (result_direction == setup_direction)
+
+                if setup.get('symbol') == result.symbol and (matches_sell or matches_buy or matches_direct):
+                    # V19.4: logica de update delegată la helper partajat cu batch sync
+                    self._update_setup_with_radar(setup, result)
                     setups[i] = setup
                     logger.success(f"✅ Synced radar data to monitoring_setups.json for {result.symbol}")
                     break
@@ -961,22 +1066,28 @@ class MultiTFRadar:
             return []
     
     def run_scan(self, symbol: Optional[str] = None, all_setups: bool = False):
-        """Run multi-timeframe scan"""
+        """Run multi-timeframe scan — V19.4: batch JSON (1 citire, 1 scriere per ciclu)"""
         setups = self.load_monitoring_setups()
-        
+
         if not setups:
             print("\n📭 No active setups in monitoring\n")
             return
-        
+
         if symbol:
-            # Scan specific symbol
             target_setups = [s for s in setups if s.get('symbol') == symbol]
             if not target_setups:
                 print(f"\n⚠️  No setup found for {symbol}\n")
                 return
             setups = target_setups
-        # else: scan all setups (default behavior — no filtering needed)
-        
+
+        # V19.4 FIX #5: Citire JSON O SINGURĂ DATĂ la începutul ciclului
+        json_data = None
+        try:
+            with open('monitoring_setups.json', 'r', encoding='utf-8') as _f:
+                json_data = json.load(_f)
+        except Exception as _je:
+            logger.warning(f"⚠️ Nu pot pre-citi monitoring_setups.json pentru batch sync: {_je}")
+
         # Print summary header
         print("\n" + "="*80)
         symbols_list = " | ".join([f"{s.get('symbol','?')} {s.get('direction','?')}" for s in setups])
@@ -984,20 +1095,22 @@ class MultiTFRadar:
         print(f"   {symbols_list}")
         print("="*80)
         sys.stdout.flush()
-        
+
         ok_count = 0
         err_count = 0
-        # Run multi-TF analysis
+        collected_results = []  # V19.4 FIX #5: colectăm (setup, result) pentru scriere batch
+
         for setup in setups:
             sym = setup.get('symbol', 'UNKNOWN')
             direction_label = setup.get('direction', '?').upper()
-            # V19.2 Fix 1+2: print inițializare per paritate + flush imediat
             print(f"\n🔄 [RADAR INIȚIALIZAT] Pornire descărcare date și analiză istorică pentru: {sym} {direction_label}...")
             sys.stdout.flush()
             try:
-                result = self.analyze_setup(setup)
+                # V19.4: save_to_json=False — NU scriem individual, scriem batch la final
+                result = self.analyze_setup(setup, save_to_json=False)
                 self.print_result(result)
-                sys.stdout.flush()  # V19.2 Fix 3: flush garantat dupa fiecare paritate
+                sys.stdout.flush()
+                collected_results.append((setup, result))
                 ok_count += 1
             except Exception as e:
                 import traceback
@@ -1007,8 +1120,17 @@ class MultiTFRadar:
                 print("="*80 + "\n")
                 sys.stdout.flush()
                 err_count += 1
-                continue  # V19.2: izolare erori — continuăm cu paritatea următoare
-        
+                continue  # izolare erori — continuăm cu paritatea următoare
+
+        # V19.4 FIX #5: O SINGURĂ SCRIERE JSON pentru toate paritățile colectate
+        if json_data is not None and collected_results:
+            self._batch_sync_to_monitoring_setups(json_data, collected_results)
+        elif json_data is None and collected_results:
+            # Fallback: pre-citirea a eșuat, scriem individual (degraded mode)
+            logger.warning("⚠️ Batch sync degradat: pre-citire JSON eșuată — scriere individuală per paritate")
+            for setup, result in collected_results:
+                self._sync_to_monitoring_setups(setup, result)
+
         print(f"\n✅ Scan complete: {ok_count} analyzed | ❌ {err_count} errors\n")
     
     def watch_mode(self, interval: int, symbol: Optional[str] = None, all_setups: bool = False):
