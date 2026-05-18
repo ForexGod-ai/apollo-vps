@@ -599,47 +599,19 @@ class MultiTFRadar:
                 f"Verifică MarketDataProvider cBot pe VPS."
             )
         
-        # ━━━ V19 FIX #1: STRUCTURAL GATE relaxat ━━━
-        # V18 citea rigid 'stop_loss' → daily_scanner salvează sub 'sl' sau 'stop_loss_price'
-        # → stop_loss_daily = 0 mereu → gate FALSE în plin pullback valid → scan 4H blocat.
-        # NOUA REGULĂ: citim din toate cheile posibile + buffer 10 pips toleranță.
-        # Dacă SL lipsește complet → setup activ (nu invalidăm fără dovadă).
-        pip_size_daily = 0.01 if 'JPY' in symbol.upper() else 0.0001
-        stop_loss_daily = float(
-            setup_data.get('sl') or
-            setup_data.get('stop_loss_price') or
-            setup_data.get('stop_loss') or 0
-        )
-        sl_buffer = pip_size_daily * 10  # 10 pips toleranță
-
-        if direction == 'LONG':
-            if stop_loss_daily > 0:
-                # Valid cât timp prețul nu a spart SL-ul (cu buffer 10 pips)
-                daily_zone_validated = current_price > (stop_loss_daily - sl_buffer)
-            else:
-                # Fără SL setat = nu invalidăm, lăsăm scanul să ruleze
-                daily_zone_validated = True
-        else:  # SHORT
-            if stop_loss_daily > 0:
-                # Valid cât timp prețul nu a spart SL-ul în sus (cu buffer 10 pips)
-                daily_zone_validated = current_price < (stop_loss_daily + sl_buffer)
-            else:
-                # Fără SL setat = nu invalidăm
-                daily_zone_validated = True
-        
-        # ━━━ V19.2 FIX 2: SCANARE NECONDIȚIONATĂ ━━━
-        # Descarca bare și analizează 1H+4H PENTRU TOATE PARECHE, indiferent de Daily Gate.
-        # Structural Gate (daily_zone_validated) este aplicat EXCLUSIV la verdict/execution_ready.
-        # Colonelul vrea vizibilitate totală în consolă pentru toate cele 7 perechi.
+        # ━━━ V19.5: POARTA DAILY ELIMINATĂ DEFINITIV ━━━
+        # Radarul este EXCLUSIV un Scanner de Aliniere Fractală — Ochii sistemului.
+        # NU are voie să blocheze execuția pe baza SL-ului Daily.
+        # Aceasta este responsabilitatea EXCLUSIVĂ a Executorului (Mâinile).
+        # Radarul citește DOAR direcția Daily ca Bias și descarcă imediat barele 4H/1H.
         required_direction = 'bullish' if direction == 'LONG' else 'bearish'
 
         print(f"\n{'='*80}")
-        print(f"🔍 Analyzing {symbol} - {direction}")
+        print(f"🔍 [{symbol}] Bias Daily: {direction} | Scanare structurală 4H+1H...")
         print(f"{'='*80}")
         print(f"💰 Current Price: {current_price:.5f}")
-        print(f"📊 Daily FVG: [{daily_fvg_bottom:.5f} - {daily_fvg_top:.5f}]")
-        _gate_status = "✅ Daily Gate OPEN" if daily_zone_validated else "⚠️ Daily Gate CLOSED (SL breached — scan pentru vizibilitate)" 
-        print(f"{_gate_status}")
+        print(f"📊 Daily FVG Referință: [{daily_fvg_bottom:.5f} - {daily_fvg_top:.5f}]")
+        print(f"✅ Poartă: PERMANENT DESCHISĂ — decizia de invalidare aparține Executorului")
         sys.stdout.flush()
 
         # Analyze 1H — ALWAYS
@@ -664,30 +636,9 @@ class MultiTFRadar:
             smc_detector=self.smc_4h
         )
 
-        # ━━━ STRUCTURAL GATE: determina execution_ready ━━━
-        # Dacă zona Daily este invalidă (SL spart) → NU executăm, dar afisăm tot
-        if not daily_zone_validated:
-            print(f"\n⏳ [{symbol}] Daily structural gate CLOSED — execution blocked (SL invalidat)")
-            sys.stdout.flush()
-            result = MultiTFResult(
-                symbol=symbol,
-                direction=direction,
-                daily_zone_validated=False,
-                daily_fvg_top=daily_fvg_top,
-                daily_fvg_bottom=daily_fvg_bottom,
-                daily_entry=daily_entry,
-                current_price=current_price,
-                tf_1h=tf_1h,
-                tf_4h=tf_4h,
-                execution_ready=False,
-                verdict="⏳ PRICE BELOW SL — SETUP STRUCTURALLY INVALIDATED",
-                priority_timeframe=None
-            )
-            if save_to_json:
-                self._sync_to_monitoring_setups(setup_data, result)
-            return result
-
-        # Determine execution readiness and priority
+        # ━━━ V19.5: Determină execution_ready — FĂRĂ nicio poartă Daily ━━━
+        # Radarul validează EXCLUSIV alinierea fractală 4H/1H cu biasul Daily.
+        # Invalidarea pe SL = responsabilitatea EXCLUSIVĂ a Executorului.
         execution_ready = False
         priority_timeframe = None
         verdict = "👀 MONITORING BOTH TIMEFRAMES"
@@ -712,7 +663,7 @@ class MultiTFRadar:
         result = MultiTFResult(
             symbol=symbol,
             direction=direction,
-            daily_zone_validated=daily_zone_validated,
+            daily_zone_validated=True,  # V19.5: permanent True — Radarul nu invalidează niciodată
             daily_fvg_top=daily_fvg_top,
             daily_fvg_bottom=daily_fvg_bottom,
             daily_entry=daily_entry,
