@@ -813,7 +813,14 @@ class TelegramCommandCenter:
                 closed_pnl = 0.0
                 trade_count = 0
                 balance = 0.0
-                today = datetime.now().strftime('%Y-%m-%d')
+                # V19.6.10: Folosim data României, nu UTC — la 00:11 RO = 21:11 UTC
+                # data UTC e încă ziua precedentă → P/L arată cifre din ziua veche
+                try:
+                    import pytz as _pytz_td
+                    _ro_tz_td = _pytz_td.timezone('Europe/Bucharest')
+                    today = datetime.now(_ro_tz_td).strftime('%Y-%m-%d')
+                except Exception:
+                    today = (datetime.now(timezone.utc) + timedelta(hours=3)).strftime('%Y-%m-%d')
 
                 if trade_history_file.exists():
                     with open(trade_history_file, 'r', encoding='utf-8') as f:
@@ -1017,7 +1024,13 @@ class TelegramCommandCenter:
                 if rej_file.exists():
                     with open(rej_file, 'r') as f:
                         rej_data = json.load(f)
-                    today_str = datetime.now(timezone.utc).date().isoformat()
+                    # V19.6.10: data României pentru rejections
+                    try:
+                        import pytz as _pytz_rj
+                        _ro_tz_rj = _pytz_rj.timezone('Europe/Bucharest')
+                        today_str = datetime.now(_ro_tz_rj).strftime('%Y-%m-%d')
+                    except Exception:
+                        today_str = (datetime.now(timezone.utc) + timedelta(hours=3)).strftime('%Y-%m-%d')
                     if rej_data.get('date') == today_str:
                         total_rej = rej_data.get('total', 0)
                         by_reason = rej_data.get('by_reason', {})

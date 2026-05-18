@@ -183,7 +183,13 @@ class SetupExecutorMonitor:
         # V9.3 DAILY REJECTION COUNTER (for /status dashboard)
         self.daily_rejections = 0
         self.daily_rejections_by_reason = {}  # {"Daily Loss Limit": 42, "Duplicate Guard": 5}
-        self.daily_rejections_date = datetime.now(timezone.utc).date().isoformat()
+        # V19.6.10: data României pentru reset zilnic corect (la 00:05 RO, nu 03:05 RO)
+        try:
+            import pytz as _pytz_init
+            _ro_tz_init = _pytz_init.timezone('Europe/Bucharest')
+            self.daily_rejections_date = datetime.now(_ro_tz_init).strftime('%Y-%m-%d')
+        except Exception:
+            self.daily_rejections_date = (datetime.now(timezone.utc) + timedelta(hours=3)).strftime('%Y-%m-%d')
         
         # ━━━ V9.3 HTTP CACHE ━━━
         # Cache D1 (4h TTL) and H4 (30m TTL) to reduce redundant HTTP calls to cBot
@@ -474,7 +480,12 @@ class SetupExecutorMonitor:
             # Reset daily rejection counter
             self.daily_rejections = 0
             self.daily_rejections_by_reason = {}
-            self.daily_rejections_date = datetime.now(timezone.utc).date().isoformat()
+            try:
+                import pytz as _pytz_wu
+                _ro_tz_wu = _pytz_wu.timezone('Europe/Bucharest')
+                self.daily_rejections_date = datetime.now(_ro_tz_wu).strftime('%Y-%m-%d')
+            except Exception:
+                self.daily_rejections_date = (datetime.now(timezone.utc) + timedelta(hours=3)).strftime('%Y-%m-%d')
             
             # Clean up state file
             try:
@@ -516,8 +527,13 @@ class SetupExecutorMonitor:
     
     def _track_rejection(self, reason: str):
         """V9.3: Track rejection for /status dashboard counter"""
-        # Reset counter on new UTC day
-        today = datetime.now(timezone.utc).date().isoformat()
+        # V19.6.10: Reset counter pe ziua României, nu UTC
+        try:
+            import pytz as _pytz_tr
+            _ro_tz_tr = _pytz_tr.timezone('Europe/Bucharest')
+            today = datetime.now(_ro_tz_tr).strftime('%Y-%m-%d')
+        except Exception:
+            today = (datetime.now(timezone.utc) + timedelta(hours=3)).strftime('%Y-%m-%d')
         if today != self.daily_rejections_date:
             self.daily_rejections = 0
             self.daily_rejections_by_reason = {}
