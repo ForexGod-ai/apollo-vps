@@ -1902,7 +1902,10 @@ class SetupExecutorMonitor:
                             logger.success(f"✅ [EXECUTE_NOW] {symbol} entry executat cu succes!")
                         else:
                             logger.error(f"❌ [EXECUTE_NOW] {symbol} execuție respinsă de Risk Manager")
+                            self._track_rejection(f"EXECUTE_NOW loss limit rejected for {symbol}")  # V19.6 FIX: contorizare rejection
                             setups[i]['EXECUTE_NOW'] = False
+                            setups[i]['last_rejection_time'] = datetime.now(timezone.utc).isoformat()
+                            setups[i]['last_rejection_reason'] = 'Risk Manager: EXECUTE_NOW rejected'
                             updated = True
                         continue
                     # ━━━ END V18 PRE-FETCH CHECK ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
