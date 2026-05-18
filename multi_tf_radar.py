@@ -381,11 +381,20 @@ class MultiTFRadar:
 
             # Detect FVG created by CHoCH
             # detect_fvg() returns a single FVG object or None (not a list)
-            latest_fvg = smc_detector.detect_fvg(
-                df,
-                choch=latest_choch,
-                current_price=current_price
-            )
+            # V19.2 FIX 1: wrap in try/except — smc_detector.detect_fvg() poate crapa cu
+            # ValueError/f-string crash intern. Prinsă eroarea → forțăm Fibo Fallback.
+            latest_fvg = None
+            try:
+                latest_fvg = smc_detector.detect_fvg(
+                    df,
+                    choch=latest_choch,
+                    current_price=current_price
+                )
+            except Exception as fvg_err:
+                print(f"  ⚠️ [PATCH RADAR] detect_fvg structural crash caught: {fvg_err}")
+                print(f"  ⚠️ [PATCH RADAR] Forcing V15.4 Fibo Fallback.")
+                sys.stdout.flush()
+                latest_fvg = None
             
             if not latest_fvg:
                 # V15.4 FIBO FALLBACK: CHoCH detectat dar FVG nu există sau a fost consumat.
@@ -576,61 +585,24 @@ class MultiTFRadar:
                 # Fără SL setat = nu invalidăm
                 daily_zone_validated = True
         
-        if not daily_zone_validated:
-            # Price invalidated structurally (below SL) — stop multi-TF analysis
-            return MultiTFResult(
-                symbol=symbol,
-                direction=direction,
-                daily_zone_validated=False,
-                daily_fvg_top=daily_fvg_top,
-                daily_fvg_bottom=daily_fvg_bottom,
-                daily_entry=daily_entry,
-                current_price=current_price,
-                tf_1h=TimeframeAnalysis(
-                    timeframe="1H",
-                    choch_detected=False,
-                    choch_direction=None,
-                    choch_time=None,
-                    choch_price=None,
-                    fvg_detected=False,
-                    fvg_top=None,
-                    fvg_bottom=None,
-                    fvg_entry=None,
-                    in_fvg=False,
-                    distance_to_fvg_pips=0.0,
-                    status=PullbackStatus.WAITING_DAILY_FVG
-                ),
-                tf_4h=TimeframeAnalysis(
-                    timeframe="4H",
-                    choch_detected=False,
-                    choch_direction=None,
-                    choch_time=None,
-                    choch_price=None,
-                    fvg_detected=False,
-                    fvg_top=None,
-                    fvg_bottom=None,
-                    fvg_entry=None,
-                    in_fvg=False,
-                    distance_to_fvg_pips=0.0,
-                    status=PullbackStatus.WAITING_DAILY_FVG
-                ),
-                execution_ready=False,
-                verdict="⏳ PRICE BELOW SL — SETUP STRUCTURALLY INVALIDATED",
-                priority_timeframe=None
-            )
-        
-        # Price in Daily FVG - analyze both timeframes
+        # ━━━ V19.2 FIX 2: SCANARE NECONDIȚIONATĂ ━━━
+        # Descarca bare și analizează 1H+4H PENTRU TOATE PARECHE, indiferent de Daily Gate.
+        # Structural Gate (daily_zone_validated) este aplicat EXCLUSIV la verdict/execution_ready.
+        # Colonelul vrea vizibilitate totală în consolă pentru toate cele 7 perechi.
         required_direction = 'bullish' if direction == 'LONG' else 'bearish'
-        
+
         print(f"\n{'='*80}")
         print(f"🔍 Analyzing {symbol} - {direction}")
         print(f"{'='*80}")
         print(f"💰 Current Price: {current_price:.5f}")
         print(f"📊 Daily FVG: [{daily_fvg_bottom:.5f} - {daily_fvg_top:.5f}]")
-        print(f"✅ Price IN Daily FVG - Scanning 1H + 4H...\n")
-        
-        # Analyze 1H
-        print("🔎 [1H] SNIPER SCAN (ATR 0.8x)...")
+        _gate_status = "✅ Daily Gate OPEN" if daily_zone_validated else "⚠️ Daily Gate CLOSED (SL breached — scan pentru vizibilitate)" 
+        print(f"{_gate_status}")
+        sys.stdout.flush()
+
+        # Analyze 1H — ALWAYS
+        print("\n🔎 [1H] SNIPER SCAN (ATR 0.8x)...")
+        sys.stdout.flush()
         tf_1h = self.analyze_timeframe(
             symbol=symbol,
             timeframe="H1",
@@ -638,9 +610,10 @@ class MultiTFRadar:
             current_price=current_price,
             smc_detector=self.smc_1h
         )
-        
-        # Analyze 4H
+
+        # Analyze 4H — ALWAYS
         print("\n🔎 [4H] HIGH CONFIDENCE SCAN (ATR 1.0x — V15.4)...")
+        sys.stdout.flush()
         tf_4h = self.analyze_timeframe(
             symbol=symbol,
             timeframe="H4",
@@ -648,7 +621,30 @@ class MultiTFRadar:
             current_price=current_price,
             smc_detector=self.smc_4h
         )
-        
+
+        # ━━━ STRUCTURAL GATE: determina execution_ready ━━━
+        # Dacă zona Daily este invalidă (SL spart) → NU executăm, dar afisăm tot
+        if not daily_zone_validated:
+            print(f"\n⏳ [{symbol}] Daily structural gate CLOSED — execution blocked (SL invalidat)")
+            sys.stdout.flush()
+            result = MultiTFResult(
+                symbol=symbol,
+                direction=direction,
+                daily_zone_validated=False,
+                daily_fvg_top=daily_fvg_top,
+                daily_fvg_bottom=daily_fvg_bottom,
+                daily_entry=daily_entry,
+                current_price=current_price,
+                tf_1h=tf_1h,
+                tf_4h=tf_4h,
+                execution_ready=False,
+                verdict="⏳ PRICE BELOW SL — SETUP STRUCTURALLY INVALIDATED",
+                priority_timeframe=None
+            )
+            if save_to_json:
+                self._sync_to_monitoring_setups(setup_data, result)
+            return result
+
         # Determine execution readiness and priority
         execution_ready = False
         priority_timeframe = None
@@ -1001,7 +997,7 @@ class MultiTFRadar:
             try:
                 result = self.analyze_setup(setup)
                 self.print_result(result)
-                sys.stdout.flush()
+                sys.stdout.flush()  # V19.2 Fix 3: flush garantat dupa fiecare paritate
                 ok_count += 1
             except Exception as e:
                 import traceback
