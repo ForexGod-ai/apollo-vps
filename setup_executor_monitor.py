@@ -1902,11 +1902,28 @@ class SetupExecutorMonitor:
                             logger.success(f"✅ [EXECUTE_NOW] {symbol} entry executat cu succes!")
                         else:
                             logger.error(f"❌ [EXECUTE_NOW] {symbol} execuție respinsă de Risk Manager")
-                            self._track_rejection(f"EXECUTE_NOW loss limit rejected for {symbol}")  # V19.6 FIX: contorizare rejection
+                            self._track_rejection(f"EXECUTE_NOW loss limit rejected for {symbol}")
                             setups[i]['EXECUTE_NOW'] = False
                             setups[i]['last_rejection_time'] = datetime.now(timezone.utc).isoformat()
                             setups[i]['last_rejection_reason'] = 'Risk Manager: EXECUTE_NOW rejected'
                             updated = True
+                            # V19.6.2 FIX: Activează Deep Sleep dacă daily loss limit e atins
+                            # _enter_deep_sleep() era definit dar NICIODATĂ apelat → /status arăta
+                            # "ACTIVE" deși sistemul refuza toate trade-urile
+                            try:
+                                _rm = getattr(self.executor, 'risk_manager', None)
+                                if _rm is not None:
+                                    _pnl = _rm.get_daily_pnl()
+                                    _bal = _pnl.get('balance', 1)
+                                    _loss_pct = (_pnl.get('total_pnl', 0) / _bal * 100) if _bal > 0 else 0
+                                    _limit = getattr(_rm, 'max_daily_loss_pct', 10.0)
+                                    if _loss_pct <= -_limit:
+                                        self._enter_deep_sleep(
+                                            f"Daily loss limit reached ({_loss_pct:.2f}%) — auto Deep Sleep"
+                                        )
+                                        logger.warning(f"😴 [V19.6.2] Deep Sleep activat: {_loss_pct:.2f}% loss >= -{_limit}%")
+                            except Exception as _ds_err:
+                                logger.warning(f"⚠️ Deep Sleep check error: {_ds_err}")
                         continue
                     # ━━━ END V18 PRE-FETCH CHECK ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
