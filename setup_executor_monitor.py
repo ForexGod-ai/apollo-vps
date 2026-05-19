@@ -1958,7 +1958,29 @@ class SetupExecutorMonitor:
                             f"SL={_sl:.5f} TP={_tp:.5f} | SL={_sl_pips_en:.1f}p | "
                             f"Bal={_balance_en:.0f}$ | Risk=5% | Lots={_lot_size_en:.2f}"
                         )
-                        _en_comment = f"D1_EXECUTE_NOW_V19.6_{setup.get('direction','').upper()}_E1"
+
+                        # V19.7 FIX: Apelăm SENTINELA și în PRE-FETCH EXECUTE_NOW
+                        # Până acum acest bloc executa direct fără Guard#1 (RR) sau Guard#2 (SL≤50p)
+                        # AUDUSD 19May: SL=103p, RR=1.41 → executat fără nicio barieră de risc!
+                        _sentinel_ok_en, _sentinel_reason_en = self._final_safety_check(
+                            symbol=symbol,
+                            direction=setup.get('direction', 'buy'),
+                            entry_price=_en_entry,
+                            stop_loss=_sl,
+                            take_profit=_tp,
+                            setup=setup
+                        )
+                        if not _sentinel_ok_en:
+                            logger.critical(
+                                f"🚨 [V19.7 SENTINELĂ EXECUTE_NOW] {symbol} BLOCAT: {_sentinel_reason_en}"
+                            )
+                            self._track_rejection(f"EXECUTE_NOW sentinel rejected: {_sentinel_reason_en[:60]}")
+                            setups[i]['EXECUTE_NOW'] = False
+                            setups[i]['last_rejection_reason'] = f'Sentinel: {_sentinel_reason_en}'
+                            updated = True
+                            continue
+
+                        _en_comment = f"D1_EXECUTE_NOW_V19.7_{setup.get('direction','').upper()}_E1"
                         success = self.executor.execute_trade(
                             symbol=symbol,
                             direction=setup.get('direction', 'buy'),

@@ -2585,10 +2585,11 @@ class SMCDetector:
                 print(f"   🛡️ [V14.1 SL STRUCTURAL LONG] Ultimul swing Low 4H pre-CHoCH valid: "
                       f"idx={chosen_sl_obj.index} wick_low={df_4h['low'].iloc[chosen_sl_obj.index]:.5f} "
                       f"→ SL={stop_loss:.5f} (distanță={sl_distance_pips:.1f} pips, ATR={atr_14/pip_size:.1f}p)")
-                # Bariera de siguranță: SL > 100 pips = structura invalida sau setup greșit
-                _max_sl_pips = 200 if 'JPY' in symbol else 100
+                # V19.7 FIX: Redus limita SL de la 100 la 50 pips pentru non-JPY
+                # AUDUSD 19May: SL=103.2p a trecut de 100p cap și a cauzat trade bad
+                _max_sl_pips = 150 if 'JPY' in symbol else 50
                 if sl_distance_pips > _max_sl_pips:
-                    print(f"   ⛔ [V14.1 REJECT: SL {sl_distance_pips:.1f} pips > {_max_sl_pips} max] "
+                    print(f"   ⛔ [V19.7 REJECT: SL {sl_distance_pips:.1f} pips > {_max_sl_pips} max] "
                           f"{symbol} — SL structural prea departe, trade ANULAT.")
                     return None, None, None
             else:
@@ -2691,10 +2692,10 @@ class SMCDetector:
                 print(f"   🛡️ [V14.1 SL STRUCTURAL SHORT] Ultimul swing High 4H pre-CHoCH valid: "
                       f"idx={chosen_sh_obj.index} wick_high={df_4h['high'].iloc[chosen_sh_obj.index]:.5f} "
                       f"→ SL={stop_loss:.5f} (distanță={sl_distance_pips:.1f} pips, ATR={atr_14/pip_size:.1f}p)")
-                # Bariera de siguranță: SL > 100 pips = structura invalidă sau setup greșit
-                _max_sl_pips = 200 if 'JPY' in symbol else 100
+                # V19.7 FIX: Redus limita SL de la 100 la 50 pips pentru non-JPY
+                _max_sl_pips = 150 if 'JPY' in symbol else 50
                 if sl_distance_pips > _max_sl_pips:
-                    print(f"   ⛔ [V14.1 REJECT: SL {sl_distance_pips:.1f} pips > {_max_sl_pips} max] "
+                    print(f"   ⛔ [V19.7 REJECT: SL {sl_distance_pips:.1f} pips > {_max_sl_pips} max] "
                           f"{symbol} — SL structural prea departe, trade ANULAT.")
                     return None, None, None
             else:
