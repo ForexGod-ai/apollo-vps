@@ -178,6 +178,14 @@ class SetupExecutorMonitor:
         # Zero HTTP calls, zero CPU usage — the system SLEEPS intelligently.
         self.deep_sleep_until = None  # datetime (UTC) — None = ACTIVE
         self.deep_sleep_state_file = Path("data/deep_sleep_state.json")  # Persist across restarts
+
+        # V19.9 MANUAL RESUME OVERRIDE
+        # Când Colonelul dă /resume, acest flag devine True și BLOCHEAZĂ re-intrarea
+        # în Deep Sleep pe baza daily loss până la resetul la 00:05 ora României.
+        # Comunicare inter-proces prin fișier system_resumed.json (scris de telegram_command_center)
+        self.manual_resume_triggered = False
+        self._check_manual_resume_marker()  # Verifică la pornire dacă există marker
+
         self._load_deep_sleep_state()
         
         # V9.3 DAILY REJECTION COUNTER (for /status dashboard)
@@ -350,6 +358,39 @@ class SetupExecutorMonitor:
                 target_naive = target_naive + timedelta(days=1)
             return (target_naive - ro_offset).replace(tzinfo=timezone.utc)
 
+    def _check_manual_resume_marker(self):
+        """
+        V19.9: Verifică dacă Colonelul a dat /resume azi.
+        Dacă fișierul data/system_resumed.json există și a fost scris AZI (ora României),
+        setăm manual_resume_triggered=True și ștergem deep_sleep_state.json.
+        """
+        try:
+            resume_marker = Path(__file__).parent / 'data' / 'system_resumed.json'
+            if not resume_marker.exists():
+                return
+            with open(resume_marker, 'r', encoding='utf-8') as _f:
+                _rm_data = json.load(_f)
+            _resumed_at_str = _rm_data.get('resumed_at', '')
+            if not _resumed_at_str:
+                return
+            _resumed_at = datetime.fromisoformat(_resumed_at_str)
+            # Verifică dacă e azi în ora României
+            try:
+                import pytz as _pytz_mr
+                _ro_tz_mr = _pytz_mr.timezone('Europe/Bucharest')
+                _today_ro = datetime.now(_ro_tz_mr).strftime('%Y-%m-%d')
+                _resumed_day_ro = _resumed_at.astimezone(_ro_tz_mr).strftime('%Y-%m-%d')
+                is_today = (_resumed_day_ro == _today_ro)
+            except Exception:
+                is_today = (_resumed_at.date() == datetime.now(timezone.utc).date())
+            if is_today:
+                self.manual_resume_triggered = True
+                # Ștergem și deep_sleep_state.json dacă există
+                self.deep_sleep_state_file.unlink(missing_ok=True)
+                logger.success("🔱 [V19.9] manual_resume_triggered=True — bypass daily loss check activ")
+        except Exception as _mr_err:
+            logger.debug(f"⚠️ _check_manual_resume_marker: {_mr_err}")
+
     def _load_deep_sleep_state(self):
         """Load Deep Sleep state from disk (survives restarts)"""
         try:
@@ -407,6 +448,12 @@ class SetupExecutorMonitor:
         Instead: SLEEP until the limit resets at midnight UTC.
         Impact: 77,760 HTTP calls/day → ZERO.
         """
+        # V19.9 MANUAL RESUME GUARD: Dacă Colonelul a dat /resume azi, NU intrăm în Deep Sleep
+        # indiferent de daily loss. Override-ul expiră automat la 00:05 ora României.
+        if self.manual_resume_triggered:
+            logger.warning(f"🔱 [V19.9] _enter_deep_sleep BLOCAT — manual_resume_triggered=True ({reason})")
+            return
+
         # V19.6.2 FIX: guard — dacă deja în Deep Sleep, nu mai scriem/trimitem din nou
         if self.deep_sleep_until is not None:
             now_check = datetime.now(timezone.utc)
@@ -473,10 +520,22 @@ class SetupExecutorMonitor:
             
             return True  # ← SLEEPING: Skip all processing
         else:
-            # WAKE UP!
+            # WAKE UP! (auto-wake la 00:05 ora României = nou trading day)
             self.deep_sleep_until = None
             self._deep_sleep_log_counter = 0
-            
+
+            # V19.9: Reset manual_resume_triggered la nou trading day
+            # Override-ul Colonelului expiră odată cu ziua de trading
+            if self.manual_resume_triggered:
+                self.manual_resume_triggered = False
+                logger.info("🔱 [V19.9] manual_resume_triggered resetat la 00:05 — nou trading day")
+                # Ștergem și marker-ul de pe disc
+                try:
+                    _rm_path = Path(__file__).parent / 'data' / 'system_resumed.json'
+                    _rm_path.unlink(missing_ok=True)
+                except Exception:
+                    pass
+
             # Reset daily rejection counter
             self.daily_rejections = 0
             self.daily_rejections_by_reason = {}
@@ -486,7 +545,7 @@ class SetupExecutorMonitor:
                 self.daily_rejections_date = datetime.now(_ro_tz_wu).strftime('%Y-%m-%d')
             except Exception:
                 self.daily_rejections_date = (datetime.now(timezone.utc) + timedelta(hours=3)).strftime('%Y-%m-%d')
-            
+
             # Clean up state file
             try:
                 self.deep_sleep_state_file.unlink(missing_ok=True)
@@ -1826,6 +1885,11 @@ class SetupExecutorMonitor:
         6. After Entry1 filled → wait for 4H CHoCH for Entry2 (same as V3.1)
         """
         # ━━━ V9.3 DEEP SLEEP CHECK (MUST be first — zero cost) ━━━
+        # V19.9: Verifică marker-ul system_resumed.json la fiecare ciclu
+        # (Colonelul poate da /resume în orice moment — trebuie prins live, nu doar la init)
+        if not self.manual_resume_triggered:
+            self._check_manual_resume_marker()
+
         if self._check_deep_sleep():
             return  # ← EXIT: No HTTP calls, no analysis, no CPU usage
         
@@ -2134,11 +2198,14 @@ class SetupExecutorMonitor:
                                         pass
                                     _loss_pct = (_pnl.get('total_pnl', 0) / _bal * 100) if _bal > 0 else 0
                                     _limit = getattr(_rm, 'max_daily_loss_pct', 10.0)
-                                    if _loss_pct <= -_limit:
+                                    # V19.9: BYPASS dacă Colonelul a dat /resume manual
+                                    if _loss_pct <= -_limit and not self.manual_resume_triggered:
                                         self._enter_deep_sleep(
                                             f"Daily loss limit reached ({_loss_pct:.2f}%) — auto Deep Sleep"
                                         )
                                         logger.warning(f"😴 [V19.8] Deep Sleep activat: {_loss_pct:.2f}% loss >= -{_limit}%")
+                                    elif _loss_pct <= -_limit and self.manual_resume_triggered:
+                                        logger.warning(f"🔱 [V19.9] Daily loss {_loss_pct:.2f}% >= -{_limit}% DAR manual_resume_triggered=True — Deep Sleep BLOCAT")
                             except Exception as _ds_err:
                                 logger.warning(f"⚠️ Deep Sleep check error: {_ds_err}")
                         continue

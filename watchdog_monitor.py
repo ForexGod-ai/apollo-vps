@@ -465,7 +465,7 @@ class WatchdogMonitor:
                 f"🚨 <b>SYSTEM ACTIVE BUT TRADING IS LOCKED</b>\n\n"
                 f"🛌 Status: <b>DEEP SLEEP / LOCKDOWN</b>\n"
                 f"📝 Reason: <i>{reason}</i>\n"
-                f"⏰ Wake: <code>{wake_display} UTC</code>\n\n"
+                f"⏰ Wake: <code>{wake_display}</code>\n\n"
                 f"⚠️ No trades will be opened until sleep expires\n"
                 f"or you send <code>/resume</code> to unlock manually.\n\n"
                 f"🔄 Next reminder in <b>4 hours</b>"
