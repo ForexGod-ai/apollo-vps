@@ -1914,24 +1914,126 @@ class SetupExecutorMonitor:
                 logger.debug(f"{zone_emoji} Processing {symbol} (in_zone={in_zone})")
                 
                 try:
-                    # ━━━ V18: EXECUTE_NOW — PRE-FETCH CHECK ━━━━━━━━━━━━━━━━━━━━━━━━━
-                    # Dacă Radarul a pus EXECUTE_NOW=True, nu avem nevoie de date D1/4H/1H
-                    # pentru validare structurală — executăm direct cu SL/TP din JSON.
+                    # ━━━ V19.8: EXECUTE_NOW — CALCUL STRUCTURAL LIVE (înlocuiește PRE-FETCH static) ━━━
+                    # NZDUSD 19May bug: SL/TP static din JSON (calculat față de alt entry) + lot 0.01 fix
+                    # V19.8 FIX COMPLET:
+                    #   1. Descarcă date live 4H + D1 din cBot (același cache ca restul executorului)
+                    #   2. Recalculează SL structural pe 4H (ultimul swing point pre-CHoCH)
+                    #   3. Recalculează TP structural pe D1 (primul swing point dincolo de preț)
+                    #   4. Calculează loturi dinamic: balance * 5% / (SL_pips * pip_value)
+                    #   5. Sentinelă pe valorile REALE înainte de execuție
                     if setup.get('EXECUTE_NOW') == True and not setup.get('entry1_filled', False):
+
+                        # ── STEP 1: Entry price — din FVG-ul radar (midpoint zonă de intrare) ──────
                         _en_entry = (
                             setup.get('radar_4h_fvg_entry') or
                             setup.get('radar_1h_fvg_entry') or
                             setup.get('entry_price', 0)
                         )
-                        _sl = setup.get('stop_loss', 0)
-                        _tp = setup.get('take_profit', 0)
-
-                        # ━━━ V19.6 FIX: CALCUL DINAMIC LOT 5% RISC (înlocuiește 0.01 hardcodat) ━━━
+                        _en_direction = setup.get('direction', 'buy').lower()
                         _pip_size_en = 0.01 if 'JPY' in symbol.upper() else 0.0001
-                        _pip_value_en = 8.33 if 'JPY' in symbol.upper() else 10.0  # USD per pip per lot standard
+                        _pip_value_en = 8.33 if 'JPY' in symbol.upper() else 10.0
+
+                        # ── STEP 2: Descarcă date live 4H + D1 pentru calcul structural ────────────
+                        _df_4h_en = self._get_cached_data(symbol, "H4", 225)
+                        _df_d1_en = self._get_cached_data(symbol, "D1", 100)
+
+                        _sl = None
+                        _tp = None
+
+                        if _df_4h_en is not None and not _df_4h_en.empty and \
+                           _df_d1_en is not None and not _df_d1_en.empty:
+                            # ── STEP 3: Calcul SL structural pe 4H ───────────────────────────────────
+                            # SL BUY  = ultimul Swing Low semnificativ 4H (sub entry)
+                            # SL SELL = ultimul Swing High semnificativ 4H (deasupra entry)
+                            try:
+                                _sl_buffer = _pip_size_en * 2  # 2 pips buffer
+                                _atr_4h = (_df_4h_en['high'] - _df_4h_en['low']).rolling(14).mean().iloc[-1]
+
+                                if _en_direction == 'buy':
+                                    _swing_lows_en = self.smc_detector.detect_swing_lows(_df_4h_en)
+                                    # Filtrare: sub entry, semnificativi (min 0.5x ATR față de entry)
+                                    _valid_sl_candidates = [
+                                        s for s in _swing_lows_en
+                                        if _df_4h_en['low'].iloc[s.index] < _en_entry
+                                        and (_en_entry - _df_4h_en['low'].iloc[s.index]) >= _atr_4h * 0.5
+                                    ]
+                                    if _valid_sl_candidates:
+                                        # Cel mai recent swing low valid
+                                        _best_sl = sorted(_valid_sl_candidates, key=lambda s: s.index, reverse=True)[0]
+                                        _sl = _df_4h_en['low'].iloc[_best_sl.index] - _sl_buffer
+                                    else:
+                                        # Fallback: min body 40 bare
+                                        _sl = _df_4h_en[['open', 'close']].min(axis=1).iloc[-40:].min() - _sl_buffer
+                                else:  # sell
+                                    _swing_highs_en = self.smc_detector.detect_swing_highs(_df_4h_en)
+                                    _valid_sl_candidates = [
+                                        s for s in _swing_highs_en
+                                        if _df_4h_en['high'].iloc[s.index] > _en_entry
+                                        and (_df_4h_en['high'].iloc[s.index] - _en_entry) >= _atr_4h * 0.5
+                                    ]
+                                    if _valid_sl_candidates:
+                                        _best_sl = sorted(_valid_sl_candidates, key=lambda s: s.index, reverse=True)[0]
+                                        _sl = _df_4h_en['high'].iloc[_best_sl.index] + _sl_buffer
+                                    else:
+                                        _sl = _df_4h_en[['open', 'close']].max(axis=1).iloc[-40:].max() + _sl_buffer
+
+                                # ── STEP 4: Calcul TP structural pe D1 ───────────────────────────────
+                                # TP BUY  = primul Swing High D1 DEASUPRA prețului curent
+                                # TP SELL = primul Swing Low D1 SUB prețul curent
+                                _current_price_en = _df_4h_en['close'].iloc[-1]
+
+                                if _en_direction == 'buy':
+                                    _swing_highs_d1_en = self.smc_detector.detect_swing_highs(_df_d1_en)
+                                    _highs_above = [sh for sh in _swing_highs_d1_en if sh.price > _current_price_en]
+                                    if _highs_above:
+                                        _nearest_high = min(_highs_above, key=lambda sh: sh.price)
+                                        _tp = _df_d1_en['high'].iloc[_nearest_high.index]
+                                    else:
+                                        # Fallback: max body D1
+                                        _tp = _df_d1_en[['open', 'close']].max(axis=1).iloc[:-1].max()
+                                else:  # sell
+                                    _swing_lows_d1_en = self.smc_detector.detect_swing_lows(_df_d1_en)
+                                    _lows_below = [sl for sl in _swing_lows_d1_en if sl.price < _current_price_en]
+                                    if _lows_below:
+                                        _nearest_low = max(_lows_below, key=lambda sl: sl.price)
+                                        _tp = _df_d1_en['low'].iloc[_nearest_low.index]
+                                    else:
+                                        _tp = _df_d1_en[['open', 'close']].min(axis=1).iloc[:-1].min()
+
+                                logger.info(
+                                    f"📐 [V19.8 STRUCTURAL CALC] {symbol} {_en_direction.upper()}: "
+                                    f"Entry={_en_entry:.5f} | SL={_sl:.5f} ({abs(_en_entry-_sl)/_pip_size_en:.1f}p) | "
+                                    f"TP={_tp:.5f} ({abs(_tp-_en_entry)/_pip_size_en:.1f}p)"
+                                )
+                            except Exception as _calc_err:
+                                logger.warning(f"⚠️ [V19.8 CALC ERR] {symbol}: {_calc_err} — fallback la SL/TP din JSON")
+                                _sl = None
+                                _tp = None
+
+                        # Fallback la valorile din JSON dacă datele live nu sunt disponibile
+                        if _sl is None or _tp is None:
+                            _sl = setup.get('stop_loss', 0)
+                            _tp = setup.get('take_profit', 0)
+                            logger.warning(f"⚠️ [V19.8 FALLBACK] {symbol}: date live indisponibile — SL/TP din JSON")
+
+                        # Validare direcție: SL sub entry pentru BUY, deasupra pentru SELL
+                        if _en_direction == 'buy' and _sl >= _en_entry:
+                            _sl = setup.get('stop_loss', 0)
+                            logger.warning(f"⚠️ [V19.8 DIR GUARD] {symbol} BUY: SL calculat deasupra entry — revert JSON")
+                        if _en_direction == 'sell' and _sl <= _en_entry:
+                            _sl = setup.get('stop_loss', 0)
+                            logger.warning(f"⚠️ [V19.8 DIR GUARD] {symbol} SELL: SL calculat sub entry — revert JSON")
+                        if _en_direction == 'buy' and _tp is not None and _tp <= _en_entry:
+                            _tp = setup.get('take_profit', 0)
+                            logger.warning(f"⚠️ [V19.8 DIR GUARD] {symbol} BUY: TP calculat sub entry — revert JSON")
+                        if _en_direction == 'sell' and _tp is not None and _tp >= _en_entry:
+                            _tp = setup.get('take_profit', 0)
+                            logger.warning(f"⚠️ [V19.8 DIR GUARD] {symbol} SELL: TP calculat deasupra entry — revert JSON")
+
+                        # ── STEP 5: Calcul dinamic loturi — 5% risc din balanță live ────────────────
                         _sl_pips_en = abs(_en_entry - _sl) / _pip_size_en if _sl and _en_entry else 0.0
 
-                        # Citim balanța live din trade_history.json (același pattern ca Risk Manager)
                         _balance_en = float(os.getenv('ACCOUNT_BALANCE', 1336))
                         try:
                             _th_path_en = Path(__file__).parent / 'trade_history.json'
@@ -1942,29 +2044,32 @@ class SetupExecutorMonitor:
                                 if _live_bal_en > 0:
                                     _balance_en = _live_bal_en
                         except Exception:
-                            pass  # fallback la ACCOUNT_BALANCE din .env
+                            pass
 
                         if _sl_pips_en > 0:
                             _risk_budget_en = _balance_en * 0.05
                             _lot_size_en = _risk_budget_en / (_sl_pips_en * _pip_value_en)
                             _lot_size_en = round(_lot_size_en, 2)
-                            _lot_size_en = max(0.01, min(_lot_size_en, 10.0))  # clamp: 0.01–10.0
+                            _lot_size_en = max(0.01, min(_lot_size_en, 10.0))
                         else:
-                            _lot_size_en = 0.01  # fallback doar dacă SL lipsește complet
-                            logger.warning(f"⚠️ [V19.6 LOT CALC] {symbol}: SL=0 sau Entry=0 — fallback lot 0.01")
+                            # SL lipsă complet — nu executa, nu are sens
+                            logger.critical(f"🚨 [V19.8 NO SL] {symbol}: SL=0, execuție anulată definitiv")
+                            self._track_rejection(f"EXECUTE_NOW no SL available for {symbol}")
+                            setups[i]['EXECUTE_NOW'] = False
+                            setups[i]['last_rejection_reason'] = 'V19.8: SL structural indisponibil'
+                            updated = True
+                            continue
 
                         logger.success(
-                            f"🔥 [V18 EXECUTE_NOW PRE-FETCH] {symbol}: Execuție directă @ {_en_entry:.5f} "
-                            f"SL={_sl:.5f} TP={_tp:.5f} | SL={_sl_pips_en:.1f}p | "
+                            f"🔥 [V19.8 EXECUTE_NOW STRUCTURAL] {symbol}: Entry={_en_entry:.5f} "
+                            f"SL={_sl:.5f} ({_sl_pips_en:.1f}p) TP={_tp:.5f} | "
                             f"Bal={_balance_en:.0f}$ | Risk=5% | Lots={_lot_size_en:.2f}"
                         )
 
-                        # V19.7 FIX: Apelăm SENTINELA și în PRE-FETCH EXECUTE_NOW
-                        # Până acum acest bloc executa direct fără Guard#1 (RR) sau Guard#2 (SL≤50p)
-                        # AUDUSD 19May: SL=103p, RR=1.41 → executat fără nicio barieră de risc!
+                        # ── STEP 6: SENTINELĂ pe valorile REALE calculate structural ─────────────────
                         _sentinel_ok_en, _sentinel_reason_en = self._final_safety_check(
                             symbol=symbol,
-                            direction=setup.get('direction', 'buy'),
+                            direction=_en_direction,
                             entry_price=_en_entry,
                             stop_loss=_sl,
                             take_profit=_tp,
@@ -1972,7 +2077,7 @@ class SetupExecutorMonitor:
                         )
                         if not _sentinel_ok_en:
                             logger.critical(
-                                f"🚨 [V19.7 SENTINELĂ EXECUTE_NOW] {symbol} BLOCAT: {_sentinel_reason_en}"
+                                f"🚨 [V19.8 SENTINELĂ] {symbol} BLOCAT: {_sentinel_reason_en}"
                             )
                             self._track_rejection(f"EXECUTE_NOW sentinel rejected: {_sentinel_reason_en[:60]}")
                             setups[i]['EXECUTE_NOW'] = False
@@ -1980,41 +2085,42 @@ class SetupExecutorMonitor:
                             updated = True
                             continue
 
-                        _en_comment = f"D1_EXECUTE_NOW_V19.7_{setup.get('direction','').upper()}_E1"
+                        # ── STEP 7: Execuție în cTrader ───────────────────────────────────────────────
+                        _en_comment = f"D1_EXECUTE_NOW_V19.8_{_en_direction.upper()}_E1"
                         success = self.executor.execute_trade(
                             symbol=symbol,
-                            direction=setup.get('direction', 'buy'),
+                            direction=_en_direction,
                             entry_price=_en_entry,
                             stop_loss=_sl,
                             take_profit=_tp,
-                            lot_size=_lot_size_en,  # V19.6: calcul dinamic 5% risc
+                            lot_size=_lot_size_en,
                             comment=_en_comment,
                             status='READY'
                         )
                         if success:
+                            # ── STEP 8: Curățare semnal — prevenire spam ordine ────────────────────
                             setups[i]['entry1_filled'] = True
                             setups[i]['entry1_price'] = _en_entry
+                            setups[i]['entry1_sl'] = _sl
+                            setups[i]['entry1_tp'] = _tp
+                            setups[i]['entry1_lots'] = _lot_size_en
                             setups[i]['entry1_time'] = datetime.now(timezone.utc).isoformat()
                             setups[i]['status'] = 'ACTIVE'
-                            setups[i]['EXECUTE_NOW'] = False
+                            setups[i].pop('EXECUTE_NOW', None)  # eliminare completă cheie
                             updated = True
-                            logger.success(f"✅ [EXECUTE_NOW] {symbol} entry executat cu succes!")
+                            logger.success(f"✅ [V19.8 EXECUTE_NOW] {symbol} executat structural: "
+                                           f"SL={_sl_pips_en:.1f}p | Lots={_lot_size_en:.2f} | 5% risk")
                         else:
-                            logger.error(f"❌ [EXECUTE_NOW] {symbol} execuție respinsă de Risk Manager")
+                            logger.error(f"❌ [V19.8 EXECUTE_NOW] {symbol} execuție respinsă de Risk Manager")
                             self._track_rejection(f"EXECUTE_NOW loss limit rejected for {symbol}")
-                            setups[i]['EXECUTE_NOW'] = False
+                            setups[i].pop('EXECUTE_NOW', None)
                             setups[i]['last_rejection_time'] = datetime.now(timezone.utc).isoformat()
                             setups[i]['last_rejection_reason'] = 'Risk Manager: EXECUTE_NOW rejected'
                             updated = True
-                            # V19.6.2 FIX: Activează Deep Sleep dacă daily loss limit e atins
-                            # _enter_deep_sleep() era definit dar NICIODATĂ apelat → /status arăta
-                            # "ACTIVE" deși sistemul refuza toate trade-urile
                             try:
                                 _rm = getattr(self.executor, 'risk_manager', None)
                                 if _rm is not None:
                                     _pnl = _rm.get_daily_pnl()
-                                    # V19.6.3 FIX: balance NU e în dict-ul get_daily_pnl()
-                                    # citim din trade_history.json (același pattern ca Risk Manager)
                                     _bal = float(os.getenv('ACCOUNT_BALANCE', 1336))
                                     try:
                                         _th_path_ds = Path(__file__).parent / 'trade_history.json'
@@ -2032,11 +2138,11 @@ class SetupExecutorMonitor:
                                         self._enter_deep_sleep(
                                             f"Daily loss limit reached ({_loss_pct:.2f}%) — auto Deep Sleep"
                                         )
-                                        logger.warning(f"😴 [V19.6.2] Deep Sleep activat: {_loss_pct:.2f}% loss >= -{_limit}%")
+                                        logger.warning(f"😴 [V19.8] Deep Sleep activat: {_loss_pct:.2f}% loss >= -{_limit}%")
                             except Exception as _ds_err:
                                 logger.warning(f"⚠️ Deep Sleep check error: {_ds_err}")
                         continue
-                    # ━━━ END V18 PRE-FETCH CHECK ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+                    # ━━━ END V19.8 EXECUTE_NOW STRUCTURAL ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
                     # V9.3 CACHED FETCH: D1=4h cache, H4=30m cache, H1=5m cache
                     df_daily = self._get_cached_data(symbol, "D1", 100)
