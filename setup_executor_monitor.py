@@ -2781,24 +2781,9 @@ class SetupExecutorMonitor:
                 take_profit=take_profit, setup=setup
             )
             if not _sentinel_ok:
-                logger.critical(f"🚨 [Fix #13 SENTINELĂ] {symbol} E{entry_number} BLOCAT: {_sentinel_reason}")
-                logger.critical(f"🗑️  Setup {symbol} eliminat din monitoring — slot eliberat pentru scan nou.")
-                # Auto-cleanup: scoate setup-ul din monitoring ca să elibereze slotul
-                try:
-                    _mf = Path(self.monitoring_file)
-                    if _mf.exists():
-                        with open(_mf, 'r', encoding='utf-8') as _mfr:
-                            _mdata = json.load(_mfr)
-                        _mdata['setups'] = [
-                            s for s in _mdata.get('setups', [])
-                            if s.get('symbol') != symbol
-                        ]
-                        _mdata['last_update'] = datetime.now(timezone.utc).isoformat()
-                        with open(_mf, 'w', encoding='utf-8') as _mfw:
-                            json.dump(_mdata, _mfw, indent=2)
-                        logger.info(f"🧹 [Fix #13] Setup {symbol} șters din monitoring_setups.json")
-                except Exception as _ce:
-                    logger.warning(f"⚠️ [Fix #13] Cleanup error pentru {symbol}: {_ce}")
+                logger.warning(f"⚠️ [Fix #13 SENTINELĂ] {symbol} E{entry_number} SKIP (nu șters): {_sentinel_reason}")
+                # V19.10: NU mai ștergem setup-ul din monitoring — skip silențios, retry la ciclul următor.
+                # Setup-ul rămâne activ; radarul va recalcula la 30s; condițiile se pot schimba.
                 return False
             logger.success(f"✅ [Fix #13 SENTINELĂ] {symbol}: {_sentinel_reason}")
             # ━━━ END SENTINELĂ ━━━
