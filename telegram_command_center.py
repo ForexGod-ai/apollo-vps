@@ -1467,7 +1467,7 @@ class TelegramCommandCenter:
         }
         MAJOR_CCY = set(FLAG_MAP.keys())
         now = datetime.now(timezone.utc)
-        cutoff = now + timedelta(days=7)
+        cutoff = now + timedelta(days=14)  # V19.11: 14 zile în loc de 7 — acoperă săptămâna viitoare complet
 
         def _parse_events_from_json() -> tuple[list, str]:
             """Load from economic_calendar.json — returns (events, source_label)."""
@@ -1549,7 +1549,7 @@ class TelegramCommandCenter:
 
             # ── Build header
             msg = (
-                f"<b>🚨 HIGH IMPACT NEWS — Next 7 Days</b>\n"
+                f"<b>🚨 HIGH IMPACT NEWS — Next 14 Days</b>\n"
                 f"{UNIVERSAL_SEPARATOR}\n\n"
             )
 
