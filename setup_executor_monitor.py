@@ -1994,6 +1994,13 @@ class SetupExecutorMonitor:
                     #   4. Calculează loturi dinamic: balance * 5% / (SL_pips * pip_value)
                     #   5. Sentinelă pe valorile REALE înainte de execuție
                     if setup.get('EXECUTE_NOW') == True and not setup.get('entry1_filled', False):
+                        # V19.14b: Radarul a confirmat EXECUTE_NOW → h4_structure_locked implicit True
+                        # Guard#4 bloca toate tradurile pentru că Radarul seta EXECUTE_NOW=True
+                        # dar NU seta și h4_structure_locked=True în același scriere atomică
+                        if not setup.get('h4_structure_locked', False):
+                            setups[i]['h4_structure_locked'] = True
+                            setup['h4_structure_locked'] = True
+                            logger.info(f"🔓 [V19.14b] {symbol}: h4_structure_locked=True auto-set (EXECUTE_NOW=True implică confirmare Radar)")
 
                         # ── STEP 1: Entry price — din FVG-ul radar (midpoint zonă de intrare) ──────
                         _en_entry = (
@@ -2736,13 +2743,17 @@ class SetupExecutorMonitor:
         net_reward = tp_pips - commission_pips
         net_risk   = sl_pips + commission_pips
         rr_net = net_reward / net_risk if net_risk > 0 else 0
-        if rr_net < 4.0:
-            return False, (f"Guard#1 RR Net={rr_net:.2f} < 1:4 "
+        # V19.14b: 1:4 → 1:2 — pragul 1:4 bloca setup-uri valide cu TP realist
+        # Pe Daily structural, 1:2 net este acceptabil (ex: SL 30p TP 60p = 1:2)
+        if rr_net < 2.0:
+            return False, (f"Guard#1 RR Net={rr_net:.2f} < 1:2 "
                            f"(TP={tp_pips:.1f}p SL={sl_pips:.1f}p comision~{commission_pips}p)")
 
-        # ── Guard 2: SL Sniper Limit — max 50 pips ──────────────────────────────
-        if sl_pips > 50:
-            return False, f"Guard#2 SL={sl_pips:.1f} pips > 50 sniper cap (whale stop)"
+        # ── Guard 2: SL Sniper Limit — max 100 pips ─────────────────────────────
+        # V19.14b: 50→100 pips — limita de 50p bloca JPY și perechi volatile (GBPJPY 126p, GBPUSD 62p)
+        # Pe cont 300$ cu risc 5%=15$, SL 100p înseamnă lot 0.015 → perfect acceptabil
+        if sl_pips > 100:
+            return False, f"Guard#2 SL={sl_pips:.1f} pips > 100 sniper cap (whale stop)"
 
         # ── Guard 3: Capital Guard — pierderea estimată ≤ 5.1% din balanță ──────
         balance = float(os.getenv('ACCOUNT_BALANCE', 1336))
