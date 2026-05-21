@@ -28,7 +28,7 @@ class SignalCache:
     def __init__(self, cache_file: str = "processed_signals_cache.json"):
         self.cache_file = Path(cache_file)
         self.cache: Dict[str, float] = {}  # {signal_id: timestamp}
-        self.max_age_hours = 24  # Keep cache entries for 24h
+        self.max_age_hours = 2  # V21: 24h → 2h — după crash executor nu mai blochează re-execuția
         
         # Load existing cache
         self._load_cache()
