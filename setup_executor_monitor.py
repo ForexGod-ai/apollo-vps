@@ -1695,15 +1695,18 @@ class SetupExecutorMonitor:
                         logger.debug(f"⏳ {symbol}: Momentum not strong enough - keep waiting...")
                         logger.debug(f"   Strong momentum: {momentum_strong}, Beyond target: {price_beyond_target}, Within range: {within_reasonable_distance}")
                 
-                # ========== Fix #1: TIMEOUT 12H → EXPIRED (nu forcăm intrarea) ==========
-                if hours_elapsed >= 12:
+                # ========== Fix #1: TIMEOUT 5 ZILE → EXPIRED ==========
+                # V19.12: Crescut de la 12H → 120H (5 zile).
+                # Piața face pullback la Fibo 50% în 2-5 zile, nu în 12H.
+                # 12H era UCIGAȘUL REAL — ștergea toate setups-urile overnight după primul CHoCH detectat.
+                if hours_elapsed >= 120:
                     logger.warning(
-                        f"⏰ [Fix #1 TIMEOUT] {symbol}: 12H fără pullback la Fibo 50% — Setup → EXPIRED. "
+                        f"⏰ [Fix #1 TIMEOUT] {symbol}: 5 zile fără pullback la Fibo 50% — Setup → EXPIRED. "
                         f"Slot eliberat pentru scan nou."
                     )
                     return {
                         'action': 'EXPIRE_SETUP',
-                        'reason': f'Fix#1: Timeout 12H fără retragere la Fibo 50% ({distance_pips:.1f}p distanță) — EXPIRED'
+                        'reason': f'Fix#1: Timeout 120H (5 zile) fără retragere la Fibo 50% ({distance_pips:.1f}p distanță) — EXPIRED'
                     }
                 
                 # Still within 6H → keep monitoring normally
@@ -1798,7 +1801,8 @@ class SetupExecutorMonitor:
                 if s.get('status', '') in dead_statuses:
                     reason_remove = f"status={s.get('status')}"
 
-                # Condiția 2: Vârstă > 7 zile
+                # Condiția 2: Vârstă > 30 zile
+                # V19.12: Crescut de la 7→30 zile — setups valide durează 2-4 săptămâni
                 if not reason_remove:
                     setup_time_str = s.get('setup_time') or s.get('created_at', '')
                     if setup_time_str:
@@ -1807,8 +1811,8 @@ class SetupExecutorMonitor:
                             if st.tzinfo is None:
                                 st = st.replace(tzinfo=timezone.utc)
                             age_days = (now - st).total_seconds() / 86400
-                            if age_days > 7:
-                                reason_remove = f"vârstă={age_days:.1f} zile > 7"
+                            if age_days > 30:
+                                reason_remove = f"vârstă={age_days:.1f} zile > 30"
                         except Exception:
                             pass
 
