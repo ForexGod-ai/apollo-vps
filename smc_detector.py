@@ -3409,16 +3409,6 @@ class SMCDetector:
                 print(f"❌ REJECTED: No Daily CHoCH or BOS found")
             return None
 
-        # ── V23 ANTI-COUNTER-TREND GUARD (CONTINUITY only) ─────────────────────
-        # CONTINUITY este validă DOAR dacă BOS-ul e în direcția ultimului CHoCH.
-        # BOS în direcția opusă CHoCH = BOS din pullback în interiorul trendului CHoCH
-        # → nu reprezintă reluarea trendului, ci confirmarea pullback-ului. REJECT.
-        # Exemplu: CHoCH BEARISH (idx 50) → BOS BULLISH (idx 60) → CONTINUITY LONG
-        #          dar trendul e BEARISH → BOS bullish e pullback retracement → REJECT
-        if strategy_type == 'continuation' and latest_choch and latest_choch.direction != current_trend:
-            print(f"⛔ [V23 REJECT: CONTINUITY {current_trend.upper()} opus CHoCH {latest_choch.direction.upper()}] {symbol} — BOS din pullback, nu trend nou")
-            return None
-        
         if debug:
             print(f"\n✅ [V23 BIAS FINAL] {symbol}: {current_trend.upper()} — {strategy_type.upper()} @ bar{latest_signal.index} price={latest_signal.break_price:.5f}")
 
