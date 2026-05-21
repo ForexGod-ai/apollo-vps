@@ -1652,15 +1652,18 @@ class SMCDetector:
         # Sort by index (chronological order)
         all_swings.sort(key=lambda x: x[1].index)
         
-        # 🆕 V7.1 FIX: Initialize prev_trend from LAST 150 bars (macro structure)
-        macro_lookback = min(150, len(df))
+        # 🆕 V7.1 FIX: Initialize prev_trend from LAST bars (macro structure)
+        # V19.13: 150→70 bare — structura recentă (3.5 luni) domină față de structuri vechi de 6+ luni
+        # Cu 150 bare, EURUSD/GBPUSD rămâneau agățate de CHoCH bullish din Oct-Apr (uptrend lung)
+        # și ignorau structura bearish recentă → bias LONG greșit.
+        macro_lookback = min(70, len(df))
         df_macro = df.iloc[-macro_lookback:].copy()
         macro_highs = [sh for sh in swing_highs if sh.index >= len(df) - macro_lookback]
         macro_lows = [sl for sl in swing_lows if sl.index >= len(df) - macro_lookback]
         
         prev_trend = None  # 'bullish' or 'bearish'
         if len(macro_highs) >= 2 and len(macro_lows) >= 2:
-            # Check LAST 150 bars structure (not first 50%)
+            # Check LAST 70 bars structure
             h_ascending = macro_highs[-1].price > macro_highs[-2].price
             l_ascending = macro_lows[-1].price > macro_lows[-2].price
             
@@ -1706,6 +1709,11 @@ class SMCDetector:
 
                 # 🎯 HH = Higher High vs prev HIGH
                 if swing.price > prev_high.price:
+                    # V19.13 BODY CLOSE RULE: candle must CLOSE above prev body high
+                    # Wick/open-only breaks (bearish candle opens above, closes below) = rejected
+                    _bc_hh = float(df['close'].iloc[swing.index]) if swing.index < len(df) else swing.price
+                    if _bc_hh <= prev_high.price:
+                        continue  # Body close did NOT confirm HH — wick/open hunt, skip
                     if prev_trend is None:
                         chochs.append(CHoCH(
                             index=swing.index,
@@ -1756,6 +1764,11 @@ class SMCDetector:
 
                 # 🎯 LL = Lower Low vs prev LOW
                 if swing.price < prev_low.price:
+                    # V19.13 BODY CLOSE RULE: candle must CLOSE below prev body low
+                    # Wick/open-only breaks (bullish candle opens below, closes above) = rejected
+                    _bc_ll = float(df['close'].iloc[swing.index]) if swing.index < len(df) else swing.price
+                    if _bc_ll >= prev_low.price:
+                        continue  # Body close did NOT confirm LL — wick hunt, skip
                     if prev_trend is None:
                         chochs.append(CHoCH(
                             index=swing.index,
@@ -1833,8 +1846,9 @@ class SMCDetector:
         if df is None or len(df) < 20:
             return 'neutral'
         
-        # 🆕 V6.2: Analyze MACRO structure (last 150 bars instead of 50)
-        macro_lookback = min(150, len(df))  # Use 150 bars or available data
+        # V19.13: Analyze MACRO structure — 70 bare (3.5 luni), nu 150 (6+ luni)
+        # 150 bare captau structuri vechi și ignorau price action recenta (EURUSD/GBPUSD bug)
+        macro_lookback = min(70, len(df))  # V19.13: 150→70 bare
         df_macro = df.iloc[-macro_lookback:].copy()
         
         if debug:
@@ -3439,26 +3453,38 @@ class SMCDetector:
                 if latest_choch and latest_bos and latest_bos.direction != latest_choch.direction:
                     # Cel mai recent BOS e opus CHoCH — dar poate exista un BOS mai vechi (post-CHoCH)
                     # in aceeasi directie (= departure dupa retest)
+                    # V19.13 FIX: BOS în direcția CHoCH trebuie să fie DUPĂ cel mai recent BOS opus
+                    # Vechea logică găsea BOS din lunile trecute (uptrend vechi) → bias LONG greșit pe bearish pairs
                     post_choch_same_dir = [
                         b for b in daily_bos_list
-                        if b.index > latest_choch.index and b.direction == latest_choch.direction
+                        if b.index > latest_bos.index and b.direction == latest_choch.direction
                     ]
                     if post_choch_same_dir:
-                        # Exista BOS in directia CHoCH dupa CHoCH → CONTINUATION
-                        # (scenariul: CHoCH bullish → retest BOS bearish → departure BOS bullish)
+                        # BOS în direcția CHoCH a revenit DUPĂ cel mai recent BOS opus → trend CHoCH activ
                         departure_bos = post_choch_same_dir[-1]  # cel mai recent
                         if debug:
-                            print(f"✅ V17.6 CONTINUATION: CHoCH {latest_choch.direction.upper()} + departure BOS {departure_bos.direction.upper()} @{departure_bos.break_price:.5f} bar{departure_bos.index} (retest BOS {latest_bos.direction.upper()} ignorat)")
+                            print(f"✅ V19.13 CONTINUATION: CHoCH {latest_choch.direction.upper()} + BOS reluare @{departure_bos.break_price:.5f} bar{departure_bos.index}")
                         latest_signal = departure_bos
                         strategy_type = 'continuation'
                         current_trend = latest_choch.direction
                     else:
-                        # Niciun BOS in directia CHoCH post-CHoCH → e doar pullback
-                        if debug:
-                            print(f"✅ V11.9 PULLBACK BOS IGNORED: BOS {latest_bos.direction.upper()} opus CHoCH {latest_choch.direction.upper()} — CHoCH rămâne BIAS MASTER")
-                        latest_signal = latest_choch
-                        strategy_type = 'reversal'
-                        current_trend = latest_choch.direction
+                        # Cel mai recent BOS e opus CHoCH și nu s-a reluat direcția CHoCH
+                        # → latest_bos e noul semnal de trend (întoarcere la trendul anterior CHoCH-ului)
+                        pre_choch_bos_new_dir = [b for b in daily_bos_list if b.index < latest_choch.index and b.direction == latest_bos.direction]
+                        if pre_choch_bos_new_dir:
+                            # Existau BOS în direcția latest_bos înainte de CHoCH → reluare trend vechi = CONTINUATION
+                            if debug:
+                                print(f"✅ V19.13 CONTINUATION (revert): BOS {latest_bos.direction.upper()} revine la trendul pre-CHoCH — CONTINUATION {latest_bos.direction.upper()}")
+                            latest_signal = latest_bos
+                            strategy_type = 'continuation'
+                            current_trend = latest_bos.direction
+                        else:
+                            # Prima dată această direcție apare → REVERSAL
+                            if debug:
+                                print(f"✅ V19.13 REVERSAL: BOS {latest_bos.direction.upper()} fără precedent — REVERSAL {latest_bos.direction.upper()}")
+                            latest_signal = latest_bos
+                            strategy_type = 'reversal'
+                            current_trend = latest_bos.direction
                 else:
                     # BOS în aceeași direcție cu CHoCH sau fără CHoCH → CONTINUATION validă
                     if debug and latest_bos:
@@ -3491,35 +3517,57 @@ class SMCDetector:
             else:
                 # BOS mai recent — V17.6 SMART V11.9
                 if latest_bos.direction != latest_choch.direction:
-                    # BOS opus CHoCH — dar verificam daca exista BOS post-CHoCH in aceeasi directie
+                    # BOS opus CHoCH — V19.13 FIX: verificăm BOS în direcția CHoCH DUPĂ cel mai recent BOS opus
                     post_choch_same_dir = [
                         b for b in daily_bos_list
-                        if b.index > latest_choch.index and b.direction == latest_choch.direction
+                        if b.index > latest_bos.index and b.direction == latest_choch.direction
                     ]
                     if post_choch_same_dir:
-                        # CHoCH + retest + departure BOS in aceeasi directie → CONTINUATION
+                        # BOS în direcția CHoCH a revenit după BOS opus → trend CHoCH încă activ
                         departure_bos = post_choch_same_dir[-1]
                         if debug:
-                            print(f"✅ V17.6 CONTINUATION (std): CHoCH {latest_choch.direction.upper()} + departure BOS @{departure_bos.break_price:.5f} bar{departure_bos.index}")
+                            print(f"✅ V19.13 CONTINUATION (std): CHoCH {latest_choch.direction.upper()} + BOS reluare @{departure_bos.break_price:.5f} bar{departure_bos.index}")
                         latest_signal = departure_bos
                         strategy_type = 'continuation'
                         current_trend = latest_choch.direction
                     else:
-                        # Doar pullback — CHoCH rămâne master
-                        if debug:
-                            print(f"✅ V11.9 PULLBACK BOS IGNORED (std): BOS {latest_bos.direction.upper()} opus CHoCH {latest_choch.direction.upper()} — CHoCH rămâne BIAS MASTER")
-                        latest_signal = latest_choch
-                        strategy_type = 'reversal'
-                        current_trend = latest_choch.direction
+                        # latest_bos (opus) e cel mai recent → semnal de schimbare de trend
+                        pre_choch_bos_new_dir = [b for b in daily_bos_list if b.index < latest_choch.index and b.direction == latest_bos.direction]
+                        if pre_choch_bos_new_dir:
+                            # Reluare trend anterior CHoCH-ului = CONTINUATION în direcția latest_bos
+                            if debug:
+                                print(f"✅ V19.13 CONTINUATION (std revert): BOS {latest_bos.direction.upper()} reluare trend pre-CHoCH")
+                            latest_signal = latest_bos
+                            strategy_type = 'continuation'
+                            current_trend = latest_bos.direction
+                        else:
+                            # Prima apariție a acestei direcții → REVERSAL
+                            if debug:
+                                print(f"✅ V19.13 REVERSAL (std): BOS {latest_bos.direction.upper()} prima dată apare — REVERSAL")
+                            latest_signal = latest_bos
+                            strategy_type = 'reversal'
+                            current_trend = latest_bos.direction
                 else:
                     # BOS în aceeași direcție cu CHoCH → CONTINUATION validă
                     latest_signal = latest_bos
                     strategy_type = 'continuation'
                     current_trend = latest_bos.direction
         elif latest_choch:
+            # V19.13 FIX: BLANKET REVERSAL BUG — blocul ăsta clasifica MEREU ca 'reversal'
+            # dacă existau CHoCH dar fără BOS (scanare fresh sau după reset).
+            # Logica corectă: CHoCH în aceeași direcție cu un BOS anterior = CONTINUATION.
             latest_signal = latest_choch
-            strategy_type = 'reversal'
             current_trend = latest_choch.direction
+            _pre_choch_bos_only = [b for b in daily_bos_list if b.index < latest_choch.index]
+            _prior_bos_dir_only = _pre_choch_bos_only[-1].direction if _pre_choch_bos_only else None
+            if _prior_bos_dir_only and _prior_bos_dir_only == latest_choch.direction:
+                strategy_type = 'continuation'
+                if debug:
+                    print(f"✅ V19.13 CONTINUITY (choch-only): CHoCH {latest_choch.direction.upper()} aliniată cu BOS anterior {_prior_bos_dir_only.upper()} → CONTINUITY")
+            else:
+                strategy_type = 'reversal'
+                if debug:
+                    print(f"✅ V19.13 REVERSAL (choch-only): CHoCH {latest_choch.direction.upper()} opus BOS anterior {_prior_bos_dir_only} → REVERSAL")
         elif latest_bos:
             latest_signal = latest_bos
             strategy_type = 'continuation'
