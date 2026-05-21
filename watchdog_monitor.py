@@ -249,6 +249,11 @@ class WatchdogMonitor:
             stdout_log = open(log_dir / f"{process_stem}_stdout.log", 'a')
             stderr_log = open(log_dir / f"{process_stem}_stderr.log", 'a')
             
+            # PYTHONUNBUFFERED=1 — forțează flush imediat la log files (nu mai bufferează 8KB)
+            import os as _os
+            _env = _os.environ.copy()
+            _env['PYTHONUNBUFFERED'] = '1'
+
             # Windows-compatible process spawning
             import platform
             if platform.system() == 'Windows':
@@ -260,6 +265,7 @@ class WatchdogMonitor:
                     cwd=self.base_path,
                     stdout=stdout_log,
                     stderr=stderr_log,
+                    env=_env,
                     creationflags=CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS
                 )
             else:
@@ -268,6 +274,7 @@ class WatchdogMonitor:
                     cwd=self.base_path,
                     stdout=stdout_log,
                     stderr=stderr_log,
+                    env=_env,
                     start_new_session=True
                 )
             
