@@ -1709,12 +1709,22 @@ class SMCDetector:
 
                 # 🎯 HH = Higher High vs prev HIGH
                 if swing.price > prev_high.price:
-                    # V19.13 BODY CLOSE RULE: candle must CLOSE above prev body high
-                    # Wick/open-only breaks (bearish candle opens above, closes below) = rejected
-                    _bc_hh = float(df['close'].iloc[swing.index]) if swing.index < len(df) else swing.price
-                    if _bc_hh <= prev_high.price:
-                        continue  # Body close did NOT confirm HH — wick/open hunt, skip
-                    if prev_trend is None:
+                    # V21 BODY CLOSE RULE (corect): o lumânare trebuie să îCHIĐĂ dincolo de WICK-ul
+                    # (high absolut) al swing-ului anterior — nu dincolo de body-ul lui.
+                    # V19.13 greşea: compara close[swing] vs body(prev_high) → bara bearish
+                    # validă (open>prev_body>close) era respinsă cu 'continue' → orbire structurală.
+                    # V21: căutăm prima bară după prev_high care îCHIĐE dincolo de WICK-ul lui.
+                    _prev_wick_h = float(df['high'].iloc[prev_high.index]) if prev_high.index < len(df) else prev_high.price
+                    _body_close_confirmed_h = False
+                    for _ci in range(prev_high.index + 1, min(swing.index + 1, len(df))):
+                        if float(df['close'].iloc[_ci]) > _prev_wick_h:
+                            _body_close_confirmed_h = True
+                            break
+                    if not _body_close_confirmed_h:
+                        # Nicio lumânare nu a închis dincolo de wick-ul prev_high
+                        # = Liquidity Sweep (wick hunt), nu BOS structural — skip
+                        pass
+                    elif _body_close_confirmed_h and prev_trend is None:
                         chochs.append(CHoCH(
                             index=swing.index,
                             direction='bullish',
@@ -1724,7 +1734,7 @@ class SMCDetector:
                             swing_broken=prev_high
                         ))
                         prev_trend = 'bullish'
-                    elif prev_trend == 'bearish':
+                    elif _body_close_confirmed_h and prev_trend == 'bearish':
                         # CHoCH bullish: validăm că structura anterioară era bearish
                         # 🔥 V10.5 FIX: OR in loc de AND — în reversale bruște (pump +20%+)
                         recent_highs = [s for s in swing_highs if s.index <= swing.index][-3:]
@@ -1743,7 +1753,7 @@ class SMCDetector:
                             ))
                             prev_trend = 'bullish'
                         # ELSE: mic pullback în trend bearish — nu e CHoCH
-                    else:  # prev_trend == 'bullish'
+                    elif _body_close_confirmed_h:  # prev_trend == 'bullish'
                         # BOS bullish: continuare trend
                         bos_list.append(BOS(
                             index=swing.index,
@@ -1764,12 +1774,20 @@ class SMCDetector:
 
                 # 🎯 LL = Lower Low vs prev LOW
                 if swing.price < prev_low.price:
-                    # V19.13 BODY CLOSE RULE: candle must CLOSE below prev body low
-                    # Wick/open-only breaks (bullish candle opens below, closes above) = rejected
-                    _bc_ll = float(df['close'].iloc[swing.index]) if swing.index < len(df) else swing.price
-                    if _bc_ll >= prev_low.price:
-                        continue  # Body close did NOT confirm LL — wick hunt, skip
-                    if prev_trend is None:
+                    # V21 BODY CLOSE RULE (corect): o lumânare trebuie să îCHIĐĂ dincolo de WICK-ul
+                    # (low absolut) al swing-ului anterior.
+                    # V19.13 greşea: compara close[swing] vs body(prev_low) → bara bullish
+                    # validă (open<prev_body<close) era respinsă cu 'continue'.
+                    _prev_wick_l = float(df['low'].iloc[prev_low.index]) if prev_low.index < len(df) else prev_low.price
+                    _body_close_confirmed_l = False
+                    for _ci in range(prev_low.index + 1, min(swing.index + 1, len(df))):
+                        if float(df['close'].iloc[_ci]) < _prev_wick_l:
+                            _body_close_confirmed_l = True
+                            break
+                    if not _body_close_confirmed_l:
+                        # Liquidity sweep pe low — trendul structural rămâne intact
+                        pass
+                    elif _body_close_confirmed_l and prev_trend is None:
                         chochs.append(CHoCH(
                             index=swing.index,
                             direction='bearish',
@@ -1779,7 +1797,7 @@ class SMCDetector:
                             swing_broken=prev_low
                         ))
                         prev_trend = 'bearish'
-                    elif prev_trend == 'bullish':
+                    elif _body_close_confirmed_l and prev_trend == 'bullish':
                         # CHoCH bearish: validăm că structura anterioară era bullish
                         # 🔥 V10.5 FIX: OR in loc de AND — în reversale bruște (crash -20%+)
                         recent_highs = [s for s in swing_highs if s.index <= swing.index][-3:]
@@ -1798,7 +1816,7 @@ class SMCDetector:
                             ))
                             prev_trend = 'bearish'
                         # ELSE: mic pullback în trend bullish — nu e CHoCH
-                    else:  # prev_trend == 'bearish'
+                    elif _body_close_confirmed_l:  # prev_trend == 'bearish'
                         # BOS bearish: continuare trend
                         bos_list.append(BOS(
                             index=swing.index,
