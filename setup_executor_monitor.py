@@ -2720,13 +2720,53 @@ class SetupExecutorMonitor:
             
             # Save updated setups
             if updated:
-                data['setups'] = setups
-                data['last_update'] = datetime.now(timezone.utc).isoformat()
-                
+                # ━━━ V22.3 RACE CONDITION FIX ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+                # BUG: Executorul citea fișierul la start de ciclu (t=0), procesa 30s,
+                # iar dacă daily_scanner.py adăuga setups noi în interval (t=15s),
+                # write-back-ul executorului (t=30s) ștergea setups-urile noi —
+                # pentru că `data['setups'] = setups` conținea doar setups-urile VECHI.
+                # Simptom: GBPCAD și EURJPY dispăreau din monitoring în 1 minut.
+                #
+                # FIX: Re-citim fișierul fresh înainte de write-back.
+                # Merge policy: setups procesate de executor (cu last_check updated) au
+                # prioritate; setups noi adăugate de scanner în interval sunt PĂSTRATE.
+                # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+                try:
+                    with open(self.monitoring_file, 'r', encoding='utf-8') as _f_fresh:
+                        _fresh_data = json.load(_f_fresh)
+                    _fresh_setups = _fresh_data.get('setups', []) if isinstance(_fresh_data, dict) else _fresh_data
+                    # Construim map cu setups procesate de executor (keyed by symbol)
+                    _processed_map = {s['symbol']: s for s in setups if s.get('symbol')}
+                    # Mergem: fresh setups actualizate cu modificările executorului
+                    _merged = []
+                    for _fs in _fresh_setups:
+                        _sym = _fs.get('symbol')
+                        if _sym and _sym in _processed_map:
+                            _merged.append(_processed_map[_sym])  # Versiunea procesată (cu last_check etc.)
+                        else:
+                            _merged.append(_fs)  # Setup nou adăugat de scanner — PĂSTRAT intact
+                    # Adăugăm orice setup din executor care nu era în fresh (edge case)
+                    _fresh_symbols = {s.get('symbol') for s in _fresh_setups}
+                    for _ps in setups:
+                        if _ps.get('symbol') and _ps['symbol'] not in _fresh_symbols:
+                            _merged.append(_ps)
+                    if isinstance(_fresh_data, dict):
+                        _fresh_data['setups'] = _merged
+                        _fresh_data['last_update'] = datetime.now(timezone.utc).isoformat()
+                        _write_data = _fresh_data
+                    else:
+                        _write_data = _merged
+                except Exception as _merge_err:
+                    # Fallback la comportamentul vechi dacă merge-ul eșuează
+                    logger.warning(f"⚠️ [V22.3] Merge fresh read failed ({_merge_err}) — fallback la write direct")
+                    data['setups'] = setups
+                    data['last_update'] = datetime.now(timezone.utc).isoformat()
+                    _write_data = data
+
                 with open(self.monitoring_file, 'w', encoding='utf-8') as f:
-                    json.dump(data, f, indent=2)
+                    json.dump(_write_data, f, indent=2)
                 
-                logger.debug(f"💾 Updated monitoring_setups.json")
+                logger.debug(f"💾 [V22.3] Updated monitoring_setups.json (merge-safe write)")
         
         except Exception as e:
             logger.error(f"❌ Error in _process_monitoring_setups: {e}")
