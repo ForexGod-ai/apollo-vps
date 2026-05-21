@@ -1872,6 +1872,9 @@ class SetupExecutorMonitor:
                     f"🧹 [V19.20 SACRED WATCHLIST] 0 șterse — "
                     f"{len(active_setups)} setup-uri protejate în monitorizare."
                 )
+
+        except Exception as e:
+            logger.error(f"⚠️  [V19.20] Cleanup monitoring_setups failed: {e}")
     
     def _process_monitoring_setups(self):
         """
@@ -1936,6 +1939,8 @@ class SetupExecutorMonitor:
             # Max 15% risc cumulat per ciclu (3 trades × 5%) — celelalte se amână la ciclul următor
             _session_risk_used = 0.0   # procent cumulat din balanță angajat în ciclul curent
             _SESSION_RISK_MAX = 0.15   # 15% max per ciclu (ex: 300$ cont → max 45$ expus simultan)
+
+            for i, setup in enumerate(setups):
                 symbol = setup['symbol']
                 status = setup.get('status', 'MONITORING')
                 
