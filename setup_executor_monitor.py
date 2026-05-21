@@ -1763,16 +1763,26 @@ class SetupExecutorMonitor:
 
     def _cleanup_monitoring_setups(self):
         """
-        Fix #11: CLEAN SLATE POLICY — Ștergere definitivă a setup-urilor stale.
+        V19.20: SACRED WATCHLIST POLICY — Un setup în monitorizare este SFÂNT.
 
-        Criterii de expirare (orice condiție = șters definitiv din JSON):
-          1. Status mort: EXPIRED / CLOSED / CANCELLED / FAILED
-          2. Vârstă > 7 zile (setup_time vechi)
-          3. Distanță > 500 pips de la prețul de entry (structură invalidată de piață)
-          4. Lipsă câmpuri obligatorii (symbol, direction, entry_price)
+        ELIMINAT DEFINITIV (V19.20):
+          ❌ Condiția 3 (distanță pips) — ȘTEARSĂ COMPLET.
+             Era cauza principală a dispariției setup-urilor: citea prețuri din
+             trade_history.json (fișier static, actualizat la 30s) și elimina
+             perechi proaspăt adăugate înainte ca TF Radar să apuce să confirme 4H CHoCH.
 
-        După ștergere, perechea devine "liberă" — Daily Scanner-ul o va re-analiza
-        de la zero la următoarea scanare matinală.
+        SINGURELE MOTIVE LEGALE DE ȘTERGERE AUTOMATĂ:
+          1. Status mort explicit: EXPIRED / CLOSED / CANCELLED / FAILED
+             (scris de executor DUPĂ execuție sau de Daily Scanner la invalidare manuală)
+          2. Vârstă cronologică > 14 zile (crescut de la 7→30→14 zile: echilibru macro)
+             Setup-urile Daily au nevoie de timp pentru pullback — 14 zile = 2 săptămâni.
+          3. Câmpuri obligatorii lipsă: symbol / direction / entry_price
+             (setup corupt, inutilizabil de executor)
+
+        GARANTAT PĂSTRAT:
+          ✅ Orice setup < 14 zile vârstă, cu status activ, rămâne în JSON
+          ✅ multi_tf_radar îl analizează ciclu de ciclu (30s) fără întrerupere
+          ✅ Nicio ștergere pe baza distanței față de preț live
         """
         if not self.monitoring_file.exists():
             return
@@ -1796,13 +1806,15 @@ class SetupExecutorMonitor:
                 symbol = s.get('symbol', '?')
                 reason_remove = None
 
-                # Condiția 1: Status mort
+                # ── Condiția 1: Status mort explicit ────────────────────────────────────
+                # Scris de executor după execuție finalizată sau de scanner la invalidare
                 dead_statuses = {'EXPIRED', 'CLOSED', 'CANCELLED', 'FAILED'}
                 if s.get('status', '') in dead_statuses:
-                    reason_remove = f"status={s.get('status')}"
+                    reason_remove = f"status mort={s.get('status')}"
 
-                # Condiția 2: Vârstă > 30 zile
-                # V19.12: Crescut de la 7→30 zile — setups valide durează 2-4 săptămâni
+                # ── Condiția 2: Vârstă cronologică > 14 zile ────────────────────────────
+                # V19.20: 14 zile = 2 săptămâni complete pentru pullback macro
+                # (Istoric: 7 zile V19.0 → 30 zile V19.12 → 14 zile V19.20 echilibru)
                 if not reason_remove:
                     setup_time_str = s.get('setup_time') or s.get('created_at', '')
                     if setup_time_str:
@@ -1811,38 +1823,25 @@ class SetupExecutorMonitor:
                             if st.tzinfo is None:
                                 st = st.replace(tzinfo=timezone.utc)
                             age_days = (now - st).total_seconds() / 86400
-                            if age_days > 30:
-                                reason_remove = f"vârstă={age_days:.1f} zile > 30"
+                            if age_days > 14:
+                                reason_remove = f"vârstă={age_days:.1f} zile > 14 (macro expirat)"
                         except Exception:
-                            pass
+                            pass  # Dacă nu putem parsa data → păstrăm setup-ul (safe default)
 
-                # Condiția 3: Distanță > 500 pips de la entry (structură invalidată)
-                if not reason_remove:
-                    entry_px = s.get('entry_price', 0)
-                    sym_upper = symbol.upper()
-                    pip_sz = 0.01 if 'JPY' in sym_upper else (1.0 if 'BTC' in sym_upper else 0.0001)
-                    current_px = 0.0
-                    try:
-                        th_path = Path(__file__).parent / 'trade_history.json'
-                        if th_path.exists():
-                            with open(th_path, 'r', encoding='utf-8') as _tf:
-                                _th = json.load(_tf)
-                            prices = _th.get('prices', _th.get('rates', {}))
-                            clean_sym = sym_upper.replace('/', '').replace(' ', '')
-                            px = prices.get(clean_sym) or prices.get(sym_upper)
-                            if px:
-                                current_px = float(px)
-                    except Exception:
-                        pass
-                    if current_px > 0 and entry_px > 0:
-                        dist_pips = abs(current_px - entry_px) / pip_sz
-                        if dist_pips > 500:
-                            reason_remove = f"distanță={dist_pips:.0f} pips > 500 (structură invalidată)"
+                # ── Condiția 3 (DISTANȚĂ) — ELIMINATĂ DEFINITIV în V19.20 ──────────────
+                # ERA: dist_pips = abs(current_px - entry_px) / pip_sz → elimina la >500p
+                # MOTIVUL ELIMINĂRII:
+                #   • trade_history.json se actualizează la ~30s → prețuri stale
+                #   • BTCUSD/XAU au pip_size=1.0 → distanța în "pips" era falsă
+                #   • Setup-uri proaspete (< 1h) erau șterse înainte de confirmare 4H
+                #   • Radical: dacă structura Daily e validă, intrarea rămâne validă
+                #     indiferent de distanța momentană față de entry
+                # ─────────────────────────────────────────────────────────────────────────
 
-                # Condiția 4: Câmpuri obligatorii lipsă
+                # ── Condiția 4: Câmpuri obligatorii lipsă (setup corupt) ─────────────────
                 if not reason_remove:
                     if not s.get('symbol') or not s.get('direction') or not s.get('entry_price'):
-                        reason_remove = "câmpuri obligatorii lipsă (symbol/direction/entry_price)"
+                        reason_remove = "câmpuri obligatorii lipsă (symbol/direction/entry_price) — setup corupt"
 
                 if reason_remove:
                     removed_reasons.append(f"{symbol}: {reason_remove}")
@@ -1863,16 +1862,16 @@ class SetupExecutorMonitor:
                     json.dump(write_data, f, indent=2, default=str)
 
                 logger.success(
-                    f"🧹 [Fix #11 CLEAN SLATE] {removed_count} setup-uri șterse definitiv "
-                    f"({len(setups)}→{len(active_setups)} active). Sloturi eliberate pentru re-scanare."
+                    f"🧹 [V19.20 SACRED WATCHLIST] {removed_count} setup-uri șterse "
+                    f"({len(setups)}→{len(active_setups)} active). Motive: status mort / vârstă >14z / corupt."
                 )
                 for r in removed_reasons:
                     logger.info(f"   🗑️  Removed: {r}")
             else:
-                logger.debug(f"🧹 [Fix #11] Cleanup: 0 setup-uri stale — {len(active_setups)} active.")
-
-        except Exception as e:
-            logger.error(f"⚠️  [Fix #11] Cleanup monitoring_setups failed: {e}")
+                logger.debug(
+                    f"🧹 [V19.20 SACRED WATCHLIST] 0 șterse — "
+                    f"{len(active_setups)} setup-uri protejate în monitorizare."
+                )
     
     def _process_monitoring_setups(self):
         """
