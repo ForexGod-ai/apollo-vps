@@ -1396,23 +1396,28 @@ class SMCDetector:
         prominence_threshold = 0.0
 
         swing_highs = []
-        body_highs = df[['open', 'close']].max(axis=1)
-        body_lows_series = df[['open', 'close']].min(axis=1)
+        # V22 DAILY MATRIX PURITY: Swing High identificat prin WICK absolut (df['high'])
+        # Povestea body-only era: wicks sunt «minciuni». Dar pentru IDENTIFICAREA punctului
+        # de swing (care bară este maximul local), folosim fitilul real al pieței.
+        # Body Close Rule se aplică EXCLUSIV la validarea BOS/CHoCH (o bară ulterioară
+        # trebuie să îCHIĐĂ dincolo de wick-ul swing-ului — în detect_choch_and_bos).
+        wick_highs = df['high']
 
         for i in range(FRACTAL_WINDOW, len(df) - FRACTAL_WINDOW):
-            current_high = body_highs.iloc[i]
+            current_high = wick_highs.iloc[i]
 
             left_check = all(
-                current_high > body_highs.iloc[i - j]
+                current_high > wick_highs.iloc[i - j]
                 for j in range(1, FRACTAL_WINDOW + 1)
             )
             right_check = all(
-                current_high > body_highs.iloc[i + j]
+                current_high > wick_highs.iloc[i + j]
                 for j in range(1, FRACTAL_WINDOW + 1)
             )
 
             if left_check and right_check:
                 # ✅ Swing valid — a dominat FRACTAL_WINDOW bare în ambele direcții
+                # price = wick absolut (df['high']) — Body Close Rule se aplică la BOS/CHoCH
                 swing_highs.append(SwingPoint(
                     index=i,
                     price=current_high,
@@ -1575,23 +1580,26 @@ class SMCDetector:
         prominence_threshold = 0.0
 
         swing_lows = []
-        body_lows = df[['open', 'close']].min(axis=1)
-        body_highs_series = df[['open', 'close']].max(axis=1)
+        # V22 DAILY MATRIX PURITY: Swing Low identificat prin WICK absolut (df['low'])
+        # Fitilul inferior real al pieței determină care bară este minimul local.
+        # Body Close Rule se aplică la BOS/CHoCH (close sub wick-ul swing-ului anterior).
+        wick_lows = df['low']
 
         for i in range(FRACTAL_WINDOW, len(df) - FRACTAL_WINDOW):
-            current_low = body_lows.iloc[i]
+            current_low = wick_lows.iloc[i]
 
             left_check = all(
-                current_low < body_lows.iloc[i - j]
+                current_low < wick_lows.iloc[i - j]
                 for j in range(1, FRACTAL_WINDOW + 1)
             )
             right_check = all(
-                current_low < body_lows.iloc[i + j]
+                current_low < wick_lows.iloc[i + j]
                 for j in range(1, FRACTAL_WINDOW + 1)
             )
 
             if left_check and right_check:
                 # ✅ Swing valid — a dominat FRACTAL_WINDOW bare în ambele direcții
+                # price = wick absolut (df['low']) — Body Close Rule se aplică la BOS/CHoCH
                 swing_lows.append(SwingPoint(
                     index=i,
                     price=current_low,
@@ -1709,12 +1717,11 @@ class SMCDetector:
 
                 # 🎯 HH = Higher High vs prev HIGH
                 if swing.price > prev_high.price:
-                    # V21 BODY CLOSE RULE (corect): o lumânare trebuie să îCHIĐĂ dincolo de WICK-ul
-                    # (high absolut) al swing-ului anterior — nu dincolo de body-ul lui.
-                    # V19.13 greşea: compara close[swing] vs body(prev_high) → bara bearish
-                    # validă (open>prev_body>close) era respinsă cu 'continue' → orbire structurală.
-                    # V21: căutăm prima bară după prev_high care îCHIĐE dincolo de WICK-ul lui.
-                    _prev_wick_h = float(df['high'].iloc[prev_high.index]) if prev_high.index < len(df) else prev_high.price
+                    # V22 BODY CLOSE RULE: o bară ulterioară trebuie să îCHIĐĂ dincolo de
+                    # WICK-ul absolut al swing-ului anterior pentru BOS/CHoCH valid.
+                    # prev_high.price = df['high'] (wick absolut) — schimbat în V22.
+                    # Liquidity Sweep = wick trece dincolo dar CLOSE rămâne în structură → pass.
+                    _prev_wick_h = prev_high.price  # V22: wick absolut direct din SwingPoint
                     _body_close_confirmed_h = False
                     for _ci in range(prev_high.index + 1, min(swing.index + 1, len(df))):
                         if float(df['close'].iloc[_ci]) > _prev_wick_h:
@@ -1774,11 +1781,11 @@ class SMCDetector:
 
                 # 🎯 LL = Lower Low vs prev LOW
                 if swing.price < prev_low.price:
-                    # V21 BODY CLOSE RULE (corect): o lumânare trebuie să îCHIĐĂ dincolo de WICK-ul
-                    # (low absolut) al swing-ului anterior.
-                    # V19.13 greşea: compara close[swing] vs body(prev_low) → bara bullish
-                    # validă (open<prev_body<close) era respinsă cu 'continue'.
-                    _prev_wick_l = float(df['low'].iloc[prev_low.index]) if prev_low.index < len(df) else prev_low.price
+                    # V22 BODY CLOSE RULE: o bară ulterioară trebuie să îCHIĐĂ dincolo de
+                    # WICK-ul absolut al swing-ului anterior pentru BOS/CHoCH valid.
+                    # prev_low.price = df['low'] (wick absolut) — schimbat în V22.
+                    # Liquidity Sweep = wick trece dincolo dar CLOSE rămâne în structură → pass.
+                    _prev_wick_l = prev_low.price  # V22: wick absolut direct din SwingPoint
                     _body_close_confirmed_l = False
                     for _ci in range(prev_low.index + 1, min(swing.index + 1, len(df))):
                         if float(df['close'].iloc[_ci]) < _prev_wick_l:
@@ -1957,32 +1964,33 @@ class SMCDetector:
         # 🆕 V7.1 LAYER 4: HIERARCHY - BOS Sequence > Swing Pattern > Latest Signal
         # PHILOSOPHY by ФорексГод: "3+ BOS = Army. Swings = Structure. Signal = Noise."
         
-        if consecutive_bos_count >= 3:
-            # 🔥 BOS DOMINANCE: 3+ consecutive BOS override everything
-            final_bias = dominant_bos_direction
-            confidence = f"VERY HIGH ({consecutive_bos_count}x BOS sequence dominant)"
-            
-            if debug:
-                print(f"\n   🔥 BOS SEQUENCE DOMINANCE:")
-                print(f"      {consecutive_bos_count} consecutive {dominant_bos_direction.upper()} BOS")
-                print(f"      This OVERRIDES all other signals and swing patterns")
-        
-        elif macro_trend_swings != 'neutral':
-            # SWING PATTERN WINS (150 bars > 1 signal)
-            final_bias = macro_trend_swings
-            
-            if latest_signal and latest_signal.direction == macro_trend_swings:
-                confidence = "HIGH (Signal confirms Swing Pattern)"
-            else:
-                confidence = "MEDIUM (Swing Pattern dominant, signal ignored)"
-        
-        elif latest_signal:
-            # No clear swing pattern, use latest signal (fallback only)
+        # V22 DAILY MATRIX PURITY: ultimul BOS/CHoCH confirmat prin body-close = bias PRIMAR
+        # «Dacă ultimul breakout confirmat prin Body Close pe Daily a fost în JOS → BEARISH obligatoriu»
+        # Swing structure (HH+HL vs LH+LL) devine confirmare secundară, nu driver principal.
+        # Motivare: swingurile pot arăta structură bullish veche (3-4 luni) în timp ce ultimul
+        # BOS body-close a rupt în jos — structura recentă trebuie să primeze.
+        if latest_signal:
             final_bias = latest_signal.direction
-            confidence = "LOW (Signal only, no swing confirmation - RISKY)"
-        
+            if macro_trend_swings == latest_signal.direction:
+                confidence = f"VERY HIGH (Body-close {signal_type} + swing structure aligned: {final_bias.upper()})"
+            elif macro_trend_swings != 'neutral':
+                confidence = f"HIGH (Body-close {signal_type} {final_bias.upper()} — overrides swing pattern {macro_trend_swings.upper()})"
+            else:
+                confidence = f"MEDIUM (Body-close {signal_type} {final_bias.upper()}, swing structure neutral)"
+
+            if debug:
+                print(f"\n   🎯 V22 BODY-CLOSE PRIMARY BIAS:")
+                print(f"      Latest {signal_type}: {final_bias.upper()} (index {latest_index})")
+                print(f"      Swing structure: {macro_trend_swings.upper()}")
+                print(f"      Confidence: {confidence}")
+
+        elif macro_trend_swings != 'neutral':
+            # Fallback: niciun BOS/CHoCH confirmat → swing structure ca bias
+            final_bias = macro_trend_swings
+            confidence = "LOW (Swing pattern only — niciun BOS/CHoCH body-close confirmat)"
+
         else:
-            # No signals, no clear swings
+            # Niciun semnal, nicio structură clară
             final_bias = 'neutral'
             confidence = "NONE (Choppy/Ranging)"
         

@@ -1839,9 +1839,12 @@ class SetupExecutorMonitor:
                 # ─────────────────────────────────────────────────────────────────────────
 
                 # ── Condiția 4: Câmpuri obligatorii lipsă (setup corupt) ─────────────────
+                # V22: entry_price eliminat din câmpuri obligatorii la cleanup.
+                # Scanner poate scrie setup fără entry_price (e adăugat ulterior de radar).
+                # Ștergem DOAR dacă lipsesc symbol sau direction (setup complet inutilizabil).
                 if not reason_remove:
-                    if not s.get('symbol') or not s.get('direction') or not s.get('entry_price'):
-                        reason_remove = "câmpuri obligatorii lipsă (symbol/direction/entry_price) — setup corupt"
+                    if not s.get('symbol') or not s.get('direction'):
+                        reason_remove = "câmpuri obligatorii lipsă (symbol/direction) — setup corupt"
 
                 if reason_remove:
                     removed_reasons.append(f"{symbol}: {reason_remove}")

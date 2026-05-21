@@ -784,45 +784,24 @@ class MultiTFRadar:
 
     def _batch_sync_to_monitoring_setups(
         self,
-        data: dict,
         results: list
     ) -> None:
         """
-        V19.4 FIX #5: O singură citire JSON + o singură scriere pentru TOATE cele 7 parități.
-        Elimină blocajele I/O de 7 citiri/scrieri secvențiale pe fiecare ciclu de 30s.
-        Primește `data` deja încărcat din run_scan și o listă de tuple (setup, result).
+        V22 MERGE PARȚIAL — elimină race condition (Time Warp).
+
+        Problema V19.4: json_data era citit la STARTUL ciclului (T+01s) și scris
+        la FINALUL ciclului (T+31s) — suprascriind orice modificare făcută de
+        setup_executor_monitor în interval (execuții, cleanup, status updates).
+
+        Soluția V22:
+          1. Re-citim monitoring_setups.json FRESH în momentul scrierii (după analiză)
+          2. Actualizăm DOAR cheile Radarului (radar_4h_*, radar_1h_*, EXECUTE_NOW)
+          3. Toate celelalte setup-uri (adăugate de scanner, modificate de executor)
+             rămân INTACTE — merge parțial, nu overwrite complet.
         """
         try:
-            if isinstance(data, dict):
-                setups = data.get("setups", [])
-            elif isinstance(data, list):
-                setups = data
-            else:
-                logger.error("⚠️ _batch_sync: format JSON nerecunoscut")
-                return
-
-            matched_count = 0
-            for _original_setup, result in results:
-                # V19.4 FIX #5: direction matching non-case-sensitive
-                result_dir = result.direction.upper()
-                for i, setup in enumerate(setups):
-                    setup_dir = setup.get('direction', '').upper()
-                    matches_sell = (result_dir == 'SHORT' and setup_dir == 'SELL')
-                    matches_buy  = (result_dir == 'LONG'  and setup_dir == 'BUY')
-                    matches_direct = (result_dir == setup_dir)
-                    if setup.get('symbol') == result.symbol and (matches_sell or matches_buy or matches_direct):
-                        self._update_setup_with_radar(setup, result)
-                        setups[i] = setup
-                        matched_count += 1
-                        break
-
-            if isinstance(data, dict):
-                data['setups'] = setups
-                data['last_updated'] = datetime.now().isoformat()
-            else:
-                data = setups
-
             import numpy as _np
+            import os as _os
 
             def _json_safe(obj):
                 if isinstance(obj, (_np.bool_,)):    return bool(obj)
@@ -831,19 +810,56 @@ class MultiTFRadar:
                 if isinstance(obj, (_np.ndarray,)):  return obj.tolist()
                 raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
 
+            # ── Re-citire LIVE: starea ACTUALĂ a fișierului, nu snapshot-ul de la startul ciclului ──
+            try:
+                with open('monitoring_setups.json', 'r', encoding='utf-8') as _f:
+                    fresh_data = json.load(_f)
+            except Exception as _je:
+                logger.error(f"⚠️ _batch_sync V22: Nu pot re-citi monitoring_setups.json: {_je}")
+                return
+
+            if isinstance(fresh_data, dict):
+                setups = fresh_data.get("setups", [])
+            elif isinstance(fresh_data, list):
+                setups = fresh_data
+            else:
+                logger.error("⚠️ _batch_sync V22: format JSON nerecunoscut")
+                return
+
+            matched_count = 0
+            for _original_setup, result in results:
+                # Direction matching non-case-sensitive
+                result_dir = result.direction.upper()
+                for i, setup in enumerate(setups):
+                    setup_dir = setup.get('direction', '').upper()
+                    matches_sell   = (result_dir == 'SHORT' and setup_dir == 'SELL')
+                    matches_buy    = (result_dir == 'LONG'  and setup_dir == 'BUY')
+                    matches_direct = (result_dir == setup_dir)
+                    if setup.get('symbol') == result.symbol and (matches_sell or matches_buy or matches_direct):
+                        # ── Merge parțial: _update_setup_with_radar scrie DOAR cheile Radarului ──
+                        # Cheile scanner/executor (status, entry_price, sl, tp etc.) rămân INTACTE
+                        self._update_setup_with_radar(setups[i], result)
+                        matched_count += 1
+                        break
+
+            if isinstance(fresh_data, dict):
+                fresh_data['setups'] = setups
+                fresh_data['last_updated'] = datetime.now().isoformat()
+            else:
+                fresh_data = setups
+
             tmp_path = 'monitoring_setups.json.tmp'
             with open(tmp_path, 'w', encoding='utf-8') as f:
-                json.dump(data, f, indent=2, default=_json_safe)
-            import os as _os
+                json.dump(fresh_data, f, indent=2, default=_json_safe)
             _os.replace(tmp_path, 'monitoring_setups.json')
             logger.success(
-                f"💾 [BATCH SYNC V19.4] monitoring_setups.json actualizat — "
-                f"{matched_count}/{len(results)} parități sincronizate într-o singură scriere"
+                f"💾 [BATCH SYNC V22 MERGE] monitoring_setups.json actualizat — "
+                f"{matched_count}/{len(results)} parități sincronizate (re-citire LIVE, race-free)"
             )
             sys.stdout.flush()
 
         except Exception as e:
-            logger.error(f"⚠️ _batch_sync_to_monitoring_setups error: {e}")
+            logger.error(f"⚠️ _batch_sync_to_monitoring_setups V22 error: {e}")
 
     def _sync_to_monitoring_setups(self, original_setup: Dict, result: MultiTFResult):
         """
@@ -1035,8 +1051,9 @@ class MultiTFRadar:
                 else:
                     return []
                 
-                # Accept MONITORING, ACTIVE, or any non-empty status
-                return [s for s in setups if isinstance(s, dict) and s.get('symbol') and s.get('entry_price')]
+                # V22: Accept orice setup cu 'symbol' — entry_price poate lipsi la setups proaspete
+                # Filtrul pe entry_price era cauza invizibilității setup-urilor nou create de daily_scanner
+                return [s for s in setups if isinstance(s, dict) and s.get('symbol')]
         
         except FileNotFoundError:
             print("⚠️  monitoring_setups.json not found")
@@ -1060,13 +1077,8 @@ class MultiTFRadar:
                 return
             setups = target_setups
 
-        # V19.4 FIX #5: Citire JSON O SINGURĂ DATĂ la începutul ciclului
-        json_data = None
-        try:
-            with open('monitoring_setups.json', 'r', encoding='utf-8') as _f:
-                json_data = json.load(_f)
-        except Exception as _je:
-            logger.warning(f"⚠️ Nu pot pre-citi monitoring_setups.json pentru batch sync: {_je}")
+        # V22: json_data pre-citire ELIMINATĂ — _batch_sync re-citește LIVE la final ciclu
+        # (fix race condition cu setup_executor_monitor care scria în fișier în interval)
 
         # Print summary header
         print("\n" + "="*80)
@@ -1102,14 +1114,9 @@ class MultiTFRadar:
                 err_count += 1
                 continue  # izolare erori — continuăm cu paritatea următoare
 
-        # V19.4 FIX #5: O SINGURĂ SCRIERE JSON pentru toate paritățile colectate
-        if json_data is not None and collected_results:
-            self._batch_sync_to_monitoring_setups(json_data, collected_results)
-        elif json_data is None and collected_results:
-            # Fallback: pre-citirea a eșuat, scriem individual (degraded mode)
-            logger.warning("⚠️ Batch sync degradat: pre-citire JSON eșuată — scriere individuală per paritate")
-            for setup, result in collected_results:
-                self._sync_to_monitoring_setups(setup, result)
+        # V22: O SINGURĂ SCRIERE JSON — re-citire LIVE în _batch_sync (race-free merge)
+        if collected_results:
+            self._batch_sync_to_monitoring_setups(collected_results)
 
         print(f"\n✅ Scan complete: {ok_count} analyzed | ❌ {err_count} errors\n")
     
