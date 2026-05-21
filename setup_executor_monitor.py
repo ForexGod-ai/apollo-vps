@@ -145,9 +145,10 @@ class SetupExecutorMonitor:
     
     def __init__(self, check_interval: int = 5):  # 🚀 5s HIGH-FREQUENCY for in-zone setups
         self.check_interval = check_interval
-        self.monitoring_file = Path("monitoring_setups.json")
-        self.executed_file = Path(".executed_setups.json")
-        self.config_file = Path("pairs_config.json")
+        _script_root = Path(__file__).parent.resolve()  # V22.2: absolut, nu CWD-dependent
+        self.monitoring_file = _script_root / "monitoring_setups.json"
+        self.executed_file = _script_root / ".executed_setups.json"
+        self.config_file = _script_root / "pairs_config.json"
         
         self.ctrader_client = CTraderCBotClient()
         
@@ -2159,9 +2160,9 @@ class SetupExecutorMonitor:
                             _lot_size_en = max(0.01, min(_lot_size_en, 10.0))
                         else:
                             # SL lipsă complet — nu executa, nu are sens
-                            logger.critical(f"🚨 [V19.8 NO SL] {symbol}: SL=0, execuție anulată definitiv")
+                            logger.critical(f"🚨 [V19.8 NO SL] {symbol}: SL=0, execuție anulată — retry la ciclul următor")
                             self._track_rejection(f"EXECUTE_NOW no SL available for {symbol}")
-                            setups[i]['EXECUTE_NOW'] = False
+                            setups[i].pop('EXECUTE_NOW', None)  # V22.2: pop (nu False) → radar re-triggereaza
                             setups[i]['last_rejection_reason'] = 'V19.8: SL structural indisponibil'
                             updated = True
                             continue
@@ -2186,7 +2187,7 @@ class SetupExecutorMonitor:
                                 f"🚨 [V19.8 SENTINELĂ] {symbol} BLOCAT: {_sentinel_reason_en}"
                             )
                             self._track_rejection(f"EXECUTE_NOW sentinel rejected: {_sentinel_reason_en[:60]}")
-                            setups[i]['EXECUTE_NOW'] = False
+                            setups[i].pop('EXECUTE_NOW', None)  # V22.2: pop (nu False) → radar re-triggereaza
                             setups[i]['last_rejection_reason'] = f'Sentinel: {_sentinel_reason_en}'
                             updated = True
                             continue

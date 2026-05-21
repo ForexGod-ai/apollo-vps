@@ -39,6 +39,12 @@ Usage:
 import json
 import sys
 import io
+import os as _os_global
+from pathlib import Path as _Path
+# V22.2: Cale absolută — nu depinde de CWD la pornire
+_RADAR_DIR = _Path(__file__).parent.resolve()
+_MONITORING_FILE = str(_RADAR_DIR / 'monitoring_setups.json')
+_MONITORING_TMP  = str(_RADAR_DIR / 'monitoring_setups.json.tmp')
 # Force UTF-8 output on Windows (fixes emoji display in PowerShell)
 if hasattr(sys.stdout, 'buffer') and sys.stdout.encoding != 'utf-8':
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
@@ -820,7 +826,7 @@ class MultiTFRadar:
 
             # ── Re-citire LIVE: starea ACTUALĂ a fișierului, nu snapshot-ul de la startul ciclului ──
             try:
-                with open('monitoring_setups.json', 'r', encoding='utf-8') as _f:
+                with open(_MONITORING_FILE, 'r', encoding='utf-8') as _f:
                     fresh_data = json.load(_f)
             except Exception as _je:
                 logger.error(f"⚠️ _batch_sync V22: Nu pot re-citi monitoring_setups.json: {_je}")
@@ -856,10 +862,10 @@ class MultiTFRadar:
             else:
                 fresh_data = setups
 
-            tmp_path = 'monitoring_setups.json.tmp'
+            tmp_path = _MONITORING_TMP
             with open(tmp_path, 'w', encoding='utf-8') as f:
                 json.dump(fresh_data, f, indent=2, default=_json_safe)
-            _os.replace(tmp_path, 'monitoring_setups.json')
+            _os.replace(tmp_path, _MONITORING_FILE)
             logger.success(
                 f"💾 [BATCH SYNC V22 MERGE] monitoring_setups.json actualizat — "
                 f"{matched_count}/{len(results)} parități sincronizate (re-citire LIVE, race-free)"
@@ -878,7 +884,7 @@ class MultiTFRadar:
         """
         try:
             # Load monitoring_setups.json
-            with open('monitoring_setups.json', 'r', encoding='utf-8') as f:
+            with open(_MONITORING_FILE, 'r', encoding='utf-8') as f:
                 data = json.load(f)
             
             if isinstance(data, dict):
@@ -932,11 +938,11 @@ class MultiTFRadar:
                     return obj.tolist()
                 raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
 
-            tmp_path = 'monitoring_setups.json.tmp'
+            tmp_path = _MONITORING_TMP
             with open(tmp_path, 'w', encoding='utf-8') as f:
                 json.dump(data, f, indent=2, default=_json_safe)
             import os as _os
-            _os.replace(tmp_path, 'monitoring_setups.json')
+            _os.replace(tmp_path, _MONITORING_FILE)
             
             logger.debug(f"💾 monitoring_setups.json updated with radar data")
         
@@ -1049,7 +1055,7 @@ class MultiTFRadar:
     def load_monitoring_setups(self) -> List[Dict]:
         """Load setups from monitoring_setups.json"""
         try:
-            with open('monitoring_setups.json', 'r', encoding='utf-8') as f:
+            with open(_MONITORING_FILE, 'r', encoding='utf-8') as f:
                 data = json.load(f)
                 
                 if isinstance(data, dict):
