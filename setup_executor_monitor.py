@@ -1932,8 +1932,11 @@ class SetupExecutorMonitor:
                 logger.debug(f"🔄 Normal monitoring: 30s interval")
             
             updated = False
-            
-            for i, setup in enumerate(setups):
+            # V19.14: Tracker risc cumulativ pe sesiunea curentă de execuție
+            # Previne supra-expunerea în scenarii Mass-Trigger (6 perechi simultan)
+            # Max 15% risc cumulat per ciclu (3 trades × 5%) — celelalte se amână la ciclul următor
+            _session_risk_used = 0.0   # procent cumulat din balanță angajat în ciclul curent
+            _SESSION_RISK_MAX = 0.15   # 15% max per ciclu (ex: 300$ cont → max 45$ expus simultan)
                 symbol = setup['symbol']
                 status = setup.get('status', 'MONITORING')
                 
@@ -2102,7 +2105,28 @@ class SetupExecutorMonitor:
                         # ── STEP 5: Calcul dinamic loturi — 5% risc din balanță live ────────────────
                         _sl_pips_en = abs(_en_entry - _sl) / _pip_size_en if _sl and _en_entry else 0.0
 
-                        _balance_en = float(os.getenv('ACCOUNT_BALANCE', 1336))
+                        # ── V19.14: GUARD RISC CUMULATIV (Mass-Trigger protection) ──────────────────
+                        # Dacă deja am angajat ≥15% din cont în ciclul curent → amânăm restul
+                        # Exemplu: cont 300$ → după 3 traduri (3×5%=15%) → stop, nu mai intrăm
+                        _base_balance_guard = float(os.getenv('ACCOUNT_BALANCE', 1336))
+                        try:
+                            _th_guard = Path(__file__).parent / 'trade_history.json'
+                            if _th_guard.exists():
+                                with open(_th_guard, 'r', encoding='utf-8') as _fg:
+                                    _tg = json.load(_fg)
+                                _lg = float(_tg.get('account', {}).get('balance', 0))
+                                if _lg > 0:
+                                    _base_balance_guard = _lg
+                        except Exception:
+                            pass
+                        if _session_risk_used >= _SESSION_RISK_MAX:
+                            logger.warning(
+                                f"⛔ [V19.14 RISK CAP] {symbol}: risc cumulat {_session_risk_used*100:.1f}% ≥ {_SESSION_RISK_MAX*100:.0f}% — "
+                                f"execuție amânată la ciclul următor (30s). Balanță protejată: {_base_balance_guard:.0f}$"
+                            )
+                            continue  # Sărim perechea — va fi preluată în ciclul următor
+
+                        _balance_en = _base_balance_guard
                         try:
                             _th_path_en = Path(__file__).parent / 'trade_history.json'
                             if _th_path_en.exists():
@@ -2176,8 +2200,15 @@ class SetupExecutorMonitor:
                             setups[i]['status'] = 'ACTIVE'
                             setups[i].pop('EXECUTE_NOW', None)  # eliminare completă cheie
                             updated = True
+                            # V19.14: Actualizare tracker risc cumulativ
+                            _session_risk_used += 0.05
                             logger.success(f"✅ [V19.8 EXECUTE_NOW] {symbol} executat structural: "
-                                           f"SL={_sl_pips_en:.1f}p | Lots={_lot_size_en:.2f} | 5% risk")
+                                           f"SL={_sl_pips_en:.1f}p | Lots={_lot_size_en:.2f} | 5% risk "
+                                           f"| Risc cumulat sesiune: {_session_risk_used*100:.0f}%")
+                            # V19.14: Anti rate-limit cTrader — 500ms pauză între ordine consecutive
+                            # Fără acest sleep, 6 ordine MARKET ajung la broker în <50ms → risc de reject
+                            import time as _time_module
+                            _time_module.sleep(0.5)
                         else:
                             logger.error(f"❌ [V19.8 EXECUTE_NOW] {symbol} execuție respinsă de Risk Manager")
                             self._track_rejection(f"EXECUTE_NOW loss limit rejected for {symbol}")
