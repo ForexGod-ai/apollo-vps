@@ -775,12 +775,20 @@ class MultiTFRadar:
         setup['radar_verdict'] = result.verdict
         setup['radar_last_scan'] = datetime.now().isoformat()
 
-        # V18: EXECUTE_NOW — cheia supremă de execuție
+        # V22.1: EXECUTE_NOW — cheia supremă de execuție
+        # REGULA DE AUR: Radarul SETEAZĂ semnalul, EXECUTORUL îl consumă.
+        # Radarul NU are voie să șteargă EXECUTE_NOW — doar executorul poate face asta
+        # (după ce execută sau respinge). Altfel: radarul scrie False în ciclu T+30s,
+        # înainte ca executorul să apuce să citească True-ul din T+00s → semnal pierdut.
+        # Excepție: dacă entry1_filled=True, semnalul a fost deja consumat → safe to clear.
         if result.execution_ready:
             setup['EXECUTE_NOW'] = True
-            logger.success(f"🔥 [V18 EXECUTE_NOW] {result.symbol}: Semnal complet confirmat → EXECUTE_NOW=True")
-        else:
+            logger.success(f"🔥 [V22.1 EXECUTE_NOW] {result.symbol}: Semnal complet confirmat → EXECUTE_NOW=True")
+        elif setup.get('entry1_filled', False):
+            # Executorul a confirmat execuția — acum putem curăța semnalul
             setup.pop('EXECUTE_NOW', None)
+        # ALTFEL: execution_ready=False dar entry1_filled=False → NU atingem EXECUTE_NOW
+        # Executorul îl va procesa și șterge el însuși la ciclul său de 30s
 
     def _batch_sync_to_monitoring_setups(
         self,
