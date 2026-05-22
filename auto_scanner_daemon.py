@@ -436,7 +436,9 @@ def main():
 
             # Verifică dacă suntem în fereastra de trigger (ziua + ora + minutul)
             is_scan_day = weekday in SCAN_DAYS
-            is_scan_time = (now.hour == scan_hour) and (now.minute == scan_minute)
+            # V11.3 FIX: Fereastra de 5 minute (07:00–07:04) în loc de exact minute==0
+            # sleep(60) pe Windows poate deriva și sări peste minutul exact → scan pierdut
+            is_scan_time = (now.hour == scan_hour) and (scan_minute <= now.minute <= scan_minute + 4)
             already_scanned_today = (get_last_scan_date() == today_str)
 
             # ── Weekly Report: Vineri 23:59 EET ──────────────────────────────
