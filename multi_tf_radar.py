@@ -422,9 +422,23 @@ class MultiTFRadar:
                         fvg_top_synth = max(fib40, fib60)
                         fvg_bottom_synth = min(fib40, fib60)
                         fvg_entry_synth = (fvg_top_synth + fvg_bottom_synth) / 2.0
-                        in_fvg_synth = fvg_bottom_synth <= current_price <= fvg_top_synth
                         pip_size_synth = 0.01 if 'JPY' in symbol.upper() else 0.0001
-                        if in_fvg_synth:
+
+                        # ── V24.2 SNIPER ANTI-FOMO — Fibo Fallback ──────────────────────
+                        # EXECUTE_NOW STRICT doar dacă prețul a făcut pullback fizic în zona 40-60%.
+                        # Dacă impulsul e proaspăt și prețul e la <35% retragere → WAITING.
+                        # Calculăm retragerea curentă față de impulsul CHoCH.
+                        if choch_direction == 'bullish':
+                            # LONG: pullback = cât a coborât prețul față de break_price
+                            retrace_pct = (choch_break_price - current_price) / impulse_size if impulse_size > 0 else 0
+                        else:
+                            # SHORT: pullback = cât a urcat prețul față de break_price
+                            retrace_pct = (current_price - choch_break_price) / impulse_size if impulse_size > 0 else 0
+
+                        in_fvg_synth = fvg_bottom_synth <= current_price <= fvg_top_synth
+                        # Anti-FOMO guard: chiar dacă prețul e geometric în zonă,
+                        # verificăm că retragerea e >= 35% (impulsul nu e proaspăt)
+                        if in_fvg_synth and retrace_pct >= 0.35:
                             dist_synth = 0.0
                             status_synth = PullbackStatus.EXECUTE_NOW_1H if timeframe == "H1" else PullbackStatus.EXECUTE_NOW_4H
                         else:
@@ -433,13 +447,15 @@ class MultiTFRadar:
                             else:
                                 dist_synth = abs(fvg_bottom_synth - current_price) / pip_size_synth
                             status_synth = PullbackStatus.WAITING_1H_PULLBACK if timeframe == "H1" else PullbackStatus.WAITING_4H_PULLBACK
+
                         # V16.2: Fibo Fallback folosește 50% EQ exact (centrul zonei sintetice)
-                        # choch_equilibrium calculat mai sus din același impuls
                         eq_for_synth = choch_equilibrium if choch_equilibrium else fvg_entry_synth
                         _eq_synth_str = f"{eq_for_synth:.5f}" if eq_for_synth is not None else "N/A"
-                        print(f"  ⚡ [V15.4 FIBO FALLBACK] No FVG found — using Fibo 40-60% synthetic zone")
+                        _retrace_str = f"{retrace_pct*100:.1f}%"
+                        _sniper_note = "🎯 IN ZONE — EXECUTE" if status_synth in (PullbackStatus.EXECUTE_NOW_1H, PullbackStatus.EXECUTE_NOW_4H) else f"⏳ PÂNDĂ ({_retrace_str} retrace, așteptăm 40-60%)"
+                        print(f"  ⚡ [V24.2 FIBO FALLBACK] No FVG — Synthetic zone 40-60%")
                         print(f"     Impulse: {swing_broken_price:.5f} → {choch_break_price:.5f} ({impulse_size/pip_size_synth:.1f} pips)")
-                        print(f"     Synthetic FVG: [{fvg_bottom_synth:.5f} - {fvg_top_synth:.5f}] | EQ={_eq_synth_str} | In zone: {in_fvg_synth}")
+                        print(f"     Zone: [{fvg_bottom_synth:.5f} - {fvg_top_synth:.5f}] | EQ={_eq_synth_str} | Retrace: {_retrace_str} | {_sniper_note}")
                         sys.stdout.flush()
                         return TimeframeAnalysis(
                             timeframe=timeframe_display,
@@ -451,11 +467,11 @@ class MultiTFRadar:
                             fvg_top=fvg_top_synth,
                             fvg_bottom=fvg_bottom_synth,
                             fvg_entry=fvg_entry_synth,
-                            in_fvg=in_fvg_synth,
+                            in_fvg=in_fvg_synth and retrace_pct >= 0.35,  # Anti-FOMO
                             distance_to_fvg_pips=dist_synth,
                             status=status_synth,
                             equilibrium=eq_for_synth,
-                            fvg_source="fibo_fallback"  # V19.6: transparență sursă
+                            fvg_source="fibo_fallback"
                         )
                 except Exception as _fib_err:
                     print(f"  ⚠️ [V15.4 FIBO FALLBACK] Error computing synthetic zone: {_fib_err}")
@@ -480,6 +496,9 @@ class MultiTFRadar:
             fvg_bottom = latest_fvg.bottom
             fvg_entry = (fvg_top + fvg_bottom) / 2.0
             
+            # ── V24.2 SNIPER ANTI-FOMO — Structural FVG ─────────────────────────
+            # EXECUTE_NOW STRICT doar dacă prețul e FIZIC în FVG.
+            # Dacă structura s-a rupt și prețul a fugit fără a mai reveni → WAITING.
             # Check if price in FVG
             in_fvg = fvg_bottom <= current_price <= fvg_top
             
@@ -488,8 +507,8 @@ class MultiTFRadar:
             _pip_size_dist = 0.01 if 'JPY' in symbol.upper() else 0.0001
             if in_fvg:
                 distance_to_fvg_pips = 0.0
-                # V18: Blackout hour filter eliminat complet — sistemul execută 24/7 fără restricții de timp
                 status = PullbackStatus.EXECUTE_NOW_1H if timeframe == "H1" else PullbackStatus.EXECUTE_NOW_4H
+                _sniper_note = f"🎯 SNIPER EXECUTE — prețul {current_price:.5f} IN FVG [{fvg_bottom:.5f}-{fvg_top:.5f}]"
             else:
                 if required_direction == 'bullish':
                     # For LONG: need to pull back DOWN to FVG
@@ -499,6 +518,11 @@ class MultiTFRadar:
                     distance_to_fvg_pips = abs(fvg_bottom - current_price) / _pip_size_dist
 
                 status = PullbackStatus.WAITING_1H_PULLBACK if timeframe == "H1" else PullbackStatus.WAITING_4H_PULLBACK
+                _sniper_note = f"⏳ SNIPER PÂNDĂ — prețul {current_price:.5f} NOT IN FVG [{fvg_bottom:.5f}-{fvg_top:.5f}] | dist={distance_to_fvg_pips:.1f}p"
+
+            print(f"  🔭 [V24.2 SNIPER] {symbol} {timeframe} | {choch_direction.upper()} CHoCH @ {choch_break_price:.5f}")
+            print(f"     {_sniper_note}")
+            sys.stdout.flush()
             
             return TimeframeAnalysis(
                 timeframe=timeframe_display,
