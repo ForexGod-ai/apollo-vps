@@ -2041,11 +2041,11 @@ class SMCDetector:
         if df is None or len(df) < 20:
             return (0, 0, 0, 0)
         
-        # ✅ V10.4 FIX #R4: Macro range calculat din prețuri reale (df high/low) pe 100 bare
-        # Vechea metodă cu swing points ATR-filtrate dădea extreme din 6 luni — zone irelevante!
-        # Exemplu: USDJPY range 6 luni 140–158 → discount_threshold 148.1 (imposibil de atins)
-        # Noua metodă: ultimele 100 bare = ~4 luni Daily → range realist curent
-        macro_lookback = min(100, len(df))
+        # V24.1: Macro range calculat din prețuri reale (df high/low) pe 150 bare
+        # 150 bare Daily = ~7 luni = Dealing Range instituțional optim pentru Fibonacci 55/45
+        # 100 bare (4 luni) era prea scurt — rata rateuri la zone majore HTF
+        # 200+ bare (10 luni) ar da zone prea largi, greu de atins în swing trading
+        macro_lookback = min(150, len(df))
         df_macro = df.iloc[-macro_lookback:]
         
         # ✅ V10.4: Folosim max/min din prețuri reale, nu swing points filtrate

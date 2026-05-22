@@ -303,11 +303,13 @@ class DailyScanner:
                 if df_1h is None:
                     print(f"⚠️ Warning: {symbol} has no 1H data (Entry 1 disabled)")
 
-                # V15.0 WEEKLY ANCHOR: Download 300 W1 bars (~6 ani context macro)
-                print(f"   📅 Downloading W1 data (Weekly Anchor — 300 bars)...")
+                # V24.1 WEEKLY ANCHOR: Download 150 W1 bars (~3 ani context macro)
+                # 300 bare = 6 ani includeau cicluri irelevante (ex: COVID 2020)
+                # 150 bare = 3 ani = context institutional optim
+                print(f"   📅 Downloading W1 data (Weekly Anchor — 150 bars, ~3 ani)...")
                 df_w1 = None
                 try:
-                    df_w1 = self.data_provider.get_historical_data(symbol, "W1", 300)
+                    df_w1 = self.data_provider.get_historical_data(symbol, "W1", 150)
                     if df_w1 is not None:
                         print(f"   ✅ W1 data: {len(df_w1)} bars")
                     else:

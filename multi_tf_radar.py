@@ -268,71 +268,35 @@ class MultiTFRadar:
                     status=PullbackStatus.WAITING_1H_CHOCH if timeframe == "H1" else PullbackStatus.WAITING_4H_CHOCH
                 )
             
-            # ━━━ V19.2: STRUCTURAL ALIGNMENT — 4-STEP CASCADE, ZERO COUNTER-TREND REJECTION ━━━
-            # REGULA ABSOLUTĂ: Dacă există CEL PUȚIN UN CHoCH sau BOS în direcția biasului Daily
-            # în ORICE punct din seria de date → ALIGNED = VALIDATED.
-            # Mișcările counter-trend (micro-pullback 4H/1H) = zgomot normal într-un pullback Daily.
-            # NU invalidăm structura pe baza ultimului semnal de pe grafic.
-            LOOKBACK_BARS = 100
+            # ━━━ V24.1: ORGANIC STRUCTURAL ALIGNMENT — NO LOOKBACK WALL ━━━
+            # Colonel's fix: cel mai recent CHoCH sau BOS aliniat din TOATĂ seria.
+            # LOOKBACK_BARS=100 eliminat — un semnal la bara 150 primează față de BOS minor la bara 80.
+            # Consistent cu V24.0 organic (fractal 2, no pivot expiry în smc_detector).
 
             use_bos_as_choch = False
             bos_used = None
 
-            # PAS 1: CHoCH aliniat în fereastra de 100 bare (prioritate maximă — semnal recent)
-            # V19.4 FIX #1: sorted garantat după index cronologic — elimină selecție counter-trend rezidual
+            # PAS 1: Cel mai recent CHoCH aliniat din TOATĂ seria descărcată
             aligned_chochs = sorted(
-                [c for c in choch_list
-                 if c.direction == required_direction
-                 and c.index >= len(df) - LOOKBACK_BARS],
+                [c for c in choch_list if c.direction == required_direction],
                 key=lambda x: x.index
             )
             if aligned_chochs:
                 bars_ago = len(df) - aligned_chochs[-1].index
-                print(f"  ✅ [{timeframe_display} SCAN] {symbol} | CHoCH {required_direction.upper()} în fereastra 100 bare la -{bars_ago} bare | VALIDATED ✅")
+                print(f"  ✅ [{timeframe_display} SCAN] {symbol} | CHoCH {required_direction.upper()} la -{bars_ago} bare | VALIDATED ✅")
                 sys.stdout.flush()
 
-            # PAS 2: BOS aliniat în fereastra de 100 bare
+            # PAS 2: Cel mai recent BOS aliniat din TOATĂ seria (dacă nu există CHoCH)
             if not aligned_chochs:
-                # V19.4 FIX #1: sorted — cel mai recent BOS în fereastră la [-1]
-                aligned_bos_window = sorted(
-                    [b for b in bos_list
-                     if b.direction == required_direction
-                     and b.index >= len(df) - LOOKBACK_BARS],
-                    key=lambda x: x.index
-                )
-                if aligned_bos_window:
-                    use_bos_as_choch = True
-                    bos_used = aligned_bos_window[-1]
-                    bars_ago = len(df) - bos_used.index
-                    print(f"  ✅ [{timeframe_display} SCAN] {symbol} | BOS {required_direction.upper()} în fereastra 100 bare la -{bars_ago} bare | VALIDATED ✅ (BOS confirmare)")
-                    sys.stdout.flush()
-
-            # PAS 3: FALLBACK FULL-DATASET CHoCH — ignorăm COMPLET orice counter-trend
-            # Luăm cel mai recent CHoCH aliniat din TOATĂ seria, indiferent ce micro-pullback a urmat
-            if not aligned_chochs and not use_bos_as_choch:
-                # V19.4 FIX #1: sorted — [-1] va fi garantat cel mai RECENT CHoCH aliniat din toată seria
-                all_aligned_chochs = sorted(
-                    [c for c in choch_list if c.direction == required_direction],
-                    key=lambda x: x.index
-                )
-                if all_aligned_chochs:
-                    aligned_chochs = [all_aligned_chochs[-1]]  # cel mai recent aliniat — definitiv valid
-                    bars_ago = len(df) - all_aligned_chochs[-1].index
-                    print(f"  ✅ [{timeframe_display} SCAN] {symbol} | CHoCH {required_direction.upper()} full-dataset la -{bars_ago} bare | VALIDATED ✅ (counter-trend ignorat)")
-                    sys.stdout.flush()
-
-            # PAS 4: FALLBACK FULL-DATASET BOS
-            if not aligned_chochs and not use_bos_as_choch:
-                # V19.4 FIX #1: sorted — [-1] va fi garantat cel mai RECENT BOS din toată seria
-                all_aligned_bos = sorted(
+                aligned_bos_all = sorted(
                     [b for b in bos_list if b.direction == required_direction],
                     key=lambda x: x.index
                 )
-                if all_aligned_bos:
+                if aligned_bos_all:
                     use_bos_as_choch = True
-                    bos_used = all_aligned_bos[-1]
+                    bos_used = aligned_bos_all[-1]
                     bars_ago = len(df) - bos_used.index
-                    print(f"  ✅ [{timeframe_display} SCAN] {symbol} | BOS {required_direction.upper()} full-dataset la -{bars_ago} bare | VALIDATED ✅")
+                    print(f"  ✅ [{timeframe_display} SCAN] {symbol} | BOS {required_direction.upper()} la -{bars_ago} bare | VALIDATED ✅ (BOS confirmare)")
                     sys.stdout.flush()
 
             # TRULY NOTHING — nicio structură aliniată în toți cei {len(df)} bari descărcați
