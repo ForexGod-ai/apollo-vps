@@ -333,6 +333,7 @@ class MultiTFRadar:
                 latest_choch = aligned_chochs[-1]
             choch_direction = latest_choch.direction
             choch_index = latest_choch.index
+            choch_break_price = float(latest_choch.break_price)   # V24.3 FIX: definit în scope principal
             
             # Get CHoCH details
             if choch_index < len(df):
