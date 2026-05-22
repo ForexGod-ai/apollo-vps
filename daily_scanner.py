@@ -222,8 +222,27 @@ class DailyScanner:
         if not connected:
             error_msg = "Failed to connect to cTrader cBot API (localhost:8010) după 3 încercări (90s)"
             print(f"❌ {error_msg}")
-            self.telegram.send_error_alert(error_msg)
-            return []
+            # V24.5 FIX: Trimitem alert Telegram imediat — mesaj explicit cu instrucțiuni VPS
+            try:
+                self.telegram.send_message(
+                    "⚠️ <b>ФорексГод.АИ</b>\n"
+                    "❌ <b>SCAN EȘUAT — cTrader OFFLINE</b>\n"
+                    "────────────────\n"
+                    "🔌 Port 8010 nu răspunde pe VPS!\n"
+                    "\n"
+                    "<b>Acțiune necesară:</b>\n"
+                    "1. Deschide cTrader pe VPS\n"
+                    "2. Pornește cBot-ul <code>MarketDataProvider</code>\n"
+                    "3. Rulează manual: <code>python daily_scanner.py</code>\n"
+                    "────────────────\n"
+                    "🏛 <b>ГЛИТЧ ИН МАТРИКС</b> 🏛"
+                )
+            except Exception:
+                pass  # Telegram failure nu trebuie să mascheze eroarea principală
+            # V24.5 FIX: Ridicăm excepție în loc să returnăm [] silențios.
+            # Aceasta face ca subprocess.run() din auto_scanner_daemon.py să vadă
+            # exit code 1 (nu 0) și să trimită corect alertul de eroare.
+            raise RuntimeError(error_msg)
         
         setups_found = []
         
@@ -945,10 +964,16 @@ def main():
     
     # Run full daily scan
     setups = scanner.run_daily_scan()
-    
-    # ALWAYS save monitoring setups (preserves existing + adds new)
-    # Even if setups is empty, we keep existing ones
-    save_monitoring_setups(setups if setups else [])
+
+    # V24.5 FIX: CRITICAL GUARD — nu salva niciodată stale data după un scan eșuat.
+    # run_daily_scan() ridică RuntimeError dacă cTrader e offline → ajungem în
+    # blocul except de mai jos cu sys.exit(1). Dacă totuși returnează [] fără excepție
+    # (alt tip de eșec intern), nu suprascrie JSON-ul.
+    # REGULA: salvăm monitoring_setups.json DOAR dacă scanul a produs date reale.
+    if setups is not None:
+        save_monitoring_setups(setups if setups else [])
+    else:
+        print("⚠️ [V24.5] Scan returned None — monitoring_setups.json NOT overwritten (stale data protected)")
     
     # Print summary
     if setups:
