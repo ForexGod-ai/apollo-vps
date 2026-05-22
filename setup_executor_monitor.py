@@ -1165,8 +1165,23 @@ class SetupExecutorMonitor:
                                     'w1_bias': setup.get('w1_bias', 'NEUTRAL'),
                                 }
                                 self.telegram.send_4h_choch_alert(setup_data_alert, df_4h_lock, df_w1_alert)
+                                # V24.3 FIX SPAM: flag scris imediat pe disc — nu se pierde la restart Watchdog
                                 setup['alert_4h_sent'] = True
-                                logger.info(f"   📱 [V14.2] 4H CHoCH Alert trimis: {symbol}")
+                                try:
+                                    with open(self.monitoring_file, 'r', encoding='utf-8') as _rf:
+                                        _disk = json.load(_rf)
+                                    _disk_setups = _disk.get('setups', _disk) if isinstance(_disk, dict) else _disk
+                                    for _s in _disk_setups:
+                                        if _s.get('symbol') == symbol:
+                                            _s['alert_4h_sent'] = True
+                                            break
+                                    if isinstance(_disk, dict):
+                                        _disk['setups'] = _disk_setups
+                                    with open(self.monitoring_file, 'w', encoding='utf-8') as _wf:
+                                        json.dump(_disk, _wf, indent=2)
+                                except Exception as _save_err:
+                                    logger.warning(f"   ⚠️ alert_4h_sent save error: {_save_err}")
+                                logger.info(f"   📱 [V14.2] 4H CHoCH Alert trimis + flag persistat pe disc: {symbol}")
                             except Exception as alert_err:
                                 logger.warning(f"   ⚠️ 4H alert error for {symbol}: {alert_err}")
 

@@ -246,11 +246,7 @@ class TelegramNotifier:
                 f"🎯 TP     <code>{tp:.5f}</code>\n"
                 f"⚖️ RR     1:{rr:.2f}\n"
                 f"{sep}\n"
-                f"⏳ Așteptăm pullback în FVG 4H pentru entry final...\n"
-                f"  {sep}\n"
-                f"  🔱 AUTHORED BY <b>ФорексГод</b> 🔱\n"
-                f"  {sep}\n"
-                f"  🏛️  <b>Глитч Ин Матрикс</b>  🏛️"
+                f"⏳ Așteptăm pullback în FVG 4H pentru entry final..."
             )
             self.send_message(msg)
             time.sleep(2)
@@ -317,11 +313,7 @@ class TelegramNotifier:
                 f"🎯 TP     <code>{tp:.5f}</code>\n"
                 f"⚖️ RR     1:{rr:.2f}\n"
                 f"{sep}\n"
-                f"⚡ EXECUTE în curs... așteptăm pullback final în FVG 1H.\n"
-                f"  {sep}\n"
-                f"  🔱 AUTHORED BY <b>ФорексГод</b> 🔱\n"
-                f"  {sep}\n"
-                f"  🏛️  <b>Глитч Ин Матрикс</b>  🏛️"
+                f"⚡ EXECUTE în curs... așteptăm pullback final în FVG 1H."
             )
             self.send_message(msg)
             time.sleep(2)
