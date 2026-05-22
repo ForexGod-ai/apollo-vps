@@ -937,14 +937,29 @@ class SetupExecutorMonitor:
             # 🎯 EXECUTE SNIPER ENTRY (1H FVG)
             logger.success(f"🎯 {symbol}: SNIPER ENTRY! Price in 1H FVG @ {radar_1h_fvg_entry:.5f}")
 
-            # ━━━ V13.2 SL PRIORITY: GENERALUL din smc_detector.py ━━━
-            # setup['stop_loss'] = SL structural calculat de calculate_entry_sl_tp() V13.2
-            # = max wick HIGH (SHORT) / min wick LOW (LONG) din TOATE swing-urile pre-CHoCH
-            # NU recalcula 10 pips fix — aceea e logica care a cauzat USDCHF stop-out 16 pips!
-            pip_size_exec = 0.01 if 'JPY' in symbol.upper() else 0.0001
-            structural_sl = setup.get('stop_loss')  # Generalul din setup JSON
+            # ━━━ V24.5 SL/TP STRUCTURAL PIPELINE ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            # SL priority: h4_sl_price (swing_broken 4H ± 3 pips, scris de Radar)
+            #              → stop_loss (SMC structural din scanner)
+            #              → FVG 10-pip fallback
+            # TP priority: daily_tp_price (nearest D1 Swing High/Low, scris de Scanner)
+            #              → take_profit (SMC structural din scanner)
+            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            _sym_up = symbol.upper()
+            if any(x in _sym_up for x in ['BTC', 'ETH', 'LTC', 'XRP']):
+                pip_size_exec = 1.0
+            elif any(x in _sym_up for x in ['XAU', 'XAG', 'GOLD', 'SILVER']):
+                pip_size_exec = 0.10
+            elif any(x in _sym_up for x in ['OIL', 'BRENT', 'WTI']):
+                pip_size_exec = 0.01
+            elif 'JPY' in _sym_up:
+                pip_size_exec = 0.01
+            else:
+                pip_size_exec = 0.0001
 
-            # Fallback: 10-pip SL din marginea FVG (doar dacă structural SL lipsește)
+            # SL: 4H structural swing_broken price (din Radar) → fallback JSON stop_loss → FVG 10pip
+            h4_sl = setup.get('h4_sl_price')
+            json_sl = setup.get('stop_loss')
+            structural_sl = h4_sl or json_sl
             if direction == 'buy':
                 radar_1h_fvg_bottom = setup.get('radar_1h_fvg_bottom', radar_1h_fvg_entry)
                 fallback_sl = radar_1h_fvg_bottom - (10 * pip_size_exec)
@@ -954,16 +969,71 @@ class SetupExecutorMonitor:
 
             if structural_sl and structural_sl != 0.0:
                 stop_loss = structural_sl
+                sl_src = '4H_SWING' if h4_sl else 'JSON_SMC'
                 sl_pips = abs(radar_1h_fvg_entry - stop_loss) / pip_size_exec
-                logger.info(f"   🛡️ [V13.2 GENERALUL] Using structural SL: {stop_loss:.5f} ({sl_pips:.1f} pips)")
+                logger.info(f"   🛡️ [V24.5 SL/{sl_src}] {stop_loss:.5f} ({sl_pips:.1f} pips)")
             else:
                 stop_loss = fallback_sl
-                logger.warning(f"   ⚠️ [V13.2 FALLBACK] Structural SL missing — using FVG 10-pip: {stop_loss:.5f}")
+                logger.warning(f"   ⚠️ [V24.5 SL/FALLBACK] SL lipsă — FVG 10-pip: {stop_loss:.5f}")
+
+            # TP: D1 Liquidity Target (din Scanner) → fallback JSON take_profit
+            daily_tp = setup.get('daily_tp_price')
+            json_tp  = setup.get('take_profit')
+            take_profit = daily_tp or json_tp
+            if take_profit:
+                tp_src = 'D1_LIQUIDITY' if daily_tp else 'JSON_SMC'
+                tp_pips = abs(take_profit - radar_1h_fvg_entry) / pip_size_exec
+                logger.info(f"   🎯 [V24.5 TP/{tp_src}] {take_profit:.5f} ({tp_pips:.1f} pips)")
+            else:
+                logger.warning(f"   ⚠️ [V24.5 TP] TP lipsă — trade fără TP explicit")
             
             return {
                 'action': 'EXECUTE_ENTRY1',
                 'entry_price': radar_1h_fvg_entry,
                 'stop_loss': stop_loss,
+                'take_profit': take_profit,
+                'reason': f'SNIPER ENTRY: Price in 1H FVG ({zone_type} zone validated)',
+                'entry_type': 'SNIPER_1H',
+                'choch_timestamp': setup.get('radar_1h_choch_time'),
+                'fibo_data': {}  # Not used in radar mode
+            }
+
+            # SL: 4H structural swing_broken price (din Radar) → fallback JSON stop_loss → FVG 10pip
+            h4_sl = setup.get('h4_sl_price')
+            json_sl = setup.get('stop_loss')
+            structural_sl = h4_sl or json_sl
+            if direction == 'buy':
+                radar_1h_fvg_bottom = setup.get('radar_1h_fvg_bottom', radar_1h_fvg_entry)
+                fallback_sl = radar_1h_fvg_bottom - (10 * pip_size_exec)
+            else:
+                radar_1h_fvg_top = setup.get('radar_1h_fvg_top', radar_1h_fvg_entry)
+                fallback_sl = radar_1h_fvg_top + (10 * pip_size_exec)
+
+            if structural_sl and structural_sl != 0.0:
+                stop_loss = structural_sl
+                sl_src = '4H_SWING' if h4_sl else 'JSON_SMC'
+                sl_pips = abs(radar_1h_fvg_entry - stop_loss) / pip_size_exec
+                logger.info(f"   🛡️ [V24.5 SL/{sl_src}] {stop_loss:.5f} ({sl_pips:.1f} pips)")
+            else:
+                stop_loss = fallback_sl
+                logger.warning(f"   ⚠️ [V24.5 SL/FALLBACK] SL lipsă — FVG 10-pip: {stop_loss:.5f}")
+
+            # TP: D1 Liquidity Target (din Scanner) → fallback JSON take_profit
+            daily_tp = setup.get('daily_tp_price')
+            json_tp  = setup.get('take_profit')
+            take_profit = daily_tp or json_tp
+            if take_profit:
+                tp_src = 'D1_LIQUIDITY' if daily_tp else 'JSON_SMC'
+                tp_pips = abs(take_profit - radar_1h_fvg_entry) / pip_size_exec
+                logger.info(f"   🎯 [V24.5 TP/{tp_src}] {take_profit:.5f} ({tp_pips:.1f} pips)")
+            else:
+                logger.warning(f"   ⚠️ [V24.5 TP] TP lipsă — trade fără TP explicit")
+            
+            return {
+                'action': 'EXECUTE_ENTRY1',
+                'entry_price': radar_1h_fvg_entry,
+                'stop_loss': stop_loss,
+                'take_profit': take_profit,
                 'reason': f'SNIPER ENTRY: Price in 1H FVG ({zone_type} zone validated)',
                 'entry_type': 'SNIPER_1H',
                 'choch_timestamp': setup.get('radar_1h_choch_time'),
@@ -997,11 +1067,23 @@ class SetupExecutorMonitor:
             # 💎 EXECUTE HIGH CONFIDENCE ENTRY (4H FVG)
             logger.success(f"💎 {symbol}: HIGH CONFIDENCE ENTRY! Price in 4H FVG @ {radar_4h_fvg_entry:.5f}")
 
-            # ━━━ V13.2 SL PRIORITY: GENERALUL din smc_detector.py ━━━
-            pip_size_exec = 0.01 if 'JPY' in symbol.upper() else 0.0001
-            structural_sl = setup.get('stop_loss')  # Generalul din setup JSON
+            # ━━━ V24.5 SL/TP STRUCTURAL PIPELINE ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            _sym_up = symbol.upper()
+            if any(x in _sym_up for x in ['BTC', 'ETH', 'LTC', 'XRP']):
+                pip_size_exec = 1.0
+            elif any(x in _sym_up for x in ['XAU', 'XAG', 'GOLD', 'SILVER']):
+                pip_size_exec = 0.10
+            elif any(x in _sym_up for x in ['OIL', 'BRENT', 'WTI']):
+                pip_size_exec = 0.01
+            elif 'JPY' in _sym_up:
+                pip_size_exec = 0.01
+            else:
+                pip_size_exec = 0.0001
 
-            # Fallback: 10-pip SL din marginea FVG 4H (doar dacă structural SL lipsește)
+            # SL: 4H structural swing_broken price (din Radar) → fallback JSON stop_loss → FVG 10pip
+            h4_sl = setup.get('h4_sl_price')
+            json_sl = setup.get('stop_loss')
+            structural_sl = h4_sl or json_sl
             if direction == 'buy':
                 radar_4h_fvg_bottom = setup.get('radar_4h_fvg_bottom', radar_4h_fvg_entry)
                 fallback_sl = radar_4h_fvg_bottom - (10 * pip_size_exec)
@@ -1011,16 +1093,29 @@ class SetupExecutorMonitor:
 
             if structural_sl and structural_sl != 0.0:
                 stop_loss = structural_sl
+                sl_src = '4H_SWING' if h4_sl else 'JSON_SMC'
                 sl_pips = abs(radar_4h_fvg_entry - stop_loss) / pip_size_exec
-                logger.info(f"   🛡️ [V13.2 GENERALUL] Using structural SL: {stop_loss:.5f} ({sl_pips:.1f} pips)")
+                logger.info(f"   🛡️ [V24.5 SL/{sl_src}] {stop_loss:.5f} ({sl_pips:.1f} pips)")
             else:
                 stop_loss = fallback_sl
-                logger.warning(f"   ⚠️ [V13.2 FALLBACK] Structural SL missing — using FVG 10-pip: {stop_loss:.5f}")
+                logger.warning(f"   ⚠️ [V24.5 SL/FALLBACK] SL lipsă — FVG 10-pip: {stop_loss:.5f}")
+
+            # TP: D1 Liquidity Target (din Scanner) → fallback JSON take_profit
+            daily_tp = setup.get('daily_tp_price')
+            json_tp  = setup.get('take_profit')
+            take_profit = daily_tp or json_tp
+            if take_profit:
+                tp_src = 'D1_LIQUIDITY' if daily_tp else 'JSON_SMC'
+                tp_pips = abs(take_profit - radar_4h_fvg_entry) / pip_size_exec
+                logger.info(f"   🎯 [V24.5 TP/{tp_src}] {take_profit:.5f} ({tp_pips:.1f} pips)")
+            else:
+                logger.warning(f"   ⚠️ [V24.5 TP] TP lipsă — trade fără TP explicit")
             
             return {
                 'action': 'EXECUTE_ENTRY1',  # Or EXECUTE_ENTRY2 if Entry1 already filled
                 'entry_price': radar_4h_fvg_entry,
                 'stop_loss': stop_loss,
+                'take_profit': take_profit,
                 'reason': f'HIGH CONFIDENCE: Price in 4H FVG ({zone_type} zone validated)',
                 'entry_type': 'HIGH_CONFIDENCE_4H',
                 'choch_timestamp': setup.get('radar_4h_choch_time'),

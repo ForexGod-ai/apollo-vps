@@ -434,6 +434,30 @@ class DailyScanner:
                         setup.w1_last_bos_price = None
                         print(f"   ⚠️ W1 bias error: {w1_bias_err}")
 
+                    # ✅ V24.5 DAILY LIQUIDITY TARGET: Cel mai apropiat D1 Swing High/Low
+                    # LONG: nearest Swing High deasupra prețului curent = TP Lichiditate
+                    # SHORT: nearest Swing Low sub prețul curent = TP Lichiditate
+                    try:
+                        _current_px = float(df_daily['close'].iloc[-1])
+                        _d1_dir = setup.daily_choch.direction  # 'bullish' / 'bearish'
+                        if _d1_dir == 'bullish':
+                            _swings = self.smc_detector.detect_swing_highs(df_daily)
+                            _targets = [s for s in _swings if s.price > _current_px]
+                            _daily_tp = min(_targets, key=lambda s: s.price).price if _targets else None
+                        else:
+                            _swings = self.smc_detector.detect_swing_lows(df_daily)
+                            _targets = [s for s in _swings if s.price < _current_px]
+                            _daily_tp = max(_targets, key=lambda s: s.price).price if _targets else None
+                        setup.daily_tp_price = float(_daily_tp) if _daily_tp else None
+                        if setup.daily_tp_price:
+                            print(f"   🎯 [V24.5 D1 TP] {symbol} {_d1_dir.upper()}: Lichiditate Target D1 = {setup.daily_tp_price:.5f}")
+                        else:
+                            print(f"   ⚠️ [V24.5 D1 TP] {symbol}: Niciun swing {_d1_dir.upper()} D1 deasupra/dedesubt prețului — fallback la TP SMC")
+                            setup.daily_tp_price = None
+                    except Exception as _dtp_err:
+                        setup.daily_tp_price = None
+                        print(f"   ⚠️ [V24.5 D1 TP] Eroare calcul daily_tp_price: {_dtp_err}")
+
                     # ✅ V10.9 CARRY MATRIX: Fetch live swap rates and attach to setup
                     try:
                         swap_info = self.data_provider.client.get_swap_info(symbol)
@@ -850,6 +874,10 @@ def save_monitoring_setups(setups: List[TradeSetup]):
                     "swap_long":        getattr(setup, 'swap_long', None),
                     "swap_short":       getattr(setup, 'swap_short', None),
                     "swap_triple_day":  getattr(setup, 'swap_triple_day', None),
+                    # V24.5: Structural SL/TP fields pentru executor
+                    # daily_tp_price = nearest D1 Swing High (LONG) / Swing Low (SHORT) = Liquidity Target
+                    # h4_sl_price    = scris de Radar (swing_broken 4H ± 3 pips) — NU de scanner
+                    "daily_tp_price":   getattr(setup, 'daily_tp_price', None),
                 }
 
                 # V11.0 CONFLICT GUARD (second line of defence inside save):

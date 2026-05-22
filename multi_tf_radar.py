@@ -103,6 +103,9 @@ class TimeframeAnalysis:
     scan_error_msg: str = ""
     # V19.6 FIX #3: transparență sursă zonă — structural FVG vs. Fibo sintetic
     fvg_source: str = "structural"  # "structural" | "fibo_fallback"
+    # V24.5: Structural SL = swing_broken.price ± buffer (4H only, dar calculat pe ambele TF)
+    # LONG: SL sub swing_broken | SHORT: SL deasupra swing_broken
+    h4_sl_price: Optional[float] = None
 
 
 @dataclass
@@ -378,6 +381,25 @@ class MultiTFRadar:
             except Exception:
                 pass
 
+            # ── V24.5: Structural SL = swing_broken.price ± 3 pip buffer ──────
+            # SL-ul autentic SMC: nivelul swing-ului rupt de CHoCH, cu buffer mic.
+            # LONG (bullish CHoCH): swing_broken este un Swing Low → SL sub el
+            # SHORT (bearish CHoCH): swing_broken este un Swing High → SL deasupra lui
+            h4_sl_price = None
+            try:
+                _sl_swing_price = float(latest_choch.swing_broken.price)
+                _sl_buffer = self._get_pip_size(symbol) * 3  # 3 pip buffer
+                if choch_direction == 'bullish':
+                    h4_sl_price = _sl_swing_price - _sl_buffer
+                else:
+                    h4_sl_price = _sl_swing_price + _sl_buffer
+                print(f"  🛡️  [V24.5 SL] {timeframe_display} swing_broken={_sl_swing_price:.5f} "
+                      f"→ h4_sl_price={h4_sl_price:.5f} (dir={choch_direction})")
+                sys.stdout.flush()
+            except Exception as _sl_err:
+                print(f"  ⚠️ [V24.5 SL] Eroare calcul h4_sl_price: {_sl_err}")
+                sys.stdout.flush()
+
             # Detect FVG created by CHoCH
             # detect_fvg() returns a single FVG object or None (not a list)
             # V19.2 FIX 1: wrap in try/except — smc_detector.detect_fvg() poate crapa cu
@@ -424,9 +446,9 @@ class MultiTFRadar:
                             in_fvg=False,
                             distance_to_fvg_pips=0.0,
                             status=PullbackStatus.WAITING_1H_PULLBACK if timeframe == "H1" else PullbackStatus.WAITING_4H_PULLBACK,
-                            equilibrium=choch_equilibrium
+                            equilibrium=choch_equilibrium,
+                            h4_sl_price=h4_sl_price
                         )
-                    if impulse_size > 0:
                         if choch_direction == 'bullish':
                             # LONG: pullback DOWN la 40-60% din impuls
                             fib60 = choch_break_price - impulse_size * 0.40  # top zone
@@ -487,7 +509,8 @@ class MultiTFRadar:
                             distance_to_fvg_pips=dist_synth,
                             status=status_synth,
                             equilibrium=eq_for_synth,
-                            fvg_source="fibo_fallback"
+                            fvg_source="fibo_fallback",
+                            h4_sl_price=h4_sl_price
                         )
                 except Exception as _fib_err:
                     print(f"  ⚠️ [V15.4 FIBO FALLBACK] Error computing synthetic zone: {_fib_err}")
@@ -505,7 +528,8 @@ class MultiTFRadar:
                     in_fvg=False,
                     distance_to_fvg_pips=0.0,
                     status=PullbackStatus.WAITING_1H_PULLBACK if timeframe == "H1" else PullbackStatus.WAITING_4H_PULLBACK,
-                    equilibrium=choch_equilibrium
+                    equilibrium=choch_equilibrium,
+                    h4_sl_price=h4_sl_price
                 )
             
             fvg_top = latest_fvg.top
@@ -553,7 +577,8 @@ class MultiTFRadar:
                 in_fvg=in_fvg,
                 distance_to_fvg_pips=distance_to_fvg_pips,
                 status=status,
-                equilibrium=choch_equilibrium
+                equilibrium=choch_equilibrium,
+                h4_sl_price=h4_sl_price
             )
         
         except Exception as e:
@@ -766,6 +791,10 @@ class MultiTFRadar:
         # V16.2: 50% Equilibrium al impulsului 4H CHoCH (frontiera P/D Array)
         if result.tf_4h.equilibrium is not None:
             setup['radar_4h_eq'] = result.tf_4h.equilibrium
+
+        # V24.5: Structural SL din swing_broken 4H — scriem în JSON pentru Executor
+        if result.tf_4h.h4_sl_price is not None:
+            setup['h4_sl_price'] = result.tf_4h.h4_sl_price
 
         setup['radar_4h_status'] = result.tf_4h.status.value
 
