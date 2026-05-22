@@ -160,6 +160,21 @@ class MultiTFRadar:
         print("🎯 SMC Detectors initialized:")
         print("   - 1H: ATR 0.8x (SNIPER mode)")
         print("   - 4H: ATR 1.0x (HIGH CONFIDENCE mode — V15.4)")
+
+    @staticmethod
+    def _get_pip_size(symbol: str) -> float:
+        """V24.4 Symbol-Agnostic pip size — suportă FX, JPY, XAU, BTC, OIL."""
+        s = symbol.upper()
+        if any(x in s for x in ['BTC', 'ETH', 'XRP', 'LTC', 'ADA', 'DOGE']):
+            return 1.0       # Crypto: 1 USD = 1 pip
+        elif any(x in s for x in ['XAU', 'XAG', 'GOLD', 'SILVER']):
+            return 0.10      # Gold/Silver: 0.10 = 1 pip
+        elif any(x in s for x in ['XTI', 'WTI', 'OIL', 'BRENT']):
+            return 0.01      # Oil: 0.01 = 1 pip
+        elif 'JPY' in s:
+            return 0.01      # JPY pairs
+        else:
+            return 0.0001    # FX standard
     
     def get_current_price(self, symbol: str) -> Optional[float]:
         """Get current price from cTrader"""
@@ -355,7 +370,7 @@ class MultiTFRadar:
                 _sbp = float(latest_choch.swing_broken.price)
                 _cbp = float(latest_choch.break_price)
                 choch_equilibrium = (_sbp + _cbp) / 2.0
-                pip_size_eq = 0.01 if 'JPY' in symbol.upper() else 0.0001
+                pip_size_eq = self._get_pip_size(symbol)
                 _eq_str = f"{choch_equilibrium:.5f}" if choch_equilibrium is not None else "N/A"
                 print(f"  📐 [V16.2 EQ] {timeframe_display} Impulse: {_sbp:.5f} → {_cbp:.5f} | "
                       f"EQ={_eq_str} ({abs(_cbp - _sbp)/pip_size_eq:.1f} pips)")
@@ -392,7 +407,7 @@ class MultiTFRadar:
                     # V19.4 FIX — Guard impuls 0 pips: date corupte sau tick duplicat din cBot.
                     # NU activăm Fibo Fallback pe impuls nul → returnăm WAITING curat.
                     if impulse_size <= 0:
-                        pip_size_guard = 0.01 if 'JPY' in symbol.upper() else 0.0001
+                        pip_size_guard = self._get_pip_size(symbol)  # noqa: F841 — cosmetic log only
                         print(f"  ⚠️ [RADAR GUARD] Impuls invalid de 0 pips detectat pentru {symbol}. "
                               f"Se păstrează starea de WAITING fără activare fallback.")
                         sys.stdout.flush()
@@ -423,7 +438,7 @@ class MultiTFRadar:
                         fvg_top_synth = max(fib40, fib60)
                         fvg_bottom_synth = min(fib40, fib60)
                         fvg_entry_synth = (fvg_top_synth + fvg_bottom_synth) / 2.0
-                        pip_size_synth = 0.01 if 'JPY' in symbol.upper() else 0.0001
+                        pip_size_synth = self._get_pip_size(symbol)  # V24.4 Symbol-Agnostic
 
                         # ── V24.2 SNIPER ANTI-FOMO — Fibo Fallback ──────────────────────
                         # EXECUTE_NOW STRICT doar dacă prețul a făcut pullback fizic în zona 40-60%.
@@ -504,8 +519,8 @@ class MultiTFRadar:
             in_fvg = fvg_bottom <= current_price <= fvg_top
             
             # Calculate distance to FVG
-            # V19.6 FIX #2: pip_size dinamic — corectează bug-ul JPY (x100 cosmetic)
-            _pip_size_dist = 0.01 if 'JPY' in symbol.upper() else 0.0001
+            # V24.4: pip_size Symbol-Agnostic — suportă FX, JPY, XAU, BTC, OIL
+            _pip_size_dist = self._get_pip_size(symbol)
             if in_fvg:
                 distance_to_fvg_pips = 0.0
                 status = PullbackStatus.EXECUTE_NOW_1H if timeframe == "H1" else PullbackStatus.EXECUTE_NOW_4H

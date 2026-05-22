@@ -3622,9 +3622,30 @@ class SMCDetector:
             # - GBP pairs: ≥70 required (RELAXED from 75)
             # - XAUUSD: SKIP quality check - filtered later by ATR + anti-loss-streak
             is_gbp = 'GBP' in symbol
-            is_gold = symbol == 'XAUUSD'
-            
-            if is_gold:
+            is_gold = any(x in symbol.upper() for x in ['XAU', 'XAG', 'GOLD', 'SILVER'])
+            is_crypto = any(x in symbol.upper() for x in ['BTC', 'ETH', 'XRP', 'LTC', 'ADA', 'DOGE'])
+
+            if is_crypto:
+                # V24.4 CRYPTO: Gap procentual minim 0.05% (BTC@95k = ~47$ gap — suficient)
+                # Body ratio 0.20 — crypto are frecvent doji/inside bars valide structural
+                gap_size = fvg.top - fvg.bottom
+                gap_pct = (gap_size / fvg.bottom) * 100
+                if gap_pct < 0.05:
+                    if debug:
+                        print(f"\n❌ REJECTED {symbol} FVG: Gap {gap_pct:.3f}% < 0.05%")
+                    return None
+                gap_candle = df_daily.iloc[fvg.index]
+                candle_body = abs(gap_candle['close'] - gap_candle['open'])
+                candle_range = gap_candle['high'] - gap_candle['low']
+                body_ratio = candle_body / candle_range if candle_range > 0 else 1.0
+                if body_ratio < 0.20:
+                    if debug:
+                        print(f"\n❌ REJECTED {symbol} FVG: Body {body_ratio:.1%} < 20%")
+                    return None
+                if debug:
+                    print(f"\n✅ CRYPTO FVG V24.4 PASSED: Gap {gap_pct:.3f}%, Body {body_ratio:.1%}")
+
+            elif is_gold:
                 # ✅ V14.0 XAUUSD FIX: Praguri relaxate de la 0.15%/40% la 0.10%/25%
                 # Motivul: Gold are frecvent doji pe Daily (body_ratio 20-35%) = structuri valide
                 # dar respinse de pragul strict de 40%. Cu 0.10%/25%, setup-urile reale trec.
@@ -3689,15 +3710,13 @@ class SMCDetector:
                 
                 atr_ratio = current_atr / avg_atr_20 if avg_atr_20 > 0 else 1.0
                 
-                if atr_ratio > 3.0:
-                    if debug:
-                        print(f"\n❌ REJECTED XAUUSD: ATR ratio {atr_ratio:.2f} > 3.0 (extreme volatility, unstable setup)")
-                    return None
-                
+                # V24.4: Filtrul ATR ratio > 3.0 ELIMINAT — volatilitatea mare pe XAU
+                # NU înseamnă setup invalid. Structura SMC (CHoCH + FVG) este singurul judecător.
+                # Un ATR x4 pe Gold = mișcare instituțională, nu zgomot.
                 if debug:
                     print(f"\n✅ XAUUSD FILTERS PASSED:")
-                    print(f"   FVG Quality: {fvg_score}/100 (≥65) ✓")
-                    print(f"   ATR Ratio: {atr_ratio:.2f} (≤3.0) ✓")
+                    print(f"   FVG Quality: {fvg_score}/100 ✓")
+                    print(f"   ATR Ratio: {atr_ratio:.2f} (filtru eliminat V24.4 — structura decide)")
                     print(f"   (ADX check skipped - Gold momentum patterns differ from forex)")
         else:
             # Skip quality check for backtest - accept all FVGs
