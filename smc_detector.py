@@ -1353,25 +1353,23 @@ class SMCDetector:
         return chochs, bos_list
     
     def detect_swing_highs(self, df: pd.DataFrame) -> List[SwingPoint]:
-        """🎯 GLITCH IN MATRIX - MACRO SWING DETECTION V7.1 (BODY CLOSURE ONLY)
-        
-        🆕 V7.1 CRITICAL FIX - REGULA CORPULUI:
-        - Uses ONLY body closure (max of open/close) - IGNORES WICKS completely
-        - Validates swing prominence using ATR filter
-        - Eliminates false swings from wick noise
-        
-        ⚡ V13.1 PERFORMANCE CACHE: Returnează rezultatul din cache dacă df-ul
-        este același obiect cu aceleași date (id + len). Evită 6-10 recalculări inutile
-        per pair, reducând ~80% din compute time per scanare.
-        
-        PHILOSOPHY by ФорексГод:
-        "Wicks are LIES. Body is TRUTH. Price close = commitment."
-        
+        """🎯 GLITCH IN MATRIX - MACRO SWING DETECTION V24.0 (ORGANIC PIVOT)
+
+        🆕 V24.0 — COLONEL'S ORGANIC REFACTOR:
+        - FRACTAL_WINDOW = 2 fix (minimal agil — identifică geometric vârful local)
+        - Odată recunoscut, pivotul rămâne în memorie la NESFÂRȘIT — NU expiră
+        - Identificare prin WICK absolut (df['high']) — fitilul real al pieței
+        - Body Close Rule se aplică EXCLUSIV la validarea BOS/CHoCH (detect_choch_and_bos)
+
+        PHILOSOPHY by ФорексГод + Colonel:
+        "Un Swing High format pe grafic rămâne nivel structural VALID la nesfârșit,
+        până când prețul îl sparge. Nu expiră în 10 zile, nici în 20."
+
         Args:
             df: DataFrame with OHLC data
-        
+
         Returns:
-            List of validated SwingPoint objects (only major structure pivots)
+            List of SwingPoint objects — toți pivoții geometrici, fără expirare
         """
         if df is None or len(df) == 0:
             return []
@@ -1381,26 +1379,16 @@ class SMCDetector:
         if _cache_key in self._swing_highs_cache:
             return self._swing_highs_cache[_cache_key]
 
-        # V17.5: FRACTAL_WINDOW dinamic din self.swing_lookback (nu mai e hardcodat 10)
-        # Default 10 pentru 1H/4H/Daily; W1 foloseste detector cu swing_lookback=3
-        FRACTAL_WINDOW = max(2, self.swing_lookback)
-        lookback = FRACTAL_WINDOW
+        # V24.0 ORGANIC: FRACTAL_WINDOW = 2 FIX — fractal minimal agil
+        # Nu mai depinde de self.swing_lookback (era 10 — prea restrictiv)
+        # 2 bare stânga + 2 bare dreapta = cel mai mic fractal valid geometric
+        FRACTAL_WINDOW = 2
 
         # 🛡️ SAFETY CHECK: minimum (FW*2)+1 bare
         if len(df) < (FRACTAL_WINDOW * 2) + 1:
             return []
 
-        # 🔥 ATR pentru prominence filtering (păstrat ca sanity check secundar)
-        atr = self.calculate_atr(df)
-        # V11.2: prominence 0.0 — Fractal Window e filtrul principal, nu ATR
-        prominence_threshold = 0.0
-
         swing_highs = []
-        # V22 DAILY MATRIX PURITY: Swing High identificat prin WICK absolut (df['high'])
-        # Povestea body-only era: wicks sunt «minciuni». Dar pentru IDENTIFICAREA punctului
-        # de swing (care bară este maximul local), folosim fitilul real al pieței.
-        # Body Close Rule se aplică EXCLUSIV la validarea BOS/CHoCH (o bară ulterioară
-        # trebuie să îCHIĐĂ dincolo de wick-ul swing-ului — în detect_choch_and_bos).
         wick_highs = df['high']
 
         for i in range(FRACTAL_WINDOW, len(df) - FRACTAL_WINDOW):
@@ -1416,8 +1404,8 @@ class SMCDetector:
             )
 
             if left_check and right_check:
-                # ✅ Swing valid — a dominat FRACTAL_WINDOW bare în ambele direcții
-                # price = wick absolut (df['high']) — Body Close Rule se aplică la BOS/CHoCH
+                # ✅ Pivot geometric valid — wick absolut real al pieței
+                # Rămâne în memorie PERMANENT până când prețul îl sparge (Body Close)
                 swing_highs.append(SwingPoint(
                     index=i,
                     price=current_high,
@@ -1552,13 +1540,17 @@ class SMCDetector:
         return swing_highs, swing_lows
 
     def detect_swing_lows(self, df: pd.DataFrame) -> List[SwingPoint]:
-        """🎯 GLITCH IN MATRIX - MACRO SWING DETECTION V9.0
+        """🎯 GLITCH IN MATRIX - MACRO SWING DETECTION V24.0 (ORGANIC PIVOT)
 
-        🆕 V9.0 UPGRADES:
-        - ATR PROMINENCE BODY-TO-BODY: highest_body_high_in_window - current_body_low (fără wicks)
-        - LOOKBACK ADAPTIV: int(base * ATR_200/ATR_14), clamp [5,25]
+        🆕 V24.0 — COLONEL'S ORGANIC REFACTOR:
+        - FRACTAL_WINDOW = 2 fix (minimal agil — identifică geometric minimul local)
+        - Odată recunoscut, pivotul rămâne în memorie la NESFÂRȘIT — NU expiră
+        - Identificare prin WICK absolut (df['low']) — fitilul real al pieței
+        - Body Close Rule se aplică EXCLUSIV la validarea BOS/CHoCH (detect_choch_and_bos)
 
-        PHILOSOPHY: Body-to-Body = adevărul instituțional, fără zgomot de wick.
+        PHILOSOPHY by ФорексГод + Colonel:
+        "Un Swing Low format pe grafic rămâne nivel structural VALID la nesfârșit,
+        până când prețul îl sparge. Nu expiră niciodată din cauza timpului."
         """
         if df is None or len(df) == 0:
             return []
@@ -1568,21 +1560,14 @@ class SMCDetector:
         if _cache_key in self._swing_lows_cache:
             return self._swing_lows_cache[_cache_key]
 
-        # V17.5: FRACTAL_WINDOW dinamic din self.swing_lookback (nu mai e hardcodat 10)
-        FRACTAL_WINDOW = max(2, self.swing_lookback)
-        lookback = FRACTAL_WINDOW
+        # V24.0 ORGANIC: FRACTAL_WINDOW = 2 FIX — fractal minimal agil
+        FRACTAL_WINDOW = 2
 
         # 🛡️ SAFETY CHECK
         if len(df) < (FRACTAL_WINDOW * 2) + 1:
             return []
 
-        atr = self.calculate_atr(df)
-        prominence_threshold = 0.0
-
         swing_lows = []
-        # V22 DAILY MATRIX PURITY: Swing Low identificat prin WICK absolut (df['low'])
-        # Fitilul inferior real al pieței determină care bară este minimul local.
-        # Body Close Rule se aplică la BOS/CHoCH (close sub wick-ul swing-ului anterior).
         wick_lows = df['low']
 
         for i in range(FRACTAL_WINDOW, len(df) - FRACTAL_WINDOW):
@@ -1598,8 +1583,8 @@ class SMCDetector:
             )
 
             if left_check and right_check:
-                # ✅ Swing valid — a dominat FRACTAL_WINDOW bare în ambele direcții
-                # price = wick absolut (df['low']) — Body Close Rule se aplică la BOS/CHoCH
+                # ✅ Pivot geometric valid — wick absolut real al pieței
+                # Rămâne în memorie PERMANENT până când prețul îl sparge (Body Close)
                 swing_lows.append(SwingPoint(
                     index=i,
                     price=current_low,
@@ -1612,92 +1597,60 @@ class SMCDetector:
         return swing_lows
 
     def detect_choch_and_bos(self, df: pd.DataFrame) -> Tuple[List[CHoCH], List[BOS]]:
-        """🎯 GLITCH IN MATRIX - CHoCH & BOS DETECTION V7.1 (DYNAMIC TREND UPDATE)
-        
-        CHoCH (Change of Character): Price breaks swing in OPPOSITE direction of prev trend
-        BOS (Break of Structure): Price breaks swing in SAME direction as prev trend
-        
-        🆕 V7.1 CRITICAL FIXES by ФорексГод:
-        - ✅ BODY CLOSURE validation (ignores wicks)
-        - ✅ DYNAMIC prev_trend: Re-evaluates every 20 swings from last 150 bars
-        - ✅ STRICT pattern validation: Bullish CHoCH requires LH + LL pattern
-        - ✅ STRICT pattern validation: Bearish CHoCH requires HH + HL pattern
-        - ✅ Eliminates "frozen trend" bug (prev_trend updates with market)
-        
-        PHILOSOPHY:
-        "Market structure changes. Trend must adapt or become obsolete."
-        
-        NEW LOGIC:
-        - Track INTERLEAVED swings (alternating highs/lows)
-        - First major break = CHoCH (establishes initial trend)
-        - Subsequent breaks same direction = BOS
-        - Break opposite direction = CHoCH (trend reversal) - ONLY if pattern validated
-        - 🆕 Every 20 swings: Re-evaluate prev_trend from LAST 150 bars (not first 50%)
+        """🎯 GLITCH IN MATRIX - CHoCH & BOS DETECTION V24.0 (ORGANIC HH/HL/LH/LL)
+
+        🆕 V24.0 — COLONEL'S ORGANIC REFACTOR:
+        - ✅ Pivoții NU expiră — un LH format acum 30 de zile este VALID până când e spart
+        - ✅ Secvența organică HH/HL/LH/LL citită pe TOATĂ seria (fără macro_lookback)
+        - ✅ prev_trend se schimbă EXCLUSIV când CHoCH e confirmat — nu se recalculează periodic
+        - ✅ BODY CLOSE ONLY: confirmarea spargerii = close dincolo de wick-ul swing-ului
+        - ✅ High-vs-High / Low-vs-Low comparație (nu interleaved cross-comparison)
+
+        PHILOSOPHY by ФорексГод + Colonel:
+        "Piața NU are o regulă de timp. Dacă piața a stat în range 30 de zile și
+        sparge ultimul LH format acum o lună — este CHoCH Bullish VALID.
+        Algoritmul citește piața ca un om: poveste a extremelor, nu fereastră de timp."
         """
-        # ⚡ V13.1 CACHE CHECK — detect_choch_and_bos apeleaza detect_swing_highs/lows intern
-        # daca df e acelasi obiect, rezultatul choch/bos e identic — returnam din cache
+        # ⚡ V13.1 CACHE CHECK
         _cache_key = (id(df), len(df))
         if _cache_key in self._choch_bos_cache:
             return self._choch_bos_cache[_cache_key]
 
         chochs = []
         bos_list = []
-        # V18.0 detect_structure_bos_driven pastrat ca functie separata pentru testare
-        # Productie: folosim in continuare detect_swing_highs/lows (FW=10, stabil)
+
         swing_highs = self.detect_swing_highs(df)
         swing_lows = self.detect_swing_lows(df)
-        
+
         if len(swing_highs) < 2 or len(swing_lows) < 2:
             return chochs, bos_list
-        
+
         # 🔥 INTERLEAVE swings (merge highs and lows in chronological order)
         all_swings = []
         for sh in swing_highs:
             all_swings.append(('high', sh))
         for sl in swing_lows:
             all_swings.append(('low', sl))
-        
-        # Sort by index (chronological order)
         all_swings.sort(key=lambda x: x[1].index)
-        
-        # 🆕 V7.1 FIX: Initialize prev_trend from LAST bars (macro structure)
-        # V19.13: 150→70 bare — structura recentă (3.5 luni) domină față de structuri vechi de 6+ luni
-        # Cu 150 bare, EURUSD/GBPUSD rămâneau agățate de CHoCH bullish din Oct-Apr (uptrend lung)
-        # și ignorau structura bearish recentă → bias LONG greșit.
-        macro_lookback = min(70, len(df))
-        df_macro = df.iloc[-macro_lookback:].copy()
-        macro_highs = [sh for sh in swing_highs if sh.index >= len(df) - macro_lookback]
-        macro_lows = [sl for sl in swing_lows if sl.index >= len(df) - macro_lookback]
-        
-        prev_trend = None  # 'bullish' or 'bearish'
-        if len(macro_highs) >= 2 and len(macro_lows) >= 2:
-            # Check LAST 70 bars structure
-            h_ascending = macro_highs[-1].price > macro_highs[-2].price
-            l_ascending = macro_lows[-1].price > macro_lows[-2].price
-            
-            if h_ascending and l_ascending:
-                prev_trend = 'bullish'  # HH + HL structure = bullish
-            elif not h_ascending and not l_ascending:
-                prev_trend = 'bearish'  # LH + LL structure = bearish
-        
+
+        # V24.0 ORGANIC: prev_trend se inițializează din PRIMELE 2 highs + 2 lows
+        # (bootstrap minimal) și se schimbă EXCLUSIV prin CHoCH confirmat.
+        # NU mai există macro_lookback, NU mai există recalculare periodică.
+        prev_trend = None
+        init_highs = swing_highs[:2]
+        init_lows  = swing_lows[:2]
+        if len(init_highs) >= 2 and len(init_lows) >= 2:
+            h_asc = init_highs[1].price > init_highs[0].price
+            l_asc = init_lows[1].price  > init_lows[0].price
+            if h_asc and l_asc:
+                prev_trend = 'bullish'
+            elif not h_asc and not l_asc:
+                prev_trend = 'bearish'
+
         for i in range(1, len(all_swings)):
             swing_type, swing = all_swings[i]
-
-            # 🔥 V8.0: REAL-TIME TREND UPDATE - Re-evaluate prev_trend at EVERY swing
-            if len(macro_highs) >= 3 and len(macro_lows) >= 3:
-                recent_macro_highs = [sh for sh in swing_highs if sh.index >= len(df) - macro_lookback][-5:]
-                recent_macro_lows  = [sl for sl in swing_lows  if sl.index >= len(df) - macro_lookback][-5:]
-
-                if len(recent_macro_highs) >= 3 and len(recent_macro_lows) >= 3:
-                    hh_count = sum(1 for j in range(1, len(recent_macro_highs)) if recent_macro_highs[j].price > recent_macro_highs[j-1].price)
-                    lh_count = sum(1 for j in range(1, len(recent_macro_highs)) if recent_macro_highs[j].price < recent_macro_highs[j-1].price)
-                    hl_count = sum(1 for j in range(1, len(recent_macro_lows))  if recent_macro_lows[j].price  > recent_macro_lows[j-1].price)
-                    ll_count = sum(1 for j in range(1, len(recent_macro_lows))  if recent_macro_lows[j].price  < recent_macro_lows[j-1].price)
-
-                    if lh_count >= 2 and ll_count >= 1:
-                        prev_trend = 'bearish'
-                    elif hh_count >= 2 and hl_count >= 1:
-                        prev_trend = 'bullish'
+            # V24.0: prev_trend NU se recalculează periodic din bare recente.
+            # El evoluează ORGANIC: rămâne fix până la CHoCH confirmat.
 
             # ─────────────────────────────────────────────────────────────────────────
             # 🆕 V9.0 V1: SEGREGARE High-vs-High / Low-vs-Low (eliminat interleaved)
@@ -1870,21 +1823,20 @@ class SMCDetector:
         """
         if df is None or len(df) < 20:
             return 'neutral'
-        
-        # V19.13: Analyze MACRO structure — 70 bare (3.5 luni), nu 150 (6+ luni)
-        # 150 bare captau structuri vechi și ignorau price action recenta (EURUSD/GBPUSD bug)
-        macro_lookback = min(70, len(df))  # V19.13: 150→70 bare
-        df_macro = df.iloc[-macro_lookback:].copy()
-        
+
+        # V24.0 ORGANIC: Analiz\u0103m TOAT\u0102 seria disponibil\u0103 \u2014 f\u0103r\u0103 macro_lookback
+        # Pivo\u021bii structurali nu expir\u0103. Un LH format acum 30 de zile e VALID
+        # p\u00e2n\u0103 c\u00e2nd pre\u021bul \u00eel sparge cu body close.
+
         if debug:
             print(f"\n{'='*80}")
-            print(f"📊 V6.2 MACRO TREND ANALYSIS (150 bars)")
+            print(f"\ud83d\udcca V24.0 ORGANIC TREND ANALYSIS (full series \u2014 no expiry)")
             print(f"{'='*80}")
-            print(f"   Analyzing {len(df_macro)} bars for macro structure...")
-        
-        # Detect swing highs and lows in macro window
-        swing_highs = self.detect_swing_highs(df_macro)
-        swing_lows = self.detect_swing_lows(df_macro)
+            print(f"   Analyzing {len(df)} bars \u2014 all pivots valid until broken...")
+
+        # Detect swing highs and lows pe TOAT\u0102 seria
+        swing_highs = self.detect_swing_highs(df)
+        swing_lows = self.detect_swing_lows(df)
         
         if debug:
             print(f"   Swing Highs detected: {len(swing_highs)}")
