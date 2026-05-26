@@ -997,48 +997,9 @@ class SetupExecutorMonitor:
                 'choch_timestamp': setup.get('radar_1h_choch_time'),
                 'fibo_data': {}  # Not used in radar mode
             }
-
-            # SL: 4H structural swing_broken price (din Radar) → fallback JSON stop_loss → FVG 10pip
-            h4_sl = setup.get('h4_sl_price')
-            json_sl = setup.get('stop_loss')
-            structural_sl = h4_sl or json_sl
-            if direction == 'buy':
-                radar_1h_fvg_bottom = setup.get('radar_1h_fvg_bottom', radar_1h_fvg_entry)
-                fallback_sl = radar_1h_fvg_bottom - (10 * pip_size_exec)
-            else:
-                radar_1h_fvg_top = setup.get('radar_1h_fvg_top', radar_1h_fvg_entry)
-                fallback_sl = radar_1h_fvg_top + (10 * pip_size_exec)
-
-            if structural_sl and structural_sl != 0.0:
-                stop_loss = structural_sl
-                sl_src = '4H_SWING' if h4_sl else 'JSON_SMC'
-                sl_pips = abs(radar_1h_fvg_entry - stop_loss) / pip_size_exec
-                logger.info(f"   🛡️ [V24.5 SL/{sl_src}] {stop_loss:.5f} ({sl_pips:.1f} pips)")
-            else:
-                stop_loss = fallback_sl
-                logger.warning(f"   ⚠️ [V24.5 SL/FALLBACK] SL lipsă — FVG 10-pip: {stop_loss:.5f}")
-
-            # TP: D1 Liquidity Target (din Scanner) → fallback JSON take_profit
-            daily_tp = setup.get('daily_tp_price')
-            json_tp  = setup.get('take_profit')
-            take_profit = daily_tp or json_tp
-            if take_profit:
-                tp_src = 'D1_LIQUIDITY' if daily_tp else 'JSON_SMC'
-                tp_pips = abs(take_profit - radar_1h_fvg_entry) / pip_size_exec
-                logger.info(f"   🎯 [V24.5 TP/{tp_src}] {take_profit:.5f} ({tp_pips:.1f} pips)")
-            else:
-                logger.warning(f"   ⚠️ [V24.5 TP] TP lipsă — trade fără TP explicit")
-            
-            return {
-                'action': 'EXECUTE_ENTRY1',
-                'entry_price': radar_1h_fvg_entry,
-                'stop_loss': stop_loss,
-                'take_profit': take_profit,
-                'reason': f'SNIPER ENTRY: Price in 1H FVG ({zone_type} zone validated)',
-                'entry_type': 'SNIPER_1H',
-                'choch_timestamp': setup.get('radar_1h_choch_time'),
-                'fibo_data': {}  # Not used in radar mode
-            }
+            # DEAD CODE ELIMINAT V24.7 (CRITIC #2):
+            # Blocul duplicat SL/TP + al doilea return identic au fost șterse.
+            # Codul de după un return este neatins — nu se executa niciodată.
         
         elif radar_4h_in_fvg and radar_4h_fvg_entry and radar_4h_choch_price:
             # V16.5 FIX BUG#7: idem 1H — nu folosim choch_price ca fallback EQ pentru 4H
@@ -1536,31 +1497,39 @@ class SetupExecutorMonitor:
         # ========== STEP 2: VALIDATE PULLBACK TO FIBONACCI 50% ==========
         if choch_detected and fibo_data:
             # ── Fix #1: TP-REACHED GUARD — prețul a atins TP fără retragere → EXPIRED ──
-            # Dacă mercele a mers direct la TP înainte să facă pullback la Fibo 50%,
-            # setup-ul devine invalid (nu mai alerpăm după preț).
-            take_profit_val = setup.get('take_profit', 0)
-            current_price_tp_check = df_h1.iloc[-1]['close']
-            if take_profit_val and take_profit_val != 0:
-                tp_reached = (
-                    (direction == 'buy'  and current_price_tp_check >= take_profit_val) or
-                    (direction == 'sell' and current_price_tp_check <= take_profit_val)
-                )
-                if tp_reached:
-                    logger.warning(
-                        f"⏰ [Fix #1 TP-REACHED] {symbol}: Prețul {current_price_tp_check:.5f} a atins/depăşit TP "
-                        f"{take_profit_val:.5f} fără pullback — Setup → EXPIRED."
+            # V24.7 GUARD: Rulează EXCLUSIV după confirmare 4H structurală (h4_structure_locked=True).
+            # MOTIVUL: take_profit din scanner = estimativ (primul swing Daily oponent).
+            #   Fără CHoCH 4H confirmat, prețul poate depăși acel swing în mișcare normală intraday.
+            #   NU înseamnă că setup-ul e invalid — înseamnă doar că piața n-a făcut pullback încă.
+            #   Cu guard-ul activ, setup-urile proaspete nu mai sunt ucise în primele 60 de secunde.
+            if setup.get('h4_structure_locked', False):
+                # Post-confirmare 4H: TP-ul este structural confirmat → Fix #1 are sens
+                take_profit_val = setup.get('daily_tp_price') or setup.get('take_profit', 0)
+                current_price_tp_check = df_h1.iloc[-1]['close']
+                if take_profit_val and take_profit_val != 0:
+                    tp_reached = (
+                        (direction == 'buy'  and current_price_tp_check >= take_profit_val) or
+                        (direction == 'sell' and current_price_tp_check <= take_profit_val)
                     )
-                    try:
-                        self.telegram.send_setup_expired_alert(
-                            symbol=symbol,
-                            direction=direction,
-                            reason=f"Prețul {current_price_tp_check:.5f} a atins TP {take_profit_val:.5f} fără retragere la Fibo 50% — intrarea a dispărut"
+                    if tp_reached:
+                        logger.warning(
+                            f"⏰ [Fix #1 TP-REACHED V24.7] {symbol}: Prețul {current_price_tp_check:.5f} a atins/depăşit TP "
+                            f"{take_profit_val:.5f} post-confirmare 4H fără pullback — Setup → EXPIRED."
                         )
-                    except Exception: pass
-                    return {
-                        'action': 'EXPIRE_SETUP',
-                        'reason': f'Fix#1: Preț a atins TP {take_profit_val:.5f} înainte de retragere la Fibo 50% — slot eliberat'
-                    }
+                        try:
+                            self.telegram.send_setup_expired_alert(
+                                symbol=symbol,
+                                direction=direction,
+                                reason=f"Prețul {current_price_tp_check:.5f} a atins TP {take_profit_val:.5f} post-CHoCH 4H fără retragere la Fibo 50% — intrarea a dispărut"
+                            )
+                        except Exception: pass
+                        return {
+                            'action': 'EXPIRE_SETUP',
+                            'reason': f'Fix#1 V24.7: Preț a atins TP {take_profit_val:.5f} post-CHoCH 4H înainte de pullback Fibo 50% — slot eliberat'
+                        }
+            else:
+                # Setup proaspăt — CHoCH 4H neconfirmat → TP estimativ, Fix #1 dezactivat
+                logger.debug(f"   ⏳ [Fix #1 SKIP V24.7] {symbol}: h4_structure_locked=False — TP estimativ, Fix #1 suspendat până la CHoCH 4H")
             # ── END Fix #1 TP-REACHED GUARD ─────────────────────────────────
             # SELL waits for pullback UP → check if HIGH touched Fibo 50%
             # BUY waits for pullback DOWN → check if LOW touched Fibo 50%
@@ -1822,26 +1791,47 @@ class SetupExecutorMonitor:
                         logger.debug(f"⏳ {symbol}: Momentum not strong enough - keep waiting...")
                         logger.debug(f"   Strong momentum: {momentum_strong}, Beyond target: {price_beyond_target}, Within range: {within_reasonable_distance}")
                 
-                # ========== Fix #1: TIMEOUT 5 ZILE → EXPIRED ==========
-                # V19.12: Crescut de la 12H → 120H (5 zile).
-                # Piața face pullback la Fibo 50% în 2-5 zile, nu în 12H.
-                # 12H era UCIGAȘUL REAL — ștergea toate setups-urile overnight după primul CHoCH detectat.
-                if hours_elapsed >= 120:
-                    logger.warning(
-                        f"⏰ [Fix #1 TIMEOUT] {symbol}: 5 zile fără pullback la Fibo 50% — Setup → EXPIRED. "
-                        f"Slot eliberat pentru scan nou."
-                    )
-                    try:
-                        self.telegram.send_setup_expired_alert(
-                            symbol=symbol,
-                            direction=setup.get('direction', '?'),
-                            reason=f"Timeout 5 zile (120H) fără retragere la Fibo 50% — {distance_pips:.1f} pips distanță la expirare"
+                # ========== Fix #1: TIMEOUT 5 ZILE → EXPIRED — V24.7 ==========
+                # V24.7 FIX TIMEOUT: Ceasul bate de la h4_lock_time (confirmarea CHoCH 4H),
+                #   NU de la choch_1h_timestamp sau setup_time.
+                # MOTIVUL: Un setup proaspăt poate să nu aibă CHoCH 4H confirmat zile întregi.
+                #   Dacă timerul curge de la 1H CHoCH sau de la creare, setup-ul expiră
+                #   înainte ca Radarul să apuce să confirme structura 4H.
+                #   CORECT: 5 zile = 120H fără pullback DUPĂ ce 4H a confirmat structura.
+                # GUARD: Dacă h4_structure_locked=False → timeout dezactivat complet.
+                if setup.get('h4_structure_locked', False):
+                    h4_lock_time_str = setup.get('h4_lock_time')
+                    if h4_lock_time_str:
+                        try:
+                            h4_lock_dt = datetime.fromisoformat(h4_lock_time_str) if isinstance(h4_lock_time_str, str) else h4_lock_time_str
+                            if h4_lock_dt.tzinfo is None:
+                                h4_lock_dt = h4_lock_dt.replace(tzinfo=timezone.utc)
+                            hours_since_4h_lock = (datetime.now(timezone.utc) - h4_lock_dt).total_seconds() / 3600
+                        except (ValueError, TypeError):
+                            hours_since_4h_lock = hours_elapsed  # fallback safe
+                    else:
+                        hours_since_4h_lock = hours_elapsed  # h4_lock_time absent → folosim CHoCH elapsed
+
+                    if hours_since_4h_lock >= 120:
+                        logger.warning(
+                            f"⏰ [Fix #1 TIMEOUT V24.7] {symbol}: 5 zile ({hours_since_4h_lock:.1f}H) fără pullback "
+                            f"la Fibo 50% după confirmare 4H CHoCH — Setup → EXPIRED. Slot eliberat."
                         )
-                    except Exception: pass
-                    return {
-                        'action': 'EXPIRE_SETUP',
-                        'reason': f'Fix#1: Timeout 120H (5 zile) fără retragere la Fibo 50% ({distance_pips:.1f}p distanță) — EXPIRED'
-                    }
+                        try:
+                            self.telegram.send_setup_expired_alert(
+                                symbol=symbol,
+                                direction=setup.get('direction', '?'),
+                                reason=f"Timeout 5 zile post-CHoCH 4H ({hours_since_4h_lock:.0f}H) fără retragere la Fibo 50% — {distance_pips:.1f} pips distanță la expirare"
+                            )
+                        except Exception: pass
+                        return {
+                            'action': 'EXPIRE_SETUP',
+                            'reason': f'Fix#1 V24.7: Timeout 120H post-CHoCH 4H fără pullback Fibo 50% ({distance_pips:.1f}p) — EXPIRED'
+                        }
+                    else:
+                        logger.debug(f"   ⏳ [Fix #1 TIMEOUT V24.7] {symbol}: {hours_since_4h_lock:.1f}H / 120H post-CHoCH 4H — mai are {120 - hours_since_4h_lock:.1f}H")
+                else:
+                    logger.debug(f"   ⏳ [Fix #1 TIMEOUT SKIP V24.7] {symbol}: h4_structure_locked=False — timeout suspendat, așteptăm CHoCH 4H")
                 
                 # Still within 6H → keep monitoring normally
                 return {
