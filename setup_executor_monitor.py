@@ -1550,6 +1550,13 @@ class SetupExecutorMonitor:
                         f"⏰ [Fix #1 TP-REACHED] {symbol}: Prețul {current_price_tp_check:.5f} a atins/depăşit TP "
                         f"{take_profit_val:.5f} fără pullback — Setup → EXPIRED."
                     )
+                    try:
+                        self.telegram.send_setup_expired_alert(
+                            symbol=symbol,
+                            direction=direction,
+                            reason=f"Prețul {current_price_tp_check:.5f} a atins TP {take_profit_val:.5f} fără retragere la Fibo 50% — intrarea a dispărut"
+                        )
+                    except Exception: pass
                     return {
                         'action': 'EXPIRE_SETUP',
                         'reason': f'Fix#1: Preț a atins TP {take_profit_val:.5f} înainte de retragere la Fibo 50% — slot eliberat'
@@ -1824,6 +1831,13 @@ class SetupExecutorMonitor:
                         f"⏰ [Fix #1 TIMEOUT] {symbol}: 5 zile fără pullback la Fibo 50% — Setup → EXPIRED. "
                         f"Slot eliberat pentru scan nou."
                     )
+                    try:
+                        self.telegram.send_setup_expired_alert(
+                            symbol=symbol,
+                            direction=setup.get('direction', '?'),
+                            reason=f"Timeout 5 zile (120H) fără retragere la Fibo 50% — {distance_pips:.1f} pips distanță la expirare"
+                        )
+                    except Exception: pass
                     return {
                         'action': 'EXPIRE_SETUP',
                         'reason': f'Fix#1: Timeout 120H (5 zile) fără retragere la Fibo 50% ({distance_pips:.1f}p distanță) — EXPIRED'
@@ -2610,6 +2624,13 @@ class SetupExecutorMonitor:
                                     setups[i]['status'] = 'EXPIRED'
                                     setups[i]['expired_reason'] = f'RR_Real={_rr_real:.2f} < 4.0 at execution'
                                     updated = True
+                                    try:
+                                        self.telegram.send_setup_expired_alert(
+                                            symbol=symbol,
+                                            direction=setup.get('direction', '?'),
+                                            reason=f"RR Real la execuție = 1:{_rr_real:.2f} < 1:4 minim structural — trade blocat de Garda de Risc"
+                                        )
+                                    except Exception: pass
                                     continue
                                 else:
                                     logger.info(f"✅ [Fix #6 RR OK] {symbol}: RR_Real=1:{_rr_real:.2f} ≥ 1:4 — execuție permisă")
@@ -2629,6 +2650,13 @@ class SetupExecutorMonitor:
                                     setups[i]['status'] = 'EXPIRED'
                                     setups[i]['expired_reason'] = f'SL={_sl_pips:.1f} pips > 150 hard cap'
                                     updated = True
+                                    try:
+                                        self.telegram.send_setup_expired_alert(
+                                            symbol=symbol,
+                                            direction=setup.get('direction', '?'),
+                                            reason=f"SL structural = {_sl_pips:.1f} pips depăşeşte limita hard cap de 150 pips — risc neacceptabil"
+                                        )
+                                    except Exception: pass
                                     continue
                                 else:
                                     logger.info(f"✅ [Fix #7 SL OK] {symbol}: SL={_sl_pips:.1f} pips ≤ 150 — execuție permisă")

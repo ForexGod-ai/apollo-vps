@@ -214,6 +214,28 @@ class TelegramNotifier:
         self._send_action_buttons(setup)
         return True
 
+    def send_setup_expired_alert(self, symbol: str, direction: str, reason: str) -> bool:
+        """
+        V24.5 GRAVEYARD ALERT: Trimis când un setup este anulat/expirat de Sentinel.
+        Mesaj scurt — nu face spam, informat Colonelul că botul și-a făcut treaba.
+        """
+        try:
+            dir_emoji = "🟢" if direction.upper() == 'BUY' else "🔴"
+            sep = "────────────────"
+            msg = (
+                f"🗑️ <b>SETUP ANULAT</b> — {symbol} {direction.upper()}\n"
+                f"{sep}\n"
+                f"{dir_emoji} <b>{symbol}</b> | Sentinel a eliminat setup-ul\n"
+                f"{sep}\n"
+                f"⚠️ <b>Motiv:</b> <code>{reason}</code>\n"
+                f"{sep}\n"
+                f"🛡️ Garda de Risc și-a făcut datoria. Slot eliberat."
+            )
+            return self.send_message(msg)
+        except Exception as e:
+            print(f"❌ [GRAVEYARD ALERT] Eroare trimitere alert expired {symbol}: {e}")
+            return False
+
     def send_4h_choch_alert(self, setup_data: dict, df_4h: pd.DataFrame, df_w1: pd.DataFrame = None) -> bool:
         """
         V15.0 EVENT ALERT: Trimis automat când setup_executor_monitor confirmă CHoCH 4H.
