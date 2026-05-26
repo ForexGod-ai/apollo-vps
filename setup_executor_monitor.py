@@ -1249,13 +1249,22 @@ class SetupExecutorMonitor:
                         if not setup.get('alert_4h_sent', False):
                             try:
                                 df_w1_alert = self._get_cached_data(symbol, "W1", 300)
+                                _alert_entry = setup.get('entry_price') or 0
+                                _alert_sl    = setup.get('stop_loss') or 0
+                                _alert_tp    = setup.get('take_profit') or 0
+                                # V24.6 FIX RR: recalculăm RR LIVE din entry/SL/TP actuale.
+                                # RR stocat în JSON poate fi stale (calculat cu un TP diferit).
+                                # Formula corectă: RR = reward / risk (nu invers!)
+                                _alert_risk   = abs(_alert_entry - _alert_sl)
+                                _alert_reward = abs(_alert_tp - _alert_entry)
+                                _alert_rr = (_alert_reward / _alert_risk) if _alert_risk > 0 else 0
                                 setup_data_alert = {
                                     'symbol': symbol,
                                     'direction': setup.get('direction', 'buy'),
-                                    'entry_price': setup.get('entry_price', 0),
-                                    'stop_loss': setup.get('stop_loss', 0),
-                                    'take_profit': setup.get('take_profit', 0),
-                                    'risk_reward': setup.get('risk_reward', 0),
+                                    'entry_price': _alert_entry,
+                                    'stop_loss': _alert_sl,
+                                    'take_profit': _alert_tp,
+                                    'risk_reward': _alert_rr,  # V24.6: RR live, nu stale din JSON
                                     'strategy_type': setup.get('strategy_type', 'reversal'),
                                     'w1_bias': setup.get('w1_bias', 'NEUTRAL'),
                                 }

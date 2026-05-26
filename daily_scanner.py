@@ -453,29 +453,47 @@ class DailyScanner:
                         setup.w1_last_bos_price = None
                         print(f"   ⚠️ W1 bias error: {w1_bias_err}")
 
-                    # ✅ V24.5 DAILY LIQUIDITY TARGET: Cel mai apropiat D1 Swing High/Low
+                    # ✅ V24.6 DAILY LIQUIDITY TARGET: D1 Swing High/Low SEMNIFICATIV
                     # LONG: nearest Swing High deasupra prețului curent = TP Lichiditate
                     # SHORT: nearest Swing Low sub prețul curent = TP Lichiditate
+                    # V24.6 ATR FILTER: swing-ul țintă trebuie să fie minim 1x ATR Daily
+                    # față de entry — eliminăm micro-pivoții / inside bars ca țintă.
                     try:
                         _current_px = float(df_daily['close'].iloc[-1])
                         _d1_dir = setup.daily_choch.direction  # 'bullish' / 'bearish'
+                        # Calculăm ATR Daily (14 bare) pentru filtrul de distanță minimă
+                        _tr = pd.concat([
+                            df_daily['high'] - df_daily['low'],
+                            (df_daily['high'] - df_daily['close'].shift(1)).abs(),
+                            (df_daily['low']  - df_daily['close'].shift(1)).abs()
+                        ], axis=1).max(axis=1)
+                        _atr_daily = float(_tr.rolling(14).mean().iloc[-1])
+                        _min_tp_dist = _atr_daily * 1.0  # minim 1x ATR față de entry
+                        _entry_ref = setup.entry_price if setup.entry_price else _current_px
                         if _d1_dir == 'bullish':
                             _swings = self.smc_detector.detect_swing_highs(df_daily)
-                            _targets = [s for s in _swings if s.price > _current_px]
+                            # Filtru: swing deasupra prețului SI la minim 1x ATR față de entry
+                            _targets = [s for s in _swings
+                                        if s.price > _current_px
+                                        and (s.price - _entry_ref) >= _min_tp_dist]
                             _daily_tp = min(_targets, key=lambda s: s.price).price if _targets else None
                         else:
                             _swings = self.smc_detector.detect_swing_lows(df_daily)
-                            _targets = [s for s in _swings if s.price < _current_px]
+                            # Filtru: swing sub prețul SI la minim 1x ATR față de entry
+                            _targets = [s for s in _swings
+                                        if s.price < _current_px
+                                        and (_entry_ref - s.price) >= _min_tp_dist]
                             _daily_tp = max(_targets, key=lambda s: s.price).price if _targets else None
                         setup.daily_tp_price = float(_daily_tp) if _daily_tp else None
                         if setup.daily_tp_price:
-                            print(f"   🎯 [V24.5 D1 TP] {symbol} {_d1_dir.upper()}: Lichiditate Target D1 = {setup.daily_tp_price:.5f}")
+                            _tp_dist_pips = abs(setup.daily_tp_price - _entry_ref) / (0.01 if 'JPY' in symbol else 0.0001)
+                            print(f"   🎯 [V24.6 D1 TP] {symbol} {_d1_dir.upper()}: Target D1 = {setup.daily_tp_price:.5f} ({_tp_dist_pips:.0f} pips | ATR={_atr_daily/(0.01 if 'JPY' in symbol else 0.0001):.0f}p)")
                         else:
-                            print(f"   ⚠️ [V24.5 D1 TP] {symbol}: Niciun swing {_d1_dir.upper()} D1 deasupra/dedesubt prețului — fallback la TP SMC")
+                            print(f"   ⚠️ [V24.6 D1 TP] {symbol}: Niciun swing {_d1_dir.upper()} D1 la >= 1x ATR față de entry — fallback la TP SMC")
                             setup.daily_tp_price = None
                     except Exception as _dtp_err:
                         setup.daily_tp_price = None
-                        print(f"   ⚠️ [V24.5 D1 TP] Eroare calcul daily_tp_price: {_dtp_err}")
+                        print(f"   ⚠️ [V24.6 D1 TP] Eroare calcul daily_tp_price: {_dtp_err}")
 
                     # ✅ V10.9 CARRY MATRIX: Fetch live swap rates and attach to setup
                     try:
