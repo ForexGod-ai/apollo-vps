@@ -1695,14 +1695,23 @@ class SMCDetector:
                         ))
                         prev_trend = 'bullish'
                     elif _body_close_confirmed_h and prev_trend == 'bearish':
-                        # CHoCH bullish: validăm că structura anterioară era bearish
-                        # V24.3: STRICT STRUCTURAL — eliminat big_pump bypass procentual.
-                        # SMC pur nu recunoaște procente. CHoCH valid = LH sau LL confirmat organic.
-                        recent_highs = [s for s in swing_highs if s.index <= swing.index][-3:]
-                        recent_lows  = [s for s in swing_lows  if s.index <= swing.index][-3:]
-                        lh_pattern = len(recent_highs) >= 2 and recent_highs[-1].price < recent_highs[-2].price
-                        ll_pattern = len(recent_lows)  >= 2 and recent_lows[-1].price  < recent_lows[-2].price
-                        if lh_pattern or ll_pattern:
+                        # CHoCH bullish: Body Close confirmat + prev_trend organic 'bearish'
+                        # V24.4 VOLATILE FIX: prev_trend == 'bearish' E deja dovada structurii.
+                        # Verificăm că cel puțin O pereche din ultimele 5 highs/lows arată LH sau LL
+                        # (nu cerem secvența perfectă 2/2 pe ultimele 3 — zgomotul volatilelor o rupe).
+                        recent_highs = [s for s in swing_highs if s.index <= swing.index][-5:]
+                        recent_lows  = [s for s in swing_lows  if s.index <= swing.index][-5:]
+                        # LH = oricare high[i] < high[i-1] în serie (nu doar ultimele 2)
+                        lh_any = any(
+                            recent_highs[i].price < recent_highs[i-1].price
+                            for i in range(1, len(recent_highs))
+                        )
+                        # LL = oricare low[i] < low[i-1] în serie
+                        ll_any = any(
+                            recent_lows[i].price < recent_lows[i-1].price
+                            for i in range(1, len(recent_lows))
+                        )
+                        if lh_any or ll_any:
                             chochs.append(CHoCH(
                                 index=swing.index,
                                 direction='bullish',
@@ -1712,7 +1721,7 @@ class SMCDetector:
                                 swing_broken=prev_high
                             ))
                             prev_trend = 'bullish'
-                        # ELSE: spargere fără LH/LL anterior confirmat — nu e CHoCH structural
+                        # ELSE: nicio urmă de structură bearish în ultimele 5 swings — skip
                     elif _body_close_confirmed_h:  # prev_trend == 'bullish'
                         # BOS bullish: continuare trend
                         bos_list.append(BOS(
@@ -1758,14 +1767,23 @@ class SMCDetector:
                         ))
                         prev_trend = 'bearish'
                     elif _body_close_confirmed_l and prev_trend == 'bullish':
-                        # CHoCH bearish: validăm că structura anterioară era bullish
-                        # V24.3: STRICT STRUCTURAL — eliminat big_drop bypass procentual.
-                        # SMC pur nu recunoaște procente. CHoCH valid = HH sau HL confirmat organic.
-                        recent_highs = [s for s in swing_highs if s.index <= swing.index][-3:]
-                        recent_lows  = [s for s in swing_lows  if s.index <= swing.index][-3:]
-                        hh_pattern = len(recent_highs) >= 2 and recent_highs[-1].price > recent_highs[-2].price
-                        hl_pattern = len(recent_lows)  >= 2 and recent_lows[-1].price  > recent_lows[-2].price
-                        if hh_pattern or hl_pattern:
+                        # CHoCH bearish: Body Close confirmat + prev_trend organic 'bullish'
+                        # V24.4 VOLATILE FIX: prev_trend == 'bullish' E deja dovada structurii.
+                        # Verificăm că cel puțin O pereche din ultimele 5 highs/lows arată HH sau HL
+                        # (nu cerem secvența perfectă 2/2 pe ultimele 3 — zgomotul volatilelor o rupe).
+                        recent_highs = [s for s in swing_highs if s.index <= swing.index][-5:]
+                        recent_lows  = [s for s in swing_lows  if s.index <= swing.index][-5:]
+                        # HH = oricare high[i] > high[i-1] în serie
+                        hh_any = any(
+                            recent_highs[i].price > recent_highs[i-1].price
+                            for i in range(1, len(recent_highs))
+                        )
+                        # HL = oricare low[i] > low[i-1] în serie
+                        hl_any = any(
+                            recent_lows[i].price > recent_lows[i-1].price
+                            for i in range(1, len(recent_lows))
+                        )
+                        if hh_any or hl_any:
                             chochs.append(CHoCH(
                                 index=swing.index,
                                 direction='bearish',
@@ -1775,7 +1793,7 @@ class SMCDetector:
                                 swing_broken=prev_low
                             ))
                             prev_trend = 'bearish'
-                        # ELSE: spargere fără HH/HL anterior confirmat — nu e CHoCH structural
+                        # ELSE: nicio urmă de structură bullish în ultimele 5 swings — skip
                     elif _body_close_confirmed_l:  # prev_trend == 'bearish'
                         # BOS bearish: continuare trend
                         bos_list.append(BOS(
