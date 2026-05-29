@@ -2600,14 +2600,17 @@ class SetupExecutorMonitor:
                             # Prevents same-cycle double execution (race condition fix)
                             self.signal_cache.mark_processed(execution_id)
                             
-                            # ━━━ Fix #6: RR SAFETY BARRIER — revalidare RR la prețul actual ━━━
+                            # ━━━ Fix #6: RR SAFETY BARRIER — revalidare RR la prețul de INTRARE ━━━
+                            # V24.8 FIX: RR calculat față de entry_price (ordinul limit), NU față de current_price.
+                            # Motivul: current_price fluctuează înainte de activarea ordinului limit.
+                            # Un trade valid cu RR 5:1 la entry poate părea sub 4:1 dacă prețul a ajuns deja
+                            # mai aproape de TP (sau invers — respins greșit). Entry_price = contractul real.
                             _entry_px = result.get('entry_price', setup.get('entry_price', 0))
                             _sl_px = result.get('stop_loss', setup.get('stop_loss', 0))
-                            _tp_px = setup.get('take_profit', 0)
-                            _cur_px = df_1h.iloc[-1]['close'] if df_1h is not None and not df_1h.empty else _entry_px
+                            _tp_px = setup.get('daily_tp_price') or setup.get('take_profit', 0)
                             if _entry_px and _sl_px and _tp_px:
-                                _risk_real = abs(_cur_px - _sl_px)
-                                _reward_real = abs(_tp_px - _cur_px)
+                                _risk_real = abs(_entry_px - _sl_px)
+                                _reward_real = abs(_tp_px - _entry_px)
                                 _rr_real = _reward_real / _risk_real if _risk_real > 0 else 0
                                 if _rr_real < 4.0:
                                     logger.warning(f"⛔ [Fix #6 RR BARRIER] {symbol}: RR_Real=1:{_rr_real:.2f} < 1:4 la execuție — BLOCAT. Setup → EXPIRED.")

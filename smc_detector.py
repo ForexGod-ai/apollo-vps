@@ -2618,15 +2618,28 @@ class SMCDetector:
             # ── V12.1 TP STRUCTURAL D1: primul swing High D1 DEASUPRA prețului curent ────
             # TP = cel mai apropiat swing High pe D1 care este deasupra entry-ului.
             # Acesta este nivelul de structură real, NU extrema din 10 luni.
+            # V24.8 ATR FILTER: Eliminăm micro-pivoții Daily — TP trebuie să fie la minim 1.5x ATR
+            # distanță de entry. Fără filtru, botul alegea swing-uri de 2-5 pips → RR distrus.
             current_price = df_4h['close'].iloc[-1]
             swing_highs_d1_list = self.detect_swing_highs(df_daily)
-            # Filtrăm swing-urile D1 DEASUPRA prețului curent
-            highs_above_price = [sh for sh in swing_highs_d1_list if sh.price > current_price]
+            # Calculăm ATR 14 pe Daily pentru filtrul de distanță minimă TP
+            atr_daily = self.calculate_atr(df_daily, period=14)
+            atr_daily_val = float(atr_daily.iloc[-1]) if atr_daily is not None and not atr_daily.empty else 0.0
+            min_tp_distance = atr_daily_val * 1.5  # Minim 1.5x ATR Daily față de entry
+            # Filtrăm swing-urile D1 DEASUPRA prețului curent ȘI la distanță ATR suficientă
+            highs_above_price = [
+                sh for sh in swing_highs_d1_list
+                if sh.price > current_price and (sh.price - entry) >= min_tp_distance
+            ]
+            if not highs_above_price:
+                # Fallback: dacă filtrul ATR elimină totul, acceptăm swing-uri deasupra prețului (fără filtru distanță)
+                highs_above_price = [sh for sh in swing_highs_d1_list if sh.price > current_price]
+                print(f"   ⚠️ [V24.8 TP ATR FALLBACK] {symbol}: Niciun swing D1 la ≥{min_tp_distance/( 0.01 if 'JPY' in symbol else 0.0001):.0f}p de entry — folosim cel mai apropiat swing D1")
             if highs_above_price:
                 # Cel mai apropiat (cel mai jos) swing High deasupra prețului
                 nearest_high = min(highs_above_price, key=lambda sh: sh.price)
                 take_profit = df_daily['high'].iloc[nearest_high.index]
-                print(f"   🎯 [V12.1 TP] Nearest D1 swing High: idx={nearest_high.index} price={take_profit:.5f}")
+                print(f"   🎯 [V12.1 TP] Nearest D1 swing High: idx={nearest_high.index} price={take_profit:.5f} (ATR_filter={min_tp_distance/( 0.01 if 'JPY' in symbol else 0.0001):.0f}p)")
             else:
                 # Fallback: ultimul swing High pe D1
                 if swing_highs_d1_list:
@@ -2724,15 +2737,28 @@ class SMCDetector:
             # ── V12.1 TP STRUCTURAL D1: primul swing Low D1 SUB prețul curent ────
             # TP = cel mai apropiat swing Low pe D1 care este sub entry.
             # Acesta este suportul structural real, NU extrema din 10 luni.
+            # V24.8 ATR FILTER: Eliminăm micro-pivoții Daily — TP trebuie să fie la minim 1.5x ATR
+            # distanță de entry. Fără filtru, botul alegea swing-uri de 2-5 pips → RR distrus.
             current_price = df_4h['close'].iloc[-1]
             swing_lows_d1_list = self.detect_swing_lows(df_daily)
-            # Filtrăm swing-urile D1 SUB prețul curent
-            lows_below_price = [sl for sl in swing_lows_d1_list if sl.price < current_price]
+            # Calculăm ATR 14 pe Daily pentru filtrul de distanță minimă TP
+            atr_daily = self.calculate_atr(df_daily, period=14)
+            atr_daily_val = float(atr_daily.iloc[-1]) if atr_daily is not None and not atr_daily.empty else 0.0
+            min_tp_distance = atr_daily_val * 1.5  # Minim 1.5x ATR Daily față de entry
+            # Filtrăm swing-urile D1 SUB prețul curent ȘI la distanță ATR suficientă
+            lows_below_price = [
+                sl for sl in swing_lows_d1_list
+                if sl.price < current_price and (entry - sl.price) >= min_tp_distance
+            ]
+            if not lows_below_price:
+                # Fallback: dacă filtrul ATR elimină totul, acceptăm swing-uri sub preț (fără filtru distanță)
+                lows_below_price = [sl for sl in swing_lows_d1_list if sl.price < current_price]
+                print(f"   ⚠️ [V24.8 TP ATR FALLBACK] {symbol}: Niciun swing D1 la ≥{min_tp_distance/( 0.01 if 'JPY' in symbol else 0.0001):.0f}p de entry — folosim cel mai apropiat swing D1")
             if lows_below_price:
                 # Cel mai apropiat (cel mai sus) swing Low sub preț = primul suport
                 nearest_low = max(lows_below_price, key=lambda sl: sl.price)
                 take_profit = df_daily['low'].iloc[nearest_low.index]
-                print(f"   🎯 [V12.1 TP] Nearest D1 swing Low: idx={nearest_low.index} price={take_profit:.5f}")
+                print(f"   🎯 [V12.1 TP] Nearest D1 swing Low: idx={nearest_low.index} price={take_profit:.5f} (ATR_filter={min_tp_distance/( 0.01 if 'JPY' in symbol else 0.0001):.0f}p)")
             else:
                 # Fallback: ultimul swing Low pe D1
                 if swing_lows_d1_list:
