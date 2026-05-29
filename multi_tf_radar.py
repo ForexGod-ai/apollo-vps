@@ -668,13 +668,29 @@ class MultiTFRadar:
             save_to_json: If True, write radar results back to monitoring_setups.json
         """
         symbol = setup_data.get('symbol', 'UNKNOWN')
-        direction = setup_data.get('direction', 'SHORT').upper()
-        
-        # Normalize direction
-        if direction == 'BUY':
+        # ── V25.0 DIRECTION GUARD: ZERO toleranță pentru direcție lipsă sau ambiguuă ──────────
+        # BUG PRE-V25.0: default='SHORT' — dacă câmpul 'direction' lipsea din JSON,
+        # Radarul scăna silențios CHoCH Bearish pentru un setup care era BUY.
+        # FIX: dacă direction e absent sau nerecunoscut → SKIP complet cu log CRITICAL.
+        # Nici un trade nu se execută fără direcție explicită confirmată.
+        _raw_direction = setup_data.get('direction', '').strip().upper()
+        if not _raw_direction:
+            logger.critical(
+                f"🚨 [V25.0 DIRECTION MISSING] {symbol}: Câmpul 'direction' este ABSENT din monitoring_setups.json. "
+                f"Setup SKIPPED — Radarul NU ghicește direcția!"
+            )
+            return None
+        # Normalizăm: BUY → LONG, SELL → SHORT (compatibilitate cu scanner)
+        if _raw_direction in ('BUY', 'LONG'):
             direction = 'LONG'
-        elif direction == 'SELL':
+        elif _raw_direction in ('SELL', 'SHORT'):
             direction = 'SHORT'
+        else:
+            logger.critical(
+                f"🚨 [V25.0 DIRECTION INVALID] {symbol}: Valoare necunoscută '{_raw_direction}' "
+                f"pentru 'direction'. Valori valide: BUY, SELL, LONG, SHORT. Setup SKIPPED!"
+            )
+            return None
         
         # Get Daily data
         daily_entry = float(setup_data.get('entry_price', 0))
@@ -854,28 +870,46 @@ class MultiTFRadar:
         if result.tf_1h.in_fvg or result.tf_4h.in_fvg:
             setup['last_in_fvg_time'] = datetime.now().isoformat()
 
-        # ── V24.9 FIX #2: h4_structure_locked RECENCY GUARD ────────────────────────
-        # BUG PRE-V24.9: h4_structure_locked se seta pe ORICE CHoCH 4H, chiar vechi de 100 bare
-        # (= 17 zile pe 4H). Rezultat: Executorul considera structura "confirmată" permanent,
-        # Fix #1 TP-guard și Timeout rulau pe structuri demult invalide.
-        # FIX: CHoCH 4H trebuie să fie RECENT (max 30 bare = ~120h = ~5 zile pe 4H).
-        # Dacă CHoCH e mai vechi de 30 bare → NU setăm locked (structura poate fi stale).
-        _4H_CHOCH_MAX_BARS = 30  # 30 × 4H = 120 ore = 5 zile — fereastră de prospețime
+        # ── V25.0 FIX #1: h4_structure_locked DIRECTION + RECENCY GUARD ──────────────
+        # BUG PRE-V24.9: se seta pe ORICE CHoCH 4H, chiar vechi de 100 bare
+        # BUG PRE-V25.0: se seta fără verificare direcție — un CHoCH Bearish pe un setup BUY
+        #   bloca structura ca și cum ar fi confirmare Bullish. LACĂTUL ERA ORB.
+        # FIX V25.0: CHoCH 4H trebuie să fie:
+        #   1. RECENT (max 30 bare = ~5 zile)
+        #   2. În ACEEAȘI DIRECȚIE cu setup-ul (BUY → bullish, SELL → bearish)
+        _4H_CHOCH_MAX_BARS = 30
+        _setup_direction_lower = 'bullish' if result.direction == 'LONG' else 'bearish'
+        _4h_choch_direction_ok = (
+            result.tf_4h.choch_direction is not None
+            and result.tf_4h.choch_direction == _setup_direction_lower
+        )
         _4h_choch_is_fresh = (
             result.tf_4h.choch_detected
             and result.tf_4h.choch_bars_ago <= _4H_CHOCH_MAX_BARS
+            and _4h_choch_direction_ok  # ← V25.0: VERIFICARE DIRECȚIE OBLIGATORIE
         )
         if _4h_choch_is_fresh:
             setup['h4_locked'] = True
             setup['h4_structure_locked'] = True
-            logger.info(f"🔒 [V24.9 H4 LOCK] {result.symbol}: CHoCH 4H PROASPĂT "
-                        f"(la -{result.tf_4h.choch_bars_ago} bare = ~{result.tf_4h.choch_bars_ago * 4}h) "
-                        f"→ h4_structure_locked=True")
+            logger.info(
+                f"🔒 [V25.0 H4 LOCK] {result.symbol}: CHoCH 4H PROASPĂT + ALINIAT "
+                f"(dir={result.tf_4h.choch_direction} == setup={_setup_direction_lower} ✅ | "
+                f"la -{result.tf_4h.choch_bars_ago} bare = ~{result.tf_4h.choch_bars_ago * 4}h) "
+                f"→ h4_structure_locked=True"
+            )
+        elif result.tf_4h.choch_detected and not _4h_choch_direction_ok:
+            # CHoCH există dar e în DIRECȚIE CONTRARĂ — LACATUL NU SE PUNE
+            logger.warning(
+                f"🚫 [V25.0 H4 DIRECTION MISMATCH] {result.symbol}: "
+                f"CHoCH 4H dir={result.tf_4h.choch_direction} != setup={_setup_direction_lower} "
+                f"— h4_structure_locked NESETAT (CHoCH contrar = zgomot structural, NU confirmare)"
+            )
         elif result.tf_4h.choch_detected and result.tf_4h.choch_bars_ago > _4H_CHOCH_MAX_BARS:
-            # CHoCH există dar e vechi — NU blocăm structura, logăm avertisment
-            logger.warning(f"⚠️  [V24.9 H4 STALE] {result.symbol}: CHoCH 4H la -{result.tf_4h.choch_bars_ago} bare "
-                           f"(>{_4H_CHOCH_MAX_BARS} max) — h4_structure_locked NESETAT (structură prea veche)")
-            # NU setăm h4_structure_locked=True — executorul trebuie să aștepte un CHoCH proaspăt
+            # CHoCH există și e aliniat dar e prea vechi
+            logger.warning(
+                f"⚠️  [V25.0 H4 STALE] {result.symbol}: CHoCH 4H la -{result.tf_4h.choch_bars_ago} bare "
+                f"(>{_4H_CHOCH_MAX_BARS} max) — h4_structure_locked NESETAT (structură prea veche)"
+            )
         # else: niciun CHoCH → rămâne cum era (nu atingem flagul)
 
         # 🏆 PRIORITY & EXECUTION STATUS
