@@ -106,6 +106,9 @@ class TimeframeAnalysis:
     # V24.5: Structural SL = swing_broken.price ± buffer (4H only, dar calculat pe ambele TF)
     # LONG: SL sub swing_broken | SHORT: SL deasupra swing_broken
     h4_sl_price: Optional[float] = None
+    # V24.9: Câte bare în urmă s-a format CHoCH-ul — recency guard pentru h4_structure_locked
+    # 9999 = valoare default = CHoCH inexistent / nu am date
+    choch_bars_ago: int = 9999
 
 
 @dataclass
@@ -295,13 +298,24 @@ class MultiTFRadar:
             bos_used = None
 
             # PAS 1: Cel mai recent CHoCH aliniat din TOATĂ seria descărcată
+            # ── V24.9 DIRECTION GUARD: filtrăm STRICT pe required_direction ──
+            # Setup BUY → acceptăm DOAR CHoCH Bullish. Setup SELL → DOAR CHoCH Bearish.
+            # CHoCH-urile în direcție contrară sunt IGNORATE complet (zgomot structural).
+            all_chochs_count = len(choch_list)
             aligned_chochs = sorted(
                 [c for c in choch_list if c.direction == required_direction],
                 key=lambda x: x.index
             )
+            rejected_count = all_chochs_count - len(aligned_chochs)
+            if rejected_count > 0:
+                print(f"  🚫 [{timeframe_display} DIRECTION GUARD] {symbol}: {rejected_count} CHoCH(uri) în direcție contrară ({required_direction.upper()} opus) — IGNORATE strict")
+                sys.stdout.flush()
             if aligned_chochs:
                 bars_ago = len(df) - aligned_chochs[-1].index
                 print(f"  ✅ [{timeframe_display} SCAN] {symbol} | CHoCH {required_direction.upper()} la -{bars_ago} bare | VALIDATED ✅")
+                sys.stdout.flush()
+            else:
+                print(f"  ⚠️  [{timeframe_display} DIRECTION GUARD] {symbol}: Zero CHoCH {required_direction.upper()} găsit din {all_chochs_count} total — cascadem la BOS")
                 sys.stdout.flush()
 
             # PAS 2: Cel mai recent BOS aliniat din TOATĂ seria (dacă nu există CHoCH)
@@ -347,9 +361,33 @@ class MultiTFRadar:
                     candle_time=bos_used.candle_time,
                     swing_broken=bos_used.swing_broken
                 )
+                _choch_bars_ago = len(df) - bos_used.index
             else:
                 latest_choch = aligned_chochs[-1]
+                _choch_bars_ago = len(df) - latest_choch.index
             choch_direction = latest_choch.direction
+            # ── V24.9 DIRECTION ASSERTION — guard final ──────────────────────
+            # Paranoid check: dacă după toate filtrele choch_direction != required_direction
+            # (nu ar trebui să se întâmple, dar dacă se întâmplă → WAITING forțat)
+            if choch_direction != required_direction:
+                print(f"  🚨 [{timeframe_display} DIRECTION ASSERT FAILED] {symbol}: "
+                      f"CHoCH dir={choch_direction} != required={required_direction} — FORȚĂM WAITING")
+                sys.stdout.flush()
+                return TimeframeAnalysis(
+                    timeframe=timeframe_display,
+                    choch_detected=False,
+                    choch_direction=None,
+                    choch_time=None,
+                    choch_price=None,
+                    fvg_detected=False,
+                    fvg_top=None,
+                    fvg_bottom=None,
+                    fvg_entry=None,
+                    in_fvg=False,
+                    distance_to_fvg_pips=0.0,
+                    status=PullbackStatus.WAITING_1H_CHOCH if timeframe == "H1" else PullbackStatus.WAITING_4H_CHOCH,
+                    choch_bars_ago=9999
+                )
             choch_index = latest_choch.index
             choch_break_price = float(latest_choch.break_price)   # V24.3 FIX: definit în scope principal
             
@@ -479,6 +517,12 @@ class MultiTFRadar:
                         if in_fvg_synth and retrace_pct >= 0.35:
                             dist_synth = 0.0
                             status_synth = PullbackStatus.EXECUTE_NOW_1H if timeframe == "H1" else PullbackStatus.EXECUTE_NOW_4H
+                            # ── V24.9 EXECUTE_NOW TRASOR — Fibo Fallback ─────────────────────
+                            print(f"  🔫 [RADAR TRIGGER {timeframe_display}] {symbol} {required_direction.upper()} "
+                                  f"→ EXECUTE_NOW. Motiv: Fibo Fallback sintetic 40-60% atins după CHoCH confirmat "
+                                  f"(CHoCH la -{_choch_bars_ago} bare | Zonă sintetică [{fvg_bottom_synth:.5f}-{fvg_top_synth:.5f}] | "
+                                  f"Retrace={retrace_pct*100:.1f}% | Preț={current_price:.5f})")
+                            sys.stdout.flush()
                         else:
                             if choch_direction == 'bullish':
                                 dist_synth = abs(current_price - fvg_top_synth) / pip_size_synth
@@ -510,7 +554,8 @@ class MultiTFRadar:
                             status=status_synth,
                             equilibrium=eq_for_synth,
                             fvg_source="fibo_fallback",
-                            h4_sl_price=h4_sl_price
+                            h4_sl_price=h4_sl_price,
+                            choch_bars_ago=_choch_bars_ago
                         )
                 except Exception as _fib_err:
                     print(f"  ⚠️ [V15.4 FIBO FALLBACK] Error computing synthetic zone: {_fib_err}")
@@ -549,6 +594,12 @@ class MultiTFRadar:
                 distance_to_fvg_pips = 0.0
                 status = PullbackStatus.EXECUTE_NOW_1H if timeframe == "H1" else PullbackStatus.EXECUTE_NOW_4H
                 _sniper_note = f"🎯 SNIPER EXECUTE — prețul {current_price:.5f} IN FVG [{fvg_bottom:.5f}-{fvg_top:.5f}]"
+                # ── V24.9 EXECUTE_NOW TRASOR ─────────────────────────────────────
+                print(f"  🔫 [RADAR TRIGGER {timeframe_display}] {symbol} {required_direction.upper()} "
+                      f"→ EXECUTE_NOW. Motiv: FVG structural atins după CHoCH confirmat "
+                      f"(CHoCH la -{_choch_bars_ago} bare | FVG [{fvg_bottom:.5f}-{fvg_top:.5f}] | "
+                      f"Entry={fvg_entry:.5f} | Preț={current_price:.5f})")
+                sys.stdout.flush()
             else:
                 if required_direction == 'bullish':
                     # For LONG: need to pull back DOWN to FVG
@@ -578,7 +629,8 @@ class MultiTFRadar:
                 distance_to_fvg_pips=distance_to_fvg_pips,
                 status=status,
                 equilibrium=choch_equilibrium,
-                h4_sl_price=h4_sl_price
+                h4_sl_price=h4_sl_price,
+                choch_bars_ago=_choch_bars_ago
             )
         
         except Exception as e:
@@ -802,11 +854,29 @@ class MultiTFRadar:
         if result.tf_1h.in_fvg or result.tf_4h.in_fvg:
             setup['last_in_fvg_time'] = datetime.now().isoformat()
 
-        # V16 FIX (B4): Propagăm h4_locked din executor în radar
-        # V16.5 FIX BUG#5: executor citește 'h4_structure_locked', nu 'h4_locked' — scriem ambele
-        if result.tf_4h.choch_detected:
+        # ── V24.9 FIX #2: h4_structure_locked RECENCY GUARD ────────────────────────
+        # BUG PRE-V24.9: h4_structure_locked se seta pe ORICE CHoCH 4H, chiar vechi de 100 bare
+        # (= 17 zile pe 4H). Rezultat: Executorul considera structura "confirmată" permanent,
+        # Fix #1 TP-guard și Timeout rulau pe structuri demult invalide.
+        # FIX: CHoCH 4H trebuie să fie RECENT (max 30 bare = ~120h = ~5 zile pe 4H).
+        # Dacă CHoCH e mai vechi de 30 bare → NU setăm locked (structura poate fi stale).
+        _4H_CHOCH_MAX_BARS = 30  # 30 × 4H = 120 ore = 5 zile — fereastră de prospețime
+        _4h_choch_is_fresh = (
+            result.tf_4h.choch_detected
+            and result.tf_4h.choch_bars_ago <= _4H_CHOCH_MAX_BARS
+        )
+        if _4h_choch_is_fresh:
             setup['h4_locked'] = True
             setup['h4_structure_locked'] = True
+            logger.info(f"🔒 [V24.9 H4 LOCK] {result.symbol}: CHoCH 4H PROASPĂT "
+                        f"(la -{result.tf_4h.choch_bars_ago} bare = ~{result.tf_4h.choch_bars_ago * 4}h) "
+                        f"→ h4_structure_locked=True")
+        elif result.tf_4h.choch_detected and result.tf_4h.choch_bars_ago > _4H_CHOCH_MAX_BARS:
+            # CHoCH există dar e vechi — NU blocăm structura, logăm avertisment
+            logger.warning(f"⚠️  [V24.9 H4 STALE] {result.symbol}: CHoCH 4H la -{result.tf_4h.choch_bars_ago} bare "
+                           f"(>{_4H_CHOCH_MAX_BARS} max) — h4_structure_locked NESETAT (structură prea veche)")
+            # NU setăm h4_structure_locked=True — executorul trebuie să aștepte un CHoCH proaspăt
+        # else: niciun CHoCH → rămâne cum era (nu atingem flagul)
 
         # 🏆 PRIORITY & EXECUTION STATUS
         setup['radar_priority_timeframe'] = result.priority_timeframe
@@ -822,7 +892,23 @@ class MultiTFRadar:
         # Excepție: dacă entry1_filled=True, semnalul a fost deja consumat → safe to clear.
         if result.execution_ready:
             setup['EXECUTE_NOW'] = True
-            logger.success(f"🔥 [V22.1 EXECUTE_NOW] {result.symbol}: Semnal complet confirmat → EXECUTE_NOW=True")
+            # ── V24.9 FIX #3: VERBOSE EXECUTE_NOW LOG — Colonelul vrea să știe EXACT de ce s-a tras ──
+            _exec_tf = result.priority_timeframe or '?'
+            _exec_tf_data = result.tf_1h if _exec_tf == '1H' else result.tf_4h
+            _exec_fvg_src = getattr(_exec_tf_data, 'fvg_source', 'unknown')
+            _exec_zone = (
+                f"[{_exec_tf_data.fvg_bottom:.5f} - {_exec_tf_data.fvg_top:.5f}]"
+                if _exec_tf_data.fvg_top and _exec_tf_data.fvg_bottom else "zona necunoscută"
+            )
+            _exec_bars = getattr(_exec_tf_data, 'choch_bars_ago', '?')
+            _exec_eq = f"EQ={_exec_tf_data.equilibrium:.5f}" if _exec_tf_data.equilibrium else "EQ=N/A"
+            logger.success(
+                f"🔫 [RADAR TRIGGER {_exec_tf}] {result.symbol} {result.direction} → EXECUTE_NOW=True\n"
+                f"   Motiv: {'FVG structural' if _exec_fvg_src == 'structural' else 'Fibo Fallback sintetic'} "
+                f"atins după CHoCH {_exec_tf} confirmat\n"
+                f"   CHoCH la -{_exec_bars} bare | Zonă: {_exec_zone} | "
+                f"Preț={result.current_price:.5f} | {_exec_eq}"
+            )
         elif setup.get('entry1_filled', False):
             # Executorul a confirmat execuția — acum putem curăța semnalul
             setup.pop('EXECUTE_NOW', None)
