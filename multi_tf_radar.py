@@ -109,6 +109,13 @@ class TimeframeAnalysis:
     # V24.9: Câte bare în urmă s-a format CHoCH-ul — recency guard pentru h4_structure_locked
     # 9999 = valoare default = CHoCH inexistent / nu am date
     choch_bars_ago: int = 9999
+    # V25.1: BOS tracking INDEPENDENT de CHoCH — pentru confirmare trend continuu
+    # Logica: CHoCH se formează O SINGURĂ DATĂ la schimbarea de caracter. Trendul continuă prin BOS.
+    # Un trend valid = CHoCH vechi (inițiator) + BOS recent aliniat (confirmare trend activ).
+    # h4_structure_locked se pune dacă: CHoCH proaspăt ALINIAT *SAU* BOS recent ALINIAT.
+    bos_detected: bool = False
+    bos_direction: Optional[str] = None
+    bos_bars_ago: int = 9999
 
 
 @dataclass
@@ -270,7 +277,20 @@ class MultiTFRadar:
         try:
             # Detect CHoCH and BOS
             choch_list, bos_list = smc_detector.detect_choch_and_bos(df)
-            
+
+            # ── V25.1: BOS RECENCY — calculat INDEPENDENT, ÎNAINTE de orice filtrare ────────────
+            # MOTIVUL: CHoCH apare o singură dată (schimbare de caracter). Continuarea trendului
+            # e confirmată de BOS-uri succesive. Lacătul 4H trebuie să accepte și BOS recent aliniat
+            # chiar dacă CHoCH-ul original are >30 bare vechime (trend sănătos, nu trend stale).
+            _all_aligned_bos_for_lock = sorted(
+                [b for b in bos_list if b.direction == required_direction],
+                key=lambda x: x.index
+            )
+            _bos_detected_val: bool = bool(_all_aligned_bos_for_lock)
+            _bos_direction_val: Optional[str] = _all_aligned_bos_for_lock[-1].direction if _all_aligned_bos_for_lock else None
+            _bos_bars_ago_val: int = (len(df) - _all_aligned_bos_for_lock[-1].index) if _all_aligned_bos_for_lock else 9999
+            # ─────────────────────────────────────────────────────────────────────────────────────
+
             # V19.4 FIX #2: returnăm WAITING doar dacă AMBELE liste sunt goale.
             # Dacă există BOS valid în direcția biasului, cascade-ul trebuie să ruleze (PAS 2/4).
             if not choch_list and not bos_list:
@@ -485,7 +505,10 @@ class MultiTFRadar:
                             distance_to_fvg_pips=0.0,
                             status=PullbackStatus.WAITING_1H_PULLBACK if timeframe == "H1" else PullbackStatus.WAITING_4H_PULLBACK,
                             equilibrium=choch_equilibrium,
-                            h4_sl_price=h4_sl_price
+                            h4_sl_price=h4_sl_price,
+                            bos_detected=_bos_detected_val,
+                            bos_direction=_bos_direction_val,
+                            bos_bars_ago=_bos_bars_ago_val
                         )
                         if choch_direction == 'bullish':
                             # LONG: pullback DOWN la 40-60% din impuls
@@ -555,7 +578,10 @@ class MultiTFRadar:
                             equilibrium=eq_for_synth,
                             fvg_source="fibo_fallback",
                             h4_sl_price=h4_sl_price,
-                            choch_bars_ago=_choch_bars_ago
+                            choch_bars_ago=_choch_bars_ago,
+                            bos_detected=_bos_detected_val,
+                            bos_direction=_bos_direction_val,
+                            bos_bars_ago=_bos_bars_ago_val
                         )
                 except Exception as _fib_err:
                     print(f"  ⚠️ [V15.4 FIBO FALLBACK] Error computing synthetic zone: {_fib_err}")
@@ -574,7 +600,10 @@ class MultiTFRadar:
                     distance_to_fvg_pips=0.0,
                     status=PullbackStatus.WAITING_1H_PULLBACK if timeframe == "H1" else PullbackStatus.WAITING_4H_PULLBACK,
                     equilibrium=choch_equilibrium,
-                    h4_sl_price=h4_sl_price
+                    h4_sl_price=h4_sl_price,
+                    bos_detected=_bos_detected_val,
+                    bos_direction=_bos_direction_val,
+                    bos_bars_ago=_bos_bars_ago_val
                 )
             
             fvg_top = latest_fvg.top
@@ -630,7 +659,10 @@ class MultiTFRadar:
                 status=status,
                 equilibrium=choch_equilibrium,
                 h4_sl_price=h4_sl_price,
-                choch_bars_ago=_choch_bars_ago
+                choch_bars_ago=_choch_bars_ago,
+                bos_detected=_bos_detected_val,
+                bos_direction=_bos_direction_val,
+                bos_bars_ago=_bos_bars_ago_val
             )
         
         except Exception as e:
@@ -870,47 +902,75 @@ class MultiTFRadar:
         if result.tf_1h.in_fvg or result.tf_4h.in_fvg:
             setup['last_in_fvg_time'] = datetime.now().isoformat()
 
-        # ── V25.0 FIX #1: h4_structure_locked DIRECTION + RECENCY GUARD ──────────────
-        # BUG PRE-V24.9: se seta pe ORICE CHoCH 4H, chiar vechi de 100 bare
-        # BUG PRE-V25.0: se seta fără verificare direcție — un CHoCH Bearish pe un setup BUY
-        #   bloca structura ca și cum ar fi confirmare Bullish. LACĂTUL ERA ORB.
-        # FIX V25.0: CHoCH 4H trebuie să fie:
-        #   1. RECENT (max 30 bare = ~5 zile)
-        #   2. În ACEEAȘI DIRECȚIE cu setup-ul (BUY → bullish, SELL → bearish)
-        _4H_CHOCH_MAX_BARS = 30
+        # ── V25.1: h4_structure_locked — CHoCH PROASPĂT *SAU* BOS RECENT ALINIAT ────────────
+        # ARHITECTURĂ SMC CORECTĂ (observație Colonel):
+        #   CHoCH = schimbare de caracter, apare O SINGURĂ DATĂ la inversarea trendului.
+        #   BOS   = confirmare continuare trend, apare REPETAT pe tot parcursul trendului.
+        # PROBLEMA V25.0: limita de 30 bare pe CHoCH invalida trenduri 4H perfect sănătoase
+        #   unde CHoCH-ul s-a format acum 60+ bare dar piața face BOS-uri recente aliniate.
+        # FIX V25.1: Lacătul se pune dacă ORICARE din condiții e adevărată:
+        #   A) CHoCH 4H PROASPĂT (≤30 bare) + ALINIAT — debut trend, confirmare inițială
+        #   B) BOS 4H RECENT   (≤30 bare) + ALINIAT — trend stabilit, continuare confirmată
+        # Direcția rămâne OBLIGATORIE în ambele cazuri (V25.0 Direction Guard intact).
+        _4H_STRUCT_MAX_BARS = 30   # 30 × 4H = 120h ≈ 5 zile — fereastra de prospețime
         _setup_direction_lower = 'bullish' if result.direction == 'LONG' else 'bearish'
+
+        # — Condiția A: CHoCH proaspăt + aliniat ——————————————————————————————
         _4h_choch_direction_ok = (
             result.tf_4h.choch_direction is not None
             and result.tf_4h.choch_direction == _setup_direction_lower
         )
-        _4h_choch_is_fresh = (
+        _4h_choch_is_fresh_and_aligned = (
             result.tf_4h.choch_detected
-            and result.tf_4h.choch_bars_ago <= _4H_CHOCH_MAX_BARS
-            and _4h_choch_direction_ok  # ← V25.0: VERIFICARE DIRECȚIE OBLIGATORIE
+            and result.tf_4h.choch_bars_ago <= _4H_STRUCT_MAX_BARS
+            and _4h_choch_direction_ok
         )
-        if _4h_choch_is_fresh:
+
+        # — Condiția B: BOS recent + aliniat (trend deja stabilit, CHoCH poate fi mai vechi) ——
+        _4h_bos_direction_ok = (
+            result.tf_4h.bos_direction is not None
+            and result.tf_4h.bos_direction == _setup_direction_lower
+        )
+        _4h_bos_is_fresh_and_aligned = (
+            result.tf_4h.bos_detected
+            and result.tf_4h.bos_bars_ago <= _4H_STRUCT_MAX_BARS
+            and _4h_bos_direction_ok
+        )
+
+        # — Decizia lacătului ————————————————————————————————————————————————
+        if _4h_choch_is_fresh_and_aligned or _4h_bos_is_fresh_and_aligned:
             setup['h4_locked'] = True
             setup['h4_structure_locked'] = True
+            if _4h_choch_is_fresh_and_aligned:
+                _lock_trigger = (
+                    f"CHoCH 4H PROASPĂT (la -{result.tf_4h.choch_bars_ago} bare = "
+                    f"~{result.tf_4h.choch_bars_ago * 4}h | dir={result.tf_4h.choch_direction} ✅)"
+                )
+            else:
+                _lock_trigger = (
+                    f"BOS 4H RECENT (la -{result.tf_4h.bos_bars_ago} bare = "
+                    f"~{result.tf_4h.bos_bars_ago * 4}h | dir={result.tf_4h.bos_direction} ✅) "
+                    f"[CHoCH la -{result.tf_4h.choch_bars_ago} bare — trend stabilit]"
+                )
             logger.info(
-                f"🔒 [V25.0 H4 LOCK] {result.symbol}: CHoCH 4H PROASPĂT + ALINIAT "
-                f"(dir={result.tf_4h.choch_direction} == setup={_setup_direction_lower} ✅ | "
-                f"la -{result.tf_4h.choch_bars_ago} bare = ~{result.tf_4h.choch_bars_ago * 4}h) "
+                f"🔒 [V25.1 H4 LOCK] {result.symbol}: {_lock_trigger} "
                 f"→ h4_structure_locked=True"
             )
         elif result.tf_4h.choch_detected and not _4h_choch_direction_ok:
-            # CHoCH există dar e în DIRECȚIE CONTRARĂ — LACATUL NU SE PUNE
             logger.warning(
-                f"🚫 [V25.0 H4 DIRECTION MISMATCH] {result.symbol}: "
+                f"🚫 [V25.1 H4 DIRECTION MISMATCH] {result.symbol}: "
                 f"CHoCH 4H dir={result.tf_4h.choch_direction} != setup={_setup_direction_lower} "
-                f"— h4_structure_locked NESETAT (CHoCH contrar = zgomot structural, NU confirmare)"
+                f"— h4_structure_locked NESETAT (CHoCH contrar = zgomot structural)"
             )
-        elif result.tf_4h.choch_detected and result.tf_4h.choch_bars_ago > _4H_CHOCH_MAX_BARS:
-            # CHoCH există și e aliniat dar e prea vechi
+        elif result.tf_4h.choch_detected and result.tf_4h.choch_bars_ago > _4H_STRUCT_MAX_BARS \
+                and not _4h_bos_is_fresh_and_aligned:
+            # CHoCH vechi ȘI fără BOS recent aliniat — structura poate fi stale
             logger.warning(
-                f"⚠️  [V25.0 H4 STALE] {result.symbol}: CHoCH 4H la -{result.tf_4h.choch_bars_ago} bare "
-                f"(>{_4H_CHOCH_MAX_BARS} max) — h4_structure_locked NESETAT (structură prea veche)"
+                f"⚠️  [V25.1 H4 STALE] {result.symbol}: CHoCH 4H la -{result.tf_4h.choch_bars_ago} bare "
+                f"(>{_4H_STRUCT_MAX_BARS} max) + NICIUN BOS recent aliniat "
+                f"— h4_structure_locked NESETAT (structură neconfirmată)"
             )
-        # else: niciun CHoCH → rămâne cum era (nu atingem flagul)
+        # else: nicio structură → rămâne cum era (nu atingem flagul)
 
         # 🏆 PRIORITY & EXECUTION STATUS
         setup['radar_priority_timeframe'] = result.priority_timeframe
