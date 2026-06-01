@@ -9,91 +9,111 @@ from datetime import datetime
 from typing import List, Dict
 
 # HIGH IMPACT EVENTS FOR JUNE 2026
-# Verificat manual — surse: ForexFactory, Investing.com, BIS calendar
-# Toate orele sunt GMT (UTC+0). Ajustați dacă VPS-ul rulează pe alt timezone.
+# Verificat manual față de ForexFactory — toate orele sunt GMT (UTC+0)
+# NOTĂ TIMEZONE: ForexFactory afișat în EEST (UTC+3, ora României în vară)
+# Conversie: GMT = ora FF - 3h  |  Ex: FF 15:30 → GMT 12:30
 JUNE_2026_EVENTS = [
     # ══════════════════════════════════════════════════════════
-    # SĂPTĂMÂNA 1 (2-5 Iunie) — NFP Week + ECB + BOC
+    # SĂPTĂMÂNA 1 (1-5 Iunie) — ISM + ADP + ISM Services + NFP Week
     # ══════════════════════════════════════════════════════════
-    {"date": "2026-06-01", "time": "15:00", "currency": "USD", "event": "ISM Manufacturing PMI", "impact": "High"},
+    # Lun 1 Iun
+    {"date": "2026-06-01", "time": "14:00", "currency": "USD", "event": "ISM Manufacturing PMI", "impact": "High"},
 
-    {"date": "2026-06-03", "time": "13:15", "currency": "USD", "event": "ADP Non-Farm Employment Change", "impact": "High"},
-    {"date": "2026-06-03", "time": "14:45", "currency": "CAD", "event": "BOC Interest Rate Decision", "impact": "High"},
-    {"date": "2026-06-03", "time": "15:30", "currency": "CAD", "event": "BOC Press Conference", "impact": "High"},
+    # Mar 2 Iun
+    {"date": "2026-06-02", "time": "14:00", "currency": "GBP", "event": "BOE Gov Bailey Speaks", "impact": "High"},
 
-    {"date": "2026-06-04", "time": "07:55", "currency": "EUR", "event": "German Unemployment Change", "impact": "Medium"},
-    {"date": "2026-06-04", "time": "13:15", "currency": "EUR", "event": "ECB Interest Rate Decision", "impact": "High"},
-    {"date": "2026-06-04", "time": "13:30", "currency": "USD", "event": "Unemployment Claims", "impact": "Medium"},
-    {"date": "2026-06-04", "time": "13:45", "currency": "EUR", "event": "ECB Press Conference", "impact": "High"},
+    # Mie 3 Iun
+    {"date": "2026-06-03", "time": "01:30", "currency": "AUD", "event": "GDP q/q", "impact": "High"},
+    {"date": "2026-06-03", "time": "08:30", "currency": "JPY", "event": "BOJ Gov Ueda Speaks", "impact": "High"},
+    {"date": "2026-06-03", "time": "12:15", "currency": "USD", "event": "ADP Non-Farm Employment Change", "impact": "High"},
+    {"date": "2026-06-03", "time": "14:00", "currency": "USD", "event": "ISM Services PMI", "impact": "High"},
 
-    {"date": "2026-06-05", "time": "13:30", "currency": "USD", "event": "Average Hourly Earnings m/m", "impact": "High"},
-    {"date": "2026-06-05", "time": "13:30", "currency": "USD", "event": "Non-Farm Employment Change", "impact": "High"},
-    {"date": "2026-06-05", "time": "13:30", "currency": "USD", "event": "Unemployment Rate", "impact": "High"},
-    {"date": "2026-06-05", "time": "13:30", "currency": "CAD", "event": "Employment Change", "impact": "High"},
-    {"date": "2026-06-05", "time": "15:00", "currency": "USD", "event": "ISM Services PMI", "impact": "High"},
+    # Joi 4 Iun
+    {"date": "2026-06-04", "time": "05:00", "currency": "AUD", "event": "RBA Gov Bullock Speaks", "impact": "High"},
+    {"date": "2026-06-04", "time": "15:40", "currency": "GBP", "event": "BOE Gov Bailey Speaks", "impact": "High"},
 
-    # ══════════════════════════════════════════════════════════
-    # SĂPTĂMÂNA 2 (8-12 Iunie) — RBA + CPI USD + PPI USD
-    # ══════════════════════════════════════════════════════════
-    {"date": "2026-06-09", "time": "04:30", "currency": "AUD", "event": "RBA Interest Rate Decision", "impact": "High"},
-    {"date": "2026-06-09", "time": "05:30", "currency": "AUD", "event": "RBA Press Conference", "impact": "High"},
-
-    {"date": "2026-06-11", "time": "13:30", "currency": "USD", "event": "Core CPI m/m", "impact": "High"},
-    {"date": "2026-06-11", "time": "13:30", "currency": "USD", "event": "CPI m/m", "impact": "High"},
-    {"date": "2026-06-11", "time": "13:30", "currency": "USD", "event": "CPI y/y", "impact": "High"},
-
-    {"date": "2026-06-12", "time": "13:30", "currency": "USD", "event": "Core PPI m/m", "impact": "High"},
-    {"date": "2026-06-12", "time": "13:30", "currency": "USD", "event": "PPI m/m", "impact": "High"},
-    {"date": "2026-06-12", "time": "13:30", "currency": "USD", "event": "Unemployment Claims", "impact": "Medium"},
-
-    {"date": "2026-06-13", "time": "15:00", "currency": "USD", "event": "Prelim UoM Consumer Sentiment", "impact": "High"},
+    # Vin 5 Iun — NFP
+    {"date": "2026-06-05", "time": "12:30", "currency": "CAD", "event": "Employment Change", "impact": "High"},
+    {"date": "2026-06-05", "time": "12:30", "currency": "CAD", "event": "Unemployment Rate", "impact": "High"},
+    {"date": "2026-06-05", "time": "12:30", "currency": "USD", "event": "Average Hourly Earnings m/m", "impact": "High"},
+    {"date": "2026-06-05", "time": "12:30", "currency": "USD", "event": "Non-Farm Employment Change", "impact": "High"},
+    {"date": "2026-06-05", "time": "12:30", "currency": "USD", "event": "Unemployment Rate", "impact": "High"},
 
     # ══════════════════════════════════════════════════════════
-    # SĂPTĂMÂNA 3 (15-19 Iunie) — FOMC + BOE + SNB + BOJ
+    # SĂPTĂMÂNA 2 (8-13 Iunie) — CPI USD + BOC + ECB + PPI + GBP GDP
     # ══════════════════════════════════════════════════════════
-    {"date": "2026-06-16", "time": "07:00", "currency": "GBP", "event": "CPI y/y", "impact": "High"},
-    {"date": "2026-06-16", "time": "07:00", "currency": "GBP", "event": "Core CPI y/y", "impact": "High"},
+    # Mie 10 Iun
+    {"date": "2026-06-10", "time": "12:30", "currency": "USD", "event": "Core CPI m/m", "impact": "High"},
+    {"date": "2026-06-10", "time": "12:30", "currency": "USD", "event": "Core CPI y/y", "impact": "High"},
+    {"date": "2026-06-10", "time": "12:30", "currency": "USD", "event": "CPI m/m", "impact": "High"},
+    {"date": "2026-06-10", "time": "12:30", "currency": "USD", "event": "CPI y/y", "impact": "High"},
+    {"date": "2026-06-10", "time": "13:45", "currency": "CAD", "event": "BOC Rate Statement", "impact": "High"},
+    {"date": "2026-06-10", "time": "13:45", "currency": "CAD", "event": "Overnight Rate", "impact": "High"},
+    {"date": "2026-06-10", "time": "14:30", "currency": "CAD", "event": "BOC Press Conference", "impact": "High"},
 
-    {"date": "2026-06-17", "time": "03:00", "currency": "JPY", "event": "BOJ Interest Rate Decision", "impact": "High"},
-    {"date": "2026-06-17", "time": "06:00", "currency": "JPY", "event": "BOJ Press Conference", "impact": "High"},
-    {"date": "2026-06-17", "time": "13:30", "currency": "USD", "event": "Retail Sales m/m", "impact": "High"},
-    {"date": "2026-06-17", "time": "13:30", "currency": "CAD", "event": "CPI m/m", "impact": "High"},
-    {"date": "2026-06-17", "time": "13:30", "currency": "CAD", "event": "Core CPI m/m", "impact": "High"},
+    # Joi 11 Iun
+    {"date": "2026-06-11", "time": "12:15", "currency": "EUR", "event": "Main Refinancing Rate", "impact": "High"},
+    {"date": "2026-06-11", "time": "12:15", "currency": "EUR", "event": "ECB Monetary Policy Statement", "impact": "High"},
+    {"date": "2026-06-11", "time": "12:30", "currency": "USD", "event": "Core PPI m/m", "impact": "High"},
+    {"date": "2026-06-11", "time": "12:30", "currency": "USD", "event": "PPI m/m", "impact": "High"},
+    {"date": "2026-06-11", "time": "12:45", "currency": "EUR", "event": "ECB Press Conference", "impact": "High"},
 
-    {"date": "2026-06-18", "time": "19:00", "currency": "USD", "event": "FOMC Statement", "impact": "High"},
-    {"date": "2026-06-18", "time": "19:30", "currency": "USD", "event": "FOMC Press Conference", "impact": "High"},
-
-    {"date": "2026-06-19", "time": "07:30", "currency": "CHF", "event": "SNB Interest Rate Decision", "impact": "High"},
-    {"date": "2026-06-19", "time": "11:00", "currency": "GBP", "event": "BOE Interest Rate Decision", "impact": "High"},
-    {"date": "2026-06-19", "time": "11:00", "currency": "GBP", "event": "BOE MPC Meeting Minutes", "impact": "High"},
-    {"date": "2026-06-19", "time": "13:30", "currency": "USD", "event": "Unemployment Claims", "impact": "Medium"},
+    # Vin 12 Iun
+    {"date": "2026-06-12", "time": "06:00", "currency": "GBP", "event": "GDP m/m", "impact": "High"},
 
     # ══════════════════════════════════════════════════════════
-    # SĂPTĂMÂNA 4 (22-26 Iunie) — Flash PMIs + Durable Goods + GDP + PCE
+    # SĂPTĂMÂNA 3 (14-20 Iunie) — BOJ + RBA + GBP CPI + FOMC + NZD + BOE + SNB
     # ══════════════════════════════════════════════════════════
-    {"date": "2026-06-22", "time": "08:30", "currency": "EUR", "event": "German Flash Manufacturing PMI", "impact": "High"},
-    {"date": "2026-06-22", "time": "08:30", "currency": "EUR", "event": "German Flash Services PMI", "impact": "High"},
+    # Mar 16 Iun — BOJ (Tentative) + RBA
+    {"date": "2026-06-16", "time": "00:00", "currency": "JPY", "event": "BOJ Policy Rate", "impact": "High"},
+    {"date": "2026-06-16", "time": "00:00", "currency": "JPY", "event": "BOJ Monetary Policy Statement", "impact": "High"},
+    {"date": "2026-06-16", "time": "04:30", "currency": "AUD", "event": "Cash Rate", "impact": "High"},
+    {"date": "2026-06-16", "time": "04:30", "currency": "AUD", "event": "RBA Rate Statement", "impact": "High"},
+    {"date": "2026-06-16", "time": "05:30", "currency": "AUD", "event": "RBA Press Conference", "impact": "High"},
+    {"date": "2026-06-16", "time": "06:00", "currency": "JPY", "event": "BOJ Press Conference", "impact": "High"},
 
-    {"date": "2026-06-23", "time": "08:00", "currency": "EUR", "event": "Flash Manufacturing PMI", "impact": "High"},
+    # Mie 17 Iun — GBP CPI + FOMC + NZD GDP
+    {"date": "2026-06-17", "time": "06:00", "currency": "GBP", "event": "CPI y/y", "impact": "High"},
+    {"date": "2026-06-17", "time": "18:00", "currency": "USD", "event": "Federal Funds Rate", "impact": "High"},
+    {"date": "2026-06-17", "time": "18:00", "currency": "USD", "event": "FOMC Economic Projections", "impact": "High"},
+    {"date": "2026-06-17", "time": "18:00", "currency": "USD", "event": "FOMC Statement", "impact": "High"},
+    {"date": "2026-06-17", "time": "18:30", "currency": "USD", "event": "FOMC Press Conference", "impact": "High"},
+    {"date": "2026-06-17", "time": "22:45", "currency": "NZD", "event": "GDP q/q", "impact": "High"},
+
+    # Joi 18 Iun — GBP Claimant + SNB + BOE
+    {"date": "2026-06-18", "time": "06:00", "currency": "GBP", "event": "Claimant Count Change", "impact": "High"},
+    {"date": "2026-06-18", "time": "07:30", "currency": "CHF", "event": "SNB Monetary Policy Assessment", "impact": "High"},
+    {"date": "2026-06-18", "time": "07:30", "currency": "CHF", "event": "SNB Policy Rate", "impact": "High"},
+    {"date": "2026-06-18", "time": "08:00", "currency": "CHF", "event": "SNB Press Conference", "impact": "High"},
+    {"date": "2026-06-18", "time": "11:00", "currency": "GBP", "event": "Monetary Policy Summary", "impact": "High"},
+    {"date": "2026-06-18", "time": "11:00", "currency": "GBP", "event": "MPC Official Bank Rate Votes", "impact": "High"},
+    {"date": "2026-06-18", "time": "11:00", "currency": "GBP", "event": "Official Bank Rate", "impact": "High"},
+
+    # ══════════════════════════════════════════════════════════
+    # SĂPTĂMÂNA 4 (21-27 Iunie) — CAD CPI + GBP PMI + AUD CPI + AUD Jobs + PCE + GDP
+    # ══════════════════════════════════════════════════════════
+    # Lun 22 Iun — CAD CPI
+    {"date": "2026-06-22", "time": "12:30", "currency": "CAD", "event": "CPI m/m", "impact": "High"},
+    {"date": "2026-06-22", "time": "12:30", "currency": "CAD", "event": "Median CPI y/y", "impact": "High"},
+    {"date": "2026-06-22", "time": "12:30", "currency": "CAD", "event": "Trimmed CPI y/y", "impact": "High"},
+
+    # Mar 23 Iun — GBP Flash PMIs
     {"date": "2026-06-23", "time": "08:30", "currency": "GBP", "event": "Flash Manufacturing PMI", "impact": "High"},
     {"date": "2026-06-23", "time": "08:30", "currency": "GBP", "event": "Flash Services PMI", "impact": "High"},
-    {"date": "2026-06-23", "time": "15:00", "currency": "USD", "event": "CB Consumer Confidence", "impact": "High"},
-    {"date": "2026-06-23", "time": "15:00", "currency": "USD", "event": "New Home Sales", "impact": "Medium"},
 
-    {"date": "2026-06-24", "time": "13:30", "currency": "USD", "event": "Core Durable Goods Orders m/m", "impact": "High"},
-    {"date": "2026-06-24", "time": "13:30", "currency": "USD", "event": "Durable Goods Orders m/m", "impact": "Medium"},
-    {"date": "2026-06-24", "time": "14:45", "currency": "USD", "event": "Flash Manufacturing PMI", "impact": "High"},
-    {"date": "2026-06-24", "time": "14:45", "currency": "USD", "event": "Flash Services PMI", "impact": "High"},
+    # Mie 24 Iun — AUD CPI
+    {"date": "2026-06-24", "time": "01:30", "currency": "AUD", "event": "CPI m/m", "impact": "High"},
+    {"date": "2026-06-24", "time": "01:30", "currency": "AUD", "event": "CPI y/y", "impact": "High"},
+    {"date": "2026-06-24", "time": "01:30", "currency": "AUD", "event": "Trimmed Mean CPI m/m", "impact": "High"},
 
-    {"date": "2026-06-25", "time": "13:30", "currency": "USD", "event": "Final GDP q/q", "impact": "High"},
-    {"date": "2026-06-25", "time": "13:30", "currency": "USD", "event": "Unemployment Claims", "impact": "Medium"},
-
-    {"date": "2026-06-26", "time": "13:30", "currency": "USD", "event": "Core PCE Price Index m/m", "impact": "High"},
-    {"date": "2026-06-26", "time": "13:30", "currency": "USD", "event": "Personal Income m/m", "impact": "Medium"},
-    {"date": "2026-06-26", "time": "13:30", "currency": "CAD", "event": "GDP m/m", "impact": "High"},
+    # Joi 25 Iun — AUD Jobs + USD Core PCE + Final GDP
+    {"date": "2026-06-25", "time": "01:30", "currency": "AUD", "event": "Employment Change", "impact": "High"},
+    {"date": "2026-06-25", "time": "01:30", "currency": "AUD", "event": "Unemployment Rate", "impact": "High"},
+    {"date": "2026-06-25", "time": "12:30", "currency": "USD", "event": "Core PCE Price Index m/m", "impact": "High"},
+    {"date": "2026-06-25", "time": "12:30", "currency": "USD", "event": "Final GDP q/q", "impact": "High"},
 
     # ══════════════════════════════════════════════════════════
-    # SĂPTĂMÂNA 5 (29-30 Iunie) — Închidere lună
+    # SĂPTĂMÂNA 5 (30 Iunie) — Închidere lună
     # ══════════════════════════════════════════════════════════
     {"date": "2026-06-30", "time": "09:00", "currency": "EUR", "event": "CPI Flash Estimate y/y", "impact": "High"},
     {"date": "2026-06-30", "time": "14:45", "currency": "USD", "event": "Chicago PMI", "impact": "High"},
