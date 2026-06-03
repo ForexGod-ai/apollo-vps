@@ -2630,29 +2630,44 @@ class SetupExecutorMonitor:
                             # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
                             # ━━━ Fix #7: SL ULTIMATUM BARRIER — max pips hard cap ━━━
-                            # V18: cap ridicat la 150 pips (SL structural poate fi 80-130p legitim)
-                            # EXECUTE_NOW sare complet — SL-ul vine din structura Daily (Generalul)
-                            _pip_sz = 0.01 if 'JPY' in symbol.upper() else 0.0001
+                            # V24.4 FIX: pip_size și hard cap sunt acum asset-aware.
+                            # BUG anterior: _pip_sz = 0.0001 pentru BTC → SL în milioane de pips → blocat mereu.
+                            _sym_up7 = symbol.upper()
+                            if any(x in _sym_up7 for x in ['BTC', 'ETH', 'LTC', 'XRP', 'ADA', 'DOGE']):
+                                _pip_sz = 1.0      # Crypto: 1 pip = $1
+                                _sl_hard_cap = 2000  # BTC: SL max $2000 structural
+                            elif any(x in _sym_up7 for x in ['XAU', 'XAG', 'GOLD', 'SILVER']):
+                                _pip_sz = 0.10     # Gold: 1 pip = $0.10
+                                _sl_hard_cap = 500   # Gold: SL max 500 pips ($50)
+                            elif any(x in _sym_up7 for x in ['OIL', 'BRENT', 'WTI']):
+                                _pip_sz = 0.01
+                                _sl_hard_cap = 300
+                            elif 'JPY' in _sym_up7:
+                                _pip_sz = 0.01
+                                _sl_hard_cap = 150
+                            else:
+                                _pip_sz = 0.0001   # Forex standard
+                                _sl_hard_cap = 150   # Forex: SL max 150 pips
                             _sl_entry = result.get('entry_price', setup.get('entry_price', 0))
                             _sl_val = result.get('stop_loss', setup.get('stop_loss', 0))
                             _is_execute_now = result.get('entry_type') == 'EXECUTE_NOW'
                             if _sl_entry and _sl_val and not _is_execute_now:
                                 _sl_pips = abs(_sl_entry - _sl_val) / _pip_sz
-                                if _sl_pips > 150:
-                                    logger.critical(f"🚨 [Fix #7 SL ULTIMATUM] {symbol}: SL={_sl_pips:.1f} pips > 150 — BLOCAT DEFINITIV. Setup → EXPIRED.")
+                                if _sl_pips > _sl_hard_cap:
+                                    logger.critical(f"🚨 [Fix #7 SL ULTIMATUM] {symbol}: SL={_sl_pips:.1f} pips > {_sl_hard_cap} — BLOCAT DEFINITIV. Setup → EXPIRED.")
                                     setups[i]['status'] = 'EXPIRED'
-                                    setups[i]['expired_reason'] = f'SL={_sl_pips:.1f} pips > 150 hard cap'
+                                    setups[i]['expired_reason'] = f'SL={_sl_pips:.1f} pips > {_sl_hard_cap} hard cap'
                                     updated = True
                                     try:
                                         self.telegram.send_setup_expired_alert(
                                             symbol=symbol,
                                             direction=setup.get('direction', '?'),
-                                            reason=f"SL structural = {_sl_pips:.1f} pips depăşeşte limita hard cap de 150 pips — risc neacceptabil"
+                                            reason=f"SL structural = {_sl_pips:.1f} pips depăşeşte limita hard cap de {_sl_hard_cap} pips — risc neacceptabil"
                                         )
                                     except Exception: pass
                                     continue
                                 else:
-                                    logger.info(f"✅ [Fix #7 SL OK] {symbol}: SL={_sl_pips:.1f} pips ≤ 150 — execuție permisă")
+                                    logger.info(f"✅ [Fix #7 SL OK] {symbol}: SL={_sl_pips:.1f} pips ≤ {_sl_hard_cap} — execuție permisă")
                             elif _is_execute_now:
                                 logger.info(f"✅ [Fix #7 SKIP — EXECUTE_NOW] {symbol}: SL structural acceptat direct")
                             # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
