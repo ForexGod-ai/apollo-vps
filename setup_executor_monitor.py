@@ -2632,6 +2632,11 @@ class SetupExecutorMonitor:
                             # ━━━ Fix #7: SL ULTIMATUM BARRIER — max pips hard cap ━━━
                             # V24.4 FIX: pip_size și hard cap sunt acum asset-aware.
                             # BUG anterior: _pip_sz = 0.0001 pentru BTC → SL în milioane de pips → blocat mereu.
+                            # V24.7 FIX: _sl_entry folosește ÎNTOTDEAUNA setup.entry_price (FVG edge structural),
+                            # NU result['entry_price'] care pentru CONTINUATION = current_price (vârful impulsului).
+                            # Exemplu BUG: BTC current=97000, SL=95000, entry_FVG=96000
+                            #   ÎNAINTE (greșit): abs(97000-95000)/1.0 = 2000 pips → BLOCAT fals
+                            #   ACUM (corect):    abs(96000-95000)/1.0 = 1000 pips → PASS ✅
                             _sym_up7 = symbol.upper()
                             if any(x in _sym_up7 for x in ['BTC', 'ETH', 'LTC', 'XRP', 'ADA', 'DOGE']):
                                 _pip_sz = 1.0      # Crypto: 1 pip = $1
@@ -2648,13 +2653,14 @@ class SetupExecutorMonitor:
                             else:
                                 _pip_sz = 0.0001   # Forex standard
                                 _sl_hard_cap = 150   # Forex: SL max 150 pips
-                            _sl_entry = result.get('entry_price', setup.get('entry_price', 0))
+                            # V24.7: ÎNTOTDEAUNA setup.entry_price (FVG structural) ca reper, NU current_price
+                            _sl_entry = setup.get('entry_price', 0) or result.get('entry_price', 0)
                             _sl_val = result.get('stop_loss', setup.get('stop_loss', 0))
                             _is_execute_now = result.get('entry_type') == 'EXECUTE_NOW'
                             if _sl_entry and _sl_val and not _is_execute_now:
                                 _sl_pips = abs(_sl_entry - _sl_val) / _pip_sz
                                 if _sl_pips > _sl_hard_cap:
-                                    logger.critical(f"🚨 [Fix #7 SL ULTIMATUM] {symbol}: SL={_sl_pips:.1f} pips > {_sl_hard_cap} — BLOCAT DEFINITIV. Setup → EXPIRED.")
+                                    logger.critical(f"🚨 [Fix #7 SL ULTIMATUM] {symbol}: SL={_sl_pips:.1f} pips (entry={_sl_entry:.5f}→sl={_sl_val:.5f}) > {_sl_hard_cap} — BLOCAT DEFINITIV. Setup → EXPIRED.")
                                     setups[i]['status'] = 'EXPIRED'
                                     setups[i]['expired_reason'] = f'SL={_sl_pips:.1f} pips > {_sl_hard_cap} hard cap'
                                     updated = True
@@ -2667,7 +2673,7 @@ class SetupExecutorMonitor:
                                     except Exception: pass
                                     continue
                                 else:
-                                    logger.info(f"✅ [Fix #7 SL OK] {symbol}: SL={_sl_pips:.1f} pips ≤ {_sl_hard_cap} — execuție permisă")
+                                    logger.info(f"✅ [Fix #7 SL OK] {symbol}: SL={_sl_pips:.1f} pips (entry={_sl_entry:.5f}→sl={_sl_val:.5f}) ≤ {_sl_hard_cap} — execuție permisă")
                             elif _is_execute_now:
                                 logger.info(f"✅ [Fix #7 SKIP — EXECUTE_NOW] {symbol}: SL structural acceptat direct")
                             # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
