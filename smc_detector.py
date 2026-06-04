@@ -83,6 +83,9 @@ class TradeSetup:
     h4_sync_fvg: Optional[FVG] = None
     h4_sync_fvg_top: float = 0.0
     h4_sync_fvg_bottom: float = 0.0
+    # V24.6 PERMISSIVE DAILY FLOW: True = FVG corp absent/mituit — setup validat NUMAI prin
+    # structura Daily (CHoCH/BOS). Radarul 4H este arbitrul final — NU se execută fără 4H CHoCH!
+    daily_bias_active: bool = False
 
 # ------------------- SMCDetector -------------------
 
@@ -3517,8 +3520,55 @@ class SMCDetector:
                     print(f"   ✅ MOMENTUM Entry Zone (fallback 20bars): {entry_zone_bottom:.5f} - {entry_zone_top:.5f}")
         
         if not fvg:
-            print(f"⛔ [V10.8 REJECT: Nu există FVG pur 3 lumânări (V10.8 SCANNING ALL 100 BARS: CHoCH→prezent)] {symbol} — {strategy_type.upper()} {current_trend.upper()}")
-            return None  # No FVG and not momentum-eligible
+            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            # V24.6 PERMISSIVE DAILY FLOW — Colonel's Philosophy
+            # Scanner Daily = plasă largă (Daily Bias). Radarul 4H = arbitrul final.
+            # Dacă structura Daily e validă (CHoCH/BOS confirmat) dar FVG corp lipsește
+            # sau e mituit → NU mai respingem. Construim o zonă sintetică de Equilibrium
+            # din swing-urile recente și lăsăm Radarul 4H să decidă.
+            # Flag daily_bias_active=True → multi_tf_radar știe că FVG-ul nu e organic.
+            # REGULA DE AUR: NICIODATĂ nu se execută un daily_bias_active fără 4H CHoCH!
+            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            print(f"⚠️ [V24.6 DAILY BIAS] {symbol}: FVG corp absent/mituit — construiesc zonă Equilibrium sintetică (Radar 4H va valida)")
+            _db_swing_highs = self.detect_swing_highs(df_daily)
+            _db_swing_lows  = self.detect_swing_lows(df_daily)
+            # Găsim cel mai recent swing high și low din ultimele 30 bare (după semnal)
+            _signal_idx = latest_signal.index
+            _recent_highs = [s for s in _db_swing_highs if s.index >= _signal_idx]
+            _recent_lows  = [s for s in _db_swing_lows  if s.index >= _signal_idx]
+            # Fallback: dacă nu avem swing-uri post-semnal, folosim ultimele 30 bare
+            if not _recent_highs:
+                _recent_highs = _db_swing_highs[-5:] if _db_swing_highs else []
+            if not _recent_lows:
+                _recent_lows = _db_swing_lows[-5:] if _db_swing_lows else []
+            if _recent_highs and _recent_lows:
+                _eq_h = max(s.price for s in _recent_highs)
+                _eq_l = min(s.price for s in _recent_lows)
+                _eq_range = _eq_h - _eq_l
+                # Zona Equilibrium = 40-60% din range — zona de interes instituțional
+                _eq_mid   = _eq_l + _eq_range * 0.50
+                _eq_top   = _eq_l + _eq_range * 0.60
+                _eq_bottom= _eq_l + _eq_range * 0.40
+            else:
+                # Ultra-fallback: ultimele 20 bare high/low
+                _eq_h = float(df_daily['high'].iloc[-20:].max())
+                _eq_l = float(df_daily['low'].iloc[-20:].min())
+                _eq_mid    = (_eq_h + _eq_l) / 2
+                _eq_top    = _eq_l + (_eq_h - _eq_l) * 0.60
+                _eq_bottom = _eq_l + (_eq_h - _eq_l) * 0.40
+            fvg = FVG(
+                index=latest_signal.index,
+                direction=current_trend,
+                top=_eq_top,
+                bottom=_eq_bottom,
+                middle=_eq_mid,
+                candle_time=latest_signal.candle_time,
+                is_momentum_entry=False  # nu e MOMENTUM — e Daily Bias
+            )
+            fvg.quality_score = 0  # Scor 0 = zone sintetică (Radarul 4H va confirma)
+            # Marcăm setup-ul — va fi propagat în TradeSetup.daily_bias_active
+            fvg._is_daily_bias_zone = True
+            print(f"   ✅ [V24.6] Zonă Equilibrium sintetică: {_eq_bottom:.5f} - {_eq_top:.5f} (mid={_eq_mid:.5f})")
 
         if debug:
             gap_size = fvg.top - fvg.bottom
@@ -4652,6 +4702,8 @@ class SMCDetector:
             h4_sync_fvg=h4_sync_fvg if h4_sync_fvg else None,
             h4_sync_fvg_top=float(h4_sync_fvg.top) if h4_sync_fvg else 0.0,
             h4_sync_fvg_bottom=float(h4_sync_fvg.bottom) if h4_sync_fvg else 0.0,
+            # V24.6 PERMISSIVE DAILY FLOW: FVG sintetic din Equilibrium swing-uri Daily
+            daily_bias_active=getattr(fvg, '_is_daily_bias_zone', False),
         )
         
         # 💧 V4.0: Store liquidity sweep info (for Telegram reporting)

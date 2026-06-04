@@ -728,6 +728,9 @@ class MultiTFRadar:
         daily_entry = float(setup_data.get('entry_price', 0))
         daily_fvg_top = float(setup_data.get('fvg_top', daily_entry))
         daily_fvg_bottom = float(setup_data.get('fvg_bottom', daily_entry))
+        # V24.6 PERMISSIVE DAILY FLOW: Setup cu FVG sintetic (zona Equilibrium) — niciun FVG corp natural
+        # Radarul 4H TREBUIE să găsească un CHoCH real înainte de EXECUTE_NOW
+        _daily_bias_active = bool(setup_data.get('daily_bias_active', False))
         
         # Get current price
         # V19.4 FIX #4: prețul live este IMPERATIV — nu existe fallback silențios la daily_entry.
@@ -748,6 +751,8 @@ class MultiTFRadar:
 
         print(f"\n{'='*80}")
         print(f"🔍 [{symbol}] Bias Daily: {direction} | Scanare structurală 4H+1H...")
+        if _daily_bias_active:
+            print(f"⚠️  [V24.6 DAILY BIAS] {symbol}: FVG sintetic (Equilibrium) — EXECUTE_NOW blocat până la CHoCH 4H real!")
         print(f"{'='*80}")
         print(f"💰 Current Price: {current_price:.5f}")
         print(f"📊 Daily FVG Referință: [{daily_fvg_bottom:.5f} - {daily_fvg_top:.5f}]")
@@ -799,6 +804,22 @@ class MultiTFRadar:
             verdict = "👀 CHoCH DETECTED - Waiting for FVG formation"
         else:
             verdict = "👀 WAITING FOR 1H/4H CHoCH"
+
+        # ━━━ V24.6 DAILY BIAS GUARD: Setup cu FVG sintetic ━━━━━━━━━━━━━━━━━━━━━━━━
+        # Dacă setup-ul vine din scanarea permisivă (fără FVG corp Daily natural),
+        # EXECUTE_NOW este permis NUMAI dacă 4H a detectat un CHoCH real (nu BOS-ca-CHoCH).
+        # Aceasta este REGULA DE AUR: Scanner = Bias, Radar = Arbitrul final.
+        if _daily_bias_active and execution_ready:
+            # Verificăm că avem un CHoCH 4H real (tf_4h.choch_detected = True din CHoCH real)
+            # BOS-ul sintetic nu garantează confluență suficientă pe zona sintetică
+            if not tf_4h.choch_detected:
+                execution_ready = False
+                priority_timeframe = None
+                verdict = f"⚠️ [V24.6 DAILY BIAS] EXECUTE blocat: FVG sintetic necesită CHoCH 4H real (nu BOS)"
+                print(f"  🛡️ [V24.6 DAILY BIAS GUARD] {symbol}: EXECUTE_NOW blocat — zona Equilibrium sintetic\u0103 fara CHoCH 4H confirmat")
+            else:
+                print(f"  ✅ [V24.6 DAILY BIAS UNLOCK] {symbol}: CHoCH 4H real detectat — EXECUTE_NOW autorizat pe zona Equilibrium")
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         
         result = MultiTFResult(
             symbol=symbol,

@@ -915,6 +915,9 @@ def save_monitoring_setups(setups: List[TradeSetup]):
                     # daily_tp_price = nearest D1 Swing High (LONG) / Swing Low (SHORT) = Liquidity Target
                     # h4_sl_price    = scris de Radar (swing_broken 4H ± 3 pips) — NU de scanner
                     "daily_tp_price":   getattr(setup, 'daily_tp_price', None),
+                    # V24.6 PERMISSIVE DAILY FLOW: FVG corp absent — zona sintetic Equilibrium
+                    # Radarul 4H este OBLIGATORIU — executorul NU execut fără 4H CHoCH confirmat
+                    "daily_bias_active": bool(getattr(setup, 'daily_bias_active', False)),
                 }
 
                 # V11.0 CONFLICT GUARD (second line of defence inside save):
