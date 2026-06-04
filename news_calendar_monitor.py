@@ -1194,13 +1194,19 @@ class NewsCalendarMonitor:
                 et = et.astimezone(self.local_tz)
 
             delta_s = (et - now).total_seconds()
-            # Window: 14 min 00 s  ≤  delta  <  16 min 00 s
-            if not (840 <= delta_s < 960):
+            # Window: 14 min 00 s  ≤  delta  <  15 min 00 s  (1 minut — o singură iterație)
+            # V24.8 FIX DUPLICATE: fereastra era 14-16 min (2 iterații × 60s = 2 alerte identice)
+            if not (840 <= delta_s < 900):
                 continue
 
             dedup_key = (et.strftime("%Y-%m-%d %H:%M"), e.currency, e.event[:30])
             if dedup_key in self._sniper_alerted:
+                logger.debug(f"⏭️ SNIPER DEDUP: {dedup_key} already sent — skip")
                 continue
+
+            # V24.8: Pre-mark ÎNAINTE de send — previne re-trimitere dacă loop-ul rulează rapid
+            self._sniper_alerted.add(dedup_key)
+            self._save_sniper_alerted()
 
             flag = _FLAGS.get(e.currency, "🏴")
             tstr = et.strftime("%H:%M")
@@ -1225,10 +1231,12 @@ class NewsCalendarMonitor:
                 )
                 if resp.status_code == 200:
                     logger.success(f"⚡ VOLATILITY RADAR sent: {e.currency} {e.event} @ {tstr} EET")
-                    self._sniper_alerted.add(dedup_key)
-                    self._save_sniper_alerted()  # V13.4: persist to disk
+                    # dedup_key already added before send (V24.8 pre-mark)
                 else:
                     logger.warning(f"⚠️ Sniper alert HTTP {resp.status_code}: {resp.text[:80]}")
+                    # Remove from alerted if send failed — va retry la urmatoarea iteratie
+                    self._sniper_alerted.discard(dedup_key)
+                    self._save_sniper_alerted()
             except Exception as ex:
                 logger.error(f"❌ Sniper alert failed: {ex}")
 
