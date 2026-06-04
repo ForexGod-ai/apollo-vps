@@ -3296,7 +3296,7 @@ class SMCDetector:
                     if _drop > _unconf_bearish_drop_pct:
                         _unconf_bearish_drop_pct = _drop
                         _unconf_bearish_ref = _ref_h
-            if _unconf_bearish_drop_pct >= 0.8:  # 0.8% față de swing high = retracere semnificativă
+            if _unconf_bearish_drop_pct >= 3.0:  # V24.5: era 0.8% — mișcare normală Forex, nu CHoCH real
                 _unconfirmed_bearish_choch = True
                 print(f"   ⚠️ [V11.9] {symbol}: CHoCH bearish neconfirmat — preț a scăzut {_unconf_bearish_drop_pct:.1f}% față de swing high @ {_unconf_bearish_ref:.3f} (în 60 bare)")
 
@@ -3313,7 +3313,7 @@ class SMCDetector:
                     if _rise > _unconf_bullish_rise_pct:
                         _unconf_bullish_rise_pct = _rise
                         _unconf_bullish_ref = _ref_l
-            if _unconf_bullish_rise_pct >= 0.8:  # 0.8% față de swing low = retracere semnificativă
+            if _unconf_bullish_rise_pct >= 3.0:  # V24.5: era 0.8% — mișcare normală Forex, nu CHoCH real
                 _unconfirmed_bullish_choch = True
                 print(f"   ⚠️ [V11.9] {symbol}: CHoCH bullish neconfirmat — preț a urcat {_unconf_bullish_rise_pct:.1f}% față de swing low @ {_unconf_bullish_ref:.3f} (în 60 bare)")
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

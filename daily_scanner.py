@@ -122,7 +122,7 @@ class DailyScanner:
         # V10.1: Initialize SMCDetector — pure structural, no arbitrary ATR floors
         self.smc_detector = SMCDetector(
             swing_lookback=5,      # Standard swing validation (5 bars each side)
-            atr_multiplier=1.2     # V10.1: Relaxed ATR (1.2x) — nu blochează swing-uri structurale
+            atr_multiplier=0.5     # V24.5: era 1.2 (4x prea restrictiv) — aliniat cu practica SMC
         )
         print("✅ SMC Detector V10.2 initialized (ГЛИТЧ ИН МАТРИКС — VERSIUNEA FINALĂ):")
         print("   🎯 Entry: Marginea FVG în zona 70-80% Fibonacci pe impulsul 4H")
