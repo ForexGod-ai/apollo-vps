@@ -559,13 +559,61 @@ class DailyScanner:
                     print(f"✓ {symbol} adăugat în raportul de dimineață [{setup_status}]")
                 else:
                     # V10.2: Setup respins — motivul exact a fost printat de smc_detector
-                    # Exemple de output care vei vedea mai sus:
-                    # [V10.2 REJECT: BUY REVERSAL din zona EQUILIBRIUM (48.3%) — necesită DISCOUNT <38.2%]
-                    # [V10.2 REJECT: RR=1:3.5 < 1:4.0 structural]
-                    # [V10.2 REJECT: SHORT CONTINUATION în macro BULLISH]
-                    # [V10.2 MONITORING: niciun 4H CHoCH (max 48 candle = 8 zile)]
-                    # [V10.2 REJECT: Nu s-a găsit FVG Daily pur de 3 lumânări]
-                    print(f"⛔ {symbol} — NO SETUP [V10.2 REJECT: vezi log-ul ↑]")
+                    # ── V24.8 BIAS FALLBACK ──────────────────────────────────────────────────
+                    # Dacă scan_for_setup() a refuzat perechea (FVG lipsă/mitigat, P/D filter
+                    # etc.) DAR există un CHoCH Daily clar → salvăm un entry minimal cu bias-ul
+                    # corect și status=WAITING_4H_CHOCH. Radarul 4H face filtrarea fină!
+                    # Obiectiv Colonel: 6-8 perechi cu bias direcțional în JSON din 16 scanate.
+                    try:
+                        _bias_dir = self.smc_detector.determine_daily_trend(df_daily)
+                        if _bias_dir in ('bullish', 'bearish'):
+                            _bias_trade_dir = 'buy' if _bias_dir == 'bullish' else 'sell'
+                            print(f"📡 [V24.8 BIAS FALLBACK] {symbol}: No FVG setup dar Daily bias = {_bias_dir.upper()} → salvăm WAITING_4H_CHOCH pentru Radar")
+                            # Citim JSON existent și adăugăm/actualizăm entry minimal
+                            _bf_path = 'monitoring_setups.json'
+                            try:
+                                with open(_bf_path, 'r', encoding='utf-8') as _bfr:
+                                    _bf_data = json.load(_bfr)
+                            except Exception:
+                                _bf_data = {'setups': []}
+                            _bf_setups = _bf_data.get('setups', _bf_data) if isinstance(_bf_data, dict) else _bf_data
+                            # Nu suprascrie setup-uri active (EXECUTE_NOW, MONITORING cu FVG)
+                            _existing_syms = {s.get('symbol'): s for s in _bf_setups if isinstance(s, dict)}
+                            _existing = _existing_syms.get(symbol, {})
+                            _existing_status = _existing.get('status', '')
+                            _skip_statuses = {'EXECUTE_NOW', 'READY', 'EXPIRED', 'CLOSED', 'CANCELLED', 'FAILED'}
+                            if _existing_status not in _skip_statuses:
+                                _bias_entry = {
+                                    'symbol': symbol,
+                                    'direction': _bias_trade_dir,
+                                    'd1_bias_direction': _bias_dir,
+                                    'status': 'WAITING_4H_CHOCH',
+                                    'strategy_type': 'continuation',
+                                    'strategy_locked': True,
+                                    'daily_bias_active': True,
+                                    'entry_price': None,
+                                    'stop_loss': None,
+                                    'take_profit': None,
+                                    'fvg_top': None,
+                                    'fvg_bottom': None,
+                                    'setup_time': datetime.now().isoformat(),
+                                    'bias_fallback': True,  # marker că vine din fallback, nu din FVG complet
+                                }
+                                _existing_syms[symbol] = _bias_entry
+                                _bf_new_setups = list(_existing_syms.values())
+                                _bf_write = {'setups': _bf_new_setups, 'last_updated': datetime.now().isoformat()}
+                                _bf_tmp = _bf_path + '.tmp'
+                                with open(_bf_tmp, 'w', encoding='utf-8') as _bfw:
+                                    json.dump(_bf_write, _bfw, indent=2)
+                                import os as _bf_os
+                                _bf_os.replace(_bf_tmp, _bf_path)
+                                print(f"   ✅ [V24.8] {symbol} {_bias_trade_dir.upper()} bias salvat în JSON → Radar va confirma 4H CHoCH")
+                            else:
+                                print(f"   ⏭️  [V24.8] {symbol}: setup activ ({_existing_status}) — bias fallback ignorat")
+                        else:
+                            print(f"⛔ {symbol} — NO SETUP + BIAS NEUTRAL [V10.2 REJECT: vezi log-ul ↑]")
+                    except Exception as _bf_err:
+                        print(f"⛔ {symbol} — NO SETUP [V10.2 REJECT: vezi log-ul ↑] | bias fallback error: {_bf_err}")
         
         finally:
             # Disconnect cTrader unless keep_connection=True
@@ -935,12 +983,16 @@ def save_monitoring_setups(setups: List[TradeSetup]):
         monitoring_setups = list(existing_setups.values())
         
         # ALWAYS save (even if empty, to update timestamp)
-        # But if we have setups, they should persist
-        with open('monitoring_setups.json', 'w', encoding='utf-8') as f:
-            json.dump({
-                "setups": monitoring_setups,
-                "last_updated": datetime.now().isoformat()
-            }, f, indent=2)
+        # V24.9: Atomic write — .tmp + os.replace() previne coruperea JSON la crash/restart Watchdog
+        _ms_write = {
+            "setups": monitoring_setups,
+            "last_updated": datetime.now().isoformat()
+        }
+        _ms_tmp = 'monitoring_setups.json.tmp'
+        with open(_ms_tmp, 'w', encoding='utf-8') as f:
+            json.dump(_ms_write, f, indent=2)
+        import os as _ms_os
+        _ms_os.replace(_ms_tmp, 'monitoring_setups.json')
         
         if monitoring_setups:
             print(f"\n💾 Saved {len(monitoring_setups)} setup(s) to MONITORING (kept existing + added new)")

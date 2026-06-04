@@ -1242,8 +1242,7 @@ class SetupExecutorMonitor:
                                             break
                                     if isinstance(_disk, dict):
                                         _disk['setups'] = _disk_setups
-                                    with open(self.monitoring_file, 'w', encoding='utf-8') as _wf:
-                                        json.dump(_disk, _wf, indent=2)
+                                    self._atomic_write_monitoring(_disk)
                                 except Exception as _save_err:
                                     logger.warning(f"   ⚠️ alert_4h_sent save error: {_save_err}")
                                 logger.info(f"   📱 [V14.2] 4H CHoCH Alert trimis + flag persistat pe disc: {symbol}")
@@ -1885,6 +1884,19 @@ class SetupExecutorMonitor:
             logger.error(f"⚠️  Error checking broker positions for {symbol}: {e} — BLOCKING execution (conservative)")
             return True  # V9.1: Conservative — block on error instead of allowing
 
+    def _atomic_write_monitoring(self, write_data: dict):
+        """V24.8: Scriere atomică monitoring_setups.json — previne coruperea JSON la crash/restart.
+        
+        Mecanismul: scrie în .tmp → os.replace() atomic (operație kernel-level indivizibilă).
+        Dacă procesul crapă în mijlocul scrierii → fișierul original rămâne intact (nu parțial scris).
+        Aceasta elimină cauza principală a dispariției setup-urilor din JSON.
+        """
+        import os as _atomic_os
+        tmp_path = str(self.monitoring_file) + '.tmp'
+        with open(tmp_path, 'w', encoding='utf-8') as f:
+            json.dump(write_data, f, indent=2, default=str)
+        _atomic_os.replace(tmp_path, str(self.monitoring_file))
+
     def _cleanup_monitoring_setups(self):
         """
         V19.20: SACRED WATCHLIST POLICY — Un setup în monitorizare este SFÂNT.
@@ -1985,8 +1997,26 @@ class SetupExecutorMonitor:
                 else:
                     write_data = active_setups
 
-                with open(self.monitoring_file, 'w', encoding='utf-8') as f:
-                    json.dump(write_data, f, indent=2, default=str)
+                # V24.8: Fresh re-read înainte de scriere — nu ștergem setup-uri noi
+                # adăugate de scanner între momentul citirii și momentul scrierii.
+                try:
+                    with open(self.monitoring_file, 'r', encoding='utf-8') as _fresh_r:
+                        _fresh = json.load(_fresh_r)
+                    _fresh_setups = _fresh.get('setups', _fresh) if isinstance(_fresh, dict) else _fresh
+                    _fresh_sym_map = {s.get('symbol'): s for s in _fresh_setups if isinstance(s, dict)}
+                    # Păstrăm setup-urile fresh care nu erau prezente la citirea inițială
+                    for _fs in active_setups:
+                        _fresh_sym_map[_fs.get('symbol', '')] = _fs
+                    # Re-excludem doar statusurile moarte (nu pierdem setup-urile noi)
+                    _final_setups = [s for s in _fresh_sym_map.values()
+                                     if s.get('status', '') not in {'EXPIRED', 'CLOSED', 'CANCELLED', 'FAILED'}]
+                    if isinstance(_fresh, dict):
+                        write_data = {**_fresh, 'setups': _final_setups, 'last_cleanup': now.isoformat()}
+                    else:
+                        write_data = _final_setups
+                except Exception:
+                    pass  # Folosim write_data calculat anterior dacă fresh re-read eșuează
+                self._atomic_write_monitoring(write_data)
 
                 logger.success(
                     f"🧹 [V19.20 SACRED WATCHLIST] {removed_count} setup-uri șterse "
@@ -2657,7 +2687,11 @@ class SetupExecutorMonitor:
                             _sl_entry = setup.get('entry_price', 0) or result.get('entry_price', 0)
                             _sl_val = result.get('stop_loss', setup.get('stop_loss', 0))
                             _is_execute_now = result.get('entry_type') == 'EXECUTE_NOW'
-                            if _sl_entry and _sl_val and not _is_execute_now:
+                            # V24.8 FIX #3: SL Hard Cap se validează EXCLUSIV la EXECUTE_NOW.
+                            # În stările WAITING (WAITING_4H_CHOCH, WAITING_4H_PULLBACK),
+                            # SL-ul e calculat din structura Daily/curentă — poate fi enorm (BTC).
+                            # Validarea corectă: DOAR după CHoCH 4H confirmat, din entry FVG → swing local 4H.
+                            if _sl_entry and _sl_val and _is_execute_now:
                                 _sl_pips = abs(_sl_entry - _sl_val) / _pip_sz
                                 if _sl_pips > _sl_hard_cap:
                                     logger.critical(f"🚨 [Fix #7 SL ULTIMATUM] {symbol}: SL={_sl_pips:.1f} pips (entry={_sl_entry:.5f}→sl={_sl_val:.5f}) > {_sl_hard_cap} — BLOCAT DEFINITIV. Setup → EXPIRED.")
@@ -2924,10 +2958,9 @@ class SetupExecutorMonitor:
                     data['last_update'] = datetime.now(timezone.utc).isoformat()
                     _write_data = data
 
-                with open(self.monitoring_file, 'w', encoding='utf-8') as f:
-                    json.dump(_write_data, f, indent=2)
-                
-                logger.debug(f"💾 [V22.3] Updated monitoring_setups.json (merge-safe write)")
+                # V24.9: Atomic write — previne coruperea JSON la crash între open(w) și json.dump
+                self._atomic_write_monitoring(_write_data)
+                logger.debug(f"💾 [V24.9] Updated monitoring_setups.json (atomic write)")
         
         except Exception as e:
             logger.error(f"❌ Error in _process_monitoring_setups: {e}")
