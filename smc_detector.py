@@ -1399,6 +1399,7 @@ class SMCDetector:
                 # else: 1H sau sub → 2
         except Exception:
             pass  # index non-timestamp (RangeIndex, backtesting) → fallback 2
+        swing_highs = []
         wick_highs = df['high']
 
         for i in range(FRACTAL_WINDOW, len(df) - FRACTAL_WINDOW):
@@ -1582,6 +1583,7 @@ class SMCDetector:
                     FRACTAL_WINDOW = 3
         except Exception:
             pass
+        swing_lows = []
         wick_lows = df['low']
 
         for i in range(FRACTAL_WINDOW, len(df) - FRACTAL_WINDOW):
