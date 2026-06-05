@@ -424,6 +424,16 @@ class SetupExecutorMonitor:
                     except Exception:
                         wake_label = '00:05 (ora României)'
                     logger.warning(f"😴 DEEP SLEEP RESTORED — {remaining_h:.1f}h until {wake_label}")
+                    # V25.2: Alertă Telegram la startup când Deep Sleep e activ
+                    # Evităm situația tăcută: Watchdog repornește executorul, nimeni nu știe că doarme
+                    self._send_deep_sleep_telegram(
+                        f"😴 <b>SYSTEM RESTARTAT ÎN DEEP SLEEP</b>\n\n"
+                        f"Executorul a fost repornit de Watchdog dar Deep Sleep era activ din sesiunea anterioară.\n\n"
+                        f"⏰ Activare automată la ora: <b>{wake_label}</b>\n"
+                        f"🕐 Timp rămas: <b>{remaining_h:.1f}h</b>\n\n"
+                        f"Zero scanări, zero execuții până la trezire.\n"
+                        f"Folosește /resume pentru a ieși forțat din Deep Sleep."
+                    )
                     # Suprascrie fișierul cu wake_time corectat (elimină valori vechi greșite)
                     state['wake_time'] = wake_time.isoformat()
                     try:
@@ -510,15 +520,20 @@ class SetupExecutorMonitor:
         now = datetime.now(timezone.utc)
         if now < self.deep_sleep_until:
             remaining_h = (self.deep_sleep_until - now).total_seconds() / 3600
-            # Log sparingly: only every ~100 iterations (every 50 min at 30s)
-            if hasattr(self, '_deep_sleep_log_counter'):
-                self._deep_sleep_log_counter += 1
-            else:
-                self._deep_sleep_log_counter = 0
-            
-            if self._deep_sleep_log_counter % 100 == 0:
-                logger.info(f"😴 DEEP SLEEP: {remaining_h:.1f}h remaining — zero resource usage")
-            
+            # V25.2: Log la FIECARE ciclu cu WARNING — vizibil imediat în consolă și log
+            # Motivul: logul la 100 iterații (~50min) era INVIZIBIL în practică.
+            # Acum e clar la fiecare 30s că sistemul doarme intenționat.
+            try:
+                import pytz as _pytz_ds
+                _ro_tz_ds = _pytz_ds.timezone('Europe/Bucharest')
+                _wake_ro = self.deep_sleep_until.astimezone(_ro_tz_ds)
+                _wake_label = _wake_ro.strftime('%H:%M (ora României)')
+            except Exception:
+                _wake_label = 'la 00:05'
+            logger.warning(
+                f"😴 [DEEP SLEEP ACTIV] {remaining_h:.1f}h rămase — trezire la {_wake_label} | "
+                f"zero scanări, zero execuții | /resume pentru ieșire forțată"
+            )
             return True  # ← SLEEPING: Skip all processing
         else:
             # WAKE UP! (auto-wake la 00:05 ora României = nou trading day)

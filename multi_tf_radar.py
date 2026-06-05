@@ -174,6 +174,12 @@ class MultiTFRadar:
         print("   - 1H: ATR 0.8x (SNIPER mode)")
         print("   - 4H: ATR 1.0x (HIGH CONFIDENCE mode — V15.4)")
 
+        # V25.2: Contor eșecuri consecutive port 8010 — alertă Telegram la 3 eșecuri
+        self._port8010_fail_count: int = 0
+        self._port8010_alert_sent: bool = False  # anti-spam: o singură alertă per incident
+        self._telegram_token: str = _os_global.getenv('TELEGRAM_BOT_TOKEN', '')
+        self._telegram_chat_id: str = _os_global.getenv('TELEGRAM_CHAT_ID', '')
+
     @staticmethod
     def _get_pip_size(symbol: str) -> float:
         """V24.4 Symbol-Agnostic pip size — suportă FX, JPY, XAU, BTC, OIL."""
@@ -189,8 +195,30 @@ class MultiTFRadar:
         else:
             return 0.0001    # FX standard
     
+    def _send_radar_telegram_alert(self, message: str) -> None:
+        """V25.2: Trimite alertă critică pe Telegram din Radar (port 8010 offline etc.)"""
+        if not self._telegram_token or not self._telegram_chat_id:
+            return
+        try:
+            import requests as _req_tg
+            sep = "────────────────"
+            branded = (
+                f"{message.strip()}\n\n"
+                f"  {sep}\n"
+                f"  🔱 AUTHORED BY <b>ФорексГод</b> 🔱\n"
+                f"  {sep}\n"
+                f"  🏛 <b>ГЛИТЧ ИН МАТРИКС</b> 🏛"
+            )
+            _req_tg.post(
+                f"https://api.telegram.org/bot{self._telegram_token}/sendMessage",
+                json={'chat_id': self._telegram_chat_id, 'text': branded, 'parse_mode': 'HTML'},
+                timeout=10
+            )
+        except Exception as _tg_err:
+            print(f"⚠️ [RADAR TELEGRAM] Eroare trimitere alertă: {_tg_err}")
+
     def get_current_price(self, symbol: str) -> Optional[float]:
-        """Get current price from cTrader"""
+        """Get current price from cTrader — V25.2: contor eșecuri port 8010 cu alertă Telegram."""
         try:
             import requests
             response = requests.get(
@@ -198,18 +226,44 @@ class MultiTFRadar:
                 params={"symbol": symbol},
                 timeout=2
             )
-            
+
             if response.status_code == 200:
                 data = response.json()
                 bid = data.get('bid', 0)
                 ask = data.get('ask', 0)
                 if bid > 0 and ask > 0:
+                    # Succes — resetăm contorul și flag-ul de alertă
+                    if self._port8010_fail_count > 0:
+                        print(f"✅ [PORT 8010] Conexiune restaurată pentru {symbol} — resetare contor eșecuri")
+                        self._port8010_fail_count = 0
+                        self._port8010_alert_sent = False
                     return (bid + ask) / 2.0
-            
-            return None
+
+            # Răspuns invalid (status != 200 sau bid/ask = 0)
+            self._port8010_fail_count += 1
+            print(f"⚠️  [PORT 8010] Răspuns invalid pentru {symbol} (eșec #{self._port8010_fail_count})")
+
         except Exception as e:
-            print(f"⚠️  Error fetching price for {symbol}: {e}")
-            return None
+            self._port8010_fail_count += 1
+            print(f"⚠️  [PORT 8010] Eroare conexiune pentru {symbol}: {e} (eșec #{self._port8010_fail_count})")
+
+        # V25.2: Alertă Telegram la 3 eșecuri consecutive (anti-spam: o singură alertă per incident)
+        if self._port8010_fail_count >= 3 and not self._port8010_alert_sent:
+            self._port8010_alert_sent = True
+            print(f"🚨 [PORT 8010 OFFLINE] {self._port8010_fail_count} eșecuri consecutive — trimit alertă Telegram!")
+            self._send_radar_telegram_alert(
+                f"🚨 <b>CONEXIUNE ÎNTRERUPTĂ — cBot OFFLINE</b>\n\n"
+                f"MarketDataProvider cBot de pe cTrader NU răspunde pe portul 8010.\n"
+                f"Eșecuri consecutive: <b>{self._port8010_fail_count}</b>\n\n"
+                f"⛔ Datele live sunt INDISPONIBILE.\n"
+                f"⛔ Execuția automată este BLOCATĂ.\n\n"
+                f"🔧 Acțiune necesară:\n"
+                f"  1. Verifică dacă cTrader este deschis pe VPS\n"
+                f"  2. Verifică dacă cBot-ul <b>DATA-Market</b> rulează\n"
+                f"  3. Verifică: <code>Test-NetConnection localhost -Port 8010</code>"
+            )
+
+        return None
     
     def get_historical_data(
         self,
@@ -930,10 +984,11 @@ class MultiTFRadar:
         # PROBLEMA V25.0: limita de 30 bare pe CHoCH invalida trenduri 4H perfect sănătoase
         #   unde CHoCH-ul s-a format acum 60+ bare dar piața face BOS-uri recente aliniate.
         # FIX V25.1: Lacătul se pune dacă ORICARE din condiții e adevărată:
-        #   A) CHoCH 4H PROASPĂT (≤30 bare) + ALINIAT — debut trend, confirmare inițială
-        #   B) BOS 4H RECENT   (≤30 bare) + ALINIAT — trend stabilit, continuare confirmată
+        #   A) CHoCH 4H PROASPĂT (≤72 bare) + ALINIAT — debut trend, confirmare inițială
+        #   B) BOS 4H RECENT   (≤72 bare) + ALINIAT — trend stabilit, continuare confirmată
         # Direcția rămâne OBLIGATORIE în ambele cazuri (V25.0 Direction Guard intact).
-        _4H_STRUCT_MAX_BARS = 30   # 30 × 4H = 120h ≈ 5 zile — fereastra de prospețime
+        # V25.2: 30→72 bare — pullback pe Daily poate dura 4-14 zile, aliniat cu V25.0 din smc_detector
+        _4H_STRUCT_MAX_BARS = 72   # 72 × 4H = 288h = 12 zile — fereastra extinsă (V25.2)
         _setup_direction_lower = 'bullish' if result.direction == 'LONG' else 'bearish'
 
         # — Condiția A: CHoCH proaspăt + aliniat ——————————————————————————————
@@ -1368,23 +1423,73 @@ class MultiTFRadar:
 
         print(f"\n✅ Scan complete: {ok_count} analyzed | ❌ {err_count} errors\n")
     
+    def _compute_adaptive_interval(self, base_interval: int, symbol: Optional[str] = None) -> int:
+        """
+        V25.2 ADAPTIVE INTERVAL — ajustează frecvența scanării bazat pe proximitatea față de FVG.
+
+        Logică:
+          ≥ 1 setup cu preț < 10 pips de FVG  →  5s  (Sniper mode — nu ratăm wick-uri rapide)
+          ≥ 1 setup în WAITING_*_PULLBACK      → 10s  (Pullback activ — monitorizare intensă)
+          Altfel                               → base_interval (30s default)
+
+        Date citite din JSON-ul deja scris de ciclul anterior — zero HTTP calls extra.
+        """
+        try:
+            with open(_MONITORING_FILE, 'r', encoding='utf-8') as _af:
+                _ad = json.load(_af)
+            _setups = _ad.get('setups', _ad) if isinstance(_ad, dict) else _ad
+            if not isinstance(_setups, list):
+                return base_interval
+            if symbol:
+                _setups = [s for s in _setups if s.get('symbol') == symbol]
+
+            _min_dist = float('inf')
+            _has_pullback = False
+
+            for _s in _setups:
+                # Verifică distanța față de FVG (stocată de scanarea anterioară)
+                for _dk in ('radar_1h_distance_pips', 'radar_4h_distance_pips'):
+                    _dv = _s.get(_dk)
+                    if isinstance(_dv, (int, float)) and _dv >= 0:
+                        _min_dist = min(_min_dist, _dv)
+                # Verifică dacă există pullback activ în statusuri
+                for _sk in ('radar_1h_status', 'radar_4h_status'):
+                    _sv = _s.get(_sk, '')
+                    if 'WAITING' in _sv and 'PULLBACK' in _sv:
+                        _has_pullback = True
+
+            if _min_dist < 10:
+                return 5    # ⚡ Sniper: preț la <10 pips de FVG
+            if _has_pullback:
+                return 10   # 🔍 Pullback activ pe 4H sau 1H
+            return base_interval  # 🔄 Normal
+        except Exception:
+            return base_interval
+
     def watch_mode(self, interval: int, symbol: Optional[str] = None, all_setups: bool = False):
         """Run scan in watch mode with auto-refresh"""
         print("\n" + "="*80)
-        print("👁️  MULTI-TF RADAR - WATCH MODE ACTIVE")
+        print("👁️  MULTI-TF RADAR - WATCH MODE ACTIVE (V25.2 ADAPTIVE INTERVAL)")
         print("="*80)
-        print(f"⏱️  Refresh Interval: {interval}s")
+        print(f"⏱️  Base Interval: {interval}s | Adaptive: 10s (pullback) / 5s (în FVG)")
         print(f"🎯 Target: {'ALL setups' if all_setups else (symbol if symbol else 'First setup')}")
         print("Press Ctrl+C to stop")
         print("="*80 + "\n")
-        
+
         try:
             while True:
                 self.run_scan(symbol=symbol, all_setups=all_setups)
-                
-                print(f"\n⏳ Next scan in {interval}s...\n")
-                time.sleep(interval)
-        
+
+                # V25.2: Interval adaptiv bazat pe proximitate FVG (citire JSON fără HTTP extra)
+                next_interval = self._compute_adaptive_interval(interval, symbol)
+                if next_interval <= 5:
+                    print(f"\n⚡ [SNIPER MODE] Preț aproape de FVG — rescan în {next_interval}s...\n")
+                elif next_interval <= 10:
+                    print(f"\n🔍 [PULLBACK ACTIV] CHoCH detectat — rescan în {next_interval}s...\n")
+                else:
+                    print(f"\n⏳ Next scan în {next_interval}s (normal)...\n")
+                time.sleep(next_interval)
+
         except KeyboardInterrupt:
             print("\n\n👋 Watch mode stopped by user\n")
 
