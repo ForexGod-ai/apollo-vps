@@ -3361,57 +3361,44 @@ class SMCDetector:
                     break  # Stop at first different direction
         
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        # V23 CLASIFICARE INSTITUȚIONALĂ PURĂ — ULTIMUL SEMNAL DICTEAZĂ TOTUL
+        # V25.0 UNIVERSAL BIAS — MECANIC UNIFICAT "GLITCH IN MATRIX"
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        # REGULA SUPREMĂ (o singură ramură, fără excepții):
+        # REGULA SUPREMĂ (o singură ramură, fără discriminare tip break):
         #
-        #   Ultimul semnal structural confirmat pe Daily (body close) → bias + tip setup
+        #   D1 Break (CHoCH sau BOS, cu Body Close confirmat) → Bias LONG/SHORT
+        #   Cel mai recent break structural = ancora biasului.
+        #   CHoCH și BOS sunt ECHIVALENTE ca declanșatori de bias.
+        #   Ambele duc la: status = WAITING_D1_PULLBACK.
+        #   Distincția reversal/continuation păstrată NUMAI intern (calcul equilibrium).
         #
-        #   CHoCH (ultimul) → REVERSAL  — structura veche a fost anulată
-        #   BOS   (ultimul) → CONTINUITY — trendul actual continuă, pullback normal
-        #
-        #   Direcția bias = direcția acelui semnal (bullish=LONG, bearish=SHORT)
-        #
-        # Eliminate: BOS dominance, V18/V19.13 ramuri, Generalul, procentaje, etc.
+        #   ELIMINAT: regula cronologică V23 care forța CONTINUATION când BOS > CHoCH.
+        #   Aceasta ucidea toate REVERSAL-urile în piețe trending (85% din cazuri).
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         if latest_choch and latest_bos:
             if latest_choch.index >= latest_bos.index:
-                # CHoCH este mai recent sau egal → REVERSAL
                 latest_signal = latest_choch
-                current_trend = latest_choch.direction
-                strategy_type = 'reversal'
-                if debug:
-                    print(f"✅ [V23 REVERSAL] CHoCH {latest_choch.direction.upper()} @bar{latest_choch.index} > BOS @bar{latest_bos.index} → REVERSAL {latest_choch.direction.upper()}")
+                strategy_type = 'reversal'   # intern — pentru calcul equilibrium
             else:
-                # BOS este mai recent → CONTINUITY
                 latest_signal = latest_bos
-                current_trend = latest_bos.direction
-                strategy_type = 'continuation'
-                if debug:
-                    print(f"✅ [V23 CONTINUITY] BOS {latest_bos.direction.upper()} @bar{latest_bos.index} > CHoCH @bar{latest_choch.index} → CONTINUITY {latest_bos.direction.upper()}")
+                strategy_type = 'continuation'  # intern — pentru calcul equilibrium
         elif latest_choch:
-            # Numai CHoCH — REVERSAL
             latest_signal = latest_choch
-            current_trend = latest_choch.direction
             strategy_type = 'reversal'
-            if debug:
-                print(f"✅ [V23 REVERSAL] CHoCH {latest_choch.direction.upper()} @bar{latest_choch.index} (fără BOS) → REVERSAL {latest_choch.direction.upper()}")
         elif latest_bos:
-            # Numai BOS — CONTINUITY
             latest_signal = latest_bos
-            current_trend = latest_bos.direction
             strategy_type = 'continuation'
-            if debug:
-                print(f"✅ [V23 CONTINUITY] BOS {latest_bos.direction.upper()} @bar{latest_bos.index} (fără CHoCH) → CONTINUITY {latest_bos.direction.upper()}")
         else:
             if debug:
                 print(f"❌ REJECTED: No Daily CHoCH or BOS found")
             return None
 
-        if debug:
-            print(f"\n✅ [V23 BIAS FINAL] {symbol}: {current_trend.upper()} — {strategy_type.upper()} @ bar{latest_signal.index} price={latest_signal.break_price:.5f}")
+        current_trend = latest_signal.direction
+        _signal_label = 'CHoCH' if isinstance(latest_signal, CHoCH) else 'BOS'
 
-        print(f"✅ [V23 BIAS] {symbol}: {current_trend.upper()} — {strategy_type.upper()} (semnal: {'CHoCH' if strategy_type == 'reversal' else 'BOS'} @bar{latest_signal.index})")
+        if debug:
+            print(f"\n✅ [V25.0 UNIVERSAL] {symbol}: D1 BREAK {_signal_label} {current_trend.upper()} @bar{latest_signal.index} price={latest_signal.break_price:.5f} → WAITING_D1_PULLBACK")
+
+        print(f"✅ [V25.0 UNIVERSAL] {symbol}: {current_trend.upper()} | {_signal_label} @bar{latest_signal.index} → WAITING_D1_PULLBACK (echilibru: {strategy_type})")
         current_price = df_daily['close'].iloc[-1]
 
         
@@ -3837,38 +3824,27 @@ class SMCDetector:
             if debug and hasattr(fvg, 'is_momentum_entry') and fvg.is_momentum_entry:
                 print(f"\n⚡ MOMENTUM ENTRY: Skipping price proximity check (breakout entry, not pullback wait)")
         else:
-            # ✅ V10.5 FIX: Buffer de proximitate 0.5% — prețul la câțiva pips de FVG = APPROACHING
-            # Vechiul cod: 1.15597 >= 1.15658? FALSE → reject (doar 6 pips distanță!)
-            # Fix: dacă prețul e în raza de 0.5% față de FVG = acceptat
-            # ✅ V14.1 FIX STALE FVG: Adăugat limită maximă de distanță (10% din FVG bottom/top)
-            # Bug: BULLISH verifica doar `price <= fvg.top + buffer` → preț la 60$ trecea pentru FVG la 86-88$!
-            # Fix: prețul nu poate fi mai mult de 10% sub FVG bottom (BULLISH) sau 10% deasupra FVG top (BEARISH)
-            fvg_size = fvg.top - fvg.bottom
-            proximity_buffer = max(fvg_size * 0.5, fvg.bottom * 0.005)  # 0.5% din preț sau 50% din FVG
-            if current_trend == 'bullish':
-                # BULLISH: Price approaching FVG from below — dar NU mai mult de 10% sub FVG bottom
-                # Exemplu valid:   price=86.40, fvg_bottom=86.54 → 0.16% sub FVG ✓
-                # Exemplu invalid: price=60.00, fvg_bottom=86.54 → 30% sub FVG ✗ (FVG stale!)
-                max_distance_below = fvg.bottom * 0.10  # Max 10% sub FVG bottom
-                below_too_far = current_price < fvg.bottom - max_distance_below
-                if current_price <= fvg.top + proximity_buffer and not below_too_far:
-                    price_approaching_fvg = True
-                elif below_too_far and debug:
-                    distance_pct = (fvg.bottom - current_price) / fvg.bottom * 100
-                    print(f"   ❌ [V14.1 STALE FVG REJECT] BULLISH FVG prea departe: "
-                          f"price={current_price:.5f}, fvg_bottom={fvg.bottom:.5f}, distanță={distance_pct:.1f}% > 10%")
-            else:
-                # BEARISH: Price approaching FVG from above — dar NU mai mult de 10% deasupra FVG top
-                # Exemplu valid:   price=1.2610, fvg_top=1.2598 → 0.09% deasupra FVG ✓
-                # Exemplu invalid: price=2.10, fvg_top=1.85 → 13.5% deasupra FVG ✗ (FVG stale!)
-                max_distance_above = fvg.top * 0.10  # Max 10% deasupra FVG top
-                above_too_far = current_price > fvg.top + max_distance_above
-                if current_price >= fvg.bottom - proximity_buffer and not above_too_far:
-                    price_approaching_fvg = True
-                elif above_too_far and debug:
-                    distance_pct = (current_price - fvg.top) / fvg.top * 100
-                    print(f"   ❌ [V14.1 STALE FVG REJECT] BEARISH FVG prea departe: "
-                          f"price={current_price:.5f}, fvg_top={fvg.top:.5f}, distanță={distance_pct:.1f}% > 10%")
+            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            # V25.0 WAITING_D1_PULLBACK: PROXIMITY CHECK ELIMINAT
+            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            # V14.1 Stale FVG (limita 10% distanță) este DEZACTIVAT în faza WAITING.
+            # MOTIVUL: setup-ul CHIAR AȘTEAPTĂ pullback-ul adânc spre FVG — asta e mecanica!
+            # Prețul este departe de FVG tocmai pentru că trend-ul continuă, iar FVG-ul
+            # este destinația pullback-ului viitor, nu o zonă pe care prețul trebuie să
+            # o atingă imediat.
+            # Distanța față de FVG va fi logată informativ, dar NU mai blochează setup-ul.
+            # Radarul 4H este cel care validează intrarea când prețul ajunge efectiv la FVG.
+            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            price_approaching_fvg = True  # V25.0: acceptăm întotdeauna — pullback-ul vine
+            if debug:
+                if current_trend == 'bullish':
+                    distance_pct = (fvg.bottom - current_price) / fvg.bottom * 100 if current_price < fvg.bottom else 0
+                    if distance_pct > 0:
+                        print(f"   ℹ️  [V25.0 WAITING] BULLISH: preț {distance_pct:.1f}% sub FVG bottom — așteptăm pullback (fără limită distanță)")
+                else:
+                    distance_pct = (current_price - fvg.top) / fvg.top * 100 if current_price > fvg.top else 0
+                    if distance_pct > 0:
+                        print(f"   ℹ️  [V25.0 WAITING] BEARISH: preț {distance_pct:.1f}% deasupra FVG top — așteptăm pullback (fără limită distanță)")
         
         if debug:
             print(f"   In FVG: {price_in_fvg}")
@@ -3879,11 +3855,6 @@ class SMCDetector:
             else:
                 distance = fvg.bottom - current_price
                 print(f"   Distance from FVG bottom: {distance:.5f} ({(distance/current_price)*100:.2f}%)")
-        
-        if not price_approaching_fvg and not skip_fvg_quality:
-            if debug:
-                print(f"❌ REJECTED: Price too far from FVG")
-            return None  # Price too far from FVG
         
         # Step 5: Strategy type already determined from signal type (CHoCH=REVERSAL, BOS=CONTINUITY)
         # No need to re-detect strategy_type
@@ -3942,21 +3913,20 @@ class SMCDetector:
                 if h4_choch.direction != current_trend:
                     continue
                 
-                # Verify CHoCH is RECENT (max 48 candles = 8 zile pe 4H)
-                # V10.2: extins la 48 — setup-urile masive au nevoie de timp
+                # V25.0: LIMITA DE VÂRSTĂ 48 CANDLE ELIMINATĂ
+                # Orice CHoCH pe 4H în direcția biasului Daily este valid, indiferent de vârstă.
+                # MOTIVUL: pullback-ul pe Daily poate dura 4, 14 sau 25 zile.
+                # În secunda în care 4H printează un CHoCH aliniat → alinierea este validă.
+                # Body closure garantată de detect_choch_and_bos() (V8.1).
                 choch_age = len(df_4h) - 1 - h4_choch.index
-                if choch_age > 48:  # More than 8 days old (48 × 4h = 192h)
-                    if debug:
-                        print(f"   ⏭️  H4 CHoCH @ {h4_choch.break_price:.5f} prea vechi ({choch_age} lumânări = {choch_age*4}h > 192h)")
-                    continue
                 
                 # Body closure already validated in detect_choch_and_bos (V8.1).
                 # No FVG zone restriction — 4H is directional sync, not zone-specific.
                 
-                # ✅ VALID 4H CHoCH — direction matches D1 bias + body closure + recent
+                # ✅ VALID 4H CHoCH — direction matches D1 bias + body closure (no age limit)
                 valid_h4_choch = h4_choch
                 if debug:
-                    print(f"   ✅ V10.4 4H SYNC CONFIRMED: {h4_choch.direction.upper()} CHoCH @ {h4_choch.break_price:.5f} ({choch_age} candles ago)")
+                    print(f"   ✅ [V25.0 4H SYNC] {h4_choch.direction.upper()} CHoCH @ {h4_choch.break_price:.5f} ({choch_age} candle în urmă — fără limită vârstă)")
                     print(f"      Body closure validated (institutional commitment)")
                 break
             
@@ -3975,9 +3945,9 @@ class SMCDetector:
                         print(f"   ⚠️  V10.4: No 4H sync FVG found after CHoCH — will use Daily FVG for entry")
             
             if not valid_h4_choch:
-                print(f"⏳ [V10.2 MONITORING] {symbol}: {strategy_type.upper()}_{current_trend.upper()} — niciun 4H CHoCH {current_trend.upper()} recent (max 48 candle = 8 zile)")
+                print(f"⏳ [V25.0 WAITING_D1_PULLBACK] {symbol}: {current_trend.upper()} — niciun 4H CHoCH {current_trend.upper()} găsit (fără limită temporală — așteptăm alinierea)")
                 if debug:
-                    print(f"   Bot stays SILENT on 4H — waiting for generals to give the order!")
+                    print(f"   Bot în PÂNDĂ pe 4H — fără deadline, alinierea va veni când vine!")
         else:
             # V2.1 MODE: Skip 4H CHoCH requirement (original logic)
             if debug:
@@ -4068,38 +4038,19 @@ class SMCDetector:
         # 2. Multiple BOS (any age) = strong continuation
         # REVERSAL setups (Daily CHoCH) skip this - trend just changed
         # 🔥 V8.0: MOMENTUM entries skip this (3+ consecutive BOS by definition = strong continuation)
-        continuity_validated = True
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # V25.0: CONTINUITY FILTER ELIMINAT — ORICE D1 BREAK INTRĂ ÎN WAITING
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # Motivul: BOS age > 100 bare ucidea trend-uri consacrate (5-6 luni valide).
+        # Un BOS din Ianuarie rămâne valid în Iulie dacă trendul nu s-a inversat.
+        # Body Close Rule din detect_choch_and_bos() este singurul gardian al calității.
+        # Radarul 4H filtrează execuția — scanner-ul Daily e plasa largă de bias.
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        continuity_validated = True  # V25.0: întotdeauna valid — Body Close Rule e suficient
         if not skip_fvg_quality and strategy_type == 'continuation' and not (hasattr(fvg, 'is_momentum_entry') and fvg.is_momentum_entry):
-            # ✅ V10.3 BUG#5 FIX: Relaxăm filtrele de continuitate — bos_age 100, quality 60
-            recent_bos = [bos for bos in daily_bos_list if bos.index >= len(df_daily) - 100 and bos.index < latest_signal.index]
-            matching_bos = [bos for bos in recent_bos if bos.direction == current_trend]
-            
-            if not matching_bos:
-                # Single BOS - validate based on recency and FVG quality
-                bos_age = len(df_daily) - latest_signal.index
-                is_gbp_pair = 'GBP' in symbol
-                # ✅ V10.8: Prag aliniat cu min_score actualizat: 15 non-GBP, 45 GBP
-                min_quality_for_cont = 45 if is_gbp_pair else 15
-                
-                if bos_age <= 100 and fvg.quality_score >= min_quality_for_cont:
-                    # ✅ Accept: BOS ≤100 candle vechi + FVG decent
-                    continuity_validated = True
-                    if debug:
-                        print(f"\n✅ CONTINUITY FILTER: Single BOS accepted (recent + decent FVG)")
-                        print(f"   BOS age: {bos_age} candles (≤100)")
-                        print(f"   FVG quality: {fvg.quality_score}/100 (≥{min_quality_for_cont})")
-                else:
-                    # ❌ Reject: Very old BOS (>100 candles) or extremely weak FVG
-                    continuity_validated = False
-                    if debug:
-                        print(f"\n⚠️  CONTINUITY FILTER: Single BOS rejected (prea vechi sau FVG f. slab)")
-                        print(f"   BOS age: {bos_age} candles (need ≤100)")
-                        print(f"   FVG quality: {fvg.quality_score}/100 (need ≥{min_quality_for_cont})")
-            else:
-                # ✅ Multiple BOS found = strong continuation
-                if debug:
-                    print(f"\n✅ CONTINUITY FILTER: {len(matching_bos)} additional BOS found (strong continuation)")
-                    print(f"   Latest additional BOS: {matching_bos[-1].direction.upper()} @ candle {matching_bos[-1].index}")
+            bos_age = len(df_daily) - latest_signal.index
+            if debug:
+                print(f"\n✅ [V25.0 CONTINUITY] BOS vârstă: {bos_age} bare — acceptat fără limită (WAITING_D1_PULLBACK)")
         
         # V3.0 GBP 2-TIMEFRAME FILTER (skip for backtest)
         # GBP pairs need BOTH 4H AND 1H confirmation
@@ -4120,11 +4071,8 @@ class SMCDetector:
                         print(f"\n⚠️  GBP FILTER: 1H data missing — allowing MONITORING (no 1H rejection)")
                     gbp_confirmed = True  # V10.8: lipsă date 1H ≠ reject, = MONITORING
         
-        # ─── V10.1: APLICĂ FILTRELE (continuity + GBP) — return None dacă eșuează ────
-        if not continuity_validated:
-            print(f"⛔ [V10.3 REJECT: BOS prea vechi sau FVG score insuficient] {symbol}")
-            print(f"   → BOS trebuie să aibă ≤100 lumânări + FVG score ≥40 (non-GBP) / ≥55 (GBP)")
-            return None
+        # ─── V25.0: APLICĂ DOAR FILTRUL GBP (continuity eliminat) ─────────────────────
+        # continuity_validated = True întotdeauna (V25.0) — orice D1 break e valid
         if not gbp_confirmed:
             return None  # motiv deja printat mai sus
         # ────────────────────────────────────────────────────────────────────────────
@@ -4309,16 +4257,21 @@ class SMCDetector:
         reward = abs(tp - entry)
         risk_reward = reward / risk if risk > 0 else 0
 
-        # ─── V10.0: RR FLOOR 1:4 STRUCTURAL ─────────────────────────────────────────
-        # Levier 1:500 = sub 1:4 este INACCEPTABIL structural.
-        # Structura 4H SL + Daily TP = singura logica valida.
+        # ─── V25.0: RR FLOOR — EVALUAT DOAR LA READY (EXECUTE_NOW) ────────────────────
+        # MOTIVUL: În faza WAITING_D1_PULLBACK, SL și TP sunt calculate din structura curentă
+        # care NU este ancora finală. Ancora reală = swing-ul 4H proaspăt de la momentul
+        # alinierii (EXECUTE_NOW). Un RR de 1:2.5 calculat acum poate deveni 1:6 când
+        # prețul ajunge la FVG și CHoCH-ul 4H reface structura.
+        # RR-ul se recalculează în setup_executor_monitor.py la tranziția EXECUTE_NOW.
         # ─────────────────────────────────────────────────────────────────────────────
-        _MIN_RR = 4.0  # V10.2: floor structural 1:4
-        if risk_reward < _MIN_RR:
-            print(f"⛔ [V10.2 REJECT: RR=1:{risk_reward:.2f} < 1:{_MIN_RR} structural] {symbol}")
+        _MIN_RR = 4.0  # V10.2: floor structural 1:4 — activ NUMAI la READY
+        if risk_reward < _MIN_RR and status == 'READY':
+            print(f"⛔ [V25.0 REJECT READY: RR=1:{risk_reward:.2f} < 1:{_MIN_RR}] {symbol} — RR insuficient la momentul execuției")
             print(f"   Entry={entry:.5f} | SL={sl:.5f} | TP={tp:.5f}")
             print(f"   Risk={abs(entry-sl):.5f} | Reward={abs(tp-entry):.5f}")
             return None
+        elif risk_reward < _MIN_RR and debug:
+            print(f"   ℹ️  [V25.0 RR INFO] RR=1:{risk_reward:.2f} < 1:{_MIN_RR} dar status=MONITORING — NU respingem (va fi recalculat la EXECUTE_NOW)")
         
         # 🚨 CHECK 1: Price already moved too close to TP?
         # If current price is within 20% of TP distance, it's too late
