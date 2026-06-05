@@ -3953,38 +3953,50 @@ class SMCDetector:
             if debug:
                 print(f"   ⚠️  V2.1 MODE: Skipping 4H CHoCH requirement")
         
-        # V3.0 GBP ADAPTIVE FILTERING: Require 1H confirmation
+        # V25.3 GBP ADAPTIVE FILTERING: Require 1H confirmation
         # GBP pairs are volatile - need 2-timeframe confirmation (4H + 1H)
         is_gbp = 'GBP' in symbol
         valid_1h_choch = None
-        
+
         if is_gbp and valid_h4_choch and df_1h is not None:
             if debug:
                 print(f"\n🔍 1H Analysis (GBP requirement):")
-            
+
             # Detect 1H CHoCH
             h1_chochs, _ = self.detect_choch_and_bos(df_1h)
-            
+
             if debug:
                 print(f"   Total 1H CHoCH: {len(h1_chochs)}")
-            
-            # Look for 1H CHoCH in last 20 candles (~20 hours)
-            recent_h1_chochs = [ch for ch in h1_chochs if ch.index >= len(df_1h) - 20]
-            
+
+            # V25.3: Fereastra extinsă la 48 bare (~48 ore, era 20 ore).
+            # MOTIVUL: Scanner rulează dimineața, CHoCH 1H poate fi din seara precedentă.
+            # Cu 20 bare, orice CHoCH >20h vechi era ignorat complet.
+            recent_h1_chochs = [ch for ch in h1_chochs if ch.index >= len(df_1h) - 48]
+
+            # V25.3: Proximity buffer = 20% din mărimea FVG (nu strict în interior).
+            # MOTIVUL: CHoCH 1H apare frecvent cu câțiva pips în afara FVG-ului Daily
+            # (FVG Daily e larg, CHoCH 1H e mai precis structural).
+            # Strict inside = ratat GBPNZD, GBPJPY, GBPCAD când CHoCH e la marginea FVG.
+            _fvg_range = fvg.top - fvg.bottom
+            _proximity = _fvg_range * 0.20  # buffer 20% din FVG size
+
             for h1_choch in reversed(recent_h1_chochs):
                 # 1H CHoCH direction must match Daily trend
                 if h1_choch.direction != current_trend:
                     continue
-                
-                # 1H CHoCH should be in or near FVG zone
-                if fvg.bottom <= h1_choch.break_price <= fvg.top:
+
+                # V25.3: Acceptăm CHoCH în interior FVG SAU în proximitate (20% buffer)
+                _in_fvg = fvg.bottom <= h1_choch.break_price <= fvg.top
+                _near_fvg = (fvg.bottom - _proximity) <= h1_choch.break_price <= (fvg.top + _proximity)
+                if _in_fvg or _near_fvg:
                     valid_1h_choch = h1_choch
+                    _location = "IN FVG" if _in_fvg else f"PROXIMITY ({abs(h1_choch.break_price - (fvg.bottom if h1_choch.break_price < fvg.bottom else fvg.top)):.5f} outside)"
                     if debug:
-                        print(f"   ✅ Valid 1H CHoCH found @ {h1_choch.break_price:.5f}")
+                        print(f"   ✅ [V25.3] Valid 1H CHoCH @ {h1_choch.break_price:.5f} ({_location})")
                     break
-            
+
             if debug and not valid_1h_choch:
-                print(f"   ❌ No valid 1H CHoCH (GBP requires 2-TF confirmation)")
+                print(f"   ❌ [V25.3] No valid 1H CHoCH in 48h window or FVG proximity (GBP 2-TF)")
         
         # ━━━ V10.3 D1 DOMINANCE: DAILY POI (Point of Interest) VALIDATION ━━━
         # PHILOSOPHY by ФорексГод: "Generalii (D1) dau ordinul, soldații (1H) execută."
@@ -4387,13 +4399,19 @@ class SMCDetector:
                     return None  # Trend invalidated
         
         # ✅ Setup still valid! Price hasn't hit SL or TP yet (or re-entry found)
-        
-        # 🟡 XAUUSD SPECIAL FILTER: Only CONTINUATION bearish (V2.0 Logic - 86% WR)
-        if symbol == 'XAUUSD' and not skip_fvg_quality:
-            if strategy_type != 'continuation' or current_trend != 'bearish':
-                if debug:
-                    print(f"\n❌ REJECTED XAUUSD: Only CONTINUATION bearish")
-                return None
+
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # V25.3 XAUUSD: FILTRUL DIRECȚIE ELIMINAT
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # Filtrul 'Only CONTINUATION bearish' (V2.0) ELIMINAT.
+        # MOTIVUL: Gold era în trend BULLISH masiv în 2025-2026 (2000→ 3200$).
+        # Filtrul bloca 100% din setup-urile XAUUSD pentru că current_trend='bullish'.
+        # V25.0 Universal Bias detectează corect direcția din structură (CHoCH/BOS).
+        # XAUUSD acceptă acum orice direcție validă: LONG (pull la discount) sau SHORT (pull la premium).
+        # Filtrele de calitate rămân active: gap ≥0.10%, body ≥25%, quality score ≥15.
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        if debug and symbol == 'XAUUSD':
+            print(f"✅ [V25.3 XAUUSD] Direcție: {current_trend.upper()} | Tip: {strategy_type} — acceptat (filtru V2.0 eliminat)")
         
         # 🌍 UNIVERSAL ANTI-OVERTRADING FILTER: Max 4 trades per FVG zone (ALL PAIRS)
         # This prevents NZDUSD-style hemorrhaging (-$1,054 on 26 trades with small SLs)
