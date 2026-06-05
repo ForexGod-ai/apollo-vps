@@ -2574,7 +2574,15 @@ class SMCDetector:
             h4_choch_idx = h4_choch.index if h4_choch is not None and hasattr(h4_choch, 'index') else max(0, len(df_4h) - 40)
             swing_lows_4h_list = self.detect_swing_lows(df_4h)
             lows_before_choch = [sl for sl in swing_lows_4h_list if sl.index <= h4_choch_idx]
-            pip_size = 0.01 if 'JPY' in symbol else 0.0001
+            # V26.0: pip_size corect per instrument (XAU/BTC aveau 0.0001 → SL în milioane de "pips")
+            if 'JPY' in symbol:
+                pip_size = 0.01
+            elif any(x in symbol.upper() for x in ['XAU', 'XAG', 'GOLD']):
+                pip_size = 0.10    # XAUUSD IC Markets: 1 pip = $0.10
+            elif any(x in symbol.upper() for x in ['BTC', 'ETH']):
+                pip_size = 1.0     # BTCUSD: 1 pip = $1.00
+            else:
+                pip_size = 0.0001
             sl_buffer = pip_size * 2  # 2 pips buffer sub swing Low (spread protection)
             # Calculăm ATR 14 pentru a filtra micro-fractali
             atr_14 = (df_4h['high'] - df_4h['low']).rolling(14).mean().iloc[h4_choch_idx] if h4_choch_idx >= 14 else (df_4h['high'] - df_4h['low']).mean()
@@ -2598,11 +2606,17 @@ class SMCDetector:
                 print(f"   🛡️ [V14.1 SL STRUCTURAL LONG] Ultimul swing Low 4H pre-CHoCH valid: "
                       f"idx={chosen_sl_obj.index} wick_low={df_4h['low'].iloc[chosen_sl_obj.index]:.5f} "
                       f"→ SL={stop_loss:.5f} (distanță={sl_distance_pips:.1f} pips, ATR={atr_14/pip_size:.1f}p)")
-                # V19.7 FIX: Redus limita SL de la 100 la 50 pips pentru non-JPY
-                # AUDUSD 19May: SL=103.2p a trecut de 100p cap și a cauzat trade bad
-                _max_sl_pips = 150 if 'JPY' in symbol else 50
+                # V26.0: SL cap per instrument (V19.7: 50→100 non-JPY; XAU/BTC: cap separat)
+                if 'JPY' in symbol:
+                    _max_sl_pips = 150
+                elif any(x in symbol.upper() for x in ['XAU', 'XAG', 'GOLD']):
+                    _max_sl_pips = 1000  # XAU: max $100 SL @ $0.10/pip = 1000 pips
+                elif any(x in symbol.upper() for x in ['BTC', 'ETH']):
+                    _max_sl_pips = 5000  # BTC: max $5000 SL @ $1/pip = 5000 pips
+                else:
+                    _max_sl_pips = 100   # V26.0: 50→100 pips non-JPY (ATR Daily ~80-120p)
                 if sl_distance_pips > _max_sl_pips:
-                    print(f"   ⛔ [V19.7 REJECT: SL {sl_distance_pips:.1f} pips > {_max_sl_pips} max] "
+                    print(f"   ⛔ [V26.0 REJECT: SL {sl_distance_pips:.1f} pips > {_max_sl_pips} max] "
                           f"{symbol} — SL structural prea departe, trade ANULAT.")
                     return None, None, None
             else:
@@ -2694,7 +2708,15 @@ class SMCDetector:
             h4_choch_idx = h4_choch.index if h4_choch is not None and hasattr(h4_choch, 'index') else max(0, len(df_4h) - 40)
             swing_highs_4h_list = self.detect_swing_highs(df_4h)
             highs_before_choch = [sh for sh in swing_highs_4h_list if sh.index <= h4_choch_idx]
-            pip_size = 0.01 if 'JPY' in symbol else 0.0001
+            # V26.0: pip_size corect per instrument (XAU/BTC aveau 0.0001 → SL în milioane de "pips")
+            if 'JPY' in symbol:
+                pip_size = 0.01
+            elif any(x in symbol.upper() for x in ['XAU', 'XAG', 'GOLD']):
+                pip_size = 0.10    # XAUUSD IC Markets: 1 pip = $0.10
+            elif any(x in symbol.upper() for x in ['BTC', 'ETH']):
+                pip_size = 1.0     # BTCUSD: 1 pip = $1.00
+            else:
+                pip_size = 0.0001
             sl_buffer = pip_size * 2  # 2 pips buffer deasupra swing High (spread protection)
             # Calculăm ATR 14 pentru a filtra micro-fractali
             atr_14 = (df_4h['high'] - df_4h['low']).rolling(14).mean().iloc[h4_choch_idx] if h4_choch_idx >= 14 else (df_4h['high'] - df_4h['low']).mean()
@@ -2718,10 +2740,17 @@ class SMCDetector:
                 print(f"   🛡️ [V14.1 SL STRUCTURAL SHORT] Ultimul swing High 4H pre-CHoCH valid: "
                       f"idx={chosen_sh_obj.index} wick_high={df_4h['high'].iloc[chosen_sh_obj.index]:.5f} "
                       f"→ SL={stop_loss:.5f} (distanță={sl_distance_pips:.1f} pips, ATR={atr_14/pip_size:.1f}p)")
-                # V19.7 FIX: Redus limita SL de la 100 la 50 pips pentru non-JPY
-                _max_sl_pips = 150 if 'JPY' in symbol else 50
+                # V26.0: SL cap per instrument (V19.7: 50→100 non-JPY; XAU/BTC: cap separat)
+                if 'JPY' in symbol:
+                    _max_sl_pips = 150
+                elif any(x in symbol.upper() for x in ['XAU', 'XAG', 'GOLD']):
+                    _max_sl_pips = 1000  # XAU: max $100 SL @ $0.10/pip = 1000 pips
+                elif any(x in symbol.upper() for x in ['BTC', 'ETH']):
+                    _max_sl_pips = 5000  # BTC: max $5000 SL @ $1/pip = 5000 pips
+                else:
+                    _max_sl_pips = 100   # V26.0: 50→100 pips non-JPY (ATR Daily ~80-120p)
                 if sl_distance_pips > _max_sl_pips:
-                    print(f"   ⛔ [V19.7 REJECT: SL {sl_distance_pips:.1f} pips > {_max_sl_pips} max] "
+                    print(f"   ⛔ [V26.0 REJECT: SL {sl_distance_pips:.1f} pips > {_max_sl_pips} max] "
                           f"{symbol} — SL structural prea departe, trade ANULAT.")
                     return None, None, None
             else:
@@ -3905,8 +3934,9 @@ class SMCDetector:
             # WHY body closure? "Generalii dau ordinul cu forță, nu cu umbra!"
             # Body closure = institutional commitment, not just a wick test.
             
-            # Scan last 50 candles for context, accept only RECENT (max 12 candles = 48h)
-            recent_h4_chochs = [ch for ch in h4_chochs if ch.index >= len(df_4h) - 50]
+            # V26.0: Scan last 80 candles (20 zile) — pullback Daily poate dura 2-3 săptămâni
+            # 50 candle = 12.5 zile era prea scurt pentru pullback-uri extinse (ex: XAUUSD, GBPNZD)
+            recent_h4_chochs = [ch for ch in h4_chochs if ch.index >= len(df_4h) - 80]
             
             for h4_choch in reversed(recent_h4_chochs):
                 # H4 CHoCH direction must match Daily trend direction
@@ -4236,9 +4266,22 @@ class SMCDetector:
             # entry era decuplat complet de zonă. Cu h4_sync_fvg, entry = marginea FVG-ului 4H real.
             fvg_for_entry = h4_sync_fvg if h4_sync_fvg else fvg
             entry, sl, tp = self.calculate_entry_sl_tp(symbol, fvg_for_entry, h4_signal, df_4h, df_daily)
-            # V10.0: daca RR sub 1:4, calculate_entry_sl_tp returneaza None — respinge setup-ul
+            # V26.0: SALVARE BIAS — când RR<4 sau SL>cap, NU mai aruncăm setup-ul.
+            # Bias-ul D1 este REAL (CHoCH/BOS confirmat + 4H CHoCH aliniat).
+            # Salvăm în MONITORING cu FVG edge ca entry informativ.
+            # RR va fi recalculat de multi_tf_radar la tranziția EXECUTE_NOW.
             if entry is None:
-                return None
+                print(f"⏳ [V26.0 BIAS SALVAT] {symbol}: calculate_entry_sl_tp eșuat (RR<4 sau SL>cap) → forțat MONITORING cu FVG edge")
+                fvg_ref = h4_sync_fvg if h4_sync_fvg else fvg
+                if current_trend == 'bullish':
+                    entry = fvg_ref.bottom
+                    sl    = fvg_ref.bottom * 0.995
+                    tp    = fvg_ref.top    * 1.02
+                else:
+                    entry = fvg_ref.top
+                    sl    = fvg_ref.top    * 1.005
+                    tp    = fvg_ref.bottom * 0.98
+                status = 'MONITORING'  # Forțat — RR informativ, recalculat la EXECUTE_NOW
             if debug:
                 fvg_source = 'h4_sync_fvg' if h4_sync_fvg else 'Daily FVG (fallback)'
                 print(f"\n💰 FVG-based Trade Levels — Entry zone: {fvg_source}")
@@ -4502,18 +4545,26 @@ class SMCDetector:
                 debug=debug
             )
             
-            # FILTER: Reject trades in wrong zones (CONTINUATION only)
-            if current_trend == 'bullish' and premium_discount['zone'] == 'PREMIUM':
+            # V26.0: P/D filter relaxat — prag extreme 85/15 + bypass complet la MONITORING
+            # PROBLEMA V15.2: calculate_premium_discount() citește O SINGURĂ lumânare Daily.
+            # Trend bullish → lumânare closes la high → 85-95% = PREMIUM → LONG respins greșit.
+            # FIX: blocăm NUMAI extremele absolute (>85% / <15%) ȘI NUMAI la READY.
+            # La MONITORING bypass total — geometria finală se recalculează la EXECUTE_NOW.
+            _pd_pct = premium_discount['percentage']
+            if current_trend == 'bullish' and _pd_pct > 85 and status == 'READY':
                 if debug:
-                    print(f"\n❌ REJECTED: Buying in PREMIUM zone ({premium_discount['percentage']:.1f}%)")
-                    print(f"   Too high risk - price at top 30% of daily range")
+                    print(f"\n❌ REJECTED: CONTINUATION LONG EXTREME PREMIUM ({_pd_pct:.1f}% > 85%) la READY")
                 return None
-            
-            if current_trend == 'bearish' and premium_discount['zone'] == 'DISCOUNT':
+
+            if current_trend == 'bearish' and _pd_pct < 15 and status == 'READY':
                 if debug:
-                    print(f"\n❌ REJECTED: Selling in DISCOUNT zone ({premium_discount['percentage']:.1f}%)")
-                    print(f"   Too high risk - price at bottom 30% of daily range")
+                    print(f"\n❌ REJECTED: CONTINUATION SHORT EXTREME DISCOUNT ({_pd_pct:.1f}% < 15%) la READY")
                 return None
+
+            if debug:
+                _pd_bypass = (status != 'READY')
+                print(f"   [V26.0 P/D] {premium_discount['zone']} {_pd_pct:.1f}% → "
+                      f"{'⚠️ BYPASS (MONITORING)' if _pd_bypass else '✅ PASSED (sub prag extrem)'}")
         elif _is_reversal and debug:
             print(f"\n✅ [V15.2] REVERSAL strategy — P/D daily candle filter SKIPPED (CHoCH+FVG confirmă structural)")
         elif _is_momentum and debug:
