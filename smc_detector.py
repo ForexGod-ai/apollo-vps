@@ -4334,7 +4334,16 @@ class SMCDetector:
         distance_to_tp = abs(current_price - tp)
         total_move = abs(entry - tp)
         
-        if total_move > 0 and (distance_to_tp / total_move) < 0.20:
+        # V27.0: Diagnostic TOO LATE — vizibil pentru FIECARE pereche
+        _pct_ramas = (distance_to_tp / total_move * 100) if total_move > 0 else 100.0
+        print(f"📊 [V27 TOO-LATE {symbol}] {100 - _pct_ramas:.1f}% spre TP | h4={'DA' if h4_signal else 'NU (placeholder)'} | status={status} | curr={current_price:.5f} entry={entry:.5f} tp={tp:.5f}")
+        
+        # V27.0 FIX: Filtru 'TOO LATE' activ NUMAI când există h4_signal (entry/tp reale).
+        # Fără h4_signal: tp = fvg.bottom * 0.985 (placeholder din ELSE branch) → total_move mic
+        # → orice pereche în downtrend care s-a îndepărtat de FVG apare "98% spre TP" → REJECT fals.
+        # EURUSD/GBPUSD SHORT: FVG la 1.09-1.11, curr la 1.07 → tp=1.0738 → ratio=2% → DROP greșit!
+        if h4_signal and total_move > 0 and (distance_to_tp / total_move) < 0.20:
+            print(f"⛔ [DROP {symbol}] FILTRU 'TOO LATE' — {100 - _pct_ramas:.1f}% completat | h4_signal PREZENT → entry/tp REALE | entry={entry:.5f} tp={tp:.5f}")
             return None  # Price already 80%+ toward TP - TOO LATE!
         
         # 🎯 CHECK 2: Stop Loss already HIT?
@@ -4343,10 +4352,12 @@ class SMCDetector:
         if fvg.direction == 'bearish':
             # SHORT setup - SL is ABOVE entry
             if current_price > sl:
+                print(f"⚡ [V27 DIAG {symbol}] SL SHORT SPART: curr={current_price:.5f} > SL={sl:.5f} | entry={entry:.5f} → re-entry logic activat")
                 sl_broken = True
         else:
             # LONG setup - SL is BELOW entry
             if current_price < sl:
+                print(f"⚡ [V27 DIAG {symbol}] SL LONG SPART: curr={current_price:.5f} < SL={sl:.5f} | entry={entry:.5f} → re-entry logic activat")
                 sl_broken = True
         
         # 🔄 RE-ENTRY LOGIC: If SL broken but trend still valid, look for new entry
@@ -4367,6 +4378,7 @@ class SMCDetector:
             
             # Require 4H CHoCH confirmation in SAME direction as original setup
             if not recent_h4_choch or recent_h4_choch.direction != fvg.direction:
+                print(f"⛔ [DROP {symbol}] RE-ENTRY: Niciun CHoCH 4H aliniat în 20 bare | fvg.dir={fvg.direction} | 4h_dir={recent_h4_choch.direction if recent_h4_choch else 'None'}")
                 return None  # No re-entry without 4H confirmation
             
             # Check if trend is STILL VALID (recent price action confirms trend)
@@ -4395,8 +4407,10 @@ class SMCDetector:
                     risk_reward = reward / risk if risk > 0 else 0
 
                     if risk_reward < 1.5:  # V9.0 V6: RR floor absolut
+                        print(f"⛔ [DROP {symbol}] RE-ENTRY SHORT: RR={risk_reward:.2f} < 1.5 (floor absolut) | entry={entry:.5f} sl={sl:.5f} tp={tp:.5f}")
                         return None
                     if risk_reward < 4.0:
+                        print(f"⛔ [DROP {symbol}] RE-ENTRY SHORT: RR=1:{risk_reward:.2f} < 1:4 (minim re-entry) | entry={entry:.5f} sl={sl:.5f} tp={tp:.5f}")
                         return None  # Re-entry not worth it (need R:R ≥ 4.0)
                         
                     print(f"🔄 RE-ENTRY setup found for {symbol}!")
@@ -4405,6 +4419,7 @@ class SMCDetector:
                     print(f"   New SL: {sl:.5f} (with ATR buffer)")
                     print(f"   New R:R: 1:{risk_reward:.2f}")
                 else:
+                    print(f"⛔ [DROP {symbol}] RE-ENTRY SHORT: Trend invalidat — LL nu se menține (recent_low={df_daily['low'].iloc[-10:].min():.5f} >= older_low={df_daily.iloc[-30:-10]['low'].min():.5f})")
                     return None  # Trend invalidated
                     
             else:
@@ -4428,8 +4443,10 @@ class SMCDetector:
                     risk_reward = reward / risk if risk > 0 else 0
 
                     if risk_reward < 1.5:  # V9.0 V6: RR floor absolut
+                        print(f"⛔ [DROP {symbol}] RE-ENTRY LONG: RR={risk_reward:.2f} < 1.5 (floor absolut) | entry={entry:.5f} sl={sl:.5f} tp={tp:.5f}")
                         return None
                     if risk_reward < 4.0:
+                        print(f"⛔ [DROP {symbol}] RE-ENTRY LONG: RR=1:{risk_reward:.2f} < 1:4 (minim re-entry) | entry={entry:.5f} sl={sl:.5f} tp={tp:.5f}")
                         return None  # Re-entry not worth it (need R:R ≥ 4.0)
                         return None  # Re-entry not worth it
                         
@@ -4439,6 +4456,7 @@ class SMCDetector:
                     print(f"   New SL: {sl:.5f}")
                     print(f"   New R:R: 1:{risk_reward:.2f}")
                 else:
+                    print(f"⛔ [DROP {symbol}] RE-ENTRY LONG: Trend invalidat — HH nu se menține (recent_high={df_daily['high'].iloc[-10:].max():.5f} <= older_high={df_daily.iloc[-30:-10]['high'].max():.5f})")
                     return None  # Trend invalidated
         
         # ✅ Setup still valid! Price hasn't hit SL or TP yet (or re-entry found)
