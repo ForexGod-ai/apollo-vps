@@ -1382,16 +1382,23 @@ class SMCDetector:
         if _cache_key in self._swing_highs_cache:
             return self._swing_highs_cache[_cache_key]
 
-        # V24.0 ORGANIC: FRACTAL_WINDOW = 2 FIX — fractal minimal agil
-        # Nu mai depinde de self.swing_lookback (era 10 — prea restrictiv)
-        # 2 bare stânga + 2 bare dreapta = cel mai mic fractal valid geometric
-        FRACTAL_WINDOW = 2
-
-        # 🛡️ SAFETY CHECK: minimum (FW*2)+1 bare
-        if len(df) < (FRACTAL_WINDOW * 2) + 1:
-            return []
-
-        swing_highs = []
+        # V29.0: FRACTAL_WINDOW ADAPTIV — detectăm timeframe-ul din intervalul median dintre bare
+        # Daily (≥20h/bar): FW=5 — filtrează zgomotul, pivoți macrostructurali reali
+        # 4H  (3-20h/bar): FW=3 — echilibru precizie/calitate
+        # 1H/sub         : FW=2 — fractal agil (comportament V24.0 original)
+        # Motivul: FW=2 pe Daily genera micro-fractali din noise → CHoCH-uri bullish eronate
+        FRACTAL_WINDOW = 2  # default: 1H și sub
+        try:
+            if len(df) >= 3 and hasattr(df.index, 'to_series'):
+                _td_series = df.index.to_series().diff().dropna()
+                _median_sec = _td_series.median().total_seconds()
+                if _median_sec >= 72000:    # ≥20h → Daily
+                    FRACTAL_WINDOW = 5
+                elif _median_sec >= 10800:  # ≥3h → 4H
+                    FRACTAL_WINDOW = 3
+                # else: 1H sau sub → 2
+        except Exception:
+            pass  # index non-timestamp (RangeIndex, backtesting) → fallback 2
         wick_highs = df['high']
 
         for i in range(FRACTAL_WINDOW, len(df) - FRACTAL_WINDOW):
@@ -1563,14 +1570,18 @@ class SMCDetector:
         if _cache_key in self._swing_lows_cache:
             return self._swing_lows_cache[_cache_key]
 
-        # V24.0 ORGANIC: FRACTAL_WINDOW = 2 FIX — fractal minimal agil
+        # V29.0: FRACTAL_WINDOW ADAPTIV — Daily=5, 4H=3, 1H/sub=2 (simetric cu detect_swing_highs)
         FRACTAL_WINDOW = 2
-
-        # 🛡️ SAFETY CHECK
-        if len(df) < (FRACTAL_WINDOW * 2) + 1:
-            return []
-
-        swing_lows = []
+        try:
+            if len(df) >= 3 and hasattr(df.index, 'to_series'):
+                _td_series = df.index.to_series().diff().dropna()
+                _median_sec = _td_series.median().total_seconds()
+                if _median_sec >= 72000:
+                    FRACTAL_WINDOW = 5
+                elif _median_sec >= 10800:
+                    FRACTAL_WINDOW = 3
+        except Exception:
+            pass
         wick_lows = df['low']
 
         for i in range(FRACTAL_WINDOW, len(df) - FRACTAL_WINDOW):
@@ -3787,17 +3798,17 @@ class SMCDetector:
             elif is_gbp:
                 min_score = 45  # V10.8: GBP relaxat la 45 (era 60)
                 if fvg_score < min_score:
-                    if debug:
-                        print(f"\n❌ REJECTED: FVG score {fvg_score}/100 < {min_score} (minimum)")
-                        print(f"   GBP pair requires stricter quality (≥60)")
-                    return None
+                    # V29.0: Nu mai respingem — Bias D1 valid (CHoCH/BOS + Body Close confirmat)
+                    # FVG slab pe Daily = zona degradată, Radar 4H decide calitatea reală
+                    print(f"⚠️ [V29.0 {symbol}] FVG score {fvg_score}/100 < {min_score} GBP min — WAITING_D1_PULLBACK (nu rejected)")
+                    fvg._is_daily_bias_zone = True
             else:
                 min_score = 15  # ✅ V10.8: Relaxat la 15 pentru non-GBP (era 40→20→15)
                 # Pe Daily, FVG-uri perfecte sunt rare — ce contează e direcția și CHoCH
                 if fvg_score < min_score:
-                    if debug:
-                        print(f"\n❌ REJECTED: FVG score {fvg_score}/100 < {min_score} (minimum Daily)")
-                    return None  # Sub 15 e cu adevărat slab
+                    # V29.0: Nu mai respingem — Bias D1 valid, scor mic ≠ setup invalid
+                    print(f"⚠️ [V29.0 {symbol}] FVG score {fvg_score}/100 < {min_score} min — WAITING_D1_PULLBACK (nu rejected)")
+                    fvg._is_daily_bias_zone = True
             
             # XAUUSD ADDITIONAL FILTERS: FVG quality + ATR volatility (NO ADX - Gold moves differently)
             if is_gold and not skip_fvg_quality:
@@ -4353,6 +4364,14 @@ class SMCDetector:
             if current_price < sl:
                 print(f"⚡ [V27 DIAG {symbol}] SL LONG SPART: curr={current_price:.5f} < SL={sl:.5f} | entry={entry:.5f} → re-entry logic activat")
                 sl_broken = True
+        
+        # V29.0: SL PLACEHOLDER GUARD — nu triggeriuim re-entry logic pe SL fals
+        # Fără h4_signal (status=WAITING_D1_PULLBACK), SL = fvg.bottom*0.998 (placeholder din ELSE branch)
+        # Prețul curent e frecvent "sub" acel placeholder → re-entry fals activat → return None gresit
+        # FIX: ignorăm sl_broken complet când h4_signal=None (SL-ul nu e structural, e inventat)
+        if sl_broken and h4_signal is None:
+            print(f"ℹ️ [V29.0 {symbol}] SL placeholder ignorat (h4_signal=None, SL={sl:.5f} nu e structural) — WAITING_D1_PULLBACK nealterat")
+            sl_broken = False
         
         # 🔄 RE-ENTRY LOGIC: If SL broken but trend still valid, look for new entry
         if sl_broken:
