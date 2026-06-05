@@ -3581,7 +3581,8 @@ class SMCDetector:
                 candle_time=latest_signal.candle_time,
                 is_momentum_entry=False  # nu e MOMENTUM — e Daily Bias
             )
-            fvg.quality_score = 0  # Scor 0 = zone sintetică (Radarul 4H va confirma)
+            fvg.quality_score = 75  # V28.0: Scor 75 = trece filtrele de calitate; Radar 4H confirmă structura reală
+            # (scor 0 era respins de filtrele GBP ≠45 și non-GBP ≥15 — acum 75 trece ambele praguri)
             # Marcăm setup-ul — va fi propagat în TradeSetup.daily_bias_active
             fvg._is_daily_bias_zone = True
             print(f"   ✅ [V24.6] Zonă Equilibrium sintetică: {_eq_bottom:.5f} - {_eq_top:.5f} (mid={_eq_mid:.5f})")
@@ -4094,30 +4095,21 @@ class SMCDetector:
             if debug:
                 print(f"\n✅ [V25.0 CONTINUITY] BOS vârstă: {bos_age} bare — acceptat fără limită (WAITING_D1_PULLBACK)")
         
-        # V3.0 GBP 2-TIMEFRAME FILTER (skip for backtest)
-        # GBP pairs need BOTH 4H AND 1H confirmation
-        # 🔥 V8.0: Skip for MOMENTUM entries (breakout, no 4H/1H pullback confirmation)
-        gbp_confirmed = True
-        if not skip_fvg_quality and not (hasattr(fvg, 'is_momentum_entry') and fvg.is_momentum_entry):
-            is_gbp = 'GBP' in symbol
-            if is_gbp and valid_h4_choch:
-                if df_1h is not None and not valid_1h_choch:
-                    gbp_confirmed = False
-                    print(f"⛔ REJECTED [{symbol}]: GBP — lipsă confirmare 1H (necesită 2-TF: 4H + 1H)")
-                    if debug:
-                        print(f"\n⚠️  GBP FILTER: Missing 1H confirmation")
-                        print(f"   GBP pairs require 2-timeframe confirmation (4H + 1H)")
-                elif df_1h is None:
-                    # ✅ V10.8: Dacă 1H date lipsesc, NU respingem — continuăm cu MONITORING
-                    if debug:
-                        print(f"\n⚠️  GBP FILTER: 1H data missing — allowing MONITORING (no 1H rejection)")
-                    gbp_confirmed = True  # V10.8: lipsă date 1H ≠ reject, = MONITORING
+        # V28.0: GBP 2-TF FILTER ELIMINAT DIN DAILY SCAN
+        # Confirmare 1H va fi verificată EXCLUSIV de multi_tf_radar când prețul atinge zona.
+        # Scanner Daily = bias macro (D1 CHoCH/BOS). Radar 4H/1H = aliniere executare.
+        # Motivul eliminării: 1H CHoCH dintr-un pullback Daily de 2-3 săptămâni
+        # apare ULTERIOR scanului de dimineață — era respins în 100% din cazuri.
+        gbp_confirmed = True  # V28.0: întotdeauna True — radar verifică 1H la execuție
+        if debug and 'GBP' in symbol:
+            print(f"\n✅ [V28.0 GBP] Filtru 1H eliminat din Daily scan — multi_tf_radar verifică 1H când prețul ajunge la FVG")
         
-        # ─── V25.0: APLICĂ DOAR FILTRUL GBP (continuity eliminat) ─────────────────────
+        # ─── V28.0: gbp_confirmed = True întotdeauna (GBP filter mutat în radar) ──────
         # continuity_validated = True întotdeauna (V25.0) — orice D1 break e valid
+        # (blocul de mai jos păstrat ca guard de siguranță — nu se mai execută niciodată)
         if not gbp_confirmed:
-            return None  # motiv deja printat mai sus
-        # ────────────────────────────────────────────────────────────────────────────
+            return None  # guard de siguranță — V28.0: nu se mai trigger-uieşte
+        # ──────────────────────────────────────────────────────────────────────────
 
         # STATUS LOGIC: V2.1 vs V3.0
         # 🔥 V8.0: MOMENTUM entries always READY (breakout strategy, no pullback confirmation needed)
@@ -4214,13 +4206,15 @@ class SMCDetector:
                     print(f"   ✗ Retracement D1: {retracement_pct:.1f}% — prețul NU a ajuns la 55/45 nivel")
                     print(f"   ⏳ Bot tace — waiting for pullback to mature (55/45 rule)")
         else:
-            # No 4H CHoCH yet - keep monitoring
-            status = 'MONITORING'
+            # V28.0: WAITING_D1_PULLBACK — D1 break valid (CHoCH/BOS confirmat cu Body Close)
+            # Așteptăm 4H CHoCH aliniat cu bias-ul Daily. Status curat, vizibil în Telegram.
+            # multi_tf_radar verifică continuu 4H/1H și upgrdează la READY la aliniere.
+            status = 'WAITING_D1_PULLBACK'
+            print(f"⏳ [V28.0 BIAS] {symbol}: D1 {current_trend.upper()} {_signal_label} valid → WAITING_D1_PULLBACK (fără 4H CHoCH încă)")
             if debug:
-                print(f"\n⏳ STATUS: MONITORING (waiting for 4H CHoCH confirmation)")
-                print(f"   ✓ Daily CHoCH: {current_trend.upper()}")
+                print(f"   ✓ Daily CHoCH/BOS: {current_trend.upper()}")
                 print(f"   ✓ FVG Zone: {fvg.bottom:.5f} - {fvg.top:.5f}")
-                print(f"   ✗ No 4H CHoCH yet (checked last 30 candles)")
+                print(f"   ✗ 4H CHoCH încă nedetectat — radar monitorizează")
                 print(f"   📊 Current Price: {current_price:.5f}")
         
         # Step 7: Calculate entry, SL, TP
