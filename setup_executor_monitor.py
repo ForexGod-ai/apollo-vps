@@ -22,7 +22,7 @@ Verifică la fiecare 30s:
 5. Trimite Telegram notification cu semnătura ФорексГод
 """
 # Windows VPS fix: force UTF-8 stdout to prevent UnicodeEncodeError on emoji
-import sys as _sys, io as _io
+import sys as _sys, io as _io, re as _re
 if hasattr(_sys.stdout, 'buffer'):
     _sys.stdout = _io.TextIOWrapper(_sys.stdout.buffer, encoding='utf-8', errors='replace')
 if hasattr(_sys.stderr, 'buffer'):
@@ -45,13 +45,53 @@ import pandas as pd
 
 _LOG_DIR = Path(__file__).parent / "logs"
 _LOG_DIR.mkdir(exist_ok=True)
+
+# V30.3: Strip emoji din mesaje — afișare curată în PowerShell (fără caractere ciudate)
+_EMOJI_RE = _re.compile(
+    u"[\U00010000-\U0010ffff"   # emoji supplementary planes
+    u"\U0001F300-\U0001F9FF"    # misc symbols & pictographs
+    u"\u2600-\u26FF"            # misc symbols
+    u"\u2700-\u27BF"            # dingbats
+    u"\u2300-\u23FF"            # technical symbols
+    u"\u2B00-\u2BFF"            # misc arrows
+    u"\u25A0-\u25FF"            # geometric shapes
+    u"\u2400-\u243F"            # control pictures
+    u"\uFE00-\uFE0F]+",         # variation selectors
+    flags=_re.UNICODE
+)
+_LEVEL_PREFIX = {
+    "DEBUG":    "[DEBUG]",
+    "INFO":     "[INFO] ",
+    "SUCCESS":  "[OK]   ",
+    "WARNING":  "[WARN] ",
+    "ERROR":    "[ERROR]",
+    "CRITICAL": "[CRIT] ",
+}
+
+def _clean_filter(record):
+    """Înlocuiește emoji cu text ASCII — log lizibil în orice terminal Windows."""
+    msg = _EMOJI_RE.sub("", record["message"]).strip()
+    prefix = _LEVEL_PREFIX.get(record["level"].name, "")
+    record["message"] = f"{prefix} {msg}" if prefix else msg
+    return True
+
+logger.remove()  # Scoate sink-ul default (stderr cu emoji)
 logger.add(
     str(_LOG_DIR / "setup_executor_monitor.log"),
     format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {message}",
+    filter=_clean_filter,
     level="DEBUG",
     rotation="10 MB",
     retention="7 days",
     compression="zip"
+)
+# Scrie si pe stdout → capturat in setup_monitor.log de Start-Process
+logger.add(
+    sys.stdout,
+    format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {message}",
+    filter=_clean_filter,
+    level="INFO",
+    colorize=False
 )
 
 
