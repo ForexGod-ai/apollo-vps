@@ -2347,23 +2347,46 @@ class SetupExecutorMonitor:
 
                         # Fallback la valorile din JSON dacă datele live nu sunt disponibile
                         if _sl is None or _tp is None:
-                            _sl = setup.get('stop_loss', 0)
-                            _tp = setup.get('take_profit', 0)
-                            logger.warning(f"⚠️ [V19.8 FALLBACK] {symbol}: date live indisponibile — SL/TP din JSON")
+                            _sl = setup.get('stop_loss') or 0
+                            _tp = setup.get('take_profit') or 0
+                            logger.warning(f"[V19.8 FALLBACK] {symbol}: date live indisponibile -- SL/TP din JSON")
 
                         # Validare direcție: SL sub entry pentru BUY, deasupra pentru SELL
                         if _en_direction == 'buy' and _sl >= _en_entry:
-                            _sl = setup.get('stop_loss', 0)
-                            logger.warning(f"⚠️ [V19.8 DIR GUARD] {symbol} BUY: SL calculat deasupra entry — revert JSON")
+                            _sl = setup.get('stop_loss') or 0
+                            logger.warning(f"[V19.8 DIR GUARD] {symbol} BUY: SL calculat deasupra entry -- revert JSON")
                         if _en_direction == 'sell' and _sl <= _en_entry:
-                            _sl = setup.get('stop_loss', 0)
-                            logger.warning(f"⚠️ [V19.8 DIR GUARD] {symbol} SELL: SL calculat sub entry — revert JSON")
+                            _sl = setup.get('stop_loss') or 0
+                            logger.warning(f"[V19.8 DIR GUARD] {symbol} SELL: SL calculat sub entry -- revert JSON")
                         if _en_direction == 'buy' and _tp is not None and _tp <= _en_entry:
-                            _tp = setup.get('take_profit', 0)
-                            logger.warning(f"⚠️ [V19.8 DIR GUARD] {symbol} BUY: TP calculat sub entry — revert JSON")
+                            _tp = setup.get('take_profit') or 0
+                            logger.warning(f"[V19.8 DIR GUARD] {symbol} BUY: TP calculat sub entry -- revert JSON")
                         if _en_direction == 'sell' and _tp is not None and _tp >= _en_entry:
-                            _tp = setup.get('take_profit', 0)
-                            logger.warning(f"⚠️ [V19.8 DIR GUARD] {symbol} SELL: TP calculat deasupra entry — revert JSON")
+                            _tp = setup.get('take_profit') or 0
+                            logger.warning(f"[V19.8 DIR GUARD] {symbol} SELL: TP calculat deasupra entry -- revert JSON")
+
+                        # V30.5: Guard None/0 dupa toate revert-urile — JSON vechi pot avea null
+                        # Daca SL sau TP = None/0 dupa toate guard-urile → calcul ATR fallback simplu
+                        if not _sl or _sl == 0:
+                            _atr_fb = float(setup.get('atr_daily', 0) or 0)
+                            if _atr_fb > 0:
+                                _sl = (_en_entry + _atr_fb * 1.5) if _en_direction == 'sell' else (_en_entry - _atr_fb * 1.5)
+                                logger.warning(f"[V30.5 SL FALLBACK] {symbol}: SL=null in JSON, calculat din ATR: {_sl:.5f}")
+                            else:
+                                logger.error(f"[V30.5 NO SL] {symbol}: SL=null si ATR indisponibil -- skip executie")
+                                setups[i].pop('EXECUTE_NOW', None)
+                                setups[i]['last_rejection_reason'] = 'V30.5: SL null in JSON + ATR indisponibil'
+                                updated = True
+                                continue
+                        if not _tp or _tp == 0:
+                            _atr_fb = float(setup.get('atr_daily', 0) or 0)
+                            if _atr_fb > 0:
+                                _tp = (_en_entry - _atr_fb * 3.0) if _en_direction == 'sell' else (_en_entry + _atr_fb * 3.0)
+                                logger.warning(f"[V30.5 TP FALLBACK] {symbol}: TP=null in JSON, calculat din ATR (3x): {_tp:.5f}")
+                            else:
+                                _sl_dist = abs(_en_entry - _sl)
+                                _tp = (_en_entry - _sl_dist * 2.0) if _en_direction == 'sell' else (_en_entry + _sl_dist * 2.0)
+                                logger.warning(f"[V30.5 TP FALLBACK] {symbol}: TP=null, calculat 2xSL: {_tp:.5f}")
 
                         # ── STEP 5: Calcul dinamic loturi — 5% risc din balanță live ────────────────
                         _sl_pips_en = abs(_en_entry - _sl) / _pip_size_en if _sl and _en_entry else 0.0
