@@ -46,17 +46,48 @@ import pandas as pd
 _LOG_DIR = Path(__file__).parent / "logs"
 _LOG_DIR.mkdir(exist_ok=True)
 
-# V30.3: Strip emoji din mesaje — afișare curată în PowerShell (fără caractere ciudate)
+# V30.4: Full ASCII log — elimina emoji + diacritice + simboluri Unicode
+# Rezultat: Get-Content setup_monitor.log arata curat in orice PowerShell/cmd
+
+# Diacritice romanesti + simboluri Unicode frecvente → echivalente ASCII
+_ASCII_MAP = str.maketrans({
+    'ă': 'a', 'â': 'a', 'î': 'i', 'ș': 's', 'ț': 't',
+    'Ă': 'A', 'Â': 'A', 'Î': 'I', 'Ș': 'S', 'Ț': 'T',
+    # Variante cu cedila (tastaturi vechi)
+    'ş': 's', 'ţ': 't', 'Ş': 'S', 'Ţ': 'T',
+    # Simboluri des intalnite in log-uri
+    '\u2014': '--',   # em dash —
+    '\u2013': '-',    # en dash –
+    '\u2192': '->',   # →
+    '\u2190': '<-',   # ←
+    '\u2191': '^',    # ↑
+    '\u2193': 'v',    # ↓
+    '\u2265': '>=',   # ≥
+    '\u2264': '<=',   # ≤
+    '\u00d7': 'x',    # ×
+    '\u00b7': '.',    # ·
+    '\u2022': '*',    # •
+    '\u2018': "'",    '\u2019': "'",   # smart quotes
+    '\u201c': '"',    '\u201d': '"',   # smart double quotes
+    '\u00e9': 'e',    '\u00e8': 'e',   # é è
+    '\u00e0': 'a',    '\u00e2': 'a',   # à â (fr)
+    '\u2248': '~=',   # ≈
+    '\u00b0': 'deg',  # °
+    '\u03c3': 'sigma', '\u03bc': 'mu', # σ μ
+    '\u2260': '!=',   # ≠
+    '\u00b1': '+/-',  # ±
+})
+
 _EMOJI_RE = _re.compile(
-    u"[\U00010000-\U0010ffff"   # emoji supplementary planes
-    u"\U0001F300-\U0001F9FF"    # misc symbols & pictographs
-    u"\u2600-\u26FF"            # misc symbols
-    u"\u2700-\u27BF"            # dingbats
-    u"\u2300-\u23FF"            # technical symbols
-    u"\u2B00-\u2BFF"            # misc arrows
-    u"\u25A0-\u25FF"            # geometric shapes
-    u"\u2400-\u243F"            # control pictures
-    u"\uFE00-\uFE0F]+",         # variation selectors
+    u"[\U00010000-\U0010ffff"
+    u"\U0001F300-\U0001F9FF"
+    u"\u2600-\u26FF"
+    u"\u2700-\u27BF"
+    u"\u2300-\u23FF"
+    u"\u2B00-\u2BFF"
+    u"\u25A0-\u25FF"
+    u"\u2400-\u243F"
+    u"\uFE00-\uFE0F]+",
     flags=_re.UNICODE
 )
 _LEVEL_PREFIX = {
@@ -69,8 +100,10 @@ _LEVEL_PREFIX = {
 }
 
 def _clean_filter(record):
-    """Înlocuiește emoji cu text ASCII — log lizibil în orice terminal Windows."""
+    """Produce ASCII pur: emoji + diacritice + Unicode → echivalente ASCII lizibile."""
     msg = _EMOJI_RE.sub("", record["message"]).strip()
+    msg = msg.translate(_ASCII_MAP)
+    msg = msg.encode('ascii', errors='ignore').decode('ascii')  # drop orice ramas
     prefix = _LEVEL_PREFIX.get(record["level"].name, "")
     record["message"] = f"{prefix} {msg}" if prefix else msg
     return True
