@@ -88,13 +88,8 @@ class SignalCache:
             False if signal is new
         """
         exists = signal_id in self.cache
-        
-        if exists:
-            timestamp = self.cache[signal_id]
-            age_seconds = time.time() - timestamp
-            age_minutes = age_seconds / 60
-            logger.warning(f"🚫 DUPLICATE DETECTED: {signal_id} (processed {age_minutes:.1f}m ago)")
-        
+        # V30.6: nu mai logam la fiecare is_processed() call -- apelat la fiecare 5s in AGGRESSIVE MODE
+        # Executorul logheaza el insusi SKIP EXECUTION cand e nevoie
         return exists
     
     def mark_processed(self, signal_id: str):

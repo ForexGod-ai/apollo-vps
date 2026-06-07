@@ -2734,7 +2734,12 @@ class SetupExecutorMonitor:
                             execution_id = f"{symbol}_execute_{result['entry_price']:.5f}"
                             
                             if self.signal_cache.is_processed(execution_id):
-                                logger.warning(f"🚫 SKIP EXECUTION: {symbol} already executed (cache hit)")
+                                logger.warning(f"SKIP EXECUTION: {symbol} already executed (cache hit)")
+                                # V30.6: sterge EXECUTE_NOW din JSON -- altfel ramine in JSON si
+                                # spameaza la infinit in AGGRESSIVE MODE 5s (bucla infinita)
+                                setups[i].pop('EXECUTE_NOW', None)
+                                setups[i]['entry1_filled'] = True  # confirma executia anterioara
+                                updated = True
                                 continue
                             
                             # ✅ V10.9 ANTI-DOUBLE: Also check rejection cooldown (timestamp in setup)
