@@ -89,7 +89,7 @@ class WatchdogMonitor:
         self.processes = {
             'setup_executor_monitor.py': {
                 'name': 'Setup Monitor',
-                'command': [self.python_path, 'setup_executor_monitor.py', '--interval', '30', '--loop'],
+                'command': [self.python_path, 'setup_executor_monitor.py', '--interval', '5', '--loop'],
                 'restart_count': 0,
                 'last_restart': None,
                 'state': 'unknown',  # 🔥 NEW: Track state (unknown/running/stopped)
