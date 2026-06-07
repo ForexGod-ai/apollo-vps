@@ -2127,7 +2127,10 @@ class SetupExecutorMonitor:
             # 🚀 DYNAMIC FREQUENCY: Count how many setups are "IN ZONE" (CHoCH detected + close to entry)
             in_zone_count = 0
             for s in setups:
-                if s.get('status') in ['MONITORING', 'READY']:
+                # V30.4: EXECUTE_NOW=True = cel mai prioritar in_zone, indiferent de status
+                if s.get('EXECUTE_NOW', False) and not s.get('entry1_filled', False):
+                    in_zone_count += 1
+                elif s.get('status') in ['MONITORING', 'READY']:
                     # V15.5 FIX: include și confirmarea 4H în contorul in_zone
                     # anterior: verifica doar choch_1h_detected → setup-uri cu DOAR 4H confirmat
                     # nu intrau în AGGRESSIVE MODE (5s interval) → execuție întârziată cu până la 30s
@@ -2157,8 +2160,12 @@ class SetupExecutorMonitor:
                 status = setup.get('status', 'MONITORING')
                 
                 # Skip expired or closed setups, but ALLOW READY for immediate execution
+                # V30.4: EXECUTE_NOW=True bypasses status filter — radarul a confirmat, executam imediat
+                # Fara acest fix: WAITING_4H_CHOCH + EXECUTE_NOW=True era sarit de executor pentru totdeauna
                 if status not in ['MONITORING', 'READY', 'WAITING_POSITION_CLOSE']:
-                    continue
+                    if not setup.get('EXECUTE_NOW', False):
+                        continue
+                    logger.info(f"[V30.4] {symbol}: status={status} dar EXECUTE_NOW=True — bypass status filter")
                 
                 # ✅ V10.9 SMART POSITION GUARD: Pause setup if same symbol+direction already open
                 # TEMPORARY — auto-resumes when broker position closes (not permanent block)
