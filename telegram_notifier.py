@@ -735,7 +735,11 @@ class TelegramNotifier:
                 # Color coding
                 if not h4_locked:
                     dot = "🔵"
-                    status_suffix = " (Waiting 4H CHoCH)"
+                    # V30.1: eticheta diferentiata — CONTINUATION vaneaza BOS, REVERSAL vaneaza CHoCH
+                    if raw_strat in ('CONTINUATION', 'CONTINUITY'):
+                        status_suffix = " (Waiting 4H BOS / Pullback)"
+                    else:
+                        status_suffix = " (Waiting 4H CHoCH)"
                 elif dir_raw == 'sell':
                     dot = "🔴"
                     status_suffix = "   (confirmed SELL)"
@@ -810,7 +814,11 @@ class TelegramNotifier:
                 h4_locked = sym_info.get('h4_structure_locked', sym_info.get('h4_bias_locked', True))
                 if not h4_locked:
                     dot = "🔵"
-                    status_suffix = " (Waiting 4H CHoCH)"
+                    # V30.1: eticheta diferentiata — CONTINUATION vaneaza BOS, REVERSAL vaneaza CHoCH
+                    if raw_strat in ('CONTINUATION', 'CONTINUITY'):
+                        status_suffix = " (Waiting 4H BOS / Pullback)"
+                    else:
+                        status_suffix = " (Waiting 4H CHoCH)"
                 elif direction == 'sell':
                     dot = "🔴"
                     status_suffix = " (confirmed SELL)"

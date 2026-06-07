@@ -287,7 +287,8 @@ class MultiTFRadar:
         timeframe: str,
         required_direction: str,
         current_price: float,
-        smc_detector: SMCDetector
+        smc_detector: SMCDetector,
+        allow_bos_trigger: bool = False  # V30.1: True pt CONTINUATION 4H — BOS = trigger direct
     ) -> TimeframeAnalysis:
         """
         Analyze a specific timeframe for CHoCH and FVG
@@ -402,7 +403,15 @@ class MultiTFRadar:
                     use_bos_as_choch = True
                     bos_used = aligned_bos_all[-1]
                     bars_ago = len(df) - bos_used.index
-                    print(f"  ✅ [{timeframe_display} SCAN] {symbol} | BOS {required_direction.upper()} la -{bars_ago} bare | VALIDATED ✅ (BOS confirmare)")
+                    if allow_bos_trigger:
+                        # V30.1 CONTINUATION TRIGGER: BOS pe 4H in directia Daily Bias = intrare directa
+                        # Trendul macro e lansat, pullback superficial nu va printa CHoCH de inversare.
+                        # BOS = confirmare ca impulsul continua. Echivalent functional cu CHoCH pt entry.
+                        print(f"  ⚡ [V30.1 CONTINUATION BOS-TRIGGER] {symbol} {timeframe_display}: "
+                              f"BOS {required_direction.upper()} la -{bars_ago} bare — "
+                              f"TRIGACI DIRECT (CONTINUATION, nu asteptam CHoCH inversare)")
+                    else:
+                        print(f"  ✅ [{timeframe_display} SCAN] {symbol} | BOS {required_direction.upper()} la -{bars_ago} bare | VALIDATED ✅ (BOS confirmare)")
                     sys.stdout.flush()
 
             # TRULY NOTHING — nicio structură aliniată în toți cei {len(df)} bari descărcați
@@ -785,8 +794,11 @@ class MultiTFRadar:
         # V24.6 PERMISSIVE DAILY FLOW: Setup cu FVG sintetic (zona Equilibrium) — niciun FVG corp natural
         # Radarul 4H TREBUIE să găsească un CHoCH real înainte de EXECUTE_NOW
         _daily_bias_active = bool(setup_data.get('daily_bias_active', False))
-        
-        # Get current price
+        # V30.1: strategy_type din JSON — determina trigaci diferentiat pe 4H
+        # CONTINUATION (Daily BOS): allow_bos=True — 4H BOS in directie = executie imediata
+        # REVERSAL (Daily CHoCH): allow_bos=False — asteptam CHoCH de inversare pe 4H
+        _strategy_type = str(setup_data.get('strategy_type', 'reversal')).lower()
+        _allow_bos_4h = (_strategy_type == 'continuation')  # True doar pentru trend continuation
         # V19.4 FIX #4: prețul live este IMPERATIV — nu existe fallback silențios la daily_entry.
         # Dacă portul 8010 nu răspunde → RuntimeError explicit, prins de run_scan cu `continue`.
         current_price = self.get_current_price(symbol)
@@ -826,13 +838,17 @@ class MultiTFRadar:
 
         # Analyze 4H — ALWAYS
         print("\n🔎 [4H] HIGH CONFIDENCE SCAN (ATR 1.0x — V15.4)...")
+        # V30.1: CONTINUATION setup — 4H BOS aliniat = trigaci direct (trendul continua fara CHoCH inversare)
+        if _allow_bos_4h:
+            print(f"  ⚡ [V30.1 CONTINUATION] {symbol}: allow_bos=True — 4H BOS in directie {required_direction.upper()} = trigger echivalent CHoCH")
         sys.stdout.flush()
         tf_4h = self.analyze_timeframe(
             symbol=symbol,
             timeframe="H4",
             required_direction=required_direction,
             current_price=current_price,
-            smc_detector=self.smc_4h
+            smc_detector=self.smc_4h,
+            allow_bos_trigger=_allow_bos_4h  # V30.1
         )
 
         # ━━━ V19.5: Determină execution_ready — FĂRĂ nicio poartă Daily ━━━
