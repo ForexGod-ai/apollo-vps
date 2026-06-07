@@ -2921,20 +2921,44 @@ class SetupExecutorMonitor:
                     
                     else:
                         # ========== ENTRY 1 FILLED - CHECK FOR ENTRY 2 (V3.1 LOGIC) ==========
-                        
+
+                        # V30.7: Skip SCALE_IN daca pozitia nu mai e activa la broker
+                        # Cazul USDCAD: entry1_filled=True de o saptamana, pozitia deja inchisa
+                        # -> SCALE_IN nu are sens fara pozitia deschisa -> crash + spam infinit
+                        try:
+                            _ap_file = Path(__file__).parent / 'active_positions.json'
+                            if _ap_file.exists():
+                                with open(_ap_file, encoding='utf-8') as _apf:
+                                    _ap_list = json.load(_apf)
+                                _still_open = any(
+                                    p.get('symbol','').upper().replace('/','') == symbol.upper().replace('/','') 
+                                    for p in _ap_list
+                                )
+                                if not _still_open:
+                                    logger.debug(f"[V30.7] {symbol}: entry1_filled=True dar nicio pozitie activa la broker -- skip SCALE_IN")
+                                    continue
+                        except Exception:
+                            pass
+
                         # ✅ V14.1: Skip if Entry 2 already filled — prevent duplicate scale-in
                         if setup.get('entry2_filled', False):
-                            logger.debug(f"   ✅ {symbol}: Entry 2 already filled — monitoring position")
+                            logger.debug(f"   {symbol}: Entry 2 already filled -- monitoring position")
                             continue
-                        
+
                         from types import SimpleNamespace
                         setup_obj = SimpleNamespace(**setup)
                         
-                        # Convert times
+                        # Convert times — V30.7: forteaza UTC pe datetimes naive ca sa nu crape
+                        # can't subtract offset-naive and offset-aware datetimes
+                        def _make_aware(dt_str):
+                            dt = datetime.fromisoformat(dt_str)
+                            if dt.tzinfo is None:
+                                dt = dt.replace(tzinfo=timezone.utc)
+                            return dt
                         if isinstance(setup.get('setup_time'), str):
-                            setup_obj.setup_time = datetime.fromisoformat(setup['setup_time'])
+                            setup_obj.setup_time = _make_aware(setup['setup_time'])
                         if setup.get('entry1_time') and isinstance(setup['entry1_time'], str):
-                            setup_obj.entry1_time = datetime.fromisoformat(setup['entry1_time'])
+                            setup_obj.entry1_time = _make_aware(setup['entry1_time'])
                         
                         # Add attributes
                         setup_obj.entry1_filled = True
