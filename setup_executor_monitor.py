@@ -216,7 +216,7 @@ EQUILIBRIUM_BUFFER_PIPS = 3
 class SetupExecutorMonitor:
     """🔥 AGGRESSIVE EXECUTIONER - Instant MONITORING→EXECUTE transition"""
     
-    def __init__(self, check_interval: int = 5):  # 🚀 5s HIGH-FREQUENCY for in-zone setups
+    def __init__(self, check_interval: int = 5):  # V30.9: 5s constant — radar scrie la 30s, executor citeste la 5s = max 5s lag
         self.check_interval = check_interval
         _script_root = Path(__file__).parent.resolve()  # V22.2: absolut, nu CWD-dependent
         self.monitoring_file = _script_root / "monitoring_setups.json"
@@ -2157,24 +2157,8 @@ class SetupExecutorMonitor:
             
             logger.debug(f"Checking {len(setups)} monitoring setups...")
 
-            # DYNAMIC FREQUENCY:
-            # V30.8: AGGRESSIVE MODE 5s DOAR cand EXECUTE_NOW=True (pret in FVG, gata de executie)
-            # CHoCH detectat dar pret departe de FVG NU justifica 5s -- spameaza inutil
-            # entry1_filled=True NU conteaza ca in_zone (setup deja executat, asteapta scale-in)
-            in_zone_count = 0
-            for s in setups:
-                if s.get('EXECUTE_NOW', False) and not s.get('entry1_filled', False):
-                    in_zone_count += 1
-            # Nota: CHoCH detectat fara EXECUTE_NOW = pret inca departe de FVG -> 30s e suficient
-            
-            if in_zone_count > 0:
-                # ⚡ AGGRESSIVE MODE: Setups in zone → check every 5 seconds
-                self.check_interval = 5
-                logger.warning(f"⚡ AGGRESSIVE MODE: {in_zone_count} setups IN ZONE → 5s interval")
-            else:
-                # 🔄 NORMAL MODE: No setups close → check every 30s to save resources
-                self.check_interval = 30
-                logger.debug(f"🔄 Normal monitoring: 30s interval")
+            # V30.9: interval fix 5s -- nu mai e nevoie de dual-speed
+            # Radar scrie la 30s, executor citeste la 5s -> max 5s lag pana la EXECUTE_NOW
             
             updated = False
             # V19.14: Tracker risc cumulativ pe sesiunea curentă de execuție
