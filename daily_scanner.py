@@ -94,14 +94,27 @@ class CTraderDataProvider:
             if df is not None and not df.empty:
                 # Rename index to 'time' column
                 df = df.reset_index()
-                print(f"✅ Downloaded {len(df)} candles for {symbol} ({timeframe}) from IC Markets")
+                # V30.8: logger in loc de print() -- print() aparea in setup_monitor.log cu emoji stricati
+                try:
+                    from loguru import logger as _lg
+                    _lg.debug(f"Downloaded {len(df)} candles for {symbol} ({timeframe}) from IC Markets")
+                except Exception:
+                    pass  # silent -- nu e critic
                 return df
             else:
-                print(f"⚠️ No data for {symbol} on {timeframe}")
+                try:
+                    from loguru import logger as _lg
+                    _lg.warning(f"No data for {symbol} on {timeframe}")
+                except Exception:
+                    pass
                 return None
                 
         except Exception as e:
-            print(f"❌ Error downloading data for {symbol}: {e}")
+            try:
+                from loguru import logger as _lg
+                _lg.error(f"Error downloading data for {symbol}: {e}")
+            except Exception:
+                pass
             return None
 
 

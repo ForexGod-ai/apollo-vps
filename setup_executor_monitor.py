@@ -2155,22 +2155,17 @@ class SetupExecutorMonitor:
             if not setups:
                 return
             
-            logger.debug(f"📊 Checking {len(setups)} monitoring setups...")
-            
-            # 🚀 DYNAMIC FREQUENCY: Count how many setups are "IN ZONE" (CHoCH detected + close to entry)
+            logger.debug(f"Checking {len(setups)} monitoring setups...")
+
+            # DYNAMIC FREQUENCY:
+            # V30.8: AGGRESSIVE MODE 5s DOAR cand EXECUTE_NOW=True (pret in FVG, gata de executie)
+            # CHoCH detectat dar pret departe de FVG NU justifica 5s -- spameaza inutil
+            # entry1_filled=True NU conteaza ca in_zone (setup deja executat, asteapta scale-in)
             in_zone_count = 0
             for s in setups:
-                # V30.4: EXECUTE_NOW=True = cel mai prioritar in_zone, indiferent de status
                 if s.get('EXECUTE_NOW', False) and not s.get('entry1_filled', False):
                     in_zone_count += 1
-                elif s.get('status') in ['MONITORING', 'READY']:
-                    # V15.5 FIX: include și confirmarea 4H în contorul in_zone
-                    # anterior: verifica doar choch_1h_detected → setup-uri cu DOAR 4H confirmat
-                    # nu intrau în AGGRESSIVE MODE (5s interval) → execuție întârziată cu până la 30s
-                    has_1h = s.get('choch_1h_detected', False) or s.get('radar_1h_choch_detected', False)
-                    has_4h = s.get('radar_4h_choch_detected', False)
-                    if has_1h or has_4h:
-                        in_zone_count += 1
+            # Nota: CHoCH detectat fara EXECUTE_NOW = pret inca departe de FVG -> 30s e suficient
             
             if in_zone_count > 0:
                 # ⚡ AGGRESSIVE MODE: Setups in zone → check every 5 seconds
