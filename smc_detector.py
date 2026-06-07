@@ -2511,7 +2511,8 @@ class SMCDetector:
         h4_choch: CHoCH,
         df_4h: pd.DataFrame,
         df_daily: pd.DataFrame,
-        df_1h: Optional[pd.DataFrame] = None
+        df_1h: Optional[pd.DataFrame] = None,
+        daily_bias_active: bool = False  # V30.0: True = setup WAITING, RR threshold 4.0→2.0
     ) -> Tuple[float, float, float]:
         """
         ═══════════════════════════════════════════════════════════════════
@@ -2846,8 +2847,12 @@ class SMCDetector:
             return None, None, None
 
         rr = reward / risk
-        if rr < 4.0:
-            print(f"⛔ [V14.1 REJECT: RR=1:{rr:.2f} < 1:4 minim] {symbol} — "
+        # V30.0: daily_bias_active (WAITING_D1_PULLBACK) → threshold relaxat la 2.0
+        # Motivul: SL structural 4H pe un setup incomplet (fără pullback final) poate fi larg,
+        # dar structura D1 este validă. RR real se recalculează la EXECUTE_NOW.
+        _rr_threshold = 2.0 if daily_bias_active else 4.0
+        if rr < _rr_threshold:
+            print(f"⛔ [V14.1 REJECT: RR=1:{rr:.2f} < 1:{_rr_threshold}{'(daily_bias)' if daily_bias_active else ''}] {symbol} — "
                   f"SL 4H structural + TP Daily nu generează RR suficient. Trade ANULAT.")
             return None, None, None
 
@@ -4233,46 +4238,21 @@ class SMCDetector:
         # Step 7: Calculate entry, SL, TP
         # Use H4 CHoCH for both REVERSAL and CONTINUITY
         h4_signal = valid_h4_choch
-        
-        # 📦 V4.0 ORDER BLOCK OVERRIDE: If OB score >= 7, use OB for precise entry/SL
-        if order_block and order_block.ob_score >= 7:
-            # Use Order Block zones for entry/SL instead of FVG
-            if debug:
-                print(f"\n📦 ORDER BLOCK ACTIVATED for Entry/SL calculation:")
-                print(f"   OB Zone: {order_block.bottom:.5f} - {order_block.top:.5f}")
-                print(f"   OB Score: {order_block.ob_score}/10")
-            
-            # Entry = OB middle (more precise than FVG 35%)
-            entry = order_block.middle
-            
-            # Tighter SL using OB boundaries (not 4H swing)
-            if current_trend == 'bullish':
-                # LONG: SL just below OB bottom
-                sl = order_block.bottom * 0.9995  # 5 pips below OB bottom
-            else:
-                # SHORT: SL just above OB top
-                sl = order_block.top * 1.0005  # 5 pips above OB top
-            
-            # TP calculation still uses Daily structure (unchanged)
-            # Calculate via calculate_entry_sl_tp but override entry/SL
-            if h4_signal:
-                _e, _s, _t = self.calculate_entry_sl_tp(symbol, fvg, h4_signal, df_4h, df_daily)
-                tp = _t if _t is not None else (entry * 1.02 if current_trend == 'bullish' else entry * 0.98)
-            else:
-                tp = entry * 1.02 if current_trend == 'bullish' else entry * 0.98
 
-            if debug:
-                print(f"   ✅ Entry: {entry:.5f} (OB middle)")
-                print(f"   ✅ SL: {sl:.5f} (OB boundary + 5 pips)")
-                print(f"   ✅ TP: {tp:.5f} (Daily structure)")
-
-        elif h4_signal:
+        # V30.0: Dead code eliminat — primul bloc OB (order_block=None la acest punct,
+        # detect_order_block() este apelat abia la Step 8 mai jos).
+        # Flux corect: Step 7 = entry/sl/tp din h4_signal sau FVG edge;
+        #              Step 8 = detect_order_block → poate OVERRIDE entry/sl dacă ob_score ≥ 7.
+        if h4_signal:
             # ✅ V14.0 BUG#2 FIX: Prioritizează h4_sync_fvg (entry zone precisă din mișcarea 4H)
             # față de Daily FVG (POI macro). Daily FVG = zona de interes, h4_sync_fvg = entry sniper.
             # Dacă Fibonacci pe impulsul macro 4H cade sub FVG (ex: XTIUSD impulse 31$),
             # entry era decuplat complet de zonă. Cu h4_sync_fvg, entry = marginea FVG-ului 4H real.
             fvg_for_entry = h4_sync_fvg if h4_sync_fvg else fvg
-            entry, sl, tp = self.calculate_entry_sl_tp(symbol, fvg_for_entry, h4_signal, df_4h, df_daily)
+            entry, sl, tp = self.calculate_entry_sl_tp(
+                symbol, fvg_for_entry, h4_signal, df_4h, df_daily,
+                daily_bias_active=getattr(fvg, '_is_daily_bias_zone', False)  # V30.0
+            )
             # V26.0: SALVARE BIAS — când RR<4 sau SL>cap, NU mai aruncăm setup-ul.
             # Bias-ul D1 este REAL (CHoCH/BOS confirmat + 4H CHoCH aliniat).
             # Salvăm în MONITORING cu FVG edge ca entry informativ.
@@ -4345,11 +4325,9 @@ class SMCDetector:
         _pct_ramas = (distance_to_tp / total_move * 100) if total_move > 0 else 100.0
         print(f"📊 [V27 TOO-LATE {symbol}] {100 - _pct_ramas:.1f}% spre TP | h4={'DA' if h4_signal else 'NU (placeholder)'} | status={status} | curr={current_price:.5f} entry={entry:.5f} tp={tp:.5f}")
         
-        # V27.0 FIX: Filtru 'TOO LATE' activ NUMAI când există h4_signal (entry/tp reale).
-        # Fără h4_signal: tp = fvg.bottom * 0.985 (placeholder din ELSE branch) → total_move mic
-        # → orice pereche în downtrend care s-a îndepărtat de FVG apare "98% spre TP" → REJECT fals.
-        # EURUSD/GBPUSD SHORT: FVG la 1.09-1.11, curr la 1.07 → tp=1.0738 → ratio=2% → DROP greșit!
-        if h4_signal and total_move > 0 and (distance_to_tp / total_move) < 0.20:
+        # V30.0: Prag relaxat 0.20→0.10 (90%+ spre TP = prea tarziu, nu 80%).
+        # + WAITING_D1_PULLBACK exclus: entry/tp sunt placeholder, nu reale → filtrul era fals.
+        if h4_signal and total_move > 0 and (distance_to_tp / total_move) < 0.10 and status != 'WAITING_D1_PULLBACK':
             print(f"⛔ [DROP {symbol}] FILTRU 'TOO LATE' — {100 - _pct_ramas:.1f}% completat | h4_signal PREZENT → entry/tp REALE | entry={entry:.5f} tp={tp:.5f}")
             return None  # Price already 80%+ toward TP - TOO LATE!
         
@@ -4525,10 +4503,9 @@ class SMCDetector:
                 
                 if trade_count >= 4:
                     # Too many trades in this zone already
-                    if debug:
-                        print(f"\n❌ REJECTED {symbol}: FVG zone exhausted ({trade_count} trades already)")
-                        print(f"   Zone: {prev_bottom:.5f}-{prev_top:.5f}")
-                        print(f"   🛡️ UNIVERSAL anti-overtrading protection active!")
+                    # V30.0: print afara din debug — vizibil în producție
+                    print(f"\n❌ [V30.0 ANTI-OT] REJECTED {symbol}: FVG zone epuizată ({trade_count} trades în zonă)")
+                    print(f"   Zone: {prev_bottom:.5f}-{prev_top:.5f} — 🛡️ UNIVERSAL anti-overtrading")
                     return None
                 
                 # Increment trade count for this zone
@@ -4665,13 +4642,15 @@ class SMCDetector:
                 if debug:
                     print(f"   ✅ [V14.3 OB TP RECALC] SHORT TP from D1 swing low: {tp:.5f}")
         else:
-            # Fallback to FVG-based entry if no high-quality OB
-            entry = None  # Will be calculated later in calculate_entry_sl_tp
-            sl = None
-
+            # V30.0 FIX PRINCIPAL: NU mai resetăm entry/sl la None!
+            # entry și sl sunt deja calculate (calculate_entry_sl_tp sau FVG edge din Step 7).
+            # OB score < 7 = nu override cu OB, dar menținăm valorile existente.
+            # Vechiul cod: entry=None; sl=None → triggereza V14.2 NULL GUARD → return None.
             if debug and order_block:
                 print(f"\n⚠️ ORDER BLOCK NOT ACTIVATED: Score {order_block.ob_score}/10 < 7")
-                print(f"   Falling back to FVG-based entry")
+                print(f"   Menținând entry/sl calculate anterior (FVG-based sau h4_signal)")
+            elif debug:
+                print(f"\nℹ️ [V30.0] Fără OB valid — entry/sl din Step 7 rămân nemodificate")
         
         # Calculate ESTIMATED RR pentru swing trading (minimum 1:5)
         estimated_rr = risk_reward  # Default to standard RR
