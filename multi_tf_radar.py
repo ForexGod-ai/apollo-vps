@@ -788,9 +788,15 @@ class MultiTFRadar:
             return None
         
         # Get Daily data
-        daily_entry = float(setup_data.get('entry_price', 0))
-        daily_fvg_top = float(setup_data.get('fvg_top', daily_entry))
-        daily_fvg_bottom = float(setup_data.get('fvg_bottom', daily_entry))
+        # V30.2: Guard None — entry_price/fvg_top/fvg_bottom pot fi null in JSON
+        # (setups salvate cu OB else-branch vechi sau WAITING_D1_PULLBACK fara h4_signal)
+        # float(None) crasheaza cu TypeError → 12 errors per scan. Fix: fallback explicit la 0.
+        _ep = setup_data.get('entry_price')
+        daily_entry = float(_ep) if _ep is not None else 0.0
+        _ft = setup_data.get('fvg_top')
+        daily_fvg_top = float(_ft) if _ft is not None else daily_entry
+        _fb = setup_data.get('fvg_bottom')
+        daily_fvg_bottom = float(_fb) if _fb is not None else daily_entry
         # V24.6 PERMISSIVE DAILY FLOW: Setup cu FVG sintetic (zona Equilibrium) — niciun FVG corp natural
         # Radarul 4H TREBUIE să găsească un CHoCH real înainte de EXECUTE_NOW
         _daily_bias_active = bool(setup_data.get('daily_bias_active', False))
