@@ -602,13 +602,18 @@ class MultiTFRadar:
                         # verificăm că retragerea e >= 35% (impulsul nu e proaspăt)
                         if in_fvg_synth and retrace_pct >= 0.35:
                             dist_synth = 0.0
-                            status_synth = PullbackStatus.EXECUTE_NOW_1H if timeframe == "H1" else PullbackStatus.EXECUTE_NOW_4H
-                            # ── V24.9 EXECUTE_NOW TRASOR — Fibo Fallback ─────────────────────
-                            print(f"  🔫 [RADAR TRIGGER {timeframe_display}] {symbol} {required_direction.upper()} "
-                                  f"→ EXECUTE_NOW. Motiv: Fibo Fallback sintetic 40-60% atins după CHoCH confirmat "
-                                  f"(CHoCH la -{_choch_bars_ago} bare | Zonă sintetică [{fvg_bottom_synth:.5f}-{fvg_top_synth:.5f}] | "
-                                  f"Retrace={retrace_pct*100:.1f}% | Preț={current_price:.5f})")
-                            sys.stdout.flush()
+                            # V31.0 CANDLE_AGE GUARD: Fibo Fallback EXECUTE_NOW numai pe CHoCH live (<=3 bare)
+                            if _choch_bars_ago <= 3:
+                                status_synth = PullbackStatus.EXECUTE_NOW_1H if timeframe == "H1" else PullbackStatus.EXECUTE_NOW_4H
+                                print(f"  [V31.0 FIBO FALLBACK LIVE {timeframe_display}] {symbol} {required_direction.upper()} "
+                                      f"-> EXECUTE_NOW (CHoCH la -{_choch_bars_ago} bare <=3 LIVE) "
+                                      f"Fibo 40-60% [{fvg_bottom_synth:.5f}-{fvg_top_synth:.5f}] "
+                                      f"Retrace={retrace_pct*100:.1f}% Pret={current_price:.5f}")
+                                sys.stdout.flush()
+                            else:
+                                status_synth = PullbackStatus.WAITING_1H_PULLBACK if timeframe == "H1" else PullbackStatus.WAITING_4H_PULLBACK
+                                print(f"  [V31.0 CANDLE_AGE FIBO {timeframe_display}] {symbol}: in Fibo zone dar CHoCH la -{_choch_bars_ago} bare > 3 — WAITING")
+                                sys.stdout.flush()
                         else:
                             if choch_direction == 'bullish':
                                 dist_synth = abs(current_price - fvg_top_synth) / pip_size_synth
@@ -684,14 +689,21 @@ class MultiTFRadar:
             _pip_size_dist = self._get_pip_size(symbol)
             if in_fvg:
                 distance_to_fvg_pips = 0.0
-                status = PullbackStatus.EXECUTE_NOW_1H if timeframe == "H1" else PullbackStatus.EXECUTE_NOW_4H
-                _sniper_note = f"🎯 SNIPER EXECUTE — prețul {current_price:.5f} IN FVG [{fvg_bottom:.5f}-{fvg_top:.5f}]"
-                # ── V24.9 EXECUTE_NOW TRASOR ─────────────────────────────────────
-                print(f"  🔫 [RADAR TRIGGER {timeframe_display}] {symbol} {required_direction.upper()} "
-                      f"→ EXECUTE_NOW. Motiv: FVG structural atins după CHoCH confirmat "
-                      f"(CHoCH la -{_choch_bars_ago} bare | FVG [{fvg_bottom:.5f}-{fvg_top:.5f}] | "
-                      f"Entry={fvg_entry:.5f} | Preț={current_price:.5f})")
-                sys.stdout.flush()
+                # V31.0 CANDLE_AGE GUARD: EXECUTE_NOW NUMAI pe CHoCH live (≤ 3 bare = ≤12h pe H4)
+                # CHoCH > 3 bare = structură veche confirmată dar trăgaciul NU este pe lumânarea curentă
+                if _choch_bars_ago <= 3:
+                    status = PullbackStatus.EXECUTE_NOW_1H if timeframe == "H1" else PullbackStatus.EXECUTE_NOW_4H
+                    _sniper_note = f"SNIPER EXECUTE LIVE — pret {current_price:.5f} IN FVG | CHoCH -{_choch_bars_ago} bare (LIVE <=3)"
+                    print(f"  [V31.0 RADAR TRIGGER LIVE {timeframe_display}] {symbol} {required_direction.upper()} "
+                          f"-> EXECUTE_NOW (CHoCH la -{_choch_bars_ago} bare <=3 = LIVE) "
+                          f"FVG [{fvg_bottom:.5f}-{fvg_top:.5f}] | Entry={fvg_entry:.5f} | Pret={current_price:.5f}")
+                    sys.stdout.flush()
+                else:
+                    # CHoCH vechi — in FVG dar nu live: ramane in WAITING
+                    status = PullbackStatus.WAITING_1H_PULLBACK if timeframe == "H1" else PullbackStatus.WAITING_4H_PULLBACK
+                    _sniper_note = f"IN FVG dar CHoCH la -{_choch_bars_ago} bare > 3 (V31.0: nu live) — WAITING"
+                    print(f"  [V31.0 CANDLE_AGE {timeframe_display}] {symbol}: pret in FVG dar CHoCH la -{_choch_bars_ago} bare > 3 — WAITING pt CHoCH live")
+                    sys.stdout.flush()
             else:
                 if required_direction == 'bullish':
                     # For LONG: need to pull back DOWN to FVG
@@ -793,10 +805,13 @@ class MultiTFRadar:
         # float(None) crasheaza cu TypeError → 12 errors per scan. Fix: fallback explicit la 0.
         _ep = setup_data.get('entry_price')
         daily_entry = float(_ep) if _ep is not None else 0.0
-        _ft = setup_data.get('fvg_top')
+        # V31.0: poi_top/poi_bottom sunt câmpurile noi din Scanner V31.0 — backward compat cu fvg_top/fvg_bottom
+        _ft = setup_data.get('poi_top') or setup_data.get('fvg_top')
         daily_fvg_top = float(_ft) if _ft is not None else daily_entry
-        _fb = setup_data.get('fvg_bottom')
+        _fb = setup_data.get('poi_bottom') or setup_data.get('fvg_bottom')
         daily_fvg_bottom = float(_fb) if _fb is not None else daily_entry
+        # V31.0: daily_target_price este TP-ul macro structural din Scanner
+        _daily_target_v31 = setup_data.get('daily_target_price') or setup_data.get('daily_tp_price')
         # V24.6 PERMISSIVE DAILY FLOW: Setup cu FVG sintetic (zona Equilibrium) — niciun FVG corp natural
         # Radarul 4H TREBUIE să găsească un CHoCH real înainte de EXECUTE_NOW
         _daily_bias_active = bool(setup_data.get('daily_bias_active', False))
@@ -1083,29 +1098,54 @@ class MultiTFRadar:
         # înainte ca executorul să apuce să citească True-ul din T+00s → semnal pierdut.
         # Excepție: dacă entry1_filled=True, semnalul a fost deja consumat → safe to clear.
         if result.execution_ready:
-            setup['EXECUTE_NOW'] = True
-            # ── V24.9 FIX #3: VERBOSE EXECUTE_NOW LOG — Colonelul vrea să știe EXACT de ce s-a tras ──
-            _exec_tf = result.priority_timeframe or '?'
-            _exec_tf_data = result.tf_1h if _exec_tf == '1H' else result.tf_4h
-            _exec_fvg_src = getattr(_exec_tf_data, 'fvg_source', 'unknown')
-            _exec_zone = (
-                f"[{_exec_tf_data.fvg_bottom:.5f} - {_exec_tf_data.fvg_top:.5f}]"
-                if _exec_tf_data.fvg_top and _exec_tf_data.fvg_bottom else "zona necunoscută"
+            # V31.0 REVERSAL vs CONTINUATION TRIGGER GUARD
+            # REVERSAL: accepta NUMAI CHoCH ca trigger (BOS = continuarea trendului anterior — invalid pt reversal)
+            # CONTINUATION: accepta si BOS (trend in desfasurare, BOS = confirmare continuare)
+            _setup_type_v31 = setup.get('setup_type', setup.get('strategy_type', '')).upper()
+            _is_reversal_v31 = 'REVERSAL' in _setup_type_v31
+            _exec_tf_v31 = result.priority_timeframe or '?'
+            _exec_tf_data_v31 = result.tf_1h if _exec_tf_v31 == '1H' else result.tf_4h
+            # BOS-only trigger detection
+            _used_bos_only = (
+                getattr(_exec_tf_data_v31, 'bos_detected', False)
+                and not _exec_tf_data_v31.choch_detected
             )
-            _exec_bars = getattr(_exec_tf_data, 'choch_bars_ago', '?')
-            _exec_eq = f"EQ={_exec_tf_data.equilibrium:.5f}" if _exec_tf_data.equilibrium else "EQ=N/A"
-            logger.success(
-                f"🔫 [RADAR TRIGGER {_exec_tf}] {result.symbol} {result.direction} → EXECUTE_NOW=True\n"
-                f"   Motiv: {'FVG structural' if _exec_fvg_src == 'structural' else 'Fibo Fallback sintetic'} "
-                f"atins după CHoCH {_exec_tf} confirmat\n"
-                f"   CHoCH la -{_exec_bars} bare | Zonă: {_exec_zone} | "
-                f"Preț={result.current_price:.5f} | {_exec_eq}"
-            )
+            if _is_reversal_v31 and _used_bos_only:
+                # REVERSAL pe BOS = INTERZIS — asteptam CHoCH autentic
+                logger.warning(
+                    f"[V31.0 REVERSAL GUARD] {result.symbol}: EXECUTE_NOW blocat — "
+                    f"setup REVERSAL nu accepta BOS ca trigger. Numai CHoCH autentic!"
+                )
+                # Nu setam EXECUTE_NOW — asteptam CHoCH real
+            else:
+                setup['EXECUTE_NOW'] = True
+                _exec_tf = result.priority_timeframe or '?'
+                _exec_tf_data = result.tf_1h if _exec_tf == '1H' else result.tf_4h
+                _exec_fvg_src = getattr(_exec_tf_data, 'fvg_source', 'unknown')
+                _exec_zone = (
+                    f"[{_exec_tf_data.fvg_bottom:.5f} - {_exec_tf_data.fvg_top:.5f}]"
+                    if _exec_tf_data.fvg_top and _exec_tf_data.fvg_bottom else "zona necunoscuta"
+                )
+                _exec_bars = getattr(_exec_tf_data, 'choch_bars_ago', '?')
+                _exec_eq = f"EQ={_exec_tf_data.equilibrium:.5f}" if _exec_tf_data.equilibrium else "EQ=N/A"
+                logger.success(
+                    f"[V31.0 RADAR TRIGGER LIVE {_exec_tf}] {result.symbol} {result.direction} -> EXECUTE_NOW=True"
+                    f" | {'FVG structural' if _exec_fvg_src == 'structural' else 'Fibo Fallback'}"
+                    f" dupa CHoCH {_exec_tf} LIVE (<=3 bare) | Zona: {_exec_zone}"
+                    f" | Pret={result.current_price:.5f} | {_exec_eq}"
+                )
+        elif not result.execution_ready and setup.get('EXECUTE_NOW') and not setup.get('entry1_filled'):
+            # V31.0: Pretul a iesit din zona FVG — resetam EXECUTE_NOW (semnal expirat)
+            setup.pop('EXECUTE_NOW', None)
+            logger.info(f"[V31.0] {result.symbol}: EXECUTE_NOW resetat — pretul nu mai este in FVG zone")
         elif setup.get('entry1_filled', False):
-            # Executorul a confirmat execuția — acum putem curăța semnalul
+            # Executorul a confirmat executia — acum putem curata semnalul
             setup.pop('EXECUTE_NOW', None)
         # ALTFEL: execution_ready=False dar entry1_filled=False → NU atingem EXECUTE_NOW
-        # Executorul îl va procesa și șterge el însuși la ciclul său de 30s
+
+        # V31.0: Propagam daily_target_price ca daily_tp_price pentru backward compat cu Executor
+        if setup.get('daily_target_price') and not setup.get('daily_tp_price'):
+            setup['daily_tp_price'] = setup['daily_target_price']
 
     def _batch_sync_to_monitoring_setups(
         self,

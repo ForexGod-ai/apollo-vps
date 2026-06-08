@@ -1189,23 +1189,15 @@ class SetupExecutorMonitor:
             }
     
     def _check_pullback_entry(self, setup: dict, df_h1, symbol: str) -> dict:
+        """V31.0 STUB: DEZACTIVAT.
+        Executorul NU mai face analiza SMC proprie.
+        Singurul trigger valid este EXECUTE_NOW=True setat de Radar (multi_tf_radar.py).
+        Functia returneaza imediat KEEP_MONITORING pentru orice apel rezidual.
         """
-        Fix #4 + V14.2 ARHITECTURA SMC STRICTĂ:
-          Daily FVG  = Zonă de Alertă (nu se execută nimic doar pentru că suntem aici)
-          4H CHoCH   = Confirmare obligatorie (Body Close în direcția Daily bias)
-          Entry      = DOAR pe retragerea 50% Fibonacci din impulsul 4H CHoCH
-                       sau atingerea noului 4H FVG generat de CHoCH
-          SL         = Ultimul Swing High/Low de pe 4H precede CHoCH-ul (INTERZIS Daily swing)
-          TP         = Extras din Daily (Swing Point opus — stabilit de scanner)
-
-        Flow:
-        1. V14.2: 4H CHoCH Body Close confirmat în direcția Daily → h4_structure_locked=True
-        2. Fix #4: OBLIGATORIU 4H sync FVG pentru zona de entry — Daily FVG BLOCAT ca fallback
-        3. Fix #2: Detect 1H CHoCH (BOS exclus) în 4H FVG zone
-        4. Fix #1: TP-reached check înainte de pullback step
-        5. Pullback la Fibo 50% din swing 4H → EXECUTE
-        6. Timeout 12H fără pullback → EXPIRED (Fix #1)
-        """
+        # V31.0: Dezactivat complet — Radar-only mode.
+        logger.debug(f"[V31.0] _check_pullback_entry stub: {symbol} → KEEP_MONITORING")
+        return {'action': 'KEEP_MONITORING', 'reason': '[V31.0] Executor fara SMC propriu — asteptam EXECUTE_NOW live de la Radar'}
+        # pylint: disable=unreachable
         # V4.0: Import datetime at function start to avoid UnboundLocalError
         from datetime import datetime
         
@@ -2172,9 +2164,13 @@ class SetupExecutorMonitor:
                 status = setup.get('status', 'MONITORING')
                 
                 # Skip expired or closed setups, but ALLOW READY for immediate execution
-                # V30.4: EXECUTE_NOW=True bypasses status filter — radarul a confirmat, executam imediat
-                # Fara acest fix: WAITING_4H_CHOCH + EXECUTE_NOW=True era sarit de executor pentru totdeauna
-                if status not in ['MONITORING', 'READY', 'WAITING_POSITION_CLOSE']:
+                # V30.4: EXECUTE_NOW=True bypasses status filter
+                # V31.0: WAITING_D1_PULLBACK si WAITING_4H_CHOCH sunt statusuri noi din Scanner V31.0
+                _active_statuses_v31 = [
+                    'MONITORING', 'READY', 'WAITING_POSITION_CLOSE',
+                    'WAITING_D1_PULLBACK', 'WAITING_4H_CHOCH', 'WAITING_1H_CHOCH'
+                ]
+                if status not in _active_statuses_v31:
                     if not setup.get('EXECUTE_NOW', False):
                         continue
                     logger.info(f"[V30.4] {symbol}: status={status} dar EXECUTE_NOW=True — bypass status filter")
@@ -2462,12 +2458,12 @@ class SetupExecutorMonitor:
                             setups[i]['entry1_tp'] = _tp
                             setups[i]['entry1_lots'] = _lot_size_en
                             setups[i]['entry1_time'] = datetime.now(timezone.utc).isoformat()
-                            setups[i]['status'] = 'ACTIVE'
-                            setups[i].pop('EXECUTE_NOW', None)  # eliminare completă cheie
+                            setups[i]['status'] = 'TRADE_OPEN'  # V31.0: status explicit post-executie
+                            setups[i].pop('EXECUTE_NOW', None)  # eliminare completa cheie
                             updated = True
                             # V19.14: Actualizare tracker risc cumulativ
                             _session_risk_used += 0.05
-                            logger.success(f"✅ [V19.8 EXECUTE_NOW] {symbol} executat structural: "
+                            logger.success(f"[V31.0 EXECUTE_NOW] {symbol} executat structural: "
                                            f"SL={_sl_pips_en:.1f}p | Lots={_lot_size_en:.2f} | 5% risk "
                                            f"| Risc cumulat sesiune: {_session_risk_used*100:.0f}%")
                             # V19.14: Anti rate-limit cTrader — 500ms pauză între ordine consecutive
@@ -2528,7 +2524,7 @@ class SetupExecutorMonitor:
                         # 🛡️ V7.1 DUPLICATE GUARD: Check broker before execution
                         if self._symbol_already_at_broker(symbol):
                             logger.warning(f"🛡️ SKIP {symbol}: Already has open position at broker (duplicate guard)")
-                            setups[i]['status'] = 'ACTIVE'
+                            setups[i]['status'] = 'TRADE_OPEN'  # V31.0
                             setups[i]['entry1_filled'] = True
                             setups[i]['force_executed'] = True
                             setups[i]['skip_reason'] = 'duplicate_guard_broker_position_exists'
@@ -2591,22 +2587,19 @@ class SetupExecutorMonitor:
                             setups[i]['entry1_filled'] = True
                             setups[i]['entry1_price'] = setup['entry_price']
                             setups[i]['entry1_time'] = datetime.now(timezone.utc).isoformat()
-                            setups[i]['status'] = 'ACTIVE'
+                            setups[i]['status'] = 'TRADE_OPEN'  # V31.0
                             setups[i]['force_executed'] = True
                             updated = True
                             logger.success(f"✅ {symbol} Entry 1 executed successfully (forced)")
                         else:
                             logger.error(f"❌ {symbol} Entry 1 execution failed (rejected by Risk Manager)")
                             # V10.2 FIX: Do NOT enter Deep Sleep on rejection
-                            # Deep Sleep was causing an infinite loop:
-                            #   READY → reject → sleep → wake → READY → reject → sleep...
-                            # Instead: set status back to ACTIVE so monitor keeps scanning
                             self._track_rejection(f"READY execution rejected for {symbol}")
-                            setups[i]['status'] = 'ACTIVE'
+                            setups[i]['status'] = 'MONITORING'  # V31.0: revenim la MONITORING (nu ACTIVE)
                             setups[i]['last_rejection_time'] = datetime.now(timezone.utc).isoformat()
                             setups[i]['last_rejection_reason'] = 'Risk Manager: daily loss limit'
                             updated = True
-                            logger.warning(f"⚠️ {symbol}: READY → ACTIVE (rejected, will retry when risk allows)")
+                            logger.warning(f"⚠️ {symbol}: READY → MONITORING (rejected, will retry when risk allows)")
                         
                         continue  # Skip pullback logic for READY status
                     
@@ -2648,32 +2641,19 @@ class SetupExecutorMonitor:
                                 'fibo_data': {}
                             }
                         elif use_radar_data:
-                            # 🎯 SNIPER MODE: Use 1H/4H FVG from multi_tf_radar.py
-                            logger.info(f"🎯 {symbol}: SNIPER MODE activated [{radar_source}] - checking radar data...")
+                            # V31.0 RADAR MODE: verificam _check_radar_entry, fara fallback SMC
+                            logger.info(f"{symbol}: RADAR MODE [{radar_source}] - verificare _check_radar_entry...")
                             result = self._check_radar_entry(setup, df_1h, symbol)
-                            
-                            # V16.4 FIX BUG#3: CHoCH radar confirmat dar preț NU în FVG
-                            # → nu bloca în KEEP_MONITORING — verifică Fibo 50% pullback
+
+                            # V31.0: La RADAR_CHOCH_NO_FVG nu mai facem fallback pe pullback
+                            # CHoCH confirmat dar pretul nu e in FVG -> asteptam EXECUTE_NOW live
                             if result.get('action') == 'RADAR_CHOCH_NO_FVG':
-                                logger.info(f"🔄 {symbol}: [V16.4] Radar CHoCH dar fără FVG activ — fallback pe Fibo 50% pullback scan")
-                                # V16.5 FIX BUG#5+6: Propagă confirmările radar în setup
-                                # Altfel executorul re-validează independent cu ATR diferit → poate eșua
-                                if setup.get('radar_4h_choch_detected'):
-                                    setup['h4_structure_locked'] = True     # Trust radar 4H — skip re-validation
-                                    setups[i]['h4_structure_locked'] = True
-                                    logger.info(f"   ✅ [V16.5 BUG#5] {symbol}: h4_structure_locked=True propagat din radar")
-                                # V16.5 FIX BUG#8: Propagă și 1H CHoCH din radar
-                                if setup.get('radar_1h_choch_detected') and not setup.get('choch_1h_detected'):
-                                    setup['choch_1h_detected'] = True
-                                    setup['choch_1h_timestamp'] = setup.get('radar_1h_choch_time', datetime.now(timezone.utc).isoformat())
-                                    setups[i]['choch_1h_detected'] = True
-                                    setups[i]['choch_1h_timestamp'] = setup['choch_1h_timestamp']
-                                    logger.info(f"   ✅ [V16.5 BUG#8] {symbol}: choch_1h_detected=True propagat din radar")
-                                result = self._check_pullback_entry(setup, df_1h, symbol)
+                                logger.info(f"[V31.0] {symbol}: CHoCH radar confirmat, pret nu in FVG — asteptam EXECUTE_NOW live")
+                                result = {'action': 'KEEP_MONITORING', 'reason': '[V31.0] CHoCH ok, pret nu in FVG — asteptam EXECUTE_NOW live'}
                         else:
-                            # 🔄 FALLBACK: Use V3.2 Pullback Strategy (Fibo 50%)
-                            logger.info(f"🔄 {symbol}: FALLBACK MODE - using Fibo 50% logic (no radar confirmation yet)...")
-                            result = self._check_pullback_entry(setup, df_1h, symbol)
+                            # V31.0: Fara confirmare Radar — monitoring pasiv
+                            logger.debug(f"[V31.0] {symbol}: fara CHoCH radar — monitoring pasiv, asteptam EXECUTE_NOW")
+                            result = {'action': 'KEEP_MONITORING', 'reason': '[V31.0] Fara confirmare Radar — asteptam EXECUTE_NOW live'}
                         
                         if result['action'] == 'CHOCH_1H_DETECTED':
                             # 🔔 1H CHoCH just detected - Update setup and RESEND notification

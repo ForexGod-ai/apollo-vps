@@ -258,7 +258,8 @@ class DailyScanner:
             raise RuntimeError(error_msg)
         
         setups_found = []
-        
+        bias_fallback_entries = []  # V31.0: Bias-only entries colectate pentru WIPE final
+
         # V3.0: Load existing monitoring setups to re-evaluate their status
         monitoring_symbols = set()
         try:
@@ -300,8 +301,8 @@ class DailyScanner:
                 # Download Daily data
                 df_daily = self.data_provider.get_historical_data(
                     symbol,
-                    "D1", 
-                    self.scanner_settings['lookback_candles']['daily']
+                    "D1",
+                    250  # V31.0: 250 bare fixe — suficient pentru 1 an D1
                 )
                 
                 if df_daily is None or df_daily.empty:
@@ -335,13 +336,11 @@ class DailyScanner:
                 if df_1h is None:
                     print(f"⚠️ Warning: {symbol} has no 1H data (Entry 1 disabled)")
 
-                # V24.1 WEEKLY ANCHOR: Download 150 W1 bars (~3 ani context macro)
-                # 300 bare = 6 ani includeau cicluri irelevante (ex: COVID 2020)
-                # 150 bare = 3 ani = context institutional optim
-                print(f"   📅 Downloading W1 data (Weekly Anchor — 150 bars, ~3 ani)...")
+                # V31.0: W1 = 52 bare = 1 an (INFORMATIV — nu blochează niciun setup)
+                print(f"   📅 Downloading W1 data (Weekly Anchor — 52 bars, ~1 an)...")
                 df_w1 = None
                 try:
-                    df_w1 = self.data_provider.get_historical_data(symbol, "W1", 150)
+                    df_w1 = self.data_provider.get_historical_data(symbol, "W1", 52)  # V31.0
                     if df_w1 is not None:
                         print(f"   ✅ W1 data: {len(df_w1)} bars")
                     else:
@@ -572,57 +571,33 @@ class DailyScanner:
                     print(f"✓ {symbol} adăugat în raportul de dimineață [{setup_status}]")
                 else:
                     # V10.2: Setup respins — motivul exact a fost printat de smc_detector
-                    # ── V24.8 BIAS FALLBACK ──────────────────────────────────────────────────
-                    # Dacă scan_for_setup() a refuzat perechea (FVG lipsă/mitigat, P/D filter
-                    # etc.) DAR există un CHoCH Daily clar → salvăm un entry minimal cu bias-ul
-                    # corect și status=WAITING_4H_CHOCH. Radarul 4H face filtrarea fină!
-                    # Obiectiv Colonel: 6-8 perechi cu bias direcțional în JSON din 16 scanate.
+                    # ── V31.0 BIAS FALLBACK ──────────────────────────────────────────────────
+                    # Nu mai scriem direct în JSON. Colectăm în bias_fallback_entries[].
+                    # save_monitoring_setups() face WIPE&OVERWRITE la final cu tot.
                     try:
                         _bias_dir = self.smc_detector.determine_daily_trend(df_daily)
                         if _bias_dir in ('bullish', 'bearish'):
                             _bias_trade_dir = 'buy' if _bias_dir == 'bullish' else 'sell'
-                            print(f"📡 [V24.8 BIAS FALLBACK] {symbol}: No FVG setup dar Daily bias = {_bias_dir.upper()} → salvăm WAITING_4H_CHOCH pentru Radar")
-                            # Citim JSON existent și adăugăm/actualizăm entry minimal
-                            _bf_path = 'monitoring_setups.json'
-                            try:
-                                with open(_bf_path, 'r', encoding='utf-8') as _bfr:
-                                    _bf_data = json.load(_bfr)
-                            except Exception:
-                                _bf_data = {'setups': []}
-                            _bf_setups = _bf_data.get('setups', _bf_data) if isinstance(_bf_data, dict) else _bf_data
-                            # Nu suprascrie setup-uri active (EXECUTE_NOW, MONITORING cu FVG)
-                            _existing_syms = {s.get('symbol'): s for s in _bf_setups if isinstance(s, dict)}
-                            _existing = _existing_syms.get(symbol, {})
-                            _existing_status = _existing.get('status', '')
-                            _skip_statuses = {'EXECUTE_NOW', 'READY', 'EXPIRED', 'CLOSED', 'CANCELLED', 'FAILED'}
-                            if _existing_status not in _skip_statuses:
-                                _bias_entry = {
-                                    'symbol': symbol,
-                                    'direction': _bias_trade_dir,
-                                    'd1_bias_direction': _bias_dir,
-                                    'status': 'WAITING_4H_CHOCH',
-                                    'strategy_type': 'continuation',
-                                    'strategy_locked': True,
-                                    'daily_bias_active': True,
-                                    'entry_price': None,
-                                    'stop_loss': None,
-                                    'take_profit': None,
-                                    'fvg_top': None,
-                                    'fvg_bottom': None,
-                                    'setup_time': datetime.now().isoformat(),
-                                    'bias_fallback': True,  # marker că vine din fallback, nu din FVG complet
-                                }
-                                _existing_syms[symbol] = _bias_entry
-                                _bf_new_setups = list(_existing_syms.values())
-                                _bf_write = {'setups': _bf_new_setups, 'last_updated': datetime.now().isoformat()}
-                                _bf_tmp = _bf_path + '.tmp'
-                                with open(_bf_tmp, 'w', encoding='utf-8') as _bfw:
-                                    json.dump(_bf_write, _bfw, indent=2)
-                                import os as _bf_os
-                                _bf_os.replace(_bf_tmp, _bf_path)
-                                print(f"   ✅ [V24.8] {symbol} {_bias_trade_dir.upper()} bias salvat în JSON → Radar va confirma 4H CHoCH")
-                            else:
-                                print(f"   ⏭️  [V24.8] {symbol}: setup activ ({_existing_status}) — bias fallback ignorat")
+                            print(f"📡 [V31.0 BIAS FALLBACK] {symbol}: bias={_bias_dir.upper()} → colectat WAITING_D1_PULLBACK")
+                            bias_fallback_entries.append({
+                                'symbol': symbol,
+                                'direction': _bias_trade_dir,
+                                'd1_bias_direction': _bias_dir,
+                                'daily_bias': _bias_dir.upper(),
+                                'setup_type': 'CONTINUATION',
+                                'strategy_type': 'continuation',
+                                'strategy_locked': True,
+                                'daily_bias_active': True,
+                                'poi_top': None,
+                                'poi_bottom': None,
+                                'fvg_top': None,
+                                'fvg_bottom': None,
+                                'daily_target_price': None,
+                                'status': 'WAITING_D1_PULLBACK',
+                                'setup_time': datetime.now().isoformat(),
+                                'bias_fallback': True,
+                            })
+                            print(f"   ✅ [V31.0] {symbol} {_bias_trade_dir.upper()} → bias_fallback_entries ({len(bias_fallback_entries)} total)")
                         else:
                             print(f"⛔ {symbol} — NO SETUP + BIAS NEUTRAL [V10.2 REJECT: vezi log-ul ↑]")
                     except Exception as _bf_err:
@@ -710,9 +685,9 @@ class DailyScanner:
         brand_new_setups   = [s for s in all_active_setups if s.symbol not in monitoring_symbols]
         re_evaluated_setups = [s for s in all_active_setups if s.symbol in monitoring_symbols]
 
-        # SAVE first, then show final summary
-        save_monitoring_setups(all_active_setups)
-        
+        # SAVE first, then show final summary — V31.0: WIPE + bias fallback
+        save_monitoring_setups(all_active_setups, bias_fallback_entries)
+
         # Now reload to get accurate count
         final_monitoring_count = 0
         try:
@@ -870,18 +845,16 @@ class DailyScanner:
             self.data_provider.disconnect()
 
 
-def save_monitoring_setups(setups: List[TradeSetup]):
-    """Salvează setup-urile MONITORING și READY în monitoring_setups.json
-    
-    V3.0: Salvăm AMBELE statusuri:
-    - MONITORING: așteptăm 4H CHoCH + price in FVG
-    - READY: poate fi executat (4H confirmat + price în FVG)
-    
-    IMPORTANT: Păstrează setups existente și adaugă doar pe cele noi.
-    Doar dacă același symbol are setup nou, îl înlocuiește.
-    
-    V11.0 CONFLICT GUARD: Nu suprascrie un setup cu direcție OPUSĂ față de o poziție deschisă.
+def save_monitoring_setups(setups: List[TradeSetup], bias_fallback: list = None):
+    """[V31.0 WIPE&OVERWRITE] Scanner scrie JSON PROASPĂT în fiecare dimineață.
+    Zero merge cu existing — zombie-urile sunt structuralmente imposibile.
+
+    setups:        TradeSetup objects din smc_detector (pot fi 0 dacă nicio pereche)
+    bias_fallback: dicts minimale cu bias direction (fără FVG confirmat)
     """
+    if bias_fallback is None:
+        bias_fallback = []
+
     # V11.0: Load open positions for direction conflict check
     open_position_dir_map = {}
     try:
@@ -896,107 +869,75 @@ def save_monitoring_setups(setups: List[TradeSetup]):
         pass  # If we can't load, no guard applied (safe fallback)
 
     try:
-        # Load existing setups FIRST
-        existing_setups = {}
-        try:
-            with open('monitoring_setups.json', 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                
-                # V8.0 FAILSAFE: Handle both formats (dict with 'setups' key or direct list)
-                if isinstance(data, dict):
-                    setups_list = data.get("setups", [])
-                elif isinstance(data, list):
-                    # Old format: direct array
-                    setups_list = data
-                else:
-                    setups_list = []
-                
-                for setup in setups_list:
-                    if isinstance(setup, dict) and "symbol" in setup:
-                        existing_setups[setup["symbol"]] = setup
-        except FileNotFoundError:
-            pass  # No existing file, start fresh
-        except json.JSONDecodeError:
-            print(f"⚠️  WARNING: monitoring_setups.json corrupted. Starting fresh...")
-            pass
-        
-        # Add/update with new setups (both MONITORING and READY)
+        monitoring_setups = []  # V31.0: WIPE — nu se încarcă nimic din existing
+
+        # --- Full setups (TradeSetup objects din smc_detector) ---
         for setup in setups:
-            # V3.0: Save BOTH MONITORING and READY status
-            if setup.status in ["MONITORING", "READY"]:
-                # Convert setup_time to proper datetime string
-                if isinstance(setup.setup_time, (int, float)):
-                    setup_time_str = datetime.fromtimestamp(setup.setup_time).isoformat()
-                elif isinstance(setup.setup_time, str):
-                    setup_time_str = setup.setup_time
-                elif hasattr(setup.setup_time, 'isoformat'):
-                    setup_time_str = setup.setup_time.isoformat()
-                else:
-                    setup_time_str = datetime.now().isoformat()
-                
-                # V8.2 FAIL-SAFE: Validate critical fields before saving
-                if setup.entry_price is None or setup.stop_loss is None or setup.take_profit is None:
-                    print(f"⚠️  WARNING: Skipping {setup.symbol} - incomplete data (entry/SL/TP is None)")
-                    continue
-                
-                # Extract FVG values safely
-                fvg_top = setup.fvg.top if setup.fvg and hasattr(setup.fvg, 'top') else setup.entry_price
-                fvg_bottom = setup.fvg.bottom if setup.fvg and hasattr(setup.fvg, 'bottom') else setup.entry_price
-                
-                # ✅ V10.5 HANDSHAKE: Extract 4H Sync FVG (entry zone from 4H confirmation move)
-                h4_sync_fvg_top    = float(setup.h4_sync_fvg_top)    if hasattr(setup, 'h4_sync_fvg_top')    and setup.h4_sync_fvg_top    else 0.0
-                h4_sync_fvg_bottom = float(setup.h4_sync_fvg_bottom) if hasattr(setup, 'h4_sync_fvg_bottom') and setup.h4_sync_fvg_bottom else 0.0
-                
-                monitoring_setup = {
-                    "symbol": setup.symbol,
-                    "direction": "buy" if setup.daily_choch.direction == "bullish" else "sell",
-                    "entry_price": float(setup.entry_price),
-                    "stop_loss": float(setup.stop_loss),
-                    "take_profit": float(setup.take_profit),
-                    "risk_reward": float(setup.risk_reward) if setup.risk_reward else 0.0,
-                    # ✅ V10.5 STRATEGY LOCK: Explicit D1 bias tag — drives ALL downstream logic
-                    "strategy_type": setup.strategy_type,  # 'reversal' or 'continuation' — NEVER empty
-                    "strategy_locked": True,               # Confirms D1 bias was explicitly determined
-                    "d1_bias_direction": setup.daily_choch.direction,  # 'bullish' or 'bearish' — for LURKING mode
-                    "setup_time": setup_time_str,
-                    "priority": setup.priority,
-                    "status": setup.status,  # V3.0: Include status field
-                    # ✅ V10.5 FVG FIELDS: Both Daily FVG and 4H Sync FVG saved
-                    # setup_executor_monitor.py prefers h4_sync_fvg if available
-                    "fvg_top": float(fvg_top) if fvg_top is not None else float(setup.entry_price),
-                    "fvg_bottom": float(fvg_bottom) if fvg_bottom is not None else float(setup.entry_price),
-                    "h4_sync_fvg_top":    h4_sync_fvg_top,     # 4H confirmation move FVG (optimal entry zone)
-                    "h4_sync_fvg_bottom": h4_sync_fvg_bottom,  # 0.0 if no 4H sync yet
-                    "lot_size": 0.01,  # Default lot size — recalculated by Risk Manager at execution
-                    # ✅ V10.9 CARRY MATRIX: Live swap rates from cTrader
-                    "swap_long":        getattr(setup, 'swap_long', None),
-                    "swap_short":       getattr(setup, 'swap_short', None),
-                    "swap_triple_day":  getattr(setup, 'swap_triple_day', None),
-                    # V24.5: Structural SL/TP fields pentru executor
-                    # daily_tp_price = nearest D1 Swing High (LONG) / Swing Low (SHORT) = Liquidity Target
-                    # h4_sl_price    = scris de Radar (swing_broken 4H ± 3 pips) — NU de scanner
-                    "daily_tp_price":   getattr(setup, 'daily_tp_price', None),
-                    # V24.6 PERMISSIVE DAILY FLOW: FVG corp absent — zona sintetic Equilibrium
-                    # Radarul 4H este OBLIGATORIU — executorul NU execut fără 4H CHoCH confirmat
-                    "daily_bias_active": bool(getattr(setup, 'daily_bias_active', False)),
-                }
+            if setup.status not in ["MONITORING", "READY", "WAITING_D1_PULLBACK",
+                                    "WAITING_4H_CHOCH", "WAITING_1H_CHOCH"]:
+                continue
 
-                # V11.0 CONFLICT GUARD (second line of defence inside save):
-                # If an open position exists with OPPOSITE direction, do NOT overwrite
-                new_dir = monitoring_setup["direction"]  # 'buy' or 'sell'
-                open_dir = open_position_dir_map.get(setup.symbol)
-                if open_dir and open_dir != new_dir:
-                    print(f"⛔ SAVE GUARD: {setup.symbol} — NOT saving {new_dir.upper()} setup, "
-                          f"open {open_dir.upper()} position exists")
-                    continue  # Skip this setup entirely
+            direction = "buy" if setup.daily_choch.direction == "bullish" else "sell"
 
-                existing_setups[setup.symbol] = monitoring_setup  # Update/add
-        
-        # Convert back to list
-        monitoring_setups = list(existing_setups.values())
-        
-        # ALWAYS save (even if empty, to update timestamp)
-        # V24.9: Atomic write — .tmp + os.replace() previne coruperea JSON la crash/restart Watchdog
+            # Conflict guard
+            open_dir = open_position_dir_map.get(setup.symbol)
+            if open_dir and open_dir != direction:
+                print(f"⛔ SAVE GUARD: {setup.symbol} — NOT saving {direction.upper()} setup, "
+                      f"open {open_dir.upper()} position exists")
+                continue
+
+            # Convert setup_time
+            if isinstance(setup.setup_time, (int, float)):
+                setup_time_str = datetime.fromtimestamp(setup.setup_time).isoformat()
+            elif isinstance(setup.setup_time, str):
+                setup_time_str = setup.setup_time
+            elif hasattr(setup.setup_time, 'isoformat'):
+                setup_time_str = setup.setup_time.isoformat()
+            else:
+                setup_time_str = datetime.now().isoformat()
+
+            # V31.0: poi_top/poi_bottom = FVG zone (zona de watch pentru Radar)
+            fvg_top    = setup.fvg.top    if setup.fvg and hasattr(setup.fvg, 'top')    else None
+            fvg_bottom = setup.fvg.bottom if setup.fvg and hasattr(setup.fvg, 'bottom') else None
+
+            monitoring_setup = {
+                "symbol":             setup.symbol,
+                "direction":          direction,
+                "daily_bias":         setup.daily_choch.direction.upper(),
+                "setup_type":         (getattr(setup, 'strategy_type', 'continuation') or 'continuation').upper(),
+                "strategy_type":      getattr(setup, 'strategy_type', 'continuation'),
+                "strategy_locked":    True,
+                "d1_bias_direction":  setup.daily_choch.direction,
+                "daily_bias_active":  True,
+                # V31.0 Zone fields — Radar entry zone
+                "poi_top":            float(fvg_top)    if fvg_top    is not None else None,
+                "poi_bottom":         float(fvg_bottom) if fvg_bottom is not None else None,
+                "fvg_top":            float(fvg_top)    if fvg_top    is not None else None,  # backward compat
+                "fvg_bottom":         float(fvg_bottom) if fvg_bottom is not None else None,
+                "daily_target_price": getattr(setup, 'daily_tp_price', None),
+                # V31.0: Scanner NU calculează entry/SL/TP — Radar face asta live
+                "status":             "WAITING_D1_PULLBACK",
+                "setup_time":         setup_time_str,
+                "priority":           setup.priority,
+                # Optional carry data (informativ)
+                "swap_long":          getattr(setup, 'swap_long', None),
+                "swap_short":         getattr(setup, 'swap_short', None),
+                "swap_triple_day":    getattr(setup, 'swap_triple_day', None),
+            }
+            monitoring_setups.append(monitoring_setup)
+
+        # --- Bias fallback entries (already dicts, fără FVG confirmat) ---
+        for entry in bias_fallback:
+            sym = entry.get('symbol')
+            direction = entry.get('direction', '')
+            open_dir = open_position_dir_map.get(sym)
+            if open_dir and open_dir != direction:
+                print(f"⛔ SAVE GUARD: {sym} — NOT saving bias fallback {direction.upper()}, "
+                      f"open {open_dir.upper()} position exists")
+                continue
+            monitoring_setups.append(entry)
+
+        # V24.9: Atomic write — .tmp + os.replace() previne coruperea JSON
         _ms_write = {
             "setups": monitoring_setups,
             "last_updated": datetime.now().isoformat()
@@ -1006,12 +947,12 @@ def save_monitoring_setups(setups: List[TradeSetup]):
             json.dump(_ms_write, f, indent=2)
         import os as _ms_os
         _ms_os.replace(_ms_tmp, 'monitoring_setups.json')
-        
+
         if monitoring_setups:
-            print(f"\n💾 Saved {len(monitoring_setups)} setup(s) to MONITORING (kept existing + added new)")
+            print(f"\n💾 [V31.0 WIPE] Scris {len(monitoring_setups)} setup(s) proaspete → zero zombie-uri")
         else:
-            print(f"\n💾 No monitoring setups (file cleared)")
-        
+            print(f"\n💾 [V31.0 WIPE] 0 setup-uri → monitoring_setups.json curat")
+
     except Exception as e:
         print(f"❌ Error saving monitoring setups: {e}")
 
@@ -1051,16 +992,8 @@ def main():
     # Run full daily scan
     setups = scanner.run_daily_scan()
 
-    # V24.5 FIX: CRITICAL GUARD — nu salva niciodată stale data după un scan eșuat.
-    # run_daily_scan() ridică RuntimeError dacă cTrader e offline → ajungem în
-    # blocul except de mai jos cu sys.exit(1). Dacă totuși returnează [] fără excepție
-    # (alt tip de eșec intern), nu suprascrie JSON-ul.
-    # REGULA: salvăm monitoring_setups.json DOAR dacă scanul a produs date reale.
-    if setups is not None:
-        save_monitoring_setups(setups if setups else [])
-    else:
-        print("⚠️ [V24.5] Scan returned None — monitoring_setups.json NOT overwritten (stale data protected)")
-    
+    # V31.0: save_monitoring_setups() WIPE apelat intern de run_daily_scan() — nu repetăm din main().
+
     # Print summary
     if setups:
         print("\n📋 SETUPS SUMMARY:")
