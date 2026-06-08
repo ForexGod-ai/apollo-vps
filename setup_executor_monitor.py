@@ -299,8 +299,8 @@ class SetupExecutorMonitor:
             'swing_lookback_candles': 5,
             'sl_buffer_pips': 10,
             'on_timeout_action': 'force_entry',
-            'use_1h_sl': True,  # 🎯 V3.3 SNIPER: Use 1H SL instead of Daily SL
-            'use_4h_sl': True   # 💎 V3.3 HIGH CONFIDENCE: Use 4H SL for 4H entries
+            'use_1h_sl': True,  # [LEGACY — Dezactivat permanent din V31.0] V3.3 SNIPER SL
+            'use_4h_sl': True   # [LEGACY — Dezactivat permanent din V31.0] V3.3 HIGH CONFIDENCE SL
         })
         
         # SMC Detector for CHoCH detection
@@ -318,8 +318,8 @@ class SetupExecutorMonitor:
         logger.info(f"⏱️  Check interval: {check_interval}s")
         logger.info(f"📊 Execution Strategy: {self.execution_strategy.get('mode', 'N/A')}")
         logger.info(f"🎯 V3.2 Pullback Strategy: {'ENABLED' if self.pullback_config['enabled'] else 'DISABLED'}")
-        logger.info(f"🎯 V3.3 SNIPER SL (1H): {'ENABLED' if self.pullback_config.get('use_1h_sl', True) else 'DISABLED'}")
-        logger.info(f"💎 V3.3 HIGH CONFIDENCE SL (4H): {'ENABLED' if self.pullback_config.get('use_4h_sl', True) else 'DISABLED'}")
+        logger.info(f"[LEGACY V3.3 — dezactivat V31.0] SL 1H: {'ENABLED' if self.pullback_config.get('use_1h_sl', True) else 'DISABLED'}")
+        logger.info(f"[LEGACY V3.3 — dezactivat V31.0] SL 4H: {'ENABLED' if self.pullback_config.get('use_4h_sl', True) else 'DISABLED'}")
     
     def _load_config(self):
         """Load pairs_config.json"""
@@ -961,24 +961,14 @@ class SetupExecutorMonitor:
             return False, 0
     
     def _check_radar_entry(self, setup: dict, df_h1, symbol: str) -> dict:
+        """[LEGACY — Dezactivat permanent din V31.0]
+        V3.3 SNIPER ENTRY a fost înlocuit de arhitectura Radar-only (multi_tf_radar.py).
+        Singurul trigger valid de execuție este EXECUTE_NOW=True setat de Radar.
+        Executorul NU mai face analiză SMC proprie (FVG / P/D / CHoCH independent).
         """
-        🎯 V3.3 SNIPER ENTRY - Uses 1H/4H FVG data from multi_tf_radar.py
-        
-        Priority System:
-        1. If radar_1h_in_fvg=True → EXECUTE_ENTRY1 (SNIPER)
-        2. If radar_4h_in_fvg=True → EXECUTE_ENTRY2 (HIGH CONFIDENCE)
-        3. Otherwise → KEEP_MONITORING
-        
-        Entry Point: 
-        - 1H: Use radar_1h_fvg_entry (middle of 1H FVG)
-        - 4H: Use radar_4h_fvg_entry (middle of 4H FVG)
-        
-        Stop Loss:
-        - 1H: Use 1H CHoCH swing + 10 pips buffer (SNIPER SL)
-        - 4H: Use 4H CHoCH swing + 10 pips buffer
-        
-        This replaces Fibonacci 50% logic with actual FVG entry zones.
-        """
+        logger.debug(f"[V31.0 LEGACY] _check_radar_entry: {symbol} → KEEP_MONITORING")
+        return {'action': 'KEEP_MONITORING', 'reason': '[V31.0 LEGACY] Radar-only mode — doar EXECUTE_NOW=True declanseaza executia'}
+        # pylint: disable=unreachable
         direction = setup['direction'].lower()
         
         # Get radar data

@@ -1307,12 +1307,11 @@ class MultiTFRadar:
         Poarta 2: Target Atins Fara Noi
           Pretul atinge daily_tp_price fara entry1_filled → COMPLETED_WITHOUT_ENTRY
 
-        Poarta 3: Timeout 5 Zile Lucratoare
-          WAITING_D1_PULLBACK > 5 zile lucratoare → EXPIRED_TIMEOUT
+        V35: Poarta 3 (Timeout Calendaristic) ELIMINATA definitiv.
+          Setup-urile in WAITING_D1_PULLBACK NU expira pe timp — numai structural.
         """
         import os as _os
 
-        _BUSINESS_DAYS = 5
         _TERMINAL_STATUSES = {
             'INVALIDATED', 'COMPLETED_WITHOUT_ENTRY', 'EXPIRED_TIMEOUT',
             'EXPIRED', 'CLOSED', 'FAILED', 'CANCELLED', 'TRADE_OPEN'
@@ -1367,26 +1366,9 @@ class MultiTFRadar:
                         changed = True
                         continue
 
-            # ── POARTA 3: Timeout 5 Zile Lucratoare ──────────────────────────────
-            if status == 'WAITING_D1_PULLBACK':
-                _stime_str = s.get('setup_time')
-                if _stime_str:
-                    try:
-                        from datetime import timezone as _tz
-                        _stime = datetime.fromisoformat(_stime_str)
-                        if _stime.tzinfo is None:
-                            _stime = _stime.replace(tzinfo=_tz.utc)
-                        _now_utc = datetime.now(_tz.utc)
-                        _delta = _now_utc - _stime
-                        # Estimam zile lucratoare: 5/7 * zile calendaristice
-                        _biz_days = _delta.days * 5 / 7
-                        if _biz_days > _BUSINESS_DAYS:
-                            s['status'] = 'EXPIRED_TIMEOUT'
-                            s['invalidation_reason'] = f'P3: {_delta.days} zile > 5 zile lucratoare fara activare'
-                            logger.warning(f"[V33 POARTA 3] {sym} EXPIRED_TIMEOUT: {_delta.days} zile in WAITING_D1_PULLBACK")
-                            changed = True
-                    except Exception as _te:
-                        logger.debug(f"[V33 POARTA 3] {sym}: eroare calcul timp ({_te})")
+        # V35: Poarta 3 (Timeout Calendaristic) ELIMINATA definitiv.
+        # Setup-urile in WAITING_D1_PULLBACK raman active pana la invalidare structurala
+        # (Poarta 1 sau Poarta 2). Sistemul nu mai ucide oportunitate pe criterii de timp.
 
         # Daca ceva s-a schimbat, salvam imediat JSON-ul (inainte de analiza structurala)
         if changed:

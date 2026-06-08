@@ -506,6 +506,33 @@ class DailyScanner:
                         setup.daily_tp_price = None
                         print(f"   ⚠️ [V24.6 D1 TP] Eroare calcul daily_tp_price: {_dtp_err}")
 
+                    # ✅ V35 T2: Pivoti structurali D1 pentru Poarta 1 (Gate 1 - Invalidare Structurala)
+                    # daily_swing_low  (LONG) : cel mai adanc swing low sub pret  = baza structurala D1
+                    # daily_swing_high (SHORT): cel mai inalt swing high deasupra  = plafonul structural D1
+                    # Poarta 1 in _apply_lifecycle_gates() marcheaza INVALIDATED daca:
+                    #   LONG:  close < daily_swing_low  (baza sparta -> structura bullish invalida)
+                    #   SHORT: close > daily_swing_high (plafonul spart -> structura bearish invalida)
+                    try:
+                        _gate1_dir = setup.daily_choch.direction  # 'bullish' / 'bearish'
+                        _gate1_px  = float(df_daily['close'].iloc[-1])
+                        if _gate1_dir == 'bullish':
+                            _gate1_lows  = self.smc_detector.detect_swing_lows(df_daily)
+                            _gate1_below = [s for s in _gate1_lows if s.price < _gate1_px]
+                            setup.daily_swing_low  = float(min(_gate1_below, key=lambda s: s.price).price) if _gate1_below else None
+                            setup.daily_swing_high = None
+                            if setup.daily_swing_low:
+                                print(f"   🏛️  [V35 GATE1] {symbol} LONG: baza structurala D1 = {setup.daily_swing_low:.5f}")
+                        else:
+                            _gate1_highs = self.smc_detector.detect_swing_highs(df_daily)
+                            _gate1_above = [s for s in _gate1_highs if s.price > _gate1_px]
+                            setup.daily_swing_high = float(max(_gate1_above, key=lambda s: s.price).price) if _gate1_above else None
+                            setup.daily_swing_low  = None
+                            if setup.daily_swing_high:
+                                print(f"   🏛️  [V35 GATE1] {symbol} SHORT: plafon structural D1 = {setup.daily_swing_high:.5f}")
+                    except Exception as _gate1_err:
+                        setup.daily_swing_low  = None
+                        setup.daily_swing_high = None
+
                     # ✅ V10.9 CARRY MATRIX: Fetch live swap rates and attach to setup
                     try:
                         swap_info = self.data_provider.client.get_swap_info(symbol)
@@ -963,6 +990,8 @@ def save_monitoring_setups(setups: List[TradeSetup], bias_fallback: list = None)
                 "swap_long":          getattr(setup, 'swap_long', None),
                 "swap_short":         getattr(setup, 'swap_short', None),
                 "swap_triple_day":    getattr(setup, 'swap_triple_day', None),
+                "daily_swing_low":    getattr(setup, 'daily_swing_low',  None),  # V35 T2: Gate 1 baza structurala (LONG)
+                "daily_swing_high":   getattr(setup, 'daily_swing_high', None),  # V35 T2: Gate 1 plafon structural (SHORT)
             }
             monitoring_setups.append(monitoring_setup)
             preserved_symbols.add(setup.symbol)
