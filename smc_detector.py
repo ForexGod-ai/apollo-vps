@@ -2617,6 +2617,7 @@ class SMCDetector:
             else:
                 pip_size = 0.0001
             sl_buffer = pip_size * 2  # 2 pips buffer sub swing Low (spread protection)
+            body_lows_4h = df_4h[['open', 'close']].min(axis=1)  # V36.1: pre-calculat — fix UnboundLocalError
             # Calculăm ATR 14 pentru a filtra micro-fractali
             atr_14 = (df_4h['high'] - df_4h['low']).rolling(14).mean().iloc[h4_choch_idx] if h4_choch_idx >= 14 else (df_4h['high'] - df_4h['low']).mean()
             stop_loss = None
@@ -2654,13 +2655,10 @@ class SMCDetector:
                     # Executorul recalculeaza SL live la EXECUTE_NOW si aplica guard 5-300p.
                     print(f"   ⚠️ [V34 SL INFO] {symbol} LONG: SL {sl_distance_pips:.1f}p > {_max_sl_pips}p — "
                           f"acceptat de Scanner, Executor va recalcula SL live la EXECUTE_NOW")
-                sl_window_start = max(0, h4_choch_idx - 40)
-                stop_loss = body_lows_4h.iloc[sl_window_start:].min() - sl_buffer
-                print(f"   🛡️ [V14.1 SL FALLBACK] Body min 40-bar window: {stop_loss:.5f}")
+                    # V36.1: SL structural pastrat intact — Executor recalculeaza la EXECUTE_NOW
 
-            # Validare: SL trebuie să fie sub entry pentru LONG
-            if stop_loss >= entry:
-                body_lows_4h = df_4h[['open', 'close']].min(axis=1)
+            # Validare: SL trebuie să fie sub entry pentru LONG (V36.1: body_lows_4h pre-calculat sus)
+            if stop_loss is not None and stop_loss >= entry:
                 stop_loss = body_lows_4h.min() - sl_buffer
                 print(f"   🛡️ [V13.2 SL FALLBACK2] Body min total 4H: {stop_loss:.5f}")
 
@@ -2752,6 +2750,7 @@ class SMCDetector:
             else:
                 pip_size = 0.0001
             sl_buffer = pip_size * 2  # 2 pips buffer deasupra swing High (spread protection)
+            body_highs_4h = df_4h[['open', 'close']].max(axis=1)  # V36.1: pre-calculat — fix UnboundLocalError
             # Calculăm ATR 14 pentru a filtra micro-fractali
             atr_14 = (df_4h['high'] - df_4h['low']).rolling(14).mean().iloc[h4_choch_idx] if h4_choch_idx >= 14 else (df_4h['high'] - df_4h['low']).mean()
             stop_loss = None
@@ -2789,13 +2788,10 @@ class SMCDetector:
                     # Executorul recalculeaza SL live la EXECUTE_NOW si aplica guard 5-300p.
                     print(f"   ⚠️ [V34 SL INFO] {symbol} SHORT: SL {sl_distance_pips:.1f}p > {_max_sl_pips}p — "
                           f"acceptat de Scanner, Executor va recalcula SL live la EXECUTE_NOW")
-                sl_window_start = max(0, h4_choch_idx - 40)
-                stop_loss = body_highs_4h.iloc[sl_window_start:].max() + sl_buffer
-                print(f"   🛡️ [V14.1 SL FALLBACK] Body max 40-bar window: {stop_loss:.5f}")
+                    # V36.1: SL structural pastrat intact — Executor recalculeaza la EXECUTE_NOW
 
-            # Validare: SL trebuie să fie deasupra entry pentru SHORT
-            if stop_loss <= entry:
-                body_highs_4h = df_4h[['open', 'close']].max(axis=1)
+            # Validare: SL trebuie să fie deasupra entry pentru SHORT (V36.1: body_highs_4h pre-calculat sus)
+            if stop_loss is not None and stop_loss <= entry:
                 stop_loss = body_highs_4h.max() + sl_buffer
                 print(f"   🛡️ [V13.2 SL FALLBACK2] Body max total 4H: {stop_loss:.5f}")
 
