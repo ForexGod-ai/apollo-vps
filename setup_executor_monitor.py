@@ -2604,56 +2604,15 @@ class SetupExecutorMonitor:
                         continue  # Skip pullback logic for READY status
                     
                     if not entry1_filled:
-                        # ========== V3.3 SNIPER ENTRY LOGIC (RADAR-ENHANCED) ==========
-                        # Priority 1: Use 1H FVG from radar (if available)
-                        # Priority 2: Fall back to V3.2 Pullback Strategy (Fibo 50%)
-                        
-                        # V15.5 FIX: use_radar_data = True dacă ORICARE dintre 1H SAU 4H are CHoCH confirmat
-                        # BUG anterior: verifica DOAR radar_1h_choch_detected → dacă doar 4H confirma,
-                        # use_radar_data=False → _check_radar_entry() cu logica 4H nu era apelată niciodată
-                        # → USDCAD 4H CHoCH clar vizibil dar executorul intra pe Fibo fallback ignorând 4H
-                        radar_1h_ok = bool(setup.get('radar_1h_choch_detected', False))
-                        radar_4h_ok = bool(setup.get('radar_4h_choch_detected', False))
-                        use_radar_data = radar_1h_ok or radar_4h_ok
-                        radar_source = ("1H+4H" if radar_1h_ok and radar_4h_ok else
-                                        "1H" if radar_1h_ok else
-                                        "4H" if radar_4h_ok else "NONE")
-                        logger.debug(f"🔍 {symbol}: Entry 1 logic - use_radar_data={use_radar_data} (source={radar_source})")
-                        
-                        # ━━━ V18: EXECUTE_NOW — cheia supremă scrisă de Radar ━━━━━━━━━━━━━━━━━━
-                        # Dacă Radarul a confirmat 4H CHoCH în zona Daily validă și prețul e în FVG,
-                        # sărim TOATE re-validările locale și executăm direct, necondiționat.
-                        # setup_executor_monitor nu mai face propria validare structurală.
-                        if setup.get('EXECUTE_NOW') == True:
-                            _en_entry = (
-                                setup.get('radar_4h_fvg_entry') or
-                                setup.get('radar_1h_fvg_entry') or
-                                setup.get('entry_price', 0)
-                            )
-                            logger.success(f"🔥 [V18 EXECUTE_NOW] {symbol}: Radar cheia supremă detectată → execuție directă @ {_en_entry:.5f}")
-                            result = {
-                                'action': 'EXECUTE_ENTRY1',
-                                'entry_price': _en_entry,
-                                'stop_loss': setup.get('stop_loss', 0),
-                                'reason': '🔥 [V18 EXECUTE_NOW] 4H CHoCH confirmat în zona Daily — execuție necondiționată',
-                                'entry_type': 'EXECUTE_NOW',
-                                'choch_timestamp': setup.get('radar_4h_choch_time', datetime.now(timezone.utc).isoformat()),
-                                'fibo_data': {}
-                            }
-                        elif use_radar_data:
-                            # V31.0 RADAR MODE: verificam _check_radar_entry, fara fallback SMC
-                            logger.info(f"{symbol}: RADAR MODE [{radar_source}] - verificare _check_radar_entry...")
-                            result = self._check_radar_entry(setup, df_1h, symbol)
-
-                            # V31.0: La RADAR_CHOCH_NO_FVG nu mai facem fallback pe pullback
-                            # CHoCH confirmat dar pretul nu e in FVG -> asteptam EXECUTE_NOW live
-                            if result.get('action') == 'RADAR_CHOCH_NO_FVG':
-                                logger.info(f"[V31.0] {symbol}: CHoCH radar confirmat, pret nu in FVG — asteptam EXECUTE_NOW live")
-                                result = {'action': 'KEEP_MONITORING', 'reason': '[V31.0] CHoCH ok, pret nu in FVG — asteptam EXECUTE_NOW live'}
-                        else:
-                            # V31.0: Fara confirmare Radar — monitoring pasiv
-                            logger.debug(f"[V31.0] {symbol}: fara CHoCH radar — monitoring pasiv, asteptam EXECUTE_NOW")
-                            result = {'action': 'KEEP_MONITORING', 'reason': '[V31.0] Fara confirmare Radar — asteptam EXECUTE_NOW live'}
+                        # ━━━ V31.0 EXECUTOR BLIND — zero initiativa SMC proprie ━━━━━━━━━━
+                        # EXECUTE_NOW este tratata EXCLUSIV in blocul V19.8 de mai sus.
+                        # Daca ajungem aici cu entry1_filled=False = EXECUTE_NOW nu era setat
+                        # (lag 5s intre Radar si Executor) sau V19.8 a rejectat si a pop-at flagul.
+                        # FIX Bug #01 & #18: eliminam _check_radar_entry() si _check_pullback_entry()
+                        # din calea de executie — evitam bypass al Risk Manager si dual personality.
+                        # Singura actiune valida = KEEP_MONITORING → asteptam EXECUTE_NOW live.
+                        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+                        result = {'action': 'KEEP_MONITORING', 'reason': '[V31.0] Blind executor — asteptam EXECUTE_NOW de la Radar'}
                         
                         if result['action'] == 'CHOCH_1H_DETECTED':
                             # 🔔 1H CHoCH just detected - Update setup and RESEND notification

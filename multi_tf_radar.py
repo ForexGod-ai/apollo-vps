@@ -502,23 +502,42 @@ class MultiTFRadar:
             except Exception:
                 pass
 
-            # ── V24.5: Structural SL = swing_broken.price ± 3 pip buffer ──────
-            # SL-ul autentic SMC: nivelul swing-ului rupt de CHoCH, cu buffer mic.
-            # LONG (bullish CHoCH): swing_broken este un Swing Low → SL sub el
-            # SHORT (bearish CHoCH): swing_broken este un Swing High → SL deasupra lui
+            # ── V31.0 STRUCTURAL SL: Swing Low/High de baza — nu swing_broken immediate ──
+            # Bug #08/#13: swing_broken.price era prea aproape de entry (BOS micro-impuls = 3 pip SL)
+            # Fix: cautam ultimul Swing Low structural SUB swing_broken (baza reala a impulsului)
+            # pentru BUY. Pentru SELL: ultimul Swing High structural DEASUPRA swing_broken.
+            # + 2 pip spread buffer (era 3 pip, insuficient pt spread la deschidere)
             h4_sl_price = None
             try:
-                _sl_swing_price = float(latest_choch.swing_broken.price)
-                _sl_buffer = self._get_pip_size(symbol) * 3  # 3 pip buffer
+                _sl_pip = self._get_pip_size(symbol)
+                _sl_buffer = _sl_pip * 2  # V31.0: 2 pip spread buffer
+                _sb_price = float(latest_choch.swing_broken.price)
                 if choch_direction == 'bullish':
-                    h4_sl_price = _sl_swing_price - _sl_buffer
+                    # BUY: cauta Swing Low structural SUB swing_broken (baza reala a impulsului)
+                    _all_lows_sl = smc_detector.detect_swing_lows(df)
+                    _struct_lows = [s for s in _all_lows_sl
+                                    if s.price < _sb_price and s.index < choch_index]
+                    if _struct_lows:
+                        _struct_base = max(_struct_lows, key=lambda s: s.index)  # cel mai recent
+                        h4_sl_price = float(_struct_base.price) - _sl_buffer
+                    else:
+                        h4_sl_price = _sb_price - _sl_buffer  # fallback: swing_broken direct
                 else:
-                    h4_sl_price = _sl_swing_price + _sl_buffer
-                print(f"  🛡️  [V24.5 SL] {timeframe_display} swing_broken={_sl_swing_price:.5f} "
-                      f"→ h4_sl_price={h4_sl_price:.5f} (dir={choch_direction})")
+                    # SELL: cauta Swing High structural DEASUPRA swing_broken (plafonul impulsului)
+                    _all_highs_sl = smc_detector.detect_swing_highs(df)
+                    _struct_highs = [s for s in _all_highs_sl
+                                     if s.price > _sb_price and s.index < choch_index]
+                    if _struct_highs:
+                        _struct_ceiling = max(_struct_highs, key=lambda s: s.index)  # cel mai recent
+                        h4_sl_price = float(_struct_ceiling.price) + _sl_buffer
+                    else:
+                        h4_sl_price = _sb_price + _sl_buffer  # fallback: swing_broken direct
+                _sl_pips_log = abs(choch_break_price - h4_sl_price) / _sl_pip if h4_sl_price else 0
+                print(f"  🛡️  [V31.0 STRUCT SL] {timeframe_display} base={h4_sl_price:.5f} "
+                      f"({_sl_pips_log:.1f}p de la CHoCH break | dir={choch_direction})")
                 sys.stdout.flush()
             except Exception as _sl_err:
-                print(f"  ⚠️ [V24.5 SL] Eroare calcul h4_sl_price: {_sl_err}")
+                print(f"  ⚠️ [V31.0 SL] Eroare calcul structural SL: {_sl_err}")
                 sys.stdout.flush()
 
             # Detect FVG created by CHoCH
@@ -602,17 +621,25 @@ class MultiTFRadar:
                         # verificăm că retragerea e >= 35% (impulsul nu e proaspăt)
                         if in_fvg_synth and retrace_pct >= 0.35:
                             dist_synth = 0.0
-                            # V31.0 CANDLE_AGE GUARD: Fibo Fallback EXECUTE_NOW numai pe CHoCH live (<=3 bare)
+                            # ━━━ V31.0 MATRICEA DUBLA — Fibo Fallback ━━━━━━━━━━━━━━━━━━━━━━
                             if _choch_bars_ago <= 3:
+                                # Trigger A: CHoCH live in zona Fibo
                                 status_synth = PullbackStatus.EXECUTE_NOW_1H if timeframe == "H1" else PullbackStatus.EXECUTE_NOW_4H
-                                print(f"  [V31.0 FIBO FALLBACK LIVE {timeframe_display}] {symbol} {required_direction.upper()} "
-                                      f"-> EXECUTE_NOW (CHoCH la -{_choch_bars_ago} bare <=3 LIVE) "
-                                      f"Fibo 40-60% [{fvg_bottom_synth:.5f}-{fvg_top_synth:.5f}] "
-                                      f"Retrace={retrace_pct*100:.1f}% Pret={current_price:.5f}")
+                                print(f"  [V31.0 FIBO TRIGGER-A {timeframe_display}] {symbol} {required_direction.upper()} "
+                                      f"-> EXECUTE_NOW (CHoCH <=3 bare LIVE) "
+                                      f"Fibo [{fvg_bottom_synth:.5f}-{fvg_top_synth:.5f}] Retrace={retrace_pct*100:.1f}%")
+                                sys.stdout.flush()
+                            elif _bos_bars_ago_val <= 3:
+                                # Trigger B: BOS live in zona Fibo (Trend Rider)
+                                status_synth = PullbackStatus.EXECUTE_NOW_1H if timeframe == "H1" else PullbackStatus.EXECUTE_NOW_4H
+                                print(f"  [V31.0 FIBO TRIGGER-B {timeframe_display}] {symbol} {required_direction.upper()} "
+                                      f"-> EXECUTE_NOW (BOS <=3 bare LIVE, CHoCH la -{_choch_bars_ago} bare) "
+                                      f"Fibo [{fvg_bottom_synth:.5f}-{fvg_top_synth:.5f}] Retrace={retrace_pct*100:.1f}%")
                                 sys.stdout.flush()
                             else:
                                 status_synth = PullbackStatus.WAITING_1H_PULLBACK if timeframe == "H1" else PullbackStatus.WAITING_4H_PULLBACK
-                                print(f"  [V31.0 CANDLE_AGE FIBO {timeframe_display}] {symbol}: in Fibo zone dar CHoCH la -{_choch_bars_ago} bare > 3 — WAITING")
+                                print(f"  [V31.0 NO TRIGGER FIBO {timeframe_display}] {symbol}: in Fibo dar "
+                                      f"CHoCH -{_choch_bars_ago}b / BOS -{_bos_bars_ago_val}b > 3 — WAITING")
                                 sys.stdout.flush()
                         else:
                             if choch_direction == 'bullish':
@@ -689,20 +716,32 @@ class MultiTFRadar:
             _pip_size_dist = self._get_pip_size(symbol)
             if in_fvg:
                 distance_to_fvg_pips = 0.0
-                # V31.0 CANDLE_AGE GUARD: EXECUTE_NOW NUMAI pe CHoCH live (≤ 3 bare = ≤12h pe H4)
-                # CHoCH > 3 bare = structură veche confirmată dar trăgaciul NU este pe lumânarea curentă
+                # ━━━ V31.0 MATRICEA DUBLA DE TRAGACI ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+                # Trigger A (Sniper Entry): CHoCH proaspat <=3 bare — confirmare imediata
+                # Trigger B (Trend Rider):  BOS proaspat  <=3 bare — a doua sansa (trenul a plecat)
+                # Ambele triggere sunt interzise daca semnalul de break e >3 bare vechi.
                 if _choch_bars_ago <= 3:
+                    # Trigger A: CHoCH live — intrare de precizie
                     status = PullbackStatus.EXECUTE_NOW_1H if timeframe == "H1" else PullbackStatus.EXECUTE_NOW_4H
-                    _sniper_note = f"SNIPER EXECUTE LIVE — pret {current_price:.5f} IN FVG | CHoCH -{_choch_bars_ago} bare (LIVE <=3)"
-                    print(f"  [V31.0 RADAR TRIGGER LIVE {timeframe_display}] {symbol} {required_direction.upper()} "
-                          f"-> EXECUTE_NOW (CHoCH la -{_choch_bars_ago} bare <=3 = LIVE) "
-                          f"FVG [{fvg_bottom:.5f}-{fvg_top:.5f}] | Entry={fvg_entry:.5f} | Pret={current_price:.5f}")
+                    _sniper_note = f"[TriggerA] CHoCH LIVE -{_choch_bars_ago} bare | pret IN FVG"
+                    print(f"  [V31.0 TRIGGER-A {timeframe_display}] {symbol} {required_direction.upper()} "
+                          f"-> EXECUTE_NOW (CHoCH <=3 bare LIVE) "
+                          f"FVG [{fvg_bottom:.5f}-{fvg_top:.5f}] | Pret={current_price:.5f}")
+                    sys.stdout.flush()
+                elif _bos_bars_ago_val <= 3:
+                    # Trigger B: BOS live — Trend Rider (CHoCH deja format, trendul confirmat)
+                    status = PullbackStatus.EXECUTE_NOW_1H if timeframe == "H1" else PullbackStatus.EXECUTE_NOW_4H
+                    _sniper_note = f"[TriggerB] BOS LIVE -{_bos_bars_ago_val} bare | CHoCH la -{_choch_bars_ago} bare"
+                    print(f"  [V31.0 TRIGGER-B {timeframe_display}] {symbol} {required_direction.upper()} "
+                          f"-> EXECUTE_NOW (BOS <=3 bare LIVE, CHoCH la -{_choch_bars_ago} bare) "
+                          f"FVG [{fvg_bottom:.5f}-{fvg_top:.5f}] | Pret={current_price:.5f}")
                     sys.stdout.flush()
                 else:
-                    # CHoCH vechi — in FVG dar nu live: ramane in WAITING
+                    # Niciun trigger live — asteptam CHoCH sau BOS proaspat
                     status = PullbackStatus.WAITING_1H_PULLBACK if timeframe == "H1" else PullbackStatus.WAITING_4H_PULLBACK
-                    _sniper_note = f"IN FVG dar CHoCH la -{_choch_bars_ago} bare > 3 (V31.0: nu live) — WAITING"
-                    print(f"  [V31.0 CANDLE_AGE {timeframe_display}] {symbol}: pret in FVG dar CHoCH la -{_choch_bars_ago} bare > 3 — WAITING pt CHoCH live")
+                    _sniper_note = f"IN FVG dar CHoCH -{_choch_bars_ago}b / BOS -{_bos_bars_ago_val}b > 3 — asteptam trigger live"
+                    print(f"  [V31.0 NO TRIGGER {timeframe_display}] {symbol}: in FVG dar CHoCH -{_choch_bars_ago}b "
+                          f"/ BOS -{_bos_bars_ago_val}b > 3 — WAITING trigger live")
                     sys.stdout.flush()
             else:
                 if required_direction == 'bullish':
@@ -835,6 +874,38 @@ class MultiTFRadar:
         # Aceasta este responsabilitatea EXCLUSIVĂ a Executorului (Mâinile).
         # Radarul citește DOAR direcția Daily ca Bias și descarcă imediat barele 4H/1H.
         required_direction = 'bullish' if direction == 'LONG' else 'bearish'
+
+        # ━━━ V31.0 PREMIUM/DISCOUNT GUARD — Radarul = singura sursa de adevar ━━━
+        # BUY valid NUMAI in Discount (sub 50% range Daily curent).
+        # SELL valid NUMAI in Premium (peste 50% range Daily curent).
+        # Locatie incorecta → skip ciclu (return None). Radar incearca din nou la 30s.
+        try:
+            _df_d1_pd = self.get_historical_data(symbol, "D1", 3)
+            if _df_d1_pd is not None and not _df_d1_pd.empty:
+                _d1_high_pd = float(_df_d1_pd['high'].iloc[-1])
+                _d1_low_pd  = float(_df_d1_pd['low'].iloc[-1])
+                _pip_pd     = self._get_pip_size(symbol)
+                _d1_range_pd = _d1_high_pd - _d1_low_pd
+                if _d1_range_pd >= _pip_pd * 5:  # min 5 pips range — zi valida
+                    _d1_midpoint = (_d1_high_pd + _d1_low_pd) / 2.0
+                    if required_direction == 'bullish' and current_price > _d1_midpoint:
+                        print(f"  ⛔ [V31.0 P/D] {symbol} LONG: pret {current_price:.5f} in PREMIUM "
+                              f"(>{_d1_midpoint:.5f}) — skip ciclu, asteptam Discount")
+                        sys.stdout.flush()
+                        return None
+                    elif required_direction == 'bearish' and current_price < _d1_midpoint:
+                        print(f"  ⛔ [V31.0 P/D] {symbol} SHORT: pret {current_price:.5f} in DISCOUNT "
+                              f"(<{_d1_midpoint:.5f}) — skip ciclu, asteptam Premium")
+                        sys.stdout.flush()
+                        return None
+                    else:
+                        _pd_zone = 'Discount ✅' if required_direction == 'bullish' else 'Premium ✅'
+                        print(f"  ✅ [V31.0 P/D] {symbol}: {current_price:.5f} in {_pd_zone} "
+                              f"(EQ={_d1_midpoint:.5f} | range={_d1_range_pd/_pip_pd:.0f}p)")
+                        sys.stdout.flush()
+        except Exception as _pd_err:
+            print(f"  ⚠️ [V31.0 P/D] {symbol}: eroare calcul ({_pd_err}) — procedam fara guard")
+            sys.stdout.flush()
 
         print(f"\n{'='*80}")
         print(f"🔍 [{symbol}] Bias Daily: {direction} | Scanare structurală 4H+1H...")
@@ -1465,6 +1536,12 @@ class MultiTFRadar:
             try:
                 # V19.4: save_to_json=False — NU scriem individual, scriem batch la final
                 result = self.analyze_setup(setup, save_to_json=False)
+                if result is None:
+                    # V31.0 P/D GUARD: pretul nu era in zona corecta — skip ciclu intentionat
+                    print(f"  ⛔ [{sym}]: P/D guard activ — skip acest ciclu (nu e eroare)")
+                    sys.stdout.flush()
+                    ok_count += 1
+                    continue
                 self.print_result(result)
                 sys.stdout.flush()
                 collected_results.append((setup, result))
