@@ -2671,7 +2671,7 @@ class SMCDetector:
             swing_highs_d1_list = self.detect_swing_highs(df_daily)
             # Calculăm ATR 14 pe Daily pentru filtrul de distanță minimă TP
             atr_daily = self.calculate_atr(df_daily, period=14)
-            atr_daily_val = float(atr_daily.iloc[-1]) if atr_daily is not None and not atr_daily.empty else 0.0
+            atr_daily_val = float(atr_daily) if atr_daily else 0.0  # V36.2: calculate_atr() → float direct, nu Series
             min_tp_distance = atr_daily_val * 1.5  # Minim 1.5x ATR Daily față de entry
             # Filtrăm swing-urile D1 DEASUPRA prețului curent ȘI la distanță ATR suficientă
             highs_above_price = [
@@ -2804,7 +2804,7 @@ class SMCDetector:
             swing_lows_d1_list = self.detect_swing_lows(df_daily)
             # Calculăm ATR 14 pe Daily pentru filtrul de distanță minimă TP
             atr_daily = self.calculate_atr(df_daily, period=14)
-            atr_daily_val = float(atr_daily.iloc[-1]) if atr_daily is not None and not atr_daily.empty else 0.0
+            atr_daily_val = float(atr_daily) if atr_daily else 0.0  # V36.2: calculate_atr() → float direct, nu Series
             min_tp_distance = atr_daily_val * 1.5  # Minim 1.5x ATR Daily față de entry
             # Filtrăm swing-urile D1 SUB prețul curent ȘI la distanță ATR suficientă
             lows_below_price = [
