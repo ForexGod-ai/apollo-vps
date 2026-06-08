@@ -846,14 +846,31 @@ class DailyScanner:
 
 
 def save_monitoring_setups(setups: List[TradeSetup], bias_fallback: list = None):
-    """[V31.0 WIPE&OVERWRITE] Scanner scrie JSON PROASPĂT în fiecare dimineață.
-    Zero merge cu existing — zombie-urile sunt structuralmente imposibile.
+    """[V33 SMART MERGE] Scanner adauga setups NOI dar pastreaza paritati active din zilele trecute.
+    Un pullback pe Daily poate dura zile — stergerea oarba de dimineata este interzisa.
 
-    setups:        TradeSetup objects din smc_detector (pot fi 0 dacă nicio pereche)
-    bias_fallback: dicts minimale cu bias direction (fără FVG confirmat)
+    Logica:
+      1. Citim JSON existent.
+      2. Pastram INTACTE paritati cu status: WAITING_D1_PULLBACK, MONITORING, READY,
+         WAITING_4H_CHOCH, WAITING_1H_CHOCH, TRADE_OPEN.
+      3. Setup-uri noi din scan: adaugam NUMAI daca paritatea NU exista deja activa in JSON.
+      4. Bias fallback: la fel (nu suprascrie activ).
+      5. Paritati cu status terminal (INVALIDATED, EXPIRED_TIMEOUT, COMPLETED_WITHOUT_ENTRY,
+         EXPIRED, CLOSED, FAILED): nu le restauram, le ignoram.
     """
     if bias_fallback is None:
         bias_fallback = []
+
+    # Status-uri active — PASTRATE INTACTE de la o zi la alta
+    _ACTIVE_STATUSES = {
+        'WAITING_D1_PULLBACK', 'MONITORING', 'READY',
+        'WAITING_4H_CHOCH', 'WAITING_1H_CHOCH', 'TRADE_OPEN'
+    }
+    # Status-uri terminale — nu se mai includ in output
+    _DEAD_STATUSES = {
+        'INVALIDATED', 'EXPIRED_TIMEOUT', 'COMPLETED_WITHOUT_ENTRY',
+        'EXPIRED', 'CLOSED', 'FAILED', 'CANCELLED'
+    }
 
     # V11.0: Load open positions for direction conflict check
     open_position_dir_map = {}
@@ -866,15 +883,38 @@ def save_monitoring_setups(setups: List[TradeSetup], bias_fallback: list = None)
                 if sym:
                     open_position_dir_map[sym] = direction
     except Exception:
-        pass  # If we can't load, no guard applied (safe fallback)
+        pass
 
     try:
-        monitoring_setups = []  # V31.0: WIPE — nu se încarcă nimic din existing
+        # Pasul 1: Citim JSON existent si pastram paritati active
+        existing_active = {}  # symbol -> dict, pastrate de Radar
+        try:
+            with open('monitoring_setups.json', 'r', encoding='utf-8') as f:
+                _ex_data = json.load(f)
+            _ex_list = _ex_data.get('setups', []) if isinstance(_ex_data, dict) else _ex_data
+            for s in _ex_list:
+                if not isinstance(s, dict):
+                    continue
+                sym = s.get('symbol')
+                st  = s.get('status', '')
+                if sym and st in _ACTIVE_STATUSES and st not in _DEAD_STATUSES:
+                    existing_active[sym] = s
+            if existing_active:
+                print(f"\n📌 [V33 SMART MERGE] {len(existing_active)} paritati active pastrate din ziua precedenta: "
+                      f"{', '.join(existing_active.keys())}")
+        except FileNotFoundError:
+            pass  # Prima rulare — nimic de pastrat
+        except json.JSONDecodeError:
+            print("\u26a0\ufe0f  monitoring_setups.json corupt — pornim fresh")
 
-        # --- Full setups (TradeSetup objects din smc_detector) ---
+        # Pasul 2: Construim lista finala
+        monitoring_setups = list(existing_active.values())  # Incepem cu ce era activ
+        preserved_symbols = set(existing_active.keys())
+
+        # Pasul 3: Adaugam setup-uri NOI din scanul de azi (numai daca nu exista deja)
         for setup in setups:
-            if setup.status not in ["MONITORING", "READY", "WAITING_D1_PULLBACK",
-                                    "WAITING_4H_CHOCH", "WAITING_1H_CHOCH"]:
+            if setup.status not in ("MONITORING", "READY", "WAITING_D1_PULLBACK",
+                                    "WAITING_4H_CHOCH", "WAITING_1H_CHOCH"):
                 continue
 
             direction = "buy" if setup.daily_choch.direction == "bullish" else "sell"
@@ -884,6 +924,11 @@ def save_monitoring_setups(setups: List[TradeSetup], bias_fallback: list = None)
             if open_dir and open_dir != direction:
                 print(f"⛔ SAVE GUARD: {setup.symbol} — NOT saving {direction.upper()} setup, "
                       f"open {open_dir.upper()} position exists")
+                continue
+
+            # Nu suprascriem o paritate deja activa din zilele trecute
+            if setup.symbol in preserved_symbols:
+                print(f"  ⏭️  [V33 MERGE] {setup.symbol}: deja activ in JSON ({existing_active[setup.symbol].get('status')}) — scan nou ignorat")
                 continue
 
             # Convert setup_time
@@ -896,7 +941,6 @@ def save_monitoring_setups(setups: List[TradeSetup], bias_fallback: list = None)
             else:
                 setup_time_str = datetime.now().isoformat()
 
-            # V31.0: poi_top/poi_bottom = FVG zone (zona de watch pentru Radar)
             fvg_top    = setup.fvg.top    if setup.fvg and hasattr(setup.fvg, 'top')    else None
             fvg_bottom = setup.fvg.bottom if setup.fvg and hasattr(setup.fvg, 'bottom') else None
 
@@ -909,35 +953,38 @@ def save_monitoring_setups(setups: List[TradeSetup], bias_fallback: list = None)
                 "strategy_locked":    True,
                 "d1_bias_direction":  setup.daily_choch.direction,
                 "daily_bias_active":  True,
-                # V31.0 Zone fields — Radar entry zone
                 "poi_top":            float(fvg_top)    if fvg_top    is not None else None,
                 "poi_bottom":         float(fvg_bottom) if fvg_bottom is not None else None,
-                "fvg_top":            float(fvg_top)    if fvg_top    is not None else None,  # backward compat
+                "fvg_top":            float(fvg_top)    if fvg_top    is not None else None,
                 "fvg_bottom":         float(fvg_bottom) if fvg_bottom is not None else None,
                 "daily_target_price": getattr(setup, 'daily_tp_price', None),
-                # V31.0: Scanner NU calculează entry/SL/TP — Radar face asta live
                 "status":             "WAITING_D1_PULLBACK",
                 "setup_time":         setup_time_str,
                 "priority":           setup.priority,
-                # Optional carry data (informativ)
                 "swap_long":          getattr(setup, 'swap_long', None),
                 "swap_short":         getattr(setup, 'swap_short', None),
                 "swap_triple_day":    getattr(setup, 'swap_triple_day', None),
             }
             monitoring_setups.append(monitoring_setup)
+            preserved_symbols.add(setup.symbol)
 
-        # --- Bias fallback entries (already dicts, fără FVG confirmat) ---
+        # Pasul 4: Bias fallback entries (numai daca simbolul nu e deja activ)
         for entry in bias_fallback:
             sym = entry.get('symbol')
             direction = entry.get('direction', '')
+            if sym in preserved_symbols:
+                print(f"  ⏭️  [V33 MERGE] {sym}: deja activ in JSON — bias fallback ignorat")
+                continue
             open_dir = open_position_dir_map.get(sym)
             if open_dir and open_dir != direction:
                 print(f"⛔ SAVE GUARD: {sym} — NOT saving bias fallback {direction.upper()}, "
                       f"open {open_dir.upper()} position exists")
                 continue
             monitoring_setups.append(entry)
+            if sym:
+                preserved_symbols.add(sym)
 
-        # V24.9: Atomic write — .tmp + os.replace() previne coruperea JSON
+        # Atomic write
         _ms_write = {
             "setups": monitoring_setups,
             "last_updated": datetime.now().isoformat()
@@ -948,10 +995,9 @@ def save_monitoring_setups(setups: List[TradeSetup], bias_fallback: list = None)
         import os as _ms_os
         _ms_os.replace(_ms_tmp, 'monitoring_setups.json')
 
-        if monitoring_setups:
-            print(f"\n💾 [V31.0 WIPE] Scris {len(monitoring_setups)} setup(s) proaspete → zero zombie-uri")
-        else:
-            print(f"\n💾 [V31.0 WIPE] 0 setup-uri → monitoring_setups.json curat")
+        new_count = len(monitoring_setups) - len(existing_active)
+        print(f"\n💾 [V33 SMART MERGE] {len(monitoring_setups)} total — "
+              f"{len(existing_active)} pastrate din trecut + {new_count} noi din scan de azi")
 
     except Exception as e:
         print(f"❌ Error saving monitoring setups: {e}")

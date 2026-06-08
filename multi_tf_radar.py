@@ -1283,6 +1283,124 @@ class MultiTFRadar:
         if setup.get('daily_target_price') and not setup.get('daily_tp_price'):
             setup['daily_tp_price'] = setup['daily_target_price']
 
+    def _apply_lifecycle_gates(self, setups: list) -> list:
+        """V33: Cele 3 Porti de Invalidare — singura responsabilitate a Radarului
+        de a marca paritati ca 'moarte' inainte de analiza structurala.
+
+        Poarta 1: Invalidare Structurala Macro
+          LONG + close < daily_swing_low  → INVALIDATED
+          SHORT + close > daily_swing_high → INVALIDATED
+
+        Poarta 2: Target Atins Fara Noi
+          Pretul atinge daily_tp_price fara entry1_filled → COMPLETED_WITHOUT_ENTRY
+
+        Poarta 3: Timeout 5 Zile Lucratoare
+          WAITING_D1_PULLBACK > 5 zile lucratoare → EXPIRED_TIMEOUT
+        """
+        import os as _os
+
+        _BUSINESS_DAYS = 5
+        _TERMINAL_STATUSES = {
+            'INVALIDATED', 'COMPLETED_WITHOUT_ENTRY', 'EXPIRED_TIMEOUT',
+            'EXPIRED', 'CLOSED', 'FAILED', 'CANCELLED', 'TRADE_OPEN'
+        }
+
+        changed = False
+        for s in setups:
+            sym    = s.get('symbol', '?')
+            status = s.get('status', '')
+
+            # Nu atingem statusuri terminale sau TRADE_OPEN
+            if status in _TERMINAL_STATUSES:
+                continue
+
+            direction = s.get('direction', '').lower()  # 'buy' / 'sell'
+
+            # Obtinem pret live (necesar pentru Portile 1 si 2)
+            try:
+                _cp = self.get_current_price(sym)
+            except Exception:
+                _cp = None
+
+            if _cp is not None:
+                # ── POARTA 1: Invalidare Structurala Macro ────────────────────────
+                # LONG: pretul inchide sub daily_swing_low (baza structurii invalidata)
+                # SHORT: pretul inchide peste daily_swing_high (plafonul structurii spart)
+                _dsl = s.get('daily_swing_low')
+                _dsh = s.get('daily_swing_high')
+                if direction == 'buy' and _dsl and _cp < float(_dsl):
+                    s['status'] = 'INVALIDATED'
+                    s['invalidation_reason'] = f'P1: close {_cp:.5f} < swing_low {_dsl:.5f}'
+                    logger.warning(f"[V33 POARTA 1] {sym} LONG INVALIDATED: pret {_cp:.5f} < daily_swing_low {_dsl:.5f}")
+                    changed = True
+                    continue
+                elif direction == 'sell' and _dsh and _cp > float(_dsh):
+                    s['status'] = 'INVALIDATED'
+                    s['invalidation_reason'] = f'P1: close {_cp:.5f} > swing_high {_dsh:.5f}'
+                    logger.warning(f"[V33 POARTA 1] {sym} SHORT INVALIDATED: pret {_cp:.5f} > daily_swing_high {_dsh:.5f}")
+                    changed = True
+                    continue
+
+                # ── POARTA 2: Target Atins Fara Noi ───────────────────────────────
+                _tp = s.get('daily_tp_price') or s.get('daily_target_price')
+                _filled = s.get('entry1_filled', False)
+                if _tp and not _filled:
+                    _tp_f = float(_tp)
+                    if (direction == 'buy'  and _cp >= _tp_f) or \
+                       (direction == 'sell' and _cp <= _tp_f):
+                        s['status'] = 'COMPLETED_WITHOUT_ENTRY'
+                        s['invalidation_reason'] = f'P2: pret {_cp:.5f} a atins TP {_tp_f:.5f} fara intrare'
+                        logger.warning(f"[V33 POARTA 2] {sym} COMPLETED_WITHOUT_ENTRY: pret {_cp:.5f} a atins TP {_tp_f:.5f}")
+                        changed = True
+                        continue
+
+            # ── POARTA 3: Timeout 5 Zile Lucratoare ──────────────────────────────
+            if status == 'WAITING_D1_PULLBACK':
+                _stime_str = s.get('setup_time')
+                if _stime_str:
+                    try:
+                        from datetime import timezone as _tz
+                        _stime = datetime.fromisoformat(_stime_str)
+                        if _stime.tzinfo is None:
+                            _stime = _stime.replace(tzinfo=_tz.utc)
+                        _now_utc = datetime.now(_tz.utc)
+                        _delta = _now_utc - _stime
+                        # Estimam zile lucratoare: 5/7 * zile calendaristice
+                        _biz_days = _delta.days * 5 / 7
+                        if _biz_days > _BUSINESS_DAYS:
+                            s['status'] = 'EXPIRED_TIMEOUT'
+                            s['invalidation_reason'] = f'P3: {_delta.days} zile > 5 zile lucratoare fara activare'
+                            logger.warning(f"[V33 POARTA 3] {sym} EXPIRED_TIMEOUT: {_delta.days} zile in WAITING_D1_PULLBACK")
+                            changed = True
+                    except Exception as _te:
+                        logger.debug(f"[V33 POARTA 3] {sym}: eroare calcul timp ({_te})")
+
+        # Daca ceva s-a schimbat, salvam imediat JSON-ul (inainte de analiza structurala)
+        if changed:
+            try:
+                import numpy as _np
+                def _json_safe(obj):
+                    if isinstance(obj, (_np.bool_,)):    return bool(obj)
+                    if isinstance(obj, (_np.integer,)):  return int(obj)
+                    if isinstance(obj, (_np.floating,)): return float(obj)
+                    if isinstance(obj, (_np.ndarray,)):  return obj.tolist()
+                    raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
+                with open(_MONITORING_FILE, 'r', encoding='utf-8') as _f:
+                    _raw = json.load(_f)
+                if isinstance(_raw, dict):
+                    _raw['setups'] = setups
+                    _raw['last_updated'] = datetime.now().isoformat()
+                else:
+                    _raw = {'setups': setups, 'last_updated': datetime.now().isoformat()}
+                with open(_MONITORING_TMP, 'w', encoding='utf-8') as _f:
+                    json.dump(_raw, _f, indent=2, default=_json_safe)
+                _os.replace(_MONITORING_TMP, _MONITORING_FILE)
+                logger.info("[V33 LIFECYCLE] JSON actualizat cu statusuri invalidate")
+            except Exception as _se:
+                logger.error(f"[V33 LIFECYCLE] Eroare salvare dupa gate: {_se}")
+
+        return setups
+
     def _batch_sync_to_monitoring_setups(
         self,
         results: list
@@ -1348,6 +1466,20 @@ class MultiTFRadar:
                 fresh_data['last_updated'] = datetime.now().isoformat()
             else:
                 fresh_data = setups
+
+            # V33 CLEANUP: Elimina din JSON paritati cu status terminal
+            # (marcate de _apply_lifecycle_gates sau de executor)
+            _DEAD = {
+                'INVALIDATED', 'COMPLETED_WITHOUT_ENTRY', 'EXPIRED_TIMEOUT',
+                'EXPIRED', 'CLOSED', 'FAILED', 'CANCELLED'
+            }
+            if isinstance(fresh_data, dict):
+                _before = len(fresh_data.get('setups', []))
+                fresh_data['setups'] = [s for s in fresh_data['setups']
+                                        if s.get('status', '') not in _DEAD]
+                _removed = _before - len(fresh_data['setups'])
+                if _removed:
+                    logger.info(f"[V33 CLEANUP] {_removed} paritate(i) terminale eliminate din JSON")
 
             tmp_path = _MONITORING_TMP
             with open(tmp_path, 'w', encoding='utf-8') as f:
@@ -1578,31 +1710,50 @@ class MultiTFRadar:
                 return
             setups = target_setups
 
-        # V22: json_data pre-citire ELIMINATĂ — _batch_sync re-citește LIVE la final ciclu
-        # (fix race condition cu setup_executor_monitor care scria în fișier în interval)
+        # V33: Inainte de analiza, aplicam cele 3 Porti de Invalidare pe toate setup-urile
+        # Daca vreun status se schimba, salvam imediat JSON-ul (fara sa asteptam batch_sync)
+        setups = self._apply_lifecycle_gates(setups)
 
-        # Print summary header
+        # Filtram: TRADE_OPEN (incetarea focului) si statusuri terminale nu intra in analiza
+        _SKIP_STATUSES = {
+            'TRADE_OPEN',           # Executorul are control — Radarul nu mai cauta trigaci
+            'INVALIDATED',          # Poarta 1: structura macro incalcata
+            'COMPLETED_WITHOUT_ENTRY',  # Poarta 2: tinta atinsa fara noi
+            'EXPIRED_TIMEOUT',      # Poarta 3: timeout 5 zile lucratoare
+            'EXPIRED', 'CLOSED', 'FAILED', 'CANCELLED'
+        }
+        active_setups = [s for s in setups if s.get('status', '') not in _SKIP_STATUSES]
+        skipped = len(setups) - len(active_setups)
+        if skipped:
+            _skipped_syms = [s.get('symbol') for s in setups if s.get('status', '') in _SKIP_STATUSES]
+            print(f"  ⏸️  [V33] {skipped} paritate(i) sarite: {_skipped_syms}")
+            sys.stdout.flush()
+
+        if not active_setups:
+            print("\n📭 No active setups to scan (all TRADE_OPEN or invalidated)\n")
+            return
+
+        # V22: json_data pre-citire ELIMINATA — _batch_sync re-citeste LIVE la final ciclu
+
         print("\n" + "="*80)
-        symbols_list = " | ".join([f"{s.get('symbol','?')} {s.get('direction','?')}" for s in setups])
-        print(f"📋 LOADED {len(setups)} SETUP(S) FROM monitoring_setups.json")
+        symbols_list = " | ".join([f"{s.get('symbol','?')} {s.get('direction','?')}" for s in active_setups])
+        print(f"📋 LOADED {len(active_setups)} ACTIVE SETUP(S) FROM monitoring_setups.json")
         print(f"   {symbols_list}")
         print("="*80)
         sys.stdout.flush()
 
         ok_count = 0
         err_count = 0
-        collected_results = []  # V19.4 FIX #5: colectăm (setup, result) pentru scriere batch
+        collected_results = []
 
-        for setup in setups:
+        for setup in active_setups:
             sym = setup.get('symbol', 'UNKNOWN')
             direction_label = setup.get('direction', '?').upper()
-            print(f"\n🔄 [RADAR INIȚIALIZAT] Pornire descărcare date și analiză istorică pentru: {sym} {direction_label}...")
+            print(f"\n🔄 [RADAR INITIALIZAT] Pornire descarcare date si analiza istorica pentru: {sym} {direction_label}...")
             sys.stdout.flush()
             try:
-                # V19.4: save_to_json=False — NU scriem individual, scriem batch la final
                 result = self.analyze_setup(setup, save_to_json=False)
                 if result is None:
-                    # V31.0 P/D GUARD: pretul nu era in zona corecta — skip ciclu intentionat
                     print(f"  ⛔ [{sym}]: P/D guard activ — skip acest ciclu (nu e eroare)")
                     sys.stdout.flush()
                     ok_count += 1
@@ -1614,14 +1765,13 @@ class MultiTFRadar:
             except Exception as e:
                 import traceback
                 print(f"\n{'='*80}")
-                print(f"❌ ERROR ANALYZING {sym}: {e}")
+                print(f"\u274c ERROR ANALYZING {sym}: {e}")
                 traceback.print_exc()
                 print("="*80 + "\n")
                 sys.stdout.flush()
                 err_count += 1
-                continue  # izolare erori — continuăm cu paritatea următoare
+                continue
 
-        # V22: O SINGURĂ SCRIERE JSON — re-citire LIVE în _batch_sync (race-free merge)
         if collected_results:
             self._batch_sync_to_monitoring_setups(collected_results)
 
