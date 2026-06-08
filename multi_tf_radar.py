@@ -558,20 +558,18 @@ class MultiTFRadar:
                 latest_fvg = None
             
             if not latest_fvg:
-                # V15.4 FIBO FALLBACK: CHoCH detectat dar FVG nu există sau a fost consumat.
-                # Calculăm zona Fibonacci 40-60% din impulsul CHoCH ca fallback entry zone sintetică.
-                # Aceasta previne ratarea intrărilor clare (ex: USDCAD 4H CHoCH vizibil dar FVG absent)
+                # V32 FIBO FALLBACK: CHoCH detectat dar FVG absent sau consumat.
+                # FIX V02: Dezactivat pe CHoCH > 72 bare (impuls epuizat — geometrie Fibo invalida).
+                # FIX V01/V08: Cod Fibo mutat AFARA din dead-code block (if impulse<=0 after return).
+                # ANCORA (<=72b): context structural valid. TRAGACI (<= 3b): CHoCH sau BOS live.
                 try:
-                    # Găsim swing-ul rupt de CHoCH (swing_broken.price) și CHoCH break_price
                     swing_broken_price = float(latest_choch.swing_broken.price)
                     choch_break_price = float(latest_choch.break_price)
                     impulse_size = abs(choch_break_price - swing_broken_price)
-                    # V19.4 FIX — Guard impuls 0 pips: date corupte sau tick duplicat din cBot.
-                    # NU activăm Fibo Fallback pe impuls nul → returnăm WAITING curat.
+
+                    # Guard 1: impuls 0 pips (date corupte / tick duplicat)
                     if impulse_size <= 0:
-                        pip_size_guard = self._get_pip_size(symbol)  # noqa: F841 — cosmetic log only
-                        print(f"  ⚠️ [RADAR GUARD] Impuls invalid de 0 pips detectat pentru {symbol}. "
-                              f"Se păstrează starea de WAITING fără activare fallback.")
+                        print(f"  ⚠️ [V32 FIBO GUARD] {symbol}: impuls 0 pips — WAITING")
                         sys.stdout.flush()
                         return TimeframeAnalysis(
                             timeframe=timeframe_display,
@@ -592,70 +590,13 @@ class MultiTFRadar:
                             bos_direction=_bos_direction_val,
                             bos_bars_ago=_bos_bars_ago_val
                         )
-                        if choch_direction == 'bullish':
-                            # LONG: pullback DOWN la 40-60% din impuls
-                            fib60 = choch_break_price - impulse_size * 0.40  # top zone
-                            fib40 = choch_break_price - impulse_size * 0.60  # bottom zone
-                        else:
-                            # SHORT: pullback UP la 40-60% din impuls
-                            fib60 = choch_break_price + impulse_size * 0.60  # top zone
-                            fib40 = choch_break_price + impulse_size * 0.40  # bottom zone
-                        fvg_top_synth = max(fib40, fib60)
-                        fvg_bottom_synth = min(fib40, fib60)
-                        fvg_entry_synth = (fvg_top_synth + fvg_bottom_synth) / 2.0
-                        pip_size_synth = self._get_pip_size(symbol)  # V24.4 Symbol-Agnostic
 
-                        # ── V24.2 SNIPER ANTI-FOMO — Fibo Fallback ──────────────────────
-                        # EXECUTE_NOW STRICT doar dacă prețul a făcut pullback fizic în zona 40-60%.
-                        # Dacă impulsul e proaspăt și prețul e la <35% retragere → WAITING.
-                        # Calculăm retragerea curentă față de impulsul CHoCH.
-                        if choch_direction == 'bullish':
-                            # LONG: pullback = cât a coborât prețul față de break_price
-                            retrace_pct = (choch_break_price - current_price) / impulse_size if impulse_size > 0 else 0
-                        else:
-                            # SHORT: pullback = cât a urcat prețul față de break_price
-                            retrace_pct = (current_price - choch_break_price) / impulse_size if impulse_size > 0 else 0
-
-                        in_fvg_synth = fvg_bottom_synth <= current_price <= fvg_top_synth
-                        # Anti-FOMO guard: chiar dacă prețul e geometric în zonă,
-                        # verificăm că retragerea e >= 35% (impulsul nu e proaspăt)
-                        if in_fvg_synth and retrace_pct >= 0.35:
-                            dist_synth = 0.0
-                            # ━━━ V31.0 MATRICEA DUBLA — Fibo Fallback ━━━━━━━━━━━━━━━━━━━━━━
-                            if _choch_bars_ago <= 3:
-                                # Trigger A: CHoCH live in zona Fibo
-                                status_synth = PullbackStatus.EXECUTE_NOW_1H if timeframe == "H1" else PullbackStatus.EXECUTE_NOW_4H
-                                print(f"  [V31.0 FIBO TRIGGER-A {timeframe_display}] {symbol} {required_direction.upper()} "
-                                      f"-> EXECUTE_NOW (CHoCH <=3 bare LIVE) "
-                                      f"Fibo [{fvg_bottom_synth:.5f}-{fvg_top_synth:.5f}] Retrace={retrace_pct*100:.1f}%")
-                                sys.stdout.flush()
-                            elif _bos_bars_ago_val <= 3:
-                                # Trigger B: BOS live in zona Fibo (Trend Rider)
-                                status_synth = PullbackStatus.EXECUTE_NOW_1H if timeframe == "H1" else PullbackStatus.EXECUTE_NOW_4H
-                                print(f"  [V31.0 FIBO TRIGGER-B {timeframe_display}] {symbol} {required_direction.upper()} "
-                                      f"-> EXECUTE_NOW (BOS <=3 bare LIVE, CHoCH la -{_choch_bars_ago} bare) "
-                                      f"Fibo [{fvg_bottom_synth:.5f}-{fvg_top_synth:.5f}] Retrace={retrace_pct*100:.1f}%")
-                                sys.stdout.flush()
-                            else:
-                                status_synth = PullbackStatus.WAITING_1H_PULLBACK if timeframe == "H1" else PullbackStatus.WAITING_4H_PULLBACK
-                                print(f"  [V31.0 NO TRIGGER FIBO {timeframe_display}] {symbol}: in Fibo dar "
-                                      f"CHoCH -{_choch_bars_ago}b / BOS -{_bos_bars_ago_val}b > 3 — WAITING")
-                                sys.stdout.flush()
-                        else:
-                            if choch_direction == 'bullish':
-                                dist_synth = abs(current_price - fvg_top_synth) / pip_size_synth
-                            else:
-                                dist_synth = abs(fvg_bottom_synth - current_price) / pip_size_synth
-                            status_synth = PullbackStatus.WAITING_1H_PULLBACK if timeframe == "H1" else PullbackStatus.WAITING_4H_PULLBACK
-
-                        # V16.2: Fibo Fallback folosește 50% EQ exact (centrul zonei sintetice)
-                        eq_for_synth = choch_equilibrium if choch_equilibrium else fvg_entry_synth
-                        _eq_synth_str = f"{eq_for_synth:.5f}" if eq_for_synth is not None else "N/A"
-                        _retrace_str = f"{retrace_pct*100:.1f}%"
-                        _sniper_note = "🎯 IN ZONE — EXECUTE" if status_synth in (PullbackStatus.EXECUTE_NOW_1H, PullbackStatus.EXECUTE_NOW_4H) else f"⏳ PÂNDĂ ({_retrace_str} retrace, așteptăm 40-60%)"
-                        print(f"  ⚡ [V24.2 FIBO FALLBACK] No FVG — Synthetic zone 40-60%")
-                        print(f"     Impulse: {swing_broken_price:.5f} → {choch_break_price:.5f} ({impulse_size/pip_size_synth:.1f} pips)")
-                        print(f"     Zone: [{fvg_bottom_synth:.5f} - {fvg_top_synth:.5f}] | EQ={_eq_synth_str} | Retrace: {_retrace_str} | {_sniper_note}")
+                    # Guard 2 (Fix V02): CHoCH > 72 bare — impuls epuizat, Fibo geometric invalid
+                    # Ancora structurala e inca valida (h4_structure_locked), dar zona Fibo nu.
+                    # Asteptam BOS live care va crea FVG nou pe piciorul curent.
+                    if _choch_bars_ago > 72:
+                        print(f"  ⚠️ [V32 FIBO AGE] {symbol}: CHoCH la -{_choch_bars_ago} bare > 72 — "
+                              f"Fibo dezactivat (impuls epuizat). Ancora activa, asteptam BOS live.")
                         sys.stdout.flush()
                         return TimeframeAnalysis(
                             timeframe=timeframe_display,
@@ -663,23 +604,106 @@ class MultiTFRadar:
                             choch_direction=choch_direction,
                             choch_time=choch_time_str,
                             choch_price=choch_price,
-                            fvg_detected=True,
-                            fvg_top=fvg_top_synth,
-                            fvg_bottom=fvg_bottom_synth,
-                            fvg_entry=fvg_entry_synth,
-                            in_fvg=in_fvg_synth and retrace_pct >= 0.35,  # Anti-FOMO
-                            distance_to_fvg_pips=dist_synth,
-                            status=status_synth,
-                            equilibrium=eq_for_synth,
-                            fvg_source="fibo_fallback",
+                            fvg_detected=False,
+                            fvg_top=None,
+                            fvg_bottom=None,
+                            fvg_entry=None,
+                            in_fvg=False,
+                            distance_to_fvg_pips=0.0,
+                            status=PullbackStatus.WAITING_1H_PULLBACK if timeframe == "H1" else PullbackStatus.WAITING_4H_PULLBACK,
+                            equilibrium=choch_equilibrium,
                             h4_sl_price=h4_sl_price,
                             choch_bars_ago=_choch_bars_ago,
                             bos_detected=_bos_detected_val,
                             bos_direction=_bos_direction_val,
                             bos_bars_ago=_bos_bars_ago_val
                         )
+
+                    # Fibo zone calculation (ACTIV — impuls valid, CHoCH <= 72 bare)
+                    pip_size_synth = self._get_pip_size(symbol)
+                    if choch_direction == 'bullish':
+                        fib60 = choch_break_price - impulse_size * 0.40  # top zone
+                        fib40 = choch_break_price - impulse_size * 0.60  # bottom zone
+                    else:
+                        fib60 = choch_break_price + impulse_size * 0.60  # top zone
+                        fib40 = choch_break_price + impulse_size * 0.40  # bottom zone
+                    fvg_top_synth = max(fib40, fib60)
+                    fvg_bottom_synth = min(fib40, fib60)
+                    fvg_entry_synth = (fvg_top_synth + fvg_bottom_synth) / 2.0
+
+                    # Retrace calculation (anti-FOMO: trebuie >= 35% retragere fizica)
+                    if choch_direction == 'bullish':
+                        retrace_pct = (choch_break_price - current_price) / impulse_size
+                    else:
+                        retrace_pct = (current_price - choch_break_price) / impulse_size
+
+                    in_fvg_synth = fvg_bottom_synth <= current_price <= fvg_top_synth
+
+                    if in_fvg_synth and retrace_pct >= 0.35:
+                        dist_synth = 0.0
+                        # ━━━ V32 MATRICEA DUBLA — Ancora Istorica vs Tragaci Live ━━━━━━━━━━━━
+                        # Ancora (CHoCH <= 72b): context structural valid.
+                        # Tragaci A (CHoCH <=3b): first CHoCH de confirmare = Sniper Entry.
+                        # Tragaci B (BOS  <=3b): BOS proaspat pe trend stabilit = Trend Rider.
+                        if _choch_bars_ago <= 3:
+                            # Tragaci A: CHoCH live in zona Fibo
+                            status_synth = PullbackStatus.EXECUTE_NOW_1H if timeframe == "H1" else PullbackStatus.EXECUTE_NOW_4H
+                            print(f"  [V32 FIBO TRIGGER-A {timeframe_display}] {symbol} {required_direction.upper()} "
+                                  f"-> EXECUTE_NOW (CHoCH <=3 bare LIVE) "
+                                  f"Fibo [{fvg_bottom_synth:.5f}-{fvg_top_synth:.5f}] Retrace={retrace_pct*100:.1f}%")
+                            sys.stdout.flush()
+                        elif _bos_bars_ago_val <= 3:
+                            # Tragaci B: BOS live + CHoCH ancora istorica = Trend Rider
+                            status_synth = PullbackStatus.EXECUTE_NOW_1H if timeframe == "H1" else PullbackStatus.EXECUTE_NOW_4H
+                            print(f"  [V32 FIBO TRIGGER-B {timeframe_display}] {symbol} {required_direction.upper()} "
+                                  f"-> EXECUTE_NOW (BOS <=3 bare LIVE | ancora CHoCH la -{_choch_bars_ago} bare) "
+                                  f"Fibo [{fvg_bottom_synth:.5f}-{fvg_top_synth:.5f}] Retrace={retrace_pct*100:.1f}%")
+                            sys.stdout.flush()
+                        else:
+                            status_synth = PullbackStatus.WAITING_1H_PULLBACK if timeframe == "H1" else PullbackStatus.WAITING_4H_PULLBACK
+                            print(f"  [V32 NO TRIGGER FIBO {timeframe_display}] {symbol}: in Fibo dar "
+                                  f"ancora CHoCH -{_choch_bars_ago}b / BOS -{_bos_bars_ago_val}b > 3 — WAITING")
+                            sys.stdout.flush()
+                    else:
+                        if choch_direction == 'bullish':
+                            dist_synth = abs(current_price - fvg_top_synth) / pip_size_synth
+                        else:
+                            dist_synth = abs(fvg_bottom_synth - current_price) / pip_size_synth
+                        status_synth = PullbackStatus.WAITING_1H_PULLBACK if timeframe == "H1" else PullbackStatus.WAITING_4H_PULLBACK
+
+                    eq_for_synth = choch_equilibrium if choch_equilibrium else fvg_entry_synth
+                    _eq_synth_str = f"{eq_for_synth:.5f}" if eq_for_synth is not None else "N/A"
+                    _retrace_str = f"{retrace_pct*100:.1f}%"
+                    _sniper_note = ("🎯 IN ZONE — EXECUTE"
+                                    if status_synth in (PullbackStatus.EXECUTE_NOW_1H, PullbackStatus.EXECUTE_NOW_4H)
+                                    else f"⏳ PANDA ({_retrace_str} retrace, asteptam 40-60%)")
+                    print(f"  ⚡ [V32 FIBO FALLBACK] No FVG — Synthetic zone 40-60%")
+                    print(f"     Impulse: {swing_broken_price:.5f} -> {choch_break_price:.5f} ({impulse_size/pip_size_synth:.1f} pips)")
+                    print(f"     Zone: [{fvg_bottom_synth:.5f} - {fvg_top_synth:.5f}] | EQ={_eq_synth_str} | Retrace: {_retrace_str} | {_sniper_note}")
+                    sys.stdout.flush()
+                    return TimeframeAnalysis(
+                        timeframe=timeframe_display,
+                        choch_detected=True,
+                        choch_direction=choch_direction,
+                        choch_time=choch_time_str,
+                        choch_price=choch_price,
+                        fvg_detected=True,
+                        fvg_top=fvg_top_synth,
+                        fvg_bottom=fvg_bottom_synth,
+                        fvg_entry=fvg_entry_synth,
+                        in_fvg=in_fvg_synth and retrace_pct >= 0.35,  # Anti-FOMO
+                        distance_to_fvg_pips=dist_synth,
+                        status=status_synth,
+                        equilibrium=eq_for_synth,
+                        fvg_source="fibo_fallback",
+                        h4_sl_price=h4_sl_price,
+                        choch_bars_ago=_choch_bars_ago,
+                        bos_detected=_bos_detected_val,
+                        bos_direction=_bos_direction_val,
+                        bos_bars_ago=_bos_bars_ago_val
+                    )
                 except Exception as _fib_err:
-                    print(f"  ⚠️ [V15.4 FIBO FALLBACK] Error computing synthetic zone: {_fib_err}")
+                    print(f"  ⚠️ [V32 FIBO FALLBACK] Error: {_fib_err}")
                 # Dacă fallback-ul eșuează, rămânem în WAITING
                 return TimeframeAnalysis(
                     timeframe=timeframe_display,
@@ -1189,22 +1213,63 @@ class MultiTFRadar:
                 )
                 # Nu setam EXECUTE_NOW — asteptam CHoCH real
             else:
-                setup['EXECUTE_NOW'] = True
-                _exec_tf = result.priority_timeframe or '?'
-                _exec_tf_data = result.tf_1h if _exec_tf == '1H' else result.tf_4h
-                _exec_fvg_src = getattr(_exec_tf_data, 'fvg_source', 'unknown')
-                _exec_zone = (
-                    f"[{_exec_tf_data.fvg_bottom:.5f} - {_exec_tf_data.fvg_top:.5f}]"
-                    if _exec_tf_data.fvg_top and _exec_tf_data.fvg_bottom else "zona necunoscuta"
+                # V32 RR SHIELD (Fix V13): Trigger B (BOS live, CHoCH ancora istorica)
+                # necesita spatiu de profit suficient pana la Daily TP.
+                # Daca trendul e aproape de destinatie (RR < 2.0), blocam intrarea.
+                _exec_tf_v32 = result.priority_timeframe or '?'
+                _exec_tf_data_v32 = result.tf_1h if _exec_tf_v32 == '1H' else result.tf_4h
+                _is_trigger_b = (
+                    getattr(_exec_tf_data_v32, 'bos_bars_ago', 9999) <= 3
+                    and getattr(_exec_tf_data_v32, 'choch_bars_ago', 9999) > 3
                 )
-                _exec_bars = getattr(_exec_tf_data, 'choch_bars_ago', '?')
-                _exec_eq = f"EQ={_exec_tf_data.equilibrium:.5f}" if _exec_tf_data.equilibrium else "EQ=N/A"
-                logger.success(
-                    f"[V31.0 RADAR TRIGGER LIVE {_exec_tf}] {result.symbol} {result.direction} -> EXECUTE_NOW=True"
-                    f" | {'FVG structural' if _exec_fvg_src == 'structural' else 'Fibo Fallback'}"
-                    f" dupa CHoCH {_exec_tf} LIVE (<=3 bare) | Zona: {_exec_zone}"
-                    f" | Pret={result.current_price:.5f} | {_exec_eq}"
-                )
+                _block_execute = False
+                if _is_trigger_b:
+                    _rr_tp = setup.get('daily_tp_price') or setup.get('daily_target_price')
+                    _rr_sl = (getattr(_exec_tf_data_v32, 'h4_sl_price', None)
+                              or setup.get('h4_sl_price'))
+                    _rr_cp = result.current_price
+                    _pip_rr = 0.01 if 'JPY' in result.symbol else 0.0001
+                    if _rr_tp and _rr_sl and _rr_cp:
+                        try:
+                            _rr_dist_tp = abs(float(_rr_tp) - _rr_cp)
+                            _rr_dist_sl = abs(_rr_cp - float(_rr_sl))
+                            if _rr_dist_sl > 0:
+                                _rr_val = _rr_dist_tp / _rr_dist_sl
+                                if _rr_val < 2.0:
+                                    _block_execute = True
+                                    logger.warning(
+                                        f"[V32 RR SHIELD] {result.symbol}: Trigger-B BLOCAT — "
+                                        f"RR={_rr_val:.2f} < 2.0 "
+                                        f"(TP dist={_rr_dist_tp/_pip_rr:.0f}p, SL dist={_rr_dist_sl/_pip_rr:.0f}p) "
+                                        f"— trend prea extins pana la Daily TP"
+                                    )
+                                else:
+                                    logger.info(
+                                        f"[V32 RR SHIELD] {result.symbol}: Trigger-B OK — "
+                                        f"RR={_rr_val:.2f} >= 2.0 | spatiu suficient pana la TP"
+                                    )
+                        except Exception as _rr_err:
+                            logger.debug(f"[V32 RR SHIELD] {result.symbol}: calcul RR esuat ({_rr_err}) — fara shield")
+                    else:
+                        logger.debug(f"[V32 RR SHIELD] {result.symbol}: date insuficiente (TP={_rr_tp}, SL={_rr_sl}) — fara shield")
+
+                if not _block_execute:
+                    setup['EXECUTE_NOW'] = True
+                    _exec_tf = result.priority_timeframe or '?'
+                    _exec_tf_data = result.tf_1h if _exec_tf == '1H' else result.tf_4h
+                    _exec_fvg_src = getattr(_exec_tf_data, 'fvg_source', 'unknown')
+                    _exec_zone = (
+                        f"[{_exec_tf_data.fvg_bottom:.5f} - {_exec_tf_data.fvg_top:.5f}]"
+                        if _exec_tf_data.fvg_top and _exec_tf_data.fvg_bottom else "zona necunoscuta"
+                    )
+                    _exec_bars = getattr(_exec_tf_data, 'choch_bars_ago', '?')
+                    _exec_eq = f"EQ={_exec_tf_data.equilibrium:.5f}" if _exec_tf_data.equilibrium else "EQ=N/A"
+                    logger.success(
+                        f"[V32 RADAR TRIGGER LIVE {_exec_tf}] {result.symbol} {result.direction} -> EXECUTE_NOW=True"
+                        f" | {'FVG structural' if _exec_fvg_src == 'structural' else 'Fibo Fallback'}"
+                        f" | Zona: {_exec_zone}"
+                        f" | Pret={result.current_price:.5f} | {_exec_eq}"
+                    )
         elif not result.execution_ready and setup.get('EXECUTE_NOW') and not setup.get('entry1_filled'):
             # V31.0: Pretul a iesit din zona FVG — resetam EXECUTE_NOW (semnal expirat)
             setup.pop('EXECUTE_NOW', None)
