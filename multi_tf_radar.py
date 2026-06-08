@@ -1045,7 +1045,6 @@ class MultiTFRadar:
             setup['radar_1h_choch_detected'] = False
 
         if result.tf_1h.scan_error:
-            # V19.4 FIX #3: crash silențios detectat — semnalizăm în JSON dar PĂSTRĂM FVG anterior
             setup['radar_1h_scan_error'] = True
             setup['radar_1h_scan_error_msg'] = result.tf_1h.scan_error_msg
         elif result.tf_1h.fvg_detected:
@@ -1054,12 +1053,20 @@ class MultiTFRadar:
             setup['radar_1h_fvg_entry'] = result.tf_1h.fvg_entry
             setup['radar_1h_in_fvg'] = result.tf_1h.in_fvg
             setup['radar_1h_distance_pips'] = result.tf_1h.distance_to_fvg_pips
-            setup['radar_1h_fvg_source'] = result.tf_1h.fvg_source  # V19.6: "structural" | "fibo_fallback"
+            setup['radar_1h_fvg_source'] = result.tf_1h.fvg_source
             setup.pop('radar_1h_scan_error', None)
         else:
-            setup['radar_1h_fvg_top'] = None
-            setup['radar_1h_fvg_bottom'] = None
-            setup['radar_1h_fvg_entry'] = None
+            # V34 FIX V10: PROTECTIE MEMORIE FVG
+            # Daca FVG nu e detectat in ACEST ciclu, NU suprascriem coordonatele deja valide.
+            # Zona FVG ramane activa pana la invalidare structurala (Poarta 1/2/3).
+            # Suprascrierea cu None cauza executorul sa piarda zona chiar daca pretul era in ea.
+            if not setup.get('radar_1h_fvg_top'):   # Scrie None NUMAI daca nu existau date
+                setup['radar_1h_fvg_top'] = None
+            if not setup.get('radar_1h_fvg_bottom'):
+                setup['radar_1h_fvg_bottom'] = None
+            if not setup.get('radar_1h_fvg_entry'):
+                setup['radar_1h_fvg_entry'] = None
+            setup['radar_1h_in_fvg'] = False   # in_fvg se recalculeaza mereu
             setup.pop('radar_1h_scan_error', None)
 
         # V16.2: 50% Equilibrium al impulsului 1H CHoCH (frontiera P/D Array)
@@ -1078,7 +1085,6 @@ class MultiTFRadar:
             setup['radar_4h_choch_detected'] = False
 
         if result.tf_4h.scan_error:
-            # V19.4 FIX #3: crash silențios detectat — semnalizăm în JSON dar PĂSTRĂM FVG anterior
             setup['radar_4h_scan_error'] = True
             setup['radar_4h_scan_error_msg'] = result.tf_4h.scan_error_msg
         elif result.tf_4h.fvg_detected:
@@ -1087,12 +1093,19 @@ class MultiTFRadar:
             setup['radar_4h_fvg_entry'] = result.tf_4h.fvg_entry
             setup['radar_4h_in_fvg'] = result.tf_4h.in_fvg
             setup['radar_4h_distance_pips'] = result.tf_4h.distance_to_fvg_pips
-            setup['radar_4h_fvg_source'] = result.tf_4h.fvg_source  # V19.6: "structural" | "fibo_fallback"
+            setup['radar_4h_fvg_source'] = result.tf_4h.fvg_source
             setup.pop('radar_4h_scan_error', None)
         else:
-            setup['radar_4h_fvg_top'] = None
-            setup['radar_4h_fvg_bottom'] = None
-            setup['radar_4h_fvg_entry'] = None
+            # V34 FIX V10: PROTECTIE MEMORIE FVG 4H
+            # Coordonatele FVG detectate anterior raman valide pana la invalidare structurala.
+            # Suprascriere cu None = zona pierduta chiar daca executorul era pe punctul de a intra.
+            if not setup.get('radar_4h_fvg_top'):   # Scrie None NUMAI daca nu existau date
+                setup['radar_4h_fvg_top'] = None
+            if not setup.get('radar_4h_fvg_bottom'):
+                setup['radar_4h_fvg_bottom'] = None
+            if not setup.get('radar_4h_fvg_entry'):
+                setup['radar_4h_fvg_entry'] = None
+            setup['radar_4h_in_fvg'] = False   # in_fvg se recalculeaza mereu
             setup.pop('radar_4h_scan_error', None)
 
         # V16.2: 50% Equilibrium al impulsului 4H CHoCH (frontiera P/D Array)

@@ -2630,12 +2630,11 @@ class SMCDetector:
                 else:
                     _max_sl_pips = 100   # V26.0: 50→100 pips non-JPY (ATR Daily ~80-120p)
                 if sl_distance_pips > _max_sl_pips:
-                    print(f"   ⛔ [V26.0 REJECT: SL {sl_distance_pips:.1f} pips > {_max_sl_pips} max] "
-                          f"{symbol} — SL structural prea departe, trade ANULAT.")
-                    return None, None, None
-            else:
-                # Fallback: min body din fereastra 40 bare
-                body_lows_4h = df_4h[['open', 'close']].min(axis=1)
+                    # V34 FIX V06: Scanner NU mai anuleaza pe baza distantei SL.
+                    # SL-ul structural 4H poate fi mai larg la scanare (pullback incomplet).
+                    # Executorul recalculeaza SL live la EXECUTE_NOW si aplica guard 5-300p.
+                    print(f"   ⚠️ [V34 SL INFO] {symbol} LONG: SL {sl_distance_pips:.1f}p > {_max_sl_pips}p — "
+                          f"acceptat de Scanner, Executor va recalcula SL live la EXECUTE_NOW")
                 sl_window_start = max(0, h4_choch_idx - 40)
                 stop_loss = body_lows_4h.iloc[sl_window_start:].min() - sl_buffer
                 print(f"   🛡️ [V14.1 SL FALLBACK] Body min 40-bar window: {stop_loss:.5f}")
@@ -2764,12 +2763,11 @@ class SMCDetector:
                 else:
                     _max_sl_pips = 100   # V26.0: 50→100 pips non-JPY (ATR Daily ~80-120p)
                 if sl_distance_pips > _max_sl_pips:
-                    print(f"   ⛔ [V26.0 REJECT: SL {sl_distance_pips:.1f} pips > {_max_sl_pips} max] "
-                          f"{symbol} — SL structural prea departe, trade ANULAT.")
-                    return None, None, None
-            else:
-                # Fallback: max body din fereastra 40 bare
-                body_highs_4h = df_4h[['open', 'close']].max(axis=1)
+                    # V34 FIX V06: Scanner NU mai anuleaza pe baza distantei SL.
+                    # SL-ul structural 4H poate fi mai larg la scanare (pullback incomplet).
+                    # Executorul recalculeaza SL live la EXECUTE_NOW si aplica guard 5-300p.
+                    print(f"   ⚠️ [V34 SL INFO] {symbol} SHORT: SL {sl_distance_pips:.1f}p > {_max_sl_pips}p — "
+                          f"acceptat de Scanner, Executor va recalcula SL live la EXECUTE_NOW")
                 sl_window_start = max(0, h4_choch_idx - 40)
                 stop_loss = body_highs_4h.iloc[sl_window_start:].max() + sl_buffer
                 print(f"   🛡️ [V14.1 SL FALLBACK] Body max 40-bar window: {stop_loss:.5f}")

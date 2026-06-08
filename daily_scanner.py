@@ -444,22 +444,21 @@ class DailyScanner:
                     
                     setups_found.append(setup)
 
-                    # V15.0 WEEKLY ANCHOR: Calculează W1 bias și atașează la setup
+                    # V34 FIX V17: W1 = EXCLUSIV INFORMATIV
+                    # Nu mai modifica strategy_type, nu mai blocheaza niciun setup.
+                    # Bias-ul W1 se salveaza in setup.w1_bias pentru context Telegram/loguri.
                     try:
                         w1_result = self.smc_detector.calculate_w1_bias(df_w1)
                         setup.w1_bias = w1_result['bias']
                         setup.w1_last_bos_price = w1_result.get('last_bos_price')
-                        # Tag COUNTER_TREND_W1 dacă D1 e opus W1
-                        d1_dir = setup.daily_choch.direction  # 'bullish' / 'bearish'
-                        w1_bias_lower = w1_result['bias'].lower()  # 'bullish' / 'bearish' / 'neutral'
+                        d1_dir = setup.daily_choch.direction
+                        w1_bias_lower = w1_result['bias'].lower()
                         if w1_bias_lower != 'neutral' and w1_bias_lower != d1_dir:
-                            # Opus → tag Counter-Trend
-                            original_strategy = getattr(setup, 'strategy_type', 'reversal')
-                            setup.strategy_type = f"{original_strategy}_counter_w1"
-                            print(f"   ⚠️ [W1 COUNTER-TREND] {symbol}: D1={d1_dir.upper()} opus W1={w1_result['bias']} — tagged")
+                            # V34: LOG ONLY — nu mai tagam strategy_type cu _counter_w1
+                            print(f"   ⚠️ [W1 INFO] {symbol}: D1={d1_dir.upper()} opus W1={w1_result['bias']} — context informativ, setup VALID")
                         else:
                             align_label = "ALINIAT" if w1_bias_lower == d1_dir else "NEUTRAL"
-                            print(f"   📅 [W1 BIAS] {symbol}: {w1_result['bias']} — {align_label} cu D1")
+                            print(f"   📅 [W1 INFO] {symbol}: {w1_result['bias']} — {align_label} cu D1")
                     except Exception as w1_bias_err:
                         setup.w1_bias = 'NEUTRAL'
                         setup.w1_last_bos_price = None
