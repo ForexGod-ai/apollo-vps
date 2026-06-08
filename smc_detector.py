@@ -142,11 +142,15 @@ class SMCDetector:
             if df_w1 is None or len(df_w1) < 10:
                 return {'bias': 'NEUTRAL', 'last_bos_direction': None, 'last_bos_price': None, 'last_bos_bar_idx': None}
 
+            # V36.0 FIX B2: reset_index(drop=True) ELIMINAT — pastreaza timestamps Datetime!
+            # Motivul bug-ului: RangeIndex facea crash la .total_seconds() in detect_swing_highs
+            # → FRACTAL_WINDOW cadea la 2 (default) in loc de 3 → pseudo-swinguri saptamanale
+            # → bounce recent BTC = BULLISH fals. Fix: .copy() fara reset_index.
             # V17.5 FIX W1 BIAS — FRACTAL_WINDOW dinamic, nu mai e hardcodat:
             # swing_lookback=3 → fereastra de 3 bare pe fiecare parte → detecteaza
             # swing-uri pana la bara[-4] = acum 4 saptamani → prinde CHoCH bearish recent.
             # Body-only identic cu tot sistemul. Detector separat = fara conflict cache.
-            df_w1_recent = df_w1.iloc[-60:].copy().reset_index(drop=True)
+            df_w1_recent = df_w1.iloc[-60:].copy()  # V36.0: fara reset_index — timestamps intacte
             w1_detector = SMCDetector(swing_lookback=3, atr_multiplier=self.atr_multiplier)
             w1_chochs, w1_bos_list = w1_detector.detect_choch_and_bos(df_w1_recent)
 
@@ -1382,18 +1386,20 @@ class SMCDetector:
         if _cache_key in self._swing_highs_cache:
             return self._swing_highs_cache[_cache_key]
 
-        # V29.0: FRACTAL_WINDOW ADAPTIV — detectăm timeframe-ul din intervalul median dintre bare
-        # Daily (≥20h/bar): FW=5 — filtrează zgomotul, pivoți macrostructurali reali
-        # 4H  (3-20h/bar): FW=3 — echilibru precizie/calitate
-        # 1H/sub         : FW=2 — fractal agil (comportament V24.0 original)
-        # Motivul: FW=2 pe Daily genera micro-fractali din noise → CHoCH-uri bullish eronate
+        # V36.0 FIX B3: FRACTAL_WINDOW ADAPTIV — Daily redus de la 5 la 3
+        # V29.0: FW=5 pe Daily lasa o zona moarta de 5 zile la marginea graficului.
+        # Un CHoCH bearish format vineri dimineata era INVIZIBIL pana marti dimineata.
+        # V36.0: FW=3 → zona moarta redusa la 3 zile (weekend = 0 bare = practic invizibil 1 zi)
+        # Daily (≥20h/bar): FW=3 — prinde swing-uri din ultimele 3 zile (era 5)
+        # 4H  (3-20h/bar): FW=3 — echilibru precizie/calitate (nemodificat)
+        # 1H/sub         : FW=2 — fractal agil (comportament V24.0 original, nemodificat)
         FRACTAL_WINDOW = 2  # default: 1H și sub
         try:
             if len(df) >= 3 and hasattr(df.index, 'to_series'):
                 _td_series = df.index.to_series().diff().dropna()
                 _median_sec = _td_series.median().total_seconds()
                 if _median_sec >= 72000:    # ≥20h → Daily
-                    FRACTAL_WINDOW = 5
+                    FRACTAL_WINDOW = 3  # V36.0: era 5 → redus la 3 (zona oarba 5→3 zile)
                 elif _median_sec >= 10800:  # ≥3h → 4H
                     FRACTAL_WINDOW = 3
                 # else: 1H sau sub → 2
@@ -1571,14 +1577,16 @@ class SMCDetector:
         if _cache_key in self._swing_lows_cache:
             return self._swing_lows_cache[_cache_key]
 
-        # V29.0: FRACTAL_WINDOW ADAPTIV — Daily=5, 4H=3, 1H/sub=2 (simetric cu detect_swing_highs)
+        # V36.0 FIX B3: FRACTAL_WINDOW ADAPTIV — Daily=3 (era 5), 4H=3, 1H/sub=2 (simetric cu detect_swing_highs)
+        # Motivul: FW=5 pe Daily lasa zona moarta de 5 zile la marginea graficului.
+        # V36.0: FW=3 → zona moarta redusa la 3 zile (simetric cu detect_swing_highs).
         FRACTAL_WINDOW = 2
         try:
             if len(df) >= 3 and hasattr(df.index, 'to_series'):
                 _td_series = df.index.to_series().diff().dropna()
                 _median_sec = _td_series.median().total_seconds()
                 if _median_sec >= 72000:
-                    FRACTAL_WINDOW = 5
+                    FRACTAL_WINDOW = 3  # V36.0: era 5 → redus la 3 (zona oarba 5→3 zile)
                 elif _median_sec >= 10800:
                     FRACTAL_WINDOW = 3
         except Exception:
@@ -1686,19 +1694,24 @@ class SMCDetector:
 
                 # 🎯 HH = Higher High vs prev HIGH
                 if swing.price > prev_high.price:
-                    # V22 BODY CLOSE RULE: o bară ulterioară trebuie să îCHIĐĂ dincolo de
-                    # WICK-ul absolut al swing-ului anterior pentru BOS/CHoCH valid.
-                    # prev_high.price = df['high'] (wick absolut) — schimbat în V22.
-                    # Liquidity Sweep = wick trece dincolo dar CLOSE rămâne în structură → pass.
-                    _prev_wick_h = prev_high.price  # V22: wick absolut direct din SwingPoint
+                    # V36.0 FIX B1: BODY CLOSE RULE CORECTATA — close > BODY_HIGH (nu > WICK)
+                    # Motivul bug-ului V22: _prev_wick_h = prev_high.price = df['high'] (wick absolut)
+                    # Pe GBPNZD/XTIUSD/JPY crosses: wick >> body → close depasea BODY dar nu WICK
+                    # → CHoCH/BOS omis complet pe piete volatile = unghiul mort principal.
+                    # Fix: comparam close cu BODY_HIGH (max open/close) al pivot-ului anterior.
+                    # Liquidity Sweep (wick hunt) este prins tot: wick trece dincolo de BODY
+                    # dar close revine sub body_high = sweep fara confirmare structurala.
+                    _prev_body_h = max(
+                        float(df['open'].iloc[prev_high.index]),
+                        float(df['close'].iloc[prev_high.index])
+                    )  # V36.0: body high al swing-ului anterior (nu wick absolut)
                     _body_close_confirmed_h = False
                     for _ci in range(prev_high.index + 1, min(swing.index + 1, len(df))):
-                        if float(df['close'].iloc[_ci]) > _prev_wick_h:
+                        if float(df['close'].iloc[_ci]) > _prev_body_h:
                             _body_close_confirmed_h = True
                             break
                     if not _body_close_confirmed_h:
-                        # Nicio lumânare nu a închis dincolo de wick-ul prev_high
-                        # = Liquidity Sweep (wick hunt), nu BOS structural — skip
+                        # Close nu a depasit body-ul prev_high → sweep sau miscare fara confirmare
                         pass
                     elif _body_close_confirmed_h and prev_trend is None:
                         chochs.append(CHoCH(
@@ -1759,18 +1772,22 @@ class SMCDetector:
 
                 # 🎯 LL = Lower Low vs prev LOW
                 if swing.price < prev_low.price:
-                    # V22 BODY CLOSE RULE: o bară ulterioară trebuie să îCHIĐĂ dincolo de
-                    # WICK-ul absolut al swing-ului anterior pentru BOS/CHoCH valid.
-                    # prev_low.price = df['low'] (wick absolut) — schimbat în V22.
-                    # Liquidity Sweep = wick trece dincolo dar CLOSE rămâne în structură → pass.
-                    _prev_wick_l = prev_low.price  # V22: wick absolut direct din SwingPoint
+                    # V36.0 FIX B1: BODY CLOSE RULE CORECTATA — close < BODY_LOW (nu < WICK)
+                    # Motivul bug-ului V22: _prev_wick_l = prev_low.price = df['low'] (wick absolut)
+                    # Pe GBPNZD/XTIUSD/JPY crosses: wick << body → close depasea BODY dar nu WICK
+                    # → CHoCH/BOS omis complet pe piete volatile.
+                    # Fix: comparam close cu BODY_LOW (min open/close) al pivot-ului anterior.
+                    _prev_body_l = min(
+                        float(df['open'].iloc[prev_low.index]),
+                        float(df['close'].iloc[prev_low.index])
+                    )  # V36.0: body low al swing-ului anterior (nu wick absolut)
                     _body_close_confirmed_l = False
                     for _ci in range(prev_low.index + 1, min(swing.index + 1, len(df))):
-                        if float(df['close'].iloc[_ci]) < _prev_wick_l:
+                        if float(df['close'].iloc[_ci]) < _prev_body_l:
                             _body_close_confirmed_l = True
                             break
                     if not _body_close_confirmed_l:
-                        # Liquidity sweep pe low — trendul structural rămâne intact
+                        # Close nu a depasit body-ul prev_low → sweep sau miscare fara confirmare
                         pass
                     elif _body_close_confirmed_l and prev_trend is None:
                         chochs.append(CHoCH(
@@ -2588,13 +2605,15 @@ class SMCDetector:
             h4_choch_idx = h4_choch.index if h4_choch is not None and hasattr(h4_choch, 'index') else max(0, len(df_4h) - 40)
             swing_lows_4h_list = self.detect_swing_lows(df_4h)
             lows_before_choch = [sl for sl in swing_lows_4h_list if sl.index <= h4_choch_idx]
-            # V26.0: pip_size corect per instrument (XAU/BTC aveau 0.0001 → SL în milioane de "pips")
+            # V36.0 FIX B4: pip_size corect per instrument (XTI/OIL era 0.0001 → SL 100x eronat)
             if 'JPY' in symbol:
                 pip_size = 0.01
             elif any(x in symbol.upper() for x in ['XAU', 'XAG', 'GOLD']):
                 pip_size = 0.10    # XAUUSD IC Markets: 1 pip = $0.10
             elif any(x in symbol.upper() for x in ['BTC', 'ETH']):
                 pip_size = 1.0     # BTCUSD: 1 pip = $1.00
+            elif any(x in symbol.upper() for x in ['XTI', 'WTI', 'OIL', 'BRENT']):
+                pip_size = 0.01    # V36.0: Oil IC Markets — 1 pip = $0.01 (era 0.0001 → 100x eronat)
             else:
                 pip_size = 0.0001
             sl_buffer = pip_size * 2  # 2 pips buffer sub swing Low (spread protection)
@@ -2721,13 +2740,15 @@ class SMCDetector:
             h4_choch_idx = h4_choch.index if h4_choch is not None and hasattr(h4_choch, 'index') else max(0, len(df_4h) - 40)
             swing_highs_4h_list = self.detect_swing_highs(df_4h)
             highs_before_choch = [sh for sh in swing_highs_4h_list if sh.index <= h4_choch_idx]
-            # V26.0: pip_size corect per instrument (XAU/BTC aveau 0.0001 → SL în milioane de "pips")
+            # V36.0 FIX B4: pip_size corect per instrument (XTI/OIL era 0.0001 → SL 100x eronat)
             if 'JPY' in symbol:
                 pip_size = 0.01
             elif any(x in symbol.upper() for x in ['XAU', 'XAG', 'GOLD']):
                 pip_size = 0.10    # XAUUSD IC Markets: 1 pip = $0.10
             elif any(x in symbol.upper() for x in ['BTC', 'ETH']):
                 pip_size = 1.0     # BTCUSD: 1 pip = $1.00
+            elif any(x in symbol.upper() for x in ['XTI', 'WTI', 'OIL', 'BRENT']):
+                pip_size = 0.01    # V36.0: Oil IC Markets — 1 pip = $0.01 (era 0.0001 → 100x eronat)
             else:
                 pip_size = 0.0001
             sl_buffer = pip_size * 2  # 2 pips buffer deasupra swing High (spread protection)
