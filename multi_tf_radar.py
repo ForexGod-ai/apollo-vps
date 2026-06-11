@@ -80,17 +80,32 @@ _EMOJI_RE = re.compile(
     "]+",
     flags=re.UNICODE,
 )
+_ASCII_MAP = str.maketrans({
+    'ă': 'a', 'â': 'a', 'î': 'i', 'ș': 's', 'ț': 't',
+    'Ă': 'A', 'Â': 'A', 'Î': 'I', 'Ș': 'S', 'Ț': 'T',
+    'ş': 's', 'ţ': 't', 'Ş': 'S', 'Ţ': 'T',
+    '—': '--', '–': '-', '━': '-', '─': '-',
+})
+
+
+def _ascii_sanitize(text: str) -> str:
+    """V37.1.1: ASCII curat pentru log PowerShell Windows."""
+    if not _RADAR_ASCII:
+        return str(text)
+    t = _EMOJI_RE.sub("", str(text))
+    t = t.translate(_ASCII_MAP)
+    t = t.replace("⏳", "[WAIT]").replace("✅", "[OK]").replace("❌", "[X]")
+    return t.encode("ascii", errors="ignore").decode("ascii")
+
+
+def _radar_log_filter(record) -> bool:
+    record["message"] = _ascii_sanitize(record["message"])
+    return True
 
 
 def _radar_out(msg: str) -> None:
     """Print radar line — ASCII-safe on Windows log files."""
-    text = str(msg)
-    if _RADAR_ASCII:
-        text = _EMOJI_RE.sub("", text)
-        text = text.replace("━", "-").replace("─", "-").replace("—", "--")
-        text = text.replace("⏳", "[WAIT]").replace("✅", "[OK]").replace("❌", "[X]")
-        text = text.encode("ascii", errors="ignore").decode("ascii")
-    print(text)
+    print(_ascii_sanitize(msg))
     sys.stdout.flush()
 
 
@@ -112,6 +127,7 @@ logger.remove()
 logger.add(
     str(_RADAR_LOG_DIR / "multi_tf_radar.log"),
     format="{time:YYYY-MM-DD HH:mm:ss} | {level:<8} | {message}",
+    filter=_radar_log_filter,
     level="INFO",
     rotation="10 MB",
     retention="7 days",
@@ -1739,8 +1755,8 @@ class MultiTFRadar:
                 json.dump(fresh_data, f, indent=2, default=_json_safe)
             _os.replace(tmp_path, _MONITORING_FILE)
             logger.success(
-                f"💾 [BATCH SYNC V22 MERGE] monitoring_setups.json actualizat — "
-                f"{matched_count}/{len(results)} parități sincronizate (re-citire LIVE, race-free)"
+                f"[BATCH SYNC V22 MERGE] monitoring_setups.json actualizat — "
+                f"{matched_count}/{len(results)} paritati sincronizate (re-citire LIVE, race-free)"
             )
             sys.stdout.flush()
 
