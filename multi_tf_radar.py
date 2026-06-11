@@ -64,8 +64,59 @@ try:
     DEPS_AVAILABLE = True
 except ImportError:
     DEPS_AVAILABLE = False
-    print("⚠️  Dependencies not available")
+    print("WARNING: Dependencies not available")
     sys.exit(1)
+
+import platform
+import re
+
+# V37.1: Output ASCII pe Windows VPS — PowerShell citeste log UTF-8 ca mojibake
+_RADAR_ASCII = platform.system() == 'Windows' or _os_global.getenv('RADAR_ASCII', '').lower() in ('1', 'true', 'yes')
+_EMOJI_RE = re.compile(
+    "["
+    "\U0001F300-\U0001FAFF"
+    "\U00002700-\U000027BF"
+    "\U00002600-\U000026FF"
+    "]+",
+    flags=re.UNICODE,
+)
+
+
+def _radar_out(msg: str) -> None:
+    """Print radar line — ASCII-safe on Windows log files."""
+    text = str(msg)
+    if _RADAR_ASCII:
+        text = _EMOJI_RE.sub("", text)
+        text = text.replace("━", "-").replace("─", "-").replace("—", "--")
+        text = text.replace("⏳", "[WAIT]").replace("✅", "[OK]").replace("❌", "[X]")
+        text = text.encode("ascii", errors="ignore").decode("ascii")
+    print(text)
+    sys.stdout.flush()
+
+
+def _plain_status(status: 'PullbackStatus') -> str:
+    """Status lizibil fara emoji (ex: WAITING_4H_PULLBACK)."""
+    return status.name if hasattr(status, 'name') else str(status)
+
+
+def _fmt_price(val: Optional[float], digits: int = 5) -> str:
+    if val is None or val == 0:
+        return "N/A"
+    return f"{val:.{digits}f}"
+
+
+# Log fisier ASCII (V37.1) — alternativa la multi_tf_radar_stdout.log cu emoji
+_RADAR_LOG_DIR = _RADAR_DIR / "logs"
+_RADAR_LOG_DIR.mkdir(exist_ok=True)
+logger.remove()
+logger.add(
+    str(_RADAR_LOG_DIR / "multi_tf_radar.log"),
+    format="{time:YYYY-MM-DD HH:mm:ss} | {level:<8} | {message}",
+    level="INFO",
+    rotation="10 MB",
+    retention="7 days",
+    encoding="utf-8",
+)
 
 
 class PullbackStatus(Enum):
@@ -230,6 +281,19 @@ class MultiTFRadar:
                 seen.add(n)
                 chain.append(n)
         return chain
+
+    @staticmethod
+    def _fvg_prices_sane(current_price: float, top: float, bottom: float) -> bool:
+        """V37.1: Respinge FVG cu bare corupte (ex: 4139 pe pereche 0.57)."""
+        if not current_price or current_price <= 0 or top is None or bottom is None:
+            return False
+        if top <= bottom:
+            return False
+        for px in (top, bottom):
+            ratio = px / current_price
+            if ratio > 10.0 or ratio < 0.1:
+                return False
+        return True
 
     @staticmethod
     def _get_pip_size(symbol: str) -> float:
@@ -728,6 +792,21 @@ class MultiTFRadar:
                 print(f"  ⚠️ [PATCH RADAR] detect_fvg structural crash caught: {fvg_err}")
                 print(f"  ⚠️ [PATCH RADAR] Forcing V15.4 Fibo Fallback.")
                 sys.stdout.flush()
+                latest_fvg = None
+
+            # V37.1: Respinge FVG cu OHLC corupt (tick aberrant / scala gresita)
+            if latest_fvg and not self._fvg_prices_sane(
+                current_price, latest_fvg.top, latest_fvg.bottom
+            ):
+                _radar_out(
+                    f"  [!] [V37.1 FVG GUARD] {symbol} {timeframe_display}: "
+                    f"FVG [{latest_fvg.bottom:.5f}-{latest_fvg.top:.5f}] vs pret {current_price:.5f} "
+                    f"= date corupte, folosim Fibo Fallback"
+                )
+                logger.warning(
+                    f"{symbol} {timeframe_display} FVG rejected: "
+                    f"[{latest_fvg.bottom}-{latest_fvg.top}] vs price {current_price}"
+                )
                 latest_fvg = None
             
             if not latest_fvg:
@@ -1743,91 +1822,71 @@ class MultiTFRadar:
             logger.error(f"⚠️  Failed to sync radar data to monitoring_setups.json: {e}")
     
     def print_result(self, result: MultiTFResult):
-        """Print formatted multi-timeframe analysis result"""
-        print("\n" + "="*80)
-        print(f"🎯 MULTI-TIMEFRAME EXECUTION RADAR - {result.symbol}")
-        print("="*80)
-        print(f"⏰ Scan Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        print(f"📊 Direction: {'🟢' if result.direction == 'LONG' else '🔴'} {result.direction}")
-        print("="*80)
-        
-        # Daily zone (V19.5: always validated — Radar scans H4/H1 regardless of price-in-FVG)
-        print("\n📊 [DAILY] ZONE VALIDATION")
-        print("   Status: ✅ VALIDATED")
-        print(f"   FVG Zone: [{result.daily_fvg_bottom:.5f} - {result.daily_fvg_top:.5f}]")
-        print(f"   Entry: {result.daily_entry:.5f}")
-        
-        # Current price
-        print("\n💰 [CURRENT PRICE]")
-        print(f"   Price: {result.current_price:.5f}")
-        
-        # 1H Analysis
-        print("\n" + "─"*80)
-        print("🎯 [1H] SNIPER ANALYSIS (ATR 0.8x)")
-        print("─"*80)
-        print(f"   Status: {result.tf_1h.status.value}")
-        
-        if result.tf_1h.choch_detected:
-            print(f"   ✅ CHoCH: {result.tf_1h.choch_direction.upper()}")
-            print(f"   📅 Time: {result.tf_1h.choch_time}")
-            if result.tf_1h.choch_price:
-                print(f"   💰 Price: {result.tf_1h.choch_price:.5f}")
+        """Print formatted multi-timeframe analysis — V37.1 ASCII lizibil pe Windows VPS."""
+        sep = "=" * 72
+        d_lo = result.daily_fvg_bottom
+        d_hi = result.daily_fvg_top
+        if d_lo == 0 and d_hi == 0:
+            daily_zone_txt = "N/A (Scanner: POI inca nesetat — WAITING_D1_PULLBACK)"
         else:
-            print(f"   ❌ No 1H CHoCH detected")
-        
-        if result.tf_1h.fvg_detected:
-            print(f"\n   📦 1H FVG Entry Zone:")
-            print(f"      Zone: [{result.tf_1h.fvg_bottom:.5f} - {result.tf_1h.fvg_top:.5f}]")
-            print(f"      🎯 Entry: {result.tf_1h.fvg_entry:.5f}")
-            
-            if result.tf_1h.in_fvg:
-                print(f"      ✅✅✅ PRICE IN 1H FVG - SNIPER ENTRY!")
+            daily_zone_txt = f"[{_fmt_price(d_lo)} - {_fmt_price(d_hi)}]"
+
+        _radar_out("")
+        _radar_out(sep)
+        _radar_out(f"RADAR REPORT | {result.symbol} | {result.direction}")
+        _radar_out(f"Scan: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        _radar_out(sep)
+        _radar_out(f"DAILY  | Status: VALIDATED (Always-On V36.5)")
+        _radar_out(f"       | FVG ref: {daily_zone_txt}")
+        _radar_out(f"       | Entry ref: {_fmt_price(result.daily_entry)}")
+        _radar_out(f"PRICE  | Live: {_fmt_price(result.current_price)}")
+        _radar_out("-" * 72)
+
+        for label, tf in [("1H", result.tf_1h), ("4H", result.tf_4h)]:
+            _radar_out(f"{label} TIMEFRAME")
+            _radar_out(f"  Status : {_plain_status(tf.status)}")
+            if tf.choch_detected:
+                _radar_out(
+                    f"  CHoCH  : {tf.choch_direction.upper()} @ {_fmt_price(tf.choch_price)} "
+                    f"({tf.choch_time or '?'})"
+                )
             else:
-                print(f"      ⏳ Distance: {result.tf_1h.distance_to_fvg_pips:.1f} pips")
-        
-        # 4H Analysis
-        print("\n" + "─"*80)
-        print("💎 [4H] HIGH CONFIDENCE ANALYSIS (ATR 1.0x — V15.4)")
-        print("─"*80)
-        print(f"   Status: {result.tf_4h.status.value}")
-        
-        if result.tf_4h.choch_detected:
-            print(f"   ✅ CHoCH: {result.tf_4h.choch_direction.upper()}")
-            print(f"   📅 Time: {result.tf_4h.choch_time}")
-            if result.tf_4h.choch_price:
-                print(f"   💰 Price: {result.tf_4h.choch_price:.5f}")
-        else:
-            print(f"   ❌ No 4H CHoCH detected")
-        
-        if result.tf_4h.fvg_detected:
-            print(f"\n   📦 4H FVG Entry Zone:")
-            print(f"      Zone: [{result.tf_4h.fvg_bottom:.5f} - {result.tf_4h.fvg_top:.5f}]")
-            print(f"      🎯 Entry: {result.tf_4h.fvg_entry:.5f}")
-            
-            if result.tf_4h.in_fvg:
-                print(f"      ✅✅✅ PRICE IN 4H FVG - HIGH CONFIDENCE!")
+                _radar_out("  CHoCH  : none")
+            if tf.fvg_detected and tf.fvg_top and tf.fvg_bottom:
+                _radar_out(
+                    f"  FVG    : [{_fmt_price(tf.fvg_bottom)} - {_fmt_price(tf.fvg_top)}] "
+                    f"entry={_fmt_price(tf.fvg_entry)}"
+                )
+                if tf.in_fvg:
+                    _radar_out("  Zone   : PRICE IN FVG")
+                else:
+                    dist = tf.distance_to_fvg_pips
+                    if dist > 5000:
+                        _radar_out(f"  Zone   : waiting pullback (dist invalid — check data)")
+                    else:
+                        _radar_out(f"  Zone   : waiting pullback ({dist:.1f} pips)")
             else:
-                print(f"      ⏳ Distance: {result.tf_4h.distance_to_fvg_pips:.1f} pips")
-        
-        # Final verdict
-        print("\n" + "="*80)
-        print(f"🎯 [VERDICT]: {result.verdict}")
+                _radar_out("  FVG    : none (Fibo fallback sau in asteptare CHoCH)")
+            _radar_out("-" * 72)
+
+        _radar_out(f"VERDICT: {result.verdict}")
+        if result.pd_guard_passed is False and result.pd_guard_reason:
+            _radar_out(f"P/D GUARD: BLOCK EXECUTE — {result.pd_guard_reason}")
+        elif result.pd_guard_passed:
+            _radar_out("P/D GUARD: OK (execuție permisă dacă trigger H4/H1)")
         if result.priority_timeframe:
-            print(f"🏆 [PRIORITY]: {result.priority_timeframe} timeframe")
-        print("="*80)
-        
+            _radar_out(f"PRIORITY TF: {result.priority_timeframe}")
         if result.execution_ready:
-            print("\n🚨🚨🚨 EXECUTE IMMEDIATELY 🚨🚨🚨")
-            if result.priority_timeframe == "1H":
-                print(f"   🎯 SNIPER ENTRY (1H):")
-                print(f"      Entry: {result.tf_1h.fvg_entry:.5f}")
-                print(f"      FVG Zone: [{result.tf_1h.fvg_bottom:.5f} - {result.tf_1h.fvg_top:.5f}]")
-            else:
-                print(f"   💎 HIGH CONFIDENCE ENTRY (4H):")
-                print(f"      Entry: {result.tf_4h.fvg_entry:.5f}")
-                print(f"      FVG Zone: [{result.tf_4h.fvg_bottom:.5f} - {result.tf_4h.fvg_top:.5f}]")
-        
-        print()
+            _radar_out("*** EXECUTE_NOW — semnal activ ***")
+        else:
+            _radar_out("EXECUTE: NU inca — asteptam trigger H4/H1 + conditii P/D")
+        _radar_out(sep)
+        _radar_out("")
+
+        logger.info(
+            f"{result.symbol} | {_plain_status(result.tf_4h.status)} | "
+            f"exec_ready={result.execution_ready} | {result.verdict[:80]}"
+        )
     
     def load_monitoring_setups(self) -> List[Dict]:
         """Load setups from monitoring_setups.json"""
