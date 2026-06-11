@@ -91,23 +91,22 @@ class CTraderDataProvider:
                 try:
                     from loguru import logger as _lg
                     _lg.debug(f"Downloaded {len(df)} candles for {symbol} ({timeframe}) from IC Markets")
-                except Exception:
-                    pass  # silent -- nu e critic
+                except Exception as _log_err:
+                    logger.debug(f"loguru unavailable in data provider: {_log_err}")
                 return df
             else:
                 try:
                     from loguru import logger as _lg
                     _lg.warning(f"No data for {symbol} on {timeframe}")
-                except Exception:
-                    pass
-                return None
+                except Exception as _log_err:
+                    logger.debug(f"loguru unavailable in data provider: {_log_err}")
                 
         except Exception as e:
             try:
                 from loguru import logger as _lg
                 _lg.error(f"Error downloading data for {symbol}: {e}")
-            except Exception:
-                pass
+            except Exception as _log_err:
+                logger.debug(f"loguru unavailable in data provider: {_log_err}")
             return None
 
 
@@ -243,8 +242,8 @@ class DailyScanner:
                     "────────────────\n"
                     "🏛 <b>ГЛИТЧ ИН МАТРИКС</b> 🏛"
                 )
-            except Exception:
-                pass  # Telegram failure nu trebuie să mascheze eroarea principală
+            except Exception as _tg_err:
+                logger.warning(f"Telegram alert failed during cBot connection error: {_tg_err}")
             # V24.5 FIX: Ridicăm excepție în loc să returnăm [] silențios.
             # Aceasta face ca subprocess.run() din auto_scanner_daemon.py să vadă
             # exit code 1 (nu 0) și să trimită corect alertul de eroare.
@@ -360,8 +359,8 @@ class DailyScanner:
                     try:
                         with open('scanner_errors.log', 'a', encoding='utf-8') as f:
                             f.write(f"{datetime.now().isoformat()} - {symbol} - {scan_error}\n")
-                    except:
-                        pass
+                    except Exception as _log_w_err:
+                        logger.warning(f"Could not write scanner_errors.log for {symbol}: {_log_w_err}")
                     setup = None
                 
                 if setup:
@@ -715,8 +714,8 @@ class DailyScanner:
                     final_monitoring_count = len(data.get("setups", []))
                 elif isinstance(data, list):
                     final_monitoring_count = len(data)
-        except:
-            pass
+        except Exception as _cnt_err:
+            logger.warning(f"[V37.0] Could not read final monitoring count: {_cnt_err}")
         
         # Send daily summary AFTER saving
         print("\n" + "="*60)
@@ -898,8 +897,8 @@ def save_monitoring_setups(setups: List[TradeSetup], bias_fallback: list = None)
                 direction = (p.get('direction') or '').lower()
                 if sym:
                     open_position_dir_map[sym] = direction
-    except Exception:
-        pass
+    except Exception as _pos_err:
+        logger.warning(f"[V37.0] Could not load open positions for monitoring merge: {_pos_err}")
 
     try:
         # Pasul 1: Citim JSON existent si pastram paritati active

@@ -672,8 +672,8 @@ class MultiTFRadar:
                 print(f"  📐 [V16.2 EQ] {timeframe_display} Impulse: {_sbp:.5f} → {_cbp:.5f} | "
                       f"EQ={_eq_str} ({abs(_cbp - _sbp)/pip_size_eq:.1f} pips)")
                 sys.stdout.flush()
-            except Exception:
-                pass
+            except Exception as _eq_err:
+                logger.warning(f"[V37.0] {symbol} {timeframe_display} equilibrium calc failed: {_eq_err}")
 
             # ── V31.0 STRUCTURAL SL: Swing Low/High de baza — nu swing_broken immediate ──
             # Bug #08/#13: swing_broken.price era prea aproape de entry (BOS micro-impuls = 3 pip SL)
@@ -1509,7 +1509,8 @@ class MultiTFRadar:
             # Obtinem pret live (necesar pentru Portile 1 si 2)
             try:
                 _cp = self.get_current_price(sym)
-            except Exception:
+            except Exception as _cp_err:
+                logger.warning(f"[V37.0] {sym}: live price unavailable for Poarta 1: {_cp_err}")
                 _cp = None
 
             if _cp is not None:
@@ -1984,7 +1985,8 @@ class MultiTFRadar:
             if _has_pullback:
                 return 10   # 🔍 Pullback activ pe 4H sau 1H
             return base_interval  # 🔄 Normal
-        except Exception:
+        except Exception as _int_err:
+            logger.warning(f"[V37.0] adaptive interval fallback to {base_interval}s: {_int_err}")
             return base_interval
 
     def watch_mode(self, interval: int, symbol: Optional[str] = None, all_setups: bool = False):

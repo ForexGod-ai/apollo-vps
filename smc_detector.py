@@ -249,27 +249,6 @@ class SMCDetector:
             print(f"❌ ATR calculation error: {e}")
             return 0.0
 
-    def _adaptive_lookback(self, df: pd.DataFrame) -> int:
-        """⚠️  DEPRECATED V11.2 — NEFOLOSIT
-
-        Înlocuit de FRACTAL WINDOW 10 (detect_swing_highs + detect_swing_lows).
-        Păstrat pentru backward compatibility cu cod extern care ar putea apela direct.
-        NU se mai apelează intern din V11.2.
-
-        FORMULA VECHE: int(base_lookback * (ATR_200 / ATR_14))
-        FORMULA NOUĂ:  FRACTAL_WINDOW = 10 (fix, bilateral)
-        """
-        atr_14 = self.calculate_atr(df, period=14)
-        atr_200 = self.calculate_atr(df, period=200)
-
-        if atr_14 == 0.0 or atr_200 == 0.0:
-            return self.base_lookback  # fallback la ancora
-
-        ratio = atr_200 / atr_14
-        adaptive = int(self.base_lookback * ratio)
-        clamped = max(5, min(25, adaptive))
-        return clamped
-    
     def calculate_equilibrium_reversal(self, df: pd.DataFrame, choch: CHoCH, 
                                        swing_highs: List[SwingPoint], swing_lows: List[SwingPoint]) -> Optional[float]:
         """🔄 V8.2: Calculate Equilibrium for REVERSAL (CHoCH) - Uses PRE-CHoCH Macro Leg
