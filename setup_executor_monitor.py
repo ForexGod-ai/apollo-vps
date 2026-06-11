@@ -181,15 +181,13 @@ from ctrader_executor import CTraderExecutor
 from telegram_notifier import TelegramNotifier
 from daily_scanner import CTraderDataProvider
 from smc_detector import (
-    validate_choch_confirmation_scale_in,
     SMCDetector,
-    calculate_choch_fibonacci,
-    validate_pullback_entry,
     TradeSetup,
     CHoCH,
     FVG,
     get_4h_body_close_confirmation,  # ✅ V10.6 FUNCȚIE UNIFICATĂ — același creier ca scanner-ul
 )
+from pip_utils import get_pip_size
 
 # 🛡️ V3.8 ANTI-SPAM SYSTEM by ФорексГод
 from signal_cache import (
@@ -1295,17 +1293,38 @@ class SetupExecutorMonitor:
                             setup.get('entry_price', 0)
                         )
                         _en_direction = setup.get('direction', 'buy').lower()
-                        _pip_size_en = 0.01 if 'JPY' in symbol.upper() else 0.0001
+                        _pip_size_en = get_pip_size(symbol)
                         _pip_value_en = 8.33 if 'JPY' in symbol.upper() else 10.0
 
-                        # ── STEP 2: Descarcă date live 4H + D1 pentru calcul structural ────────────
+                        # ── V37.0 STEP 2: SL/TP — prioritate JSON Radar, ATR ultim resort ───────
+                        def _float_price(val):
+                            try:
+                                return float(val) if val not in (None, 0, '0', '') else None
+                            except (TypeError, ValueError):
+                                return None
+
+                        _sl = _float_price(setup.get('h4_sl_price'))
+                        _tp = _float_price(setup.get('daily_tp_price') or setup.get('daily_target_price'))
+
+                        if _sl and _tp:
+                            if _en_direction == 'buy' and (_sl >= _en_entry or _tp <= _en_entry):
+                                logger.warning(f"[V37.0 JSON GUARD] {symbol} BUY: h4_sl/daily_tp invalid vs entry — recalc")
+                                _sl = _tp = None
+                            elif _en_direction == 'sell' and (_sl <= _en_entry or _tp >= _en_entry):
+                                logger.warning(f"[V37.0 JSON GUARD] {symbol} SELL: h4_sl/daily_tp invalid vs entry — recalc")
+                                _sl = _tp = None
+                            else:
+                                logger.info(
+                                    f"📐 [V37.0 JSON PRIORITY] {symbol}: SL={_sl:.5f} TP={_tp:.5f} "
+                                    f"(h4_sl_price + daily_tp_price din Radar)"
+                                )
+
+                        # ── Recalcul structural live doar dacă JSON Radar lipsește/invalid ────────
                         _df_4h_en = self._get_cached_data(symbol, "H4", 225)
                         _df_d1_en = self._get_cached_data(symbol, "D1", 100)
 
-                        _sl = None
-                        _tp = None
-
-                        if _df_4h_en is not None and not _df_4h_en.empty and \
+                        if (_sl is None or _tp is None) and \
+                           _df_4h_en is not None and not _df_4h_en.empty and \
                            _df_d1_en is not None and not _df_d1_en.empty:
                             # ── STEP 3: Calcul SL structural pe 4H ───────────────────────────────────
                             # SL BUY  = ultimul Swing Low semnificativ 4H (sub entry)
@@ -1315,55 +1334,52 @@ class SetupExecutorMonitor:
                                 _atr_4h = (_df_4h_en['high'] - _df_4h_en['low']).rolling(14).mean().iloc[-1]
 
                                 if _en_direction == 'buy':
-                                    _swing_lows_en = self.smc_detector.detect_swing_lows(_df_4h_en)
-                                    # Filtrare: sub entry, semnificativi (min 0.5x ATR față de entry)
-                                    _valid_sl_candidates = [
-                                        s for s in _swing_lows_en
-                                        if _df_4h_en['low'].iloc[s.index] < _en_entry
-                                        and (_en_entry - _df_4h_en['low'].iloc[s.index]) >= _atr_4h * 0.5
-                                    ]
-                                    if _valid_sl_candidates:
-                                        # Cel mai recent swing low valid
-                                        _best_sl = sorted(_valid_sl_candidates, key=lambda s: s.index, reverse=True)[0]
-                                        _sl = _df_4h_en['low'].iloc[_best_sl.index] - _sl_buffer
-                                    else:
-                                        # Fallback: min body 40 bare
-                                        _sl = _df_4h_en[['open', 'close']].min(axis=1).iloc[-40:].min() - _sl_buffer
+                                    if _sl is None:
+                                        _swing_lows_en = self.smc_detector.detect_swing_lows(_df_4h_en)
+                                        _valid_sl_candidates = [
+                                            s for s in _swing_lows_en
+                                            if _df_4h_en['low'].iloc[s.index] < _en_entry
+                                            and (_en_entry - _df_4h_en['low'].iloc[s.index]) >= _atr_4h * 0.5
+                                        ]
+                                        if _valid_sl_candidates:
+                                            _best_sl = sorted(_valid_sl_candidates, key=lambda s: s.index, reverse=True)[0]
+                                            _sl = _df_4h_en['low'].iloc[_best_sl.index] - _sl_buffer
+                                        else:
+                                            _sl = _df_4h_en[['open', 'close']].min(axis=1).iloc[-40:].min() - _sl_buffer
                                 else:  # sell
-                                    _swing_highs_en = self.smc_detector.detect_swing_highs(_df_4h_en)
-                                    _valid_sl_candidates = [
-                                        s for s in _swing_highs_en
-                                        if _df_4h_en['high'].iloc[s.index] > _en_entry
-                                        and (_df_4h_en['high'].iloc[s.index] - _en_entry) >= _atr_4h * 0.5
-                                    ]
-                                    if _valid_sl_candidates:
-                                        _best_sl = sorted(_valid_sl_candidates, key=lambda s: s.index, reverse=True)[0]
-                                        _sl = _df_4h_en['high'].iloc[_best_sl.index] + _sl_buffer
-                                    else:
-                                        _sl = _df_4h_en[['open', 'close']].max(axis=1).iloc[-40:].max() + _sl_buffer
+                                    if _sl is None:
+                                        _swing_highs_en = self.smc_detector.detect_swing_highs(_df_4h_en)
+                                        _valid_sl_candidates = [
+                                            s for s in _swing_highs_en
+                                            if _df_4h_en['high'].iloc[s.index] > _en_entry
+                                            and (_df_4h_en['high'].iloc[s.index] - _en_entry) >= _atr_4h * 0.5
+                                        ]
+                                        if _valid_sl_candidates:
+                                            _best_sl = sorted(_valid_sl_candidates, key=lambda s: s.index, reverse=True)[0]
+                                            _sl = _df_4h_en['high'].iloc[_best_sl.index] + _sl_buffer
+                                        else:
+                                            _sl = _df_4h_en[['open', 'close']].max(axis=1).iloc[-40:].max() + _sl_buffer
 
-                                # ── STEP 4: Calcul TP structural pe D1 ───────────────────────────────
-                                # TP BUY  = primul Swing High D1 DEASUPRA prețului curent
-                                # TP SELL = primul Swing Low D1 SUB prețul curent
                                 _current_price_en = _df_4h_en['close'].iloc[-1]
 
                                 if _en_direction == 'buy':
-                                    _swing_highs_d1_en = self.smc_detector.detect_swing_highs(_df_d1_en)
-                                    _highs_above = [sh for sh in _swing_highs_d1_en if sh.price > _current_price_en]
-                                    if _highs_above:
-                                        _nearest_high = min(_highs_above, key=lambda sh: sh.price)
-                                        _tp = _df_d1_en['high'].iloc[_nearest_high.index]
-                                    else:
-                                        # Fallback: max body D1
-                                        _tp = _df_d1_en[['open', 'close']].max(axis=1).iloc[:-1].max()
+                                    if _tp is None:
+                                        _swing_highs_d1_en = self.smc_detector.detect_swing_highs(_df_d1_en)
+                                        _highs_above = [sh for sh in _swing_highs_d1_en if sh.price > _current_price_en]
+                                        if _highs_above:
+                                            _nearest_high = min(_highs_above, key=lambda sh: sh.price)
+                                            _tp = _df_d1_en['high'].iloc[_nearest_high.index]
+                                        else:
+                                            _tp = _df_d1_en[['open', 'close']].max(axis=1).iloc[:-1].max()
                                 else:  # sell
-                                    _swing_lows_d1_en = self.smc_detector.detect_swing_lows(_df_d1_en)
-                                    _lows_below = [sl for sl in _swing_lows_d1_en if sl.price < _current_price_en]
-                                    if _lows_below:
-                                        _nearest_low = max(_lows_below, key=lambda sl: sl.price)
-                                        _tp = _df_d1_en['low'].iloc[_nearest_low.index]
-                                    else:
-                                        _tp = _df_d1_en[['open', 'close']].min(axis=1).iloc[:-1].min()
+                                    if _tp is None:
+                                        _swing_lows_d1_en = self.smc_detector.detect_swing_lows(_df_d1_en)
+                                        _lows_below = [sl for sl in _swing_lows_d1_en if sl.price < _current_price_en]
+                                        if _lows_below:
+                                            _nearest_low = max(_lows_below, key=lambda sl: sl.price)
+                                            _tp = _df_d1_en['low'].iloc[_nearest_low.index]
+                                        else:
+                                            _tp = _df_d1_en[['open', 'close']].min(axis=1).iloc[:-1].min()
 
                                 logger.info(
                                     f"📐 [V19.8 STRUCTURAL CALC] {symbol} {_en_direction.upper()}: "
@@ -1375,11 +1391,13 @@ class SetupExecutorMonitor:
                                 _sl = None
                                 _tp = None
 
-                        # Fallback la valorile din JSON dacă datele live nu sunt disponibile
-                        if _sl is None or _tp is None:
-                            _sl = setup.get('stop_loss') or 0
-                            _tp = setup.get('take_profit') or 0
-                            logger.warning(f"[V19.8 FALLBACK] {symbol}: date live indisponibile -- SL/TP din JSON")
+                        # Fallback la valorile legacy din Scanner dacă Radar JSON + recalc lipsesc
+                        if _sl is None:
+                            _sl = _float_price(setup.get('stop_loss')) or 0
+                        if _tp is None:
+                            _tp = _float_price(setup.get('take_profit')) or 0
+                        if _sl is None or _tp is None or (_sl == 0 and _tp == 0):
+                            logger.warning(f"[V37.0 FALLBACK] {symbol}: SL/TP incomplete — folosim stop_loss/take_profit Scanner")
 
                         # Validare direcție: SL sub entry pentru BUY, deasupra pentru SELL
                         if _en_direction == 'buy' and _sl >= _en_entry:
@@ -1893,139 +1911,12 @@ class SetupExecutorMonitor:
                             logger.warning(f"❌ {symbol}: {result.get('reason')}")
                     
                     else:
-                        # ========== ENTRY 1 FILLED - CHECK FOR ENTRY 2 (V3.1 LOGIC) ==========
-
-                        # V30.7: Skip SCALE_IN daca pozitia nu mai e activa la broker
-                        # Cazul USDCAD: entry1_filled=True de o saptamana, pozitia deja inchisa
-                        # -> SCALE_IN nu are sens fara pozitia deschisa -> crash + spam infinit
-                        try:
-                            _ap_file = Path(__file__).parent / 'active_positions.json'
-                            if _ap_file.exists():
-                                with open(_ap_file, encoding='utf-8') as _apf:
-                                    _ap_list = json.load(_apf)
-                                _still_open = any(
-                                    p.get('symbol','').upper().replace('/','') == symbol.upper().replace('/','') 
-                                    for p in _ap_list
-                                )
-                                if not _still_open:
-                                    logger.debug(f"[V30.7] {symbol}: entry1_filled=True dar nicio pozitie activa la broker -- skip SCALE_IN")
-                                    continue
-                        except Exception:
-                            pass
-
-                        # ✅ V14.1: Skip if Entry 2 already filled — prevent duplicate scale-in
-                        if setup.get('entry2_filled', False):
-                            logger.debug(f"   {symbol}: Entry 2 already filled -- monitoring position")
-                            continue
-
-                        from types import SimpleNamespace
-                        setup_obj = SimpleNamespace(**setup)
-                        
-                        # Convert times — V30.7: forteaza UTC pe datetimes naive ca sa nu crape
-                        # can't subtract offset-naive and offset-aware datetimes
-                        def _make_aware(dt_str):
-                            dt = datetime.fromisoformat(dt_str)
-                            if dt.tzinfo is None:
-                                dt = dt.replace(tzinfo=timezone.utc)
-                            return dt
-                        if isinstance(setup.get('setup_time'), str):
-                            setup_obj.setup_time = _make_aware(setup['setup_time'])
-                        if setup.get('entry1_time') and isinstance(setup['entry1_time'], str):
-                            setup_obj.entry1_time = _make_aware(setup['entry1_time'])
-                        
-                        # Add attributes
-                        setup_obj.entry1_filled = True
-                        setup_obj.entry1_price = setup.get('entry1_price')
-                        setup_obj.entry2_filled = setup.get('entry2_filled', False)
-                        
-                        # FVG and CHoCH objects
-                        fvg_dict = setup.get('fvg', {})
-                        setup_obj.fvg = SimpleNamespace(bottom=fvg_dict.get('bottom', 0), top=fvg_dict.get('top', 0))
-                        choch_dict = setup.get('daily_choch', {})
-                        setup_obj.daily_choch = SimpleNamespace(direction=choch_dict.get('direction', 'bullish'))
-                        
-                        # Validate for Entry 2
-                        result = validate_choch_confirmation_scale_in(
-                            setup=setup_obj,
-                            current_time=datetime.now(timezone.utc),
-                            df_daily=df_daily,
-                            df_4h=df_4h,
-                            df_1h=df_1h,
-                            config=self.execution_strategy,
-                            debug=True
+                        # V37.0: Entry 2 scale-in dezactivat — arhitectură Radar-only (EXECUTE_NOW singur trigger)
+                        logger.debug(
+                            f"[V37.0] {symbol}: Entry 2 scale-in dezactivat "
+                            f"(entry1_filled=True) — skip validate_choch_confirmation_scale_in"
                         )
-                        
-                        action = result.get('action')
-                        reason = result.get('reason')
-                        
-                        logger.info(f"   🎯 Action: {action}")
-                        logger.info(f"   📝 Reason: {reason}")
-                        
-                        if action == 'EXECUTE_ENTRY2':
-                            # Execute Entry 2 (scale-in, slightly larger lot via 7.5% risk override)
-                            scale_in_risk = self.config.get('scale_in', {}).get('entry2_risk_percent', 7.5)
-                            e1_risk = self.config.get('risk_management', {}).get('risk_per_trade_percent', 5.0)
-                            logger.info(f"   📈 V14.1 SCALE-IN: Entry 2 risk = {scale_in_risk}% (vs Entry 1 = {e1_risk:.1f}%)")
-                            success = self._execute_entry(
-                                setup=setup,
-                                entry_number=2,
-                                entry_price=result['entry_price'],
-                                stop_loss=result['stop_loss'],
-                                take_profit=result['take_profit'],
-                                position_size=result['position_size'],
-                                risk_override_percent=scale_in_risk
-                            )
-                            
-                            if success:
-                                # Update setup with Entry 2 details
-                                setups[i]['entry2_filled'] = True
-                                setups[i]['entry2_price'] = result['entry_price']
-                                setups[i]['entry2_time'] = datetime.now(timezone.utc).isoformat()
-                                setups[i]['entry2_lots'] = result['position_size']
-                                updated = True
-                                logger.success(f"✅ Entry 2 executed for {symbol}, full scale in complete!")
-                        
-                        elif action == 'CLOSE_ENTRY1':
-                            # V8.0: ACTUALLY CLOSE THE POSITION AT BROKER!
-                            close_price = result.get('close_price')
-                            pnl_pips = result.get('pnl_pips', 0)
-                            close_direction = setup.get('direction', 'UNKNOWN')
-                            close_reason = f'Timeout expired, Entry 1 negative ({pnl_pips:.1f} pips)'
-                            
-                            logger.warning(f"   🔴 V8.0 CLOSE_ENTRY1: Closing {symbol} {close_direction} at broker!")
-                            logger.warning(f"   📊 Price: {close_price} | P&L: {pnl_pips:.1f} pips")
-                            
-                            # SEND CLOSE SIGNAL TO CBOT VIA ctrader_executor
-                            try:
-                                close_success = self.executor.close_position(
-                                    symbol=symbol,
-                                    direction=close_direction,
-                                    reason=close_reason
-                                )
-                                if close_success:
-                                    logger.success(f"   ✅ Close signal sent to cBot for {symbol} {close_direction}")
-                                else:
-                                    logger.error(f"   ❌ Failed to send close signal for {symbol}")
-                            except Exception as close_err:
-                                logger.error(f"   ❌ Exception sending close signal: {close_err}")
-                            
-                            # Update setup status regardless (signal was attempted)
-                            setups[i]['status'] = 'CLOSED'
-                            setups[i]['close_reason'] = close_reason
-                            setups[i]['close_time'] = datetime.now(timezone.utc).isoformat()
-                            setups[i]['broker_close_sent'] = True
-                            updated = True
-                        
-                        elif action == 'EXPIRE':
-                            logger.info(f"   ⏰ Setup {symbol} expired: {reason}")
-                            setups[i]['status'] = 'EXPIRED'
-                            setups[i]['expire_time'] = datetime.now(timezone.utc).isoformat()
-                            updated = True
-                        
-                        elif action == 'KEEP_MONITORING':
-                            logger.debug(f"   ⏳ {reason}")
-                            setups[i]['last_check'] = datetime.now(timezone.utc).isoformat()
-                            updated = True
+                        continue
                 
                 except Exception as e:
                     logger.error(f"❌ Error processing {symbol}: {e}")
@@ -2096,7 +1987,7 @@ class SetupExecutorMonitor:
         Fix #13: Sentinela finală — 4 bariere de risc validate înainte de execuția cTrader.
         Returns: (passed: bool, reason: str)
         """
-        pip_size = 0.01 if 'JPY' in symbol.upper() else 0.0001
+        pip_size = get_pip_size(symbol)
         sl_pips = abs(entry_price - stop_loss) / pip_size if pip_size > 0 else 0
         tp_pips = abs(take_profit - entry_price) / pip_size if pip_size > 0 else 0
 

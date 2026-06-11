@@ -55,6 +55,8 @@ from dataclasses import dataclass
 from enum import Enum
 from loguru import logger
 
+from pip_utils import get_pip_size
+
 try:
     from ctrader_cbot_client import CTraderCBotClient
     from smc_detector import SMCDetector
@@ -231,17 +233,8 @@ class MultiTFRadar:
 
     @staticmethod
     def _get_pip_size(symbol: str) -> float:
-        """V36.3 pip_size — aliniat cu daily_scanner / smc_detector V36.0 (Crypto + Commodities)."""
-        s = symbol.upper()
-        if any(x in s for x in ['XTI', 'WTI', 'OIL', 'BRENT', 'USOIL']):
-            return 0.01
-        if any(x in s for x in ['XAU', 'XAG', 'GOLD', 'SILVER']):
-            return 0.10
-        if any(x in s for x in ['BTC', 'ETH', 'XRP', 'LTC', 'ADA', 'DOGE']):
-            return 1.0
-        if 'JPY' in s:
-            return 0.01
-        return 0.0001
+        """V37.0 — delegat la pip_utils.get_pip_size (Crypto + Commodities)."""
+        return get_pip_size(symbol)
 
     @staticmethod
     def _log_radar_warn(symbol: str, reason: str) -> None:
