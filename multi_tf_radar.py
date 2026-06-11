@@ -9,8 +9,10 @@ if sys.stderr.encoding != 'utf-8':
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
 """
-🎯 MULTI-TIMEFRAME EXECUTION RADAR - V8.3 SNIPER EDITION
+🎯 MULTI-TIMEFRAME EXECUTION RADAR - V36.3 LIVE SYNC EDITION
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+V36.3: pip_size Crypto/Commodities aliniat cu scanner | symbol broker map (XTI→WTIUSD, BTC fallbacks) | skip logging verbose
+
 Double Entry Logic: Scans both 1H and 4H for CHoCH confirmation.
 
 CRITICAL UPGRADE:
@@ -179,21 +181,59 @@ class MultiTFRadar:
         self._port8010_alert_sent: bool = False  # anti-spam: o singură alertă per incident
         self._telegram_token: str = _os_global.getenv('TELEGRAM_BOT_TOKEN', '')
         self._telegram_chat_id: str = _os_global.getenv('TELEGRAM_CHAT_ID', '')
+        # V36.3: motivul ultimului skip — propagat la run_scan pentru logging explicit
+        self._last_skip_reason: Optional[str] = None
+
+    # V36.3: JSON symbol → nume recunoscut de IC Markets cTrader (MarketDataProvider.cs)
+    _BROKER_SYMBOL_PRIMARY: Dict[str, str] = {
+        'XTIUSD': 'WTIUSD',
+        'USOIL': 'WTIUSD',
+    }
+
+    @classmethod
+    def _broker_symbol_candidates(cls, json_symbol: str) -> List[str]:
+        """Ordinea de încercare pentru API cTrader — primul succes câștigă."""
+        s = (json_symbol or '').upper().strip()
+        if not s:
+            return ['UNKNOWN']
+        seen: set = set()
+        ordered: List[str] = []
+
+        def _add(sym: str) -> None:
+            if sym and sym not in seen:
+                seen.add(sym)
+                ordered.append(sym)
+
+        _add(cls._BROKER_SYMBOL_PRIMARY.get(s, s))
+        if s == 'BTCUSD':
+            _add('BTC/USD')
+            _add('BTCUSD')
+        elif s in ('XTIUSD', 'WTIUSD', 'USOIL'):
+            _add('WTIUSD')
+            _add('XTIUSD')
+        elif s != cls._BROKER_SYMBOL_PRIMARY.get(s, s):
+            _add(s)
+        return ordered
 
     @staticmethod
     def _get_pip_size(symbol: str) -> float:
-        """V24.4 Symbol-Agnostic pip size — suportă FX, JPY, XAU, BTC, OIL."""
+        """V36.3 pip_size — aliniat cu daily_scanner / smc_detector V36.0 (Crypto + Commodities)."""
         s = symbol.upper()
+        if any(x in s for x in ['XTI', 'WTI', 'OIL', 'BRENT', 'USOIL']):
+            return 0.01
+        if any(x in s for x in ['XAU', 'XAG', 'GOLD', 'SILVER']):
+            return 0.10
         if any(x in s for x in ['BTC', 'ETH', 'XRP', 'LTC', 'ADA', 'DOGE']):
-            return 1.0       # Crypto: 1 USD = 1 pip
-        elif any(x in s for x in ['XAU', 'XAG', 'GOLD', 'SILVER']):
-            return 0.10      # Gold/Silver: 0.10 = 1 pip
-        elif any(x in s for x in ['XTI', 'WTI', 'OIL', 'BRENT']):
-            return 0.01      # Oil: 0.01 = 1 pip
-        elif 'JPY' in s:
-            return 0.01      # JPY pairs
-        else:
-            return 0.0001    # FX standard
+            return 1.0
+        if 'JPY' in s:
+            return 0.01
+        return 0.0001
+
+    @staticmethod
+    def _log_radar_skip(symbol: str, reason: str) -> None:
+        """V36.3: fiecare skip trebuie explicat explicit în consolă."""
+        print(f"  ⛔ [RADAR SKIP] {symbol}: {reason}")
+        sys.stdout.flush()
     
     def _send_radar_telegram_alert(self, message: str) -> None:
         """V25.2: Trimite alertă critică pe Telegram din Radar (port 8010 offline etc.)"""
@@ -218,34 +258,44 @@ class MultiTFRadar:
             print(f"⚠️ [RADAR TELEGRAM] Eroare trimitere alertă: {_tg_err}")
 
     def get_current_price(self, symbol: str) -> Optional[float]:
-        """Get current price from cTrader — V25.2: contor eșecuri port 8010 cu alertă Telegram."""
-        try:
-            import requests
-            response = requests.get(
-                f"http://localhost:8010/price",  # V19 FIX #5: port corect MarketDataProvider
-                params={"symbol": symbol},
-                timeout=2
-            )
+        """Get current price from cTrader — V36.3: broker symbol fallbacks + logging explicit."""
+        import requests
+        last_err: Optional[str] = None
+        for broker_sym in self._broker_symbol_candidates(symbol):
+            try:
+                response = requests.get(
+                    f"http://localhost:8010/price",
+                    params={"symbol": broker_sym},
+                    timeout=2
+                )
 
-            if response.status_code == 200:
-                data = response.json()
-                bid = data.get('bid', 0)
-                ask = data.get('ask', 0)
-                if bid > 0 and ask > 0:
-                    # Succes — resetăm contorul și flag-ul de alertă
-                    if self._port8010_fail_count > 0:
-                        print(f"✅ [PORT 8010] Conexiune restaurată pentru {symbol} — resetare contor eșecuri")
-                        self._port8010_fail_count = 0
-                        self._port8010_alert_sent = False
-                    return (bid + ask) / 2.0
+                if response.status_code == 200:
+                    data = response.json()
+                    bid = data.get('bid', 0)
+                    ask = data.get('ask', 0)
+                    if bid > 0 and ask > 0:
+                        if broker_sym != symbol.upper():
+                            print(f"  ✅ [V36.3 SYMBOL MAP] {symbol} → {broker_sym} (preț OK)")
+                            sys.stdout.flush()
+                        if self._port8010_fail_count > 0:
+                            print(f"✅ [PORT 8010] Conexiune restaurată pentru {symbol} — resetare contor eșecuri")
+                            self._port8010_fail_count = 0
+                            self._port8010_alert_sent = False
+                        return (bid + ask) / 2.0
 
-            # Răspuns invalid (status != 200 sau bid/ask = 0)
-            self._port8010_fail_count += 1
-            print(f"⚠️  [PORT 8010] Răspuns invalid pentru {symbol} (eșec #{self._port8010_fail_count})")
+                last_err = f"HTTP {response.status_code} body={response.text[:120]}"
+                print(f"⚠️  [PORT 8010] Răspuns invalid {symbol} ca {broker_sym}: {last_err}")
 
-        except Exception as e:
-            self._port8010_fail_count += 1
-            print(f"⚠️  [PORT 8010] Eroare conexiune pentru {symbol}: {e} (eșec #{self._port8010_fail_count})")
+            except Exception as e:
+                last_err = str(e)
+                print(f"⚠️  [PORT 8010] Eroare {symbol} ca {broker_sym}: {e}")
+
+        self._port8010_fail_count += 1
+        print(f"⚠️  [RADAR ERROR] Preț indisponibil pentru {symbol} — toate variantele eșuate"
+              f" {self._broker_symbol_candidates(symbol)}"
+              f"{f' | ultima eroare: {last_err}' if last_err else ''}"
+              f" (eșec #{self._port8010_fail_count})")
+        sys.stdout.flush()
 
         # V25.2: Alertă Telegram la 3 eșecuri consecutive (anti-spam: o singură alertă per incident)
         if self._port8010_fail_count >= 3 and not self._port8010_alert_sent:
@@ -271,15 +321,32 @@ class MultiTFRadar:
         timeframe: str,
         num_candles: int = 100
     ) -> Optional[pd.DataFrame]:
-        """Download historical data"""
-        try:
-            df = self.ctrader.get_historical_data(symbol, timeframe, num_candles)
-            if df is not None and not df.empty:
-                return df.reset_index()
-            return None
-        except Exception as e:
-            print(f"⚠️  Error downloading {timeframe} data for {symbol}: {e}")
-            return None
+        """Download historical data — V36.3: broker symbol map + fallback + logging explicit."""
+        candidates = self._broker_symbol_candidates(symbol)
+        print(f"  📥 [V36.3 DATA] {symbol} {timeframe} x{num_candles} — încerc {candidates}")
+        sys.stdout.flush()
+        last_err: Optional[str] = None
+        for broker_sym in candidates:
+            try:
+                df = self.ctrader.get_historical_data(broker_sym, timeframe, num_candles)
+                if df is not None and not df.empty:
+                    if broker_sym != symbol.upper():
+                        print(f"  ✅ [V36.3 SYMBOL MAP] {symbol} → {broker_sym} "
+                              f"({len(df)} bare {timeframe})")
+                        sys.stdout.flush()
+                    return df.reset_index()
+                last_err = f"{broker_sym}: răspuns gol sau DataFrame empty"
+                print(f"  ⚠️ [RADAR ERROR] {symbol} {timeframe} via {broker_sym}: {last_err}")
+                sys.stdout.flush()
+            except Exception as e:
+                last_err = f"{broker_sym}: {e}"
+                print(f"  ⚠️ [RADAR ERROR] Nu s-au putut descărca datele pentru {symbol} "
+                      f"({timeframe}) via {broker_sym} din cauza: {e}")
+                sys.stdout.flush()
+        print(f"  ❌ [RADAR ERROR] {symbol} {timeframe}: toate variantile eșuate {candidates}"
+              f"{f' — ultima: {last_err}' if last_err else ''}")
+        sys.stdout.flush()
+        return None
     
     def analyze_timeframe(
         self,
@@ -314,6 +381,11 @@ class MultiTFRadar:
         df = self.get_historical_data(symbol, timeframe, num_bars)
         
         if df is None or df.empty:
+            self._log_radar_skip(
+                symbol,
+                f"Fără date {timeframe_display} ({num_bars} bare) — verifică simbol broker "
+                f"{self._broker_symbol_candidates(symbol)} pe port 8010"
+            )
             return TimeframeAnalysis(
                 timeframe=timeframe_display,
                 choch_detected=False,
@@ -838,6 +910,7 @@ class MultiTFRadar:
             save_to_json: If True, write radar results back to monitoring_setups.json
         """
         symbol = setup_data.get('symbol', 'UNKNOWN')
+        self._last_skip_reason = None
         # ── V25.0 DIRECTION GUARD: ZERO toleranță pentru direcție lipsă sau ambiguuă ──────────
         # BUG PRE-V25.0: default='SHORT' — dacă câmpul 'direction' lipsea din JSON,
         # Radarul scăna silențios CHoCH Bearish pentru un setup care era BUY.
@@ -845,10 +918,12 @@ class MultiTFRadar:
         # Nici un trade nu se execută fără direcție explicită confirmată.
         _raw_direction = setup_data.get('direction', '').strip().upper()
         if not _raw_direction:
+            self._last_skip_reason = "Câmpul 'direction' ABSENT din monitoring_setups.json"
             logger.critical(
-                f"🚨 [V25.0 DIRECTION MISSING] {symbol}: Câmpul 'direction' este ABSENT din monitoring_setups.json. "
+                f"🚨 [V25.0 DIRECTION MISSING] {symbol}: {self._last_skip_reason}. "
                 f"Setup SKIPPED — Radarul NU ghicește direcția!"
             )
+            self._log_radar_skip(symbol, self._last_skip_reason)
             return None
         # Normalizăm: BUY → LONG, SELL → SHORT (compatibilitate cu scanner)
         if _raw_direction in ('BUY', 'LONG'):
@@ -856,10 +931,12 @@ class MultiTFRadar:
         elif _raw_direction in ('SELL', 'SHORT'):
             direction = 'SHORT'
         else:
+            self._last_skip_reason = f"Valoare direction invalidă: '{_raw_direction}'"
             logger.critical(
-                f"🚨 [V25.0 DIRECTION INVALID] {symbol}: Valoare necunoscută '{_raw_direction}' "
-                f"pentru 'direction'. Valori valide: BUY, SELL, LONG, SHORT. Setup SKIPPED!"
+                f"🚨 [V25.0 DIRECTION INVALID] {symbol}: {self._last_skip_reason}. "
+                f"Valori valide: BUY, SELL, LONG, SHORT."
             )
+            self._log_radar_skip(symbol, self._last_skip_reason)
             return None
         
         # Get Daily data
@@ -887,6 +964,11 @@ class MultiTFRadar:
         # Dacă portul 8010 nu răspunde → RuntimeError explicit, prins de run_scan cu `continue`.
         current_price = self.get_current_price(symbol)
         if current_price is None:
+            self._last_skip_reason = (
+                f"Preț live indisponibil — port 8010 / simbol broker "
+                f"{self._broker_symbol_candidates(symbol)}"
+            )
+            self._log_radar_skip(symbol, self._last_skip_reason)
             raise RuntimeError(
                 f"Preț indisponibil pentru {symbol} — portul 8010 nu răspunde. "
                 f"Verifică MarketDataProvider cBot pe VPS."
@@ -903,32 +985,48 @@ class MultiTFRadar:
         # BUY valid NUMAI in Discount (sub 50% range Daily curent).
         # SELL valid NUMAI in Premium (peste 50% range Daily curent).
         # Locatie incorecta → skip ciclu (return None). Radar incearca din nou la 30s.
+        _pip_pd = self._get_pip_size(symbol)
         try:
             _df_d1_pd = self.get_historical_data(symbol, "D1", 3)
-            if _df_d1_pd is not None and not _df_d1_pd.empty:
+            if _df_d1_pd is None or _df_d1_pd.empty:
+                print(f"  ⚠️ [V36.3 P/D] {symbol}: D1 indisponibil — guard P/D omis, continuăm 4H+1H "
+                      f"(pip_size={_pip_pd})")
+                sys.stdout.flush()
+            else:
                 _d1_high_pd = float(_df_d1_pd['high'].iloc[-1])
                 _d1_low_pd  = float(_df_d1_pd['low'].iloc[-1])
-                _pip_pd     = self._get_pip_size(symbol)
                 _d1_range_pd = _d1_high_pd - _d1_low_pd
-                if _d1_range_pd >= _pip_pd * 5:  # min 5 pips range — zi valida
+                _min_range = _pip_pd * 5
+                if _d1_range_pd < _min_range:
+                    print(f"  ⚠️ [V36.3 P/D] {symbol}: range D1 prea mic "
+                          f"({_d1_range_pd:.5f} < {_min_range:.5f} = 5p @ pip={_pip_pd}) "
+                          f"— guard omis, continuăm 4H+1H")
+                    sys.stdout.flush()
+                else:
                     _d1_midpoint = (_d1_high_pd + _d1_low_pd) / 2.0
                     if required_direction == 'bullish' and current_price > _d1_midpoint:
-                        print(f"  ⛔ [V31.0 P/D] {symbol} LONG: pret {current_price:.5f} in PREMIUM "
-                              f"(>{_d1_midpoint:.5f}) — skip ciclu, asteptam Discount")
-                        sys.stdout.flush()
+                        self._last_skip_reason = (
+                            f"P/D GUARD LONG: preț {current_price:.5f} în PREMIUM "
+                            f"(>{_d1_midpoint:.5f} EQ | range={_d1_range_pd/_pip_pd:.1f}p | pip={_pip_pd}) "
+                            f"— așteptăm Discount"
+                        )
+                        self._log_radar_skip(symbol, self._last_skip_reason)
                         return None
                     elif required_direction == 'bearish' and current_price < _d1_midpoint:
-                        print(f"  ⛔ [V31.0 P/D] {symbol} SHORT: pret {current_price:.5f} in DISCOUNT "
-                              f"(<{_d1_midpoint:.5f}) — skip ciclu, asteptam Premium")
-                        sys.stdout.flush()
+                        self._last_skip_reason = (
+                            f"P/D GUARD SHORT: preț {current_price:.5f} în DISCOUNT "
+                            f"(<{_d1_midpoint:.5f} EQ | range={_d1_range_pd/_pip_pd:.1f}p | pip={_pip_pd}) "
+                            f"— așteptăm Premium"
+                        )
+                        self._log_radar_skip(symbol, self._last_skip_reason)
                         return None
                     else:
                         _pd_zone = 'Discount ✅' if required_direction == 'bullish' else 'Premium ✅'
                         print(f"  ✅ [V31.0 P/D] {symbol}: {current_price:.5f} in {_pd_zone} "
-                              f"(EQ={_d1_midpoint:.5f} | range={_d1_range_pd/_pip_pd:.0f}p)")
+                              f"(EQ={_d1_midpoint:.5f} | range={_d1_range_pd/_pip_pd:.0f}p | pip={_pip_pd})")
                         sys.stdout.flush()
         except Exception as _pd_err:
-            print(f"  ⚠️ [V31.0 P/D] {symbol}: eroare calcul ({_pd_err}) — procedam fara guard")
+            print(f"  ⚠️ [V36.3 P/D] {symbol}: eroare calcul ({_pd_err}) — procedam fara guard (pip={_pip_pd})")
             sys.stdout.flush()
 
         print(f"\n{'='*80}")
@@ -1224,6 +1322,9 @@ class MultiTFRadar:
                     f"[V31.0 REVERSAL GUARD] {result.symbol}: EXECUTE_NOW blocat — "
                     f"setup REVERSAL nu accepta BOS ca trigger. Numai CHoCH autentic!"
                 )
+                print(f"  ⛔ [RADAR SKIP EXECUTE] {result.symbol}: REVERSAL guard — "
+                      f"BOS-only trigger respins, așteptăm CHoCH autentic")
+                sys.stdout.flush()
                 # Nu setam EXECUTE_NOW — asteptam CHoCH real
             else:
                 # V32 RR SHIELD (Fix V13): Trigger B (BOS live, CHoCH ancora istorica)
@@ -1241,7 +1342,7 @@ class MultiTFRadar:
                     _rr_sl = (getattr(_exec_tf_data_v32, 'h4_sl_price', None)
                               or setup.get('h4_sl_price'))
                     _rr_cp = result.current_price
-                    _pip_rr = 0.01 if 'JPY' in result.symbol else 0.0001
+                    _pip_rr = self._get_pip_size(result.symbol)
                     if _rr_tp and _rr_sl and _rr_cp:
                         try:
                             _rr_dist_tp = abs(float(_rr_tp) - _rr_cp)
@@ -1253,9 +1354,12 @@ class MultiTFRadar:
                                     logger.warning(
                                         f"[V32 RR SHIELD] {result.symbol}: Trigger-B BLOCAT — "
                                         f"RR={_rr_val:.2f} < 2.0 "
-                                        f"(TP dist={_rr_dist_tp/_pip_rr:.0f}p, SL dist={_rr_dist_sl/_pip_rr:.0f}p) "
-                                        f"— trend prea extins pana la Daily TP"
+                                        f"(TP dist={_rr_dist_tp/_pip_rr:.0f}p, SL dist={_rr_dist_sl/_pip_rr:.0f}p, "
+                                        f"pip={_pip_rr}) — trend prea extins pana la Daily TP"
                                     )
+                                    print(f"  ⛔ [RADAR SKIP EXECUTE] {result.symbol}: RR Shield Trigger-B "
+                                          f"RR={_rr_val:.2f}<2.0 (pip={_pip_rr})")
+                                    sys.stdout.flush()
                                 else:
                                     logger.info(
                                         f"[V32 RR SHIELD] {result.symbol}: Trigger-B OK — "
@@ -1583,7 +1687,7 @@ class MultiTFRadar:
         print(f"   Price: {result.current_price:.5f}")
         
         if not result.daily_zone_validated:
-            pip_sz = 0.01 if 'JPY' in result.symbol or 'XTI' in result.symbol else 0.0001
+            pip_sz = self._get_pip_size(result.symbol)
             if result.current_price > result.daily_fvg_top:
                 dist_pips = (result.current_price - result.daily_fvg_top) / pip_sz
                 direction_txt = f"ABOVE FVG — {dist_pips:.0f} pips to top of zone"
@@ -1698,6 +1802,13 @@ class MultiTFRadar:
             print("\n📭 No active setups in monitoring\n")
             return
 
+        _all_in_json = [
+            f"{s.get('symbol','?')}({s.get('status','?')})"
+            for s in setups if isinstance(s, dict)
+        ]
+        print(f"  📋 [V36.3] monitoring_setups.json: {len(setups)} intrări — {_all_in_json}")
+        sys.stdout.flush()
+
         if symbol:
             target_setups = [s for s in setups if s.get('symbol') == symbol]
             if not target_setups:
@@ -1720,8 +1831,10 @@ class MultiTFRadar:
         active_setups = [s for s in setups if s.get('status', '') not in _SKIP_STATUSES]
         skipped = len(setups) - len(active_setups)
         if skipped:
-            _skipped_syms = [s.get('symbol') for s in setups if s.get('status', '') in _SKIP_STATUSES]
-            print(f"  ⏸️  [V33] {skipped} paritate(i) sarite: {_skipped_syms}")
+            for s in setups:
+                if s.get('status', '') in _SKIP_STATUSES:
+                    print(f"  ⏸️  [RADAR SKIP] {s.get('symbol', '?')}: status={s.get('status')} "
+                          f"— exclus din scan (terminal/TRADE_OPEN)")
             sys.stdout.flush()
 
         if not active_setups:
@@ -1749,7 +1862,8 @@ class MultiTFRadar:
             try:
                 result = self.analyze_setup(setup, save_to_json=False)
                 if result is None:
-                    print(f"  ⛔ [{sym}]: P/D guard activ — skip acest ciclu (nu e eroare)")
+                    _reason = self._last_skip_reason or "motiv necunoscut (verifică log-urile de mai sus)"
+                    print(f"  ⛔ [RADAR SKIP] {sym}: ciclu omis — {_reason}")
                     sys.stdout.flush()
                     ok_count += 1
                     continue
@@ -1760,7 +1874,7 @@ class MultiTFRadar:
             except Exception as e:
                 import traceback
                 print(f"\n{'='*80}")
-                print(f"\u274c ERROR ANALYZING {sym}: {e}")
+                print(f"❌ [RADAR ERROR] {sym}: analiză eșuată — {e}")
                 traceback.print_exc()
                 print("="*80 + "\n")
                 sys.stdout.flush()
