@@ -9,8 +9,9 @@ if sys.stderr.encoding != 'utf-8':
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
 """
-🎯 MULTI-TIMEFRAME EXECUTION RADAR - V36.4 COMMODITIES HARDENED
+🎯 MULTI-TIMEFRAME EXECUTION RADAR - V36.5 ALWAYS-ON H4/H1
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+V36.5: P/D Guard blochează EXECUTE_NOW, NU scanarea H4/H1 — JSON mereu actualizat
 V36.4: H4/H1 bar fallback (300→150→100) | XTIUSD prioritar vs WTIUSD | crash-safe cBot parse
 V36.3: pip_size Crypto/Commodities | symbol broker map | skip logging verbose
 
@@ -146,6 +147,9 @@ class MultiTFResult:
     execution_ready: bool
     verdict: str
     priority_timeframe: Optional[str]  # "1H" or "4H"
+    # V36.5: P/D Guard — scan H4/H1 always-on; P/D blochează doar execuția
+    pd_guard_passed: bool = True
+    pd_guard_reason: str = ""
 
 
 class MultiTFRadar:
@@ -258,6 +262,93 @@ class MultiTFRadar:
         """V36.3: fiecare skip trebuie explicat explicit în consolă."""
         print(f"  ⛔ [RADAR SKIP] {symbol}: {reason}")
         sys.stdout.flush()
+
+    @staticmethod
+    def _log_scan_done(symbol: str, tf: 'TimeframeAnalysis', num_bars: int) -> None:
+        """V36.5: confirmare explicită că H4/H1 au fost descărcate și analizate."""
+        if tf.choch_detected:
+            _choch = f"CHoCH {tf.choch_direction} -{tf.choch_bars_ago}b"
+        else:
+            _choch = "no CHoCH"
+        if tf.bos_detected:
+            _bos = f"BOS {tf.bos_direction} -{tf.bos_bars_ago}b"
+        else:
+            _bos = "no BOS"
+        print(
+            f"  ✅ [V36.5 SCAN DONE] {symbol} {tf.timeframe} — {num_bars} bare | "
+            f"{_choch} | {_bos} | status={tf.status.value}"
+        )
+        sys.stdout.flush()
+
+    def _evaluate_pd_guard(
+        self,
+        symbol: str,
+        required_direction: str,
+        current_price: float,
+    ) -> dict:
+        """
+        V36.5: P/D Guard evaluat DUPĂ scan H4/H1 — returnează dict, fără return None.
+        BUY valid în Discount; SELL valid în Premium.
+        """
+        _pip_pd = self._get_pip_size(symbol)
+        _result = {
+            'passed': True,
+            'zone': 'unknown',
+            'midpoint': None,
+            'reason': '',
+            'skipped': False,
+        }
+        try:
+            _df_d1_pd = self.get_historical_data(symbol, "D1", 3)
+            if _df_d1_pd is None or _df_d1_pd.empty:
+                _result['skipped'] = True
+                _result['reason'] = 'D1 indisponibil — guard P/D omis'
+                print(f"  ⚠️ [V36.5 P/D] {symbol}: D1 indisponibil — guard P/D omis "
+                      f"(pip_size={_pip_pd})")
+                sys.stdout.flush()
+                return _result
+
+            _d1_high_pd = float(_df_d1_pd['high'].iloc[-1])
+            _d1_low_pd = float(_df_d1_pd['low'].iloc[-1])
+            _d1_range_pd = _d1_high_pd - _d1_low_pd
+            _min_range = _pip_pd * 5
+            if _d1_range_pd < _min_range:
+                _result['skipped'] = True
+                _result['reason'] = f'range D1 prea mic ({_d1_range_pd:.5f})'
+                print(f"  ⚠️ [V36.5 P/D] {symbol}: range D1 prea mic "
+                      f"({_d1_range_pd:.5f} < {_min_range:.5f} = 5p @ pip={_pip_pd}) — guard omis")
+                sys.stdout.flush()
+                return _result
+
+            _d1_midpoint = (_d1_high_pd + _d1_low_pd) / 2.0
+            _result['midpoint'] = _d1_midpoint
+            _zone = 'premium' if current_price > _d1_midpoint else 'discount'
+            _result['zone'] = _zone
+
+            if required_direction == 'bullish' and current_price > _d1_midpoint:
+                _result['passed'] = False
+                _result['reason'] = (
+                    f"LONG in Premium ({current_price:.5f} > EQ {_d1_midpoint:.5f} "
+                    f"| range={_d1_range_pd/_pip_pd:.1f}p) — așteptăm Discount"
+                )
+            elif required_direction == 'bearish' and current_price < _d1_midpoint:
+                _result['passed'] = False
+                _result['reason'] = (
+                    f"SHORT in Discount ({current_price:.5f} < EQ {_d1_midpoint:.5f} "
+                    f"| range={_d1_range_pd/_pip_pd:.1f}p) — așteptăm Premium"
+                )
+            else:
+                _pd_label = 'Discount ✅' if required_direction == 'bullish' else 'Premium ✅'
+                print(f"  ✅ [V36.5 P/D] {symbol}: {current_price:.5f} in {_pd_label} "
+                      f"(EQ={_d1_midpoint:.5f} | range={_d1_range_pd/_pip_pd:.0f}p | pip={_pip_pd})")
+                sys.stdout.flush()
+        except Exception as _pd_err:
+            _result['skipped'] = True
+            _result['reason'] = f'eroare calcul P/D: {_pd_err}'
+            print(f"  ⚠️ [V36.5 P/D] {symbol}: eroare calcul ({_pd_err}) — procedăm fără guard "
+                  f"(pip={_pip_pd})")
+            sys.stdout.flush()
+        return _result
     
     def _send_radar_telegram_alert(self, message: str) -> None:
         """V25.2: Trimite alertă critică pe Telegram din Radar (port 8010 offline etc.)"""
@@ -1006,56 +1097,8 @@ class MultiTFRadar:
         # Radarul citește DOAR direcția Daily ca Bias și descarcă imediat barele 4H/1H.
         required_direction = 'bullish' if direction == 'LONG' else 'bearish'
 
-        # ━━━ V31.0 PREMIUM/DISCOUNT GUARD — Radarul = singura sursa de adevar ━━━
-        # BUY valid NUMAI in Discount (sub 50% range Daily curent).
-        # SELL valid NUMAI in Premium (peste 50% range Daily curent).
-        # Locatie incorecta → skip ciclu (return None). Radar incearca din nou la 30s.
-        _pip_pd = self._get_pip_size(symbol)
-        try:
-            _df_d1_pd = self.get_historical_data(symbol, "D1", 3)
-            if _df_d1_pd is None or _df_d1_pd.empty:
-                print(f"  ⚠️ [V36.3 P/D] {symbol}: D1 indisponibil — guard P/D omis, continuăm 4H+1H "
-                      f"(pip_size={_pip_pd})")
-                sys.stdout.flush()
-            else:
-                _d1_high_pd = float(_df_d1_pd['high'].iloc[-1])
-                _d1_low_pd  = float(_df_d1_pd['low'].iloc[-1])
-                _d1_range_pd = _d1_high_pd - _d1_low_pd
-                _min_range = _pip_pd * 5
-                if _d1_range_pd < _min_range:
-                    print(f"  ⚠️ [V36.3 P/D] {symbol}: range D1 prea mic "
-                          f"({_d1_range_pd:.5f} < {_min_range:.5f} = 5p @ pip={_pip_pd}) "
-                          f"— guard omis, continuăm 4H+1H")
-                    sys.stdout.flush()
-                else:
-                    _d1_midpoint = (_d1_high_pd + _d1_low_pd) / 2.0
-                    if required_direction == 'bullish' and current_price > _d1_midpoint:
-                        self._last_skip_reason = (
-                            f"P/D GUARD LONG: preț {current_price:.5f} în PREMIUM "
-                            f"(>{_d1_midpoint:.5f} EQ | range={_d1_range_pd/_pip_pd:.1f}p | pip={_pip_pd}) "
-                            f"— așteptăm Discount"
-                        )
-                        self._log_radar_skip(symbol, self._last_skip_reason)
-                        return None
-                    elif required_direction == 'bearish' and current_price < _d1_midpoint:
-                        self._last_skip_reason = (
-                            f"P/D GUARD SHORT: preț {current_price:.5f} în DISCOUNT "
-                            f"(<{_d1_midpoint:.5f} EQ | range={_d1_range_pd/_pip_pd:.1f}p | pip={_pip_pd}) "
-                            f"— așteptăm Premium"
-                        )
-                        self._log_radar_skip(symbol, self._last_skip_reason)
-                        return None
-                    else:
-                        _pd_zone = 'Discount ✅' if required_direction == 'bullish' else 'Premium ✅'
-                        print(f"  ✅ [V31.0 P/D] {symbol}: {current_price:.5f} in {_pd_zone} "
-                              f"(EQ={_d1_midpoint:.5f} | range={_d1_range_pd/_pip_pd:.0f}p | pip={_pip_pd})")
-                        sys.stdout.flush()
-        except Exception as _pd_err:
-            print(f"  ⚠️ [V36.3 P/D] {symbol}: eroare calcul ({_pd_err}) — procedam fara guard (pip={_pip_pd})")
-            sys.stdout.flush()
-
         print(f"\n{'='*80}")
-        print(f"🔍 [{symbol}] Bias Daily: {direction} | Scanare structurală 4H+1H...")
+        print(f"🔍 [{symbol}] Bias Daily: {direction} | Scanare structurală 4H+1H (V36.5 Always-On)...")
         if _daily_bias_active:
             print(f"⚠️  [V24.6 DAILY BIAS] {symbol}: FVG sintetic (Equilibrium) — EXECUTE_NOW blocat până la CHoCH 4H real!")
         print(f"{'='*80}")
@@ -1064,9 +1107,10 @@ class MultiTFRadar:
         print(f"✅ Poartă: PERMANENT DESCHISĂ — decizia de invalidare aparține Executorului")
         sys.stdout.flush()
 
-        # Analyze 1H — ALWAYS
+        # Analyze 1H — ALWAYS (V36.5: indiferent de P/D)
         print("\n🔎 [1H] SNIPER SCAN (ATR 0.8x)...")
         sys.stdout.flush()
+        _h1_bars = 400
         tf_1h = self.analyze_timeframe(
             symbol=symbol,
             timeframe="H1",
@@ -1074,13 +1118,14 @@ class MultiTFRadar:
             current_price=current_price,
             smc_detector=self.smc_1h
         )
+        self._log_scan_done(symbol, tf_1h, _h1_bars)
 
-        # Analyze 4H — ALWAYS
+        # Analyze 4H — ALWAYS (V36.5: indiferent de P/D)
         print("\n🔎 [4H] HIGH CONFIDENCE SCAN (ATR 1.0x — V15.4)...")
-        # V30.1: CONTINUATION setup — 4H BOS aliniat = trigaci direct (trendul continua fara CHoCH inversare)
         if _allow_bos_4h:
             print(f"  ⚡ [V30.1 CONTINUATION] {symbol}: allow_bos=True — 4H BOS in directie {required_direction.upper()} = trigger echivalent CHoCH")
         sys.stdout.flush()
+        _h4_bars = 300
         tf_4h = self.analyze_timeframe(
             symbol=symbol,
             timeframe="H4",
@@ -1089,6 +1134,12 @@ class MultiTFRadar:
             smc_detector=self.smc_4h,
             allow_bos_trigger=_allow_bos_4h  # V30.1
         )
+        self._log_scan_done(symbol, tf_4h, _h4_bars)
+
+        # ━━━ V36.5 P/D GUARD — DUPĂ scan H4/H1, blochează EXECUTE nu scanarea ━━━
+        _pd = self._evaluate_pd_guard(symbol, required_direction, current_price)
+        _pd_guard_passed = _pd['passed']
+        _pd_guard_reason = _pd['reason']
 
         # ━━━ V19.5: Determină execution_ready — FĂRĂ nicio poartă Daily ━━━
         # Radarul validează EXCLUSIV alinierea fractală 4H/1H cu biasul Daily.
@@ -1113,6 +1164,17 @@ class MultiTFRadar:
             verdict = "👀 CHoCH DETECTED - Waiting for FVG formation"
         else:
             verdict = "👀 WAITING FOR 1H/4H CHoCH"
+
+        # V36.5: P/D blochează EXECUTE_NOW — scan H4/H1 deja complet, JSON se actualizează
+        if not _pd_guard_passed and _pd_guard_reason and not _pd.get('skipped'):
+            if execution_ready:
+                execution_ready = False
+                priority_timeframe = None
+            _wait_zone = 'Premium' if required_direction == 'bearish' else 'Discount'
+            verdict = f"⏳ P/D WAIT — H4/H1 monitorizate, așteptăm {_wait_zone}"
+            print(f"  ⏳ [V36.5 P/D BLOCK EXECUTE] {symbol}: {_pd_guard_reason} — "
+                  f"scan H4/H1 OK, EXECUTE blocat")
+            sys.stdout.flush()
 
         # ━━━ V24.6 DAILY BIAS GUARD: Setup cu FVG sintetic ━━━━━━━━━━━━━━━━━━━━━━━━
         # Dacă setup-ul vine din scanarea permisivă (fără FVG corp Daily natural),
@@ -1142,7 +1204,9 @@ class MultiTFRadar:
             tf_4h=tf_4h,
             execution_ready=execution_ready,
             verdict=verdict,
-            priority_timeframe=priority_timeframe
+            priority_timeframe=priority_timeframe,
+            pd_guard_passed=_pd_guard_passed,
+            pd_guard_reason=_pd_guard_reason,
         )
         
         # 🔥 V8.3 SYNC: Write radar results to monitoring_setups.json
@@ -1321,6 +1385,8 @@ class MultiTFRadar:
         setup['radar_execution_ready'] = result.execution_ready
         setup['radar_verdict'] = result.verdict
         setup['radar_last_scan'] = datetime.now().isoformat()
+        setup['pd_guard_passed'] = result.pd_guard_passed
+        setup['pd_guard_reason'] = result.pd_guard_reason or ''
 
         # V22.1: EXECUTE_NOW — cheia supremă de execuție
         # REGULA DE AUR: Radarul SETEAZĂ semnalul, EXECUTORUL îl consumă.
