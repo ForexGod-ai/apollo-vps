@@ -26,8 +26,7 @@ CRITICAL UPGRADE:
 - ✅ Shows BOTH confirmations in console
 
 STATUS SYSTEM:
-- ⏳ WAITING_DAILY_FVG: Price not in Daily FVG yet
-- 👀 WAITING_1H_CHOCH: In Daily FVG, scanning 1H
+- 👀 WAITING_1H_CHOCH: Scanning 1H for CHoCH alignment
 - 👀 WAITING_4H_CHOCH: In Daily FVG, scanning 4H
 - ⏳ WAITING_1H_PULLBACK: 1H CHoCH detected, waiting for pullback
 - ⏳ WAITING_4H_PULLBACK: 4H CHoCH detected, waiting for pullback
@@ -41,20 +40,14 @@ Usage:
 """
 
 import json
-import sys
-import io
 import os as _os_global
+import time
 from pathlib import Path as _Path
+
 # V22.2: Cale absolută — nu depinde de CWD la pornire
 _RADAR_DIR = _Path(__file__).parent.resolve()
 _MONITORING_FILE = str(_RADAR_DIR / 'monitoring_setups.json')
 _MONITORING_TMP  = str(_RADAR_DIR / 'monitoring_setups.json.tmp')
-# Force UTF-8 output on Windows (fixes emoji display in PowerShell)
-if hasattr(sys.stdout, 'buffer') and sys.stdout.encoding != 'utf-8':
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
-if hasattr(sys.stderr, 'buffer') and sys.stderr.encoding != 'utf-8':
-    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
-import time
 import argparse
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
@@ -75,7 +68,6 @@ except ImportError:
 
 class PullbackStatus(Enum):
     """Execution status for multi-timeframe analysis"""
-    WAITING_DAILY_FVG = "⏳ WAITING_DAILY_FVG"
     WAITING_1H_CHOCH = "👀 WAITING_1H_CHOCH"
     WAITING_4H_CHOCH = "👀 WAITING_4H_CHOCH"
     WAITING_1H_PULLBACK = "⏳ WAITING_1H_PULLBACK"
@@ -1066,8 +1058,6 @@ class MultiTFRadar:
         daily_fvg_top = float(_ft) if _ft is not None else daily_entry
         _fb = setup_data.get('poi_bottom') or setup_data.get('fvg_bottom')
         daily_fvg_bottom = float(_fb) if _fb is not None else daily_entry
-        # V31.0: daily_target_price este TP-ul macro structural din Scanner
-        _daily_target_v31 = setup_data.get('daily_target_price') or setup_data.get('daily_tp_price')
         # V24.6 PERMISSIVE DAILY FLOW: Setup cu FVG sintetic (zona Equilibrium) — niciun FVG corp natural
         # Radarul 4H TREBUIE să găsească un CHoCH real înainte de EXECUTE_NOW
         _daily_bias_active = bool(setup_data.get('daily_bias_active', False))
@@ -1767,31 +1757,15 @@ class MultiTFRadar:
         print(f"📊 Direction: {'🟢' if result.direction == 'LONG' else '🔴'} {result.direction}")
         print("="*80)
         
-        # Daily zone
+        # Daily zone (V19.5: always validated — Radar scans H4/H1 regardless of price-in-FVG)
         print("\n📊 [DAILY] ZONE VALIDATION")
-        print(f"   Status: {'✅ VALIDATED' if result.daily_zone_validated else '❌ NOT IN ZONE'}")
+        print("   Status: ✅ VALIDATED")
         print(f"   FVG Zone: [{result.daily_fvg_bottom:.5f} - {result.daily_fvg_top:.5f}]")
         print(f"   Entry: {result.daily_entry:.5f}")
         
         # Current price
         print("\n💰 [CURRENT PRICE]")
         print(f"   Price: {result.current_price:.5f}")
-        
-        if not result.daily_zone_validated:
-            pip_sz = self._get_pip_size(result.symbol)
-            if result.current_price > result.daily_fvg_top:
-                dist_pips = (result.current_price - result.daily_fvg_top) / pip_sz
-                direction_txt = f"ABOVE FVG — {dist_pips:.0f} pips to top of zone"
-            else:
-                dist_pips = (result.daily_fvg_bottom - result.current_price) / pip_sz
-                direction_txt = f"BELOW FVG — {dist_pips:.0f} pips to bottom of zone"
-            print(f"\n\u23f3 WAITING DAILY FVG: {direction_txt}")
-            print(f"   Daily FVG: [{result.daily_fvg_bottom:.5f} - {result.daily_fvg_top:.5f}]")
-            print(f"   Entry target: {result.daily_entry:.5f}")
-            print("\n" + "="*80)
-            print(f"🎯 [VERDICT]: {result.verdict}")
-            print("="*80)
-            return
         
         # 1H Analysis
         print("\n" + "─"*80)

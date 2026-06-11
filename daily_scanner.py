@@ -30,13 +30,6 @@ from ai_probability_analyzer import AIProbabilityAnalyzer
 
 load_dotenv()
 
-# ━━━ V11.2: Folosim ora sistemului (EET/Romania) — macOS setat corect ━━━
-# os.environ['TZ'] = 'UTC'  # DEZACTIVAT V11.2 — era pentru VPS, pe Mac e EET
-# try:
-#     time.tzset()
-# except AttributeError:
-#     pass
-
 # Global flag for testing/audit - ignore open positions check
 IGNORE_OPEN_POSITIONS = False
 
@@ -347,9 +340,6 @@ class DailyScanner:
                         print(f"   ⚠️ W1 data unavailable for {symbol} — bias = NEUTRAL")
                 except Exception as w1_err:
                     print(f"   ⚠️ W1 fetch error for {symbol}: {w1_err} — continuing")
-                
-                # GBP pairs still need 1H for additional validation
-                is_gbp = 'GBP' in symbol
                 
                 # V8.0: Run SMC detection with ATR + Premium/Discount filters
                 # These filters may reject setups:
