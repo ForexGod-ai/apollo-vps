@@ -6,7 +6,7 @@ Connects to local cBot HTTP server for real-time IC Markets data
 import requests
 import pandas as pd
 from datetime import datetime
-from typing import Optional
+from typing import List, Optional
 from loguru import logger
 
 class CTraderCBotClient:
@@ -42,93 +42,110 @@ class CTraderCBotClient:
         print("❌ cTrader MarketDataProvider (port 8010) not reachable. Start the DATA-Market cBot in cTrader.")
         return False
     
-    def get_historical_data(self, symbol: str, timeframe: str = 'Daily', bars: int = 200) -> Optional[pd.DataFrame]:
-        """
-        Get historical OHLCV data from cBot
-        
-        Args:
-            symbol: Trading symbol (e.g., 'GBPUSD', 'XAUUSD')
-            timeframe: 'M1', 'M5', 'M15', 'H1', 'H4', 'Daily'
-            bars: Number of bars to retrieve
-            
-        Returns:
-            DataFrame with columns: time, open, high, low, close, volume
-        """
+    @staticmethod
+    def _bar_fallback_chain(requested: int) -> List[int]:
+        """V36.4: lanț de avarie — jumătate, apoi 150/100/50 bare minime."""
+        chain: List[int] = []
+        seen: set = set()
+        for candidate in (requested, requested // 2, 150, 100, 50, 30):
+            if candidate and candidate >= 10 and candidate not in seen:
+                seen.add(candidate)
+                chain.append(candidate)
+        return chain
+
+    def _dataframe_from_payload(
+        self,
+        data: object,
+        symbol: str,
+        timeframe: str,
+    ) -> Optional[pd.DataFrame]:
+        """V36.4: parse sigur — fără crash pe None / error dict / bars lipsă."""
+        if data is None:
+            logger.warning(f"⚠️ [V36.4] Payload None pentru {symbol} {timeframe}")
+            return None
+        if not isinstance(data, dict):
+            logger.warning(f"⚠️ [V36.4] Payload invalid ({type(data).__name__}) pentru {symbol} {timeframe}")
+            return None
+        api_error = data.get('error')
+        if api_error:
+            logger.warning(f"⚠️ [V36.4] API error {symbol} {timeframe}: {api_error}")
+            return None
+        bars = data.get('bars')
+        if not isinstance(bars, list) or len(bars) == 0:
+            logger.warning(f"⚠️ [V36.4] Fără bare în răspuns pentru {symbol} {timeframe}")
+            return None
         try:
-            logger.debug(f"📊 Requesting {bars} {timeframe} bars for {symbol}")
-            
-            params = {
-                'symbol': symbol,
-                'timeframe': timeframe,
-                'bars': bars
-            }
-            
-            # V10.1: timeout 30s — cTrader GetAccountCalculatedValues poate dura >10s la conexiuni lente
-            response = requests.get(f"{self.base_url}/data", params=params, timeout=30)
-            
-            # DETAILED LOGGING FOR DEBUGGING
-            logger.debug(f"🔍 Request URL: {response.url}")
-            logger.debug(f"🔍 Response Status: {response.status_code}")
-            logger.debug(f"🔍 Response Headers: {response.headers}")
-            logger.debug(f"🔍 Response Text (first 200 chars): {response.text[:200]}")
-            
-            if response.status_code != 200:
-                logger.error(f"❌ HTTP {response.status_code}: {response.text}")
-                
-                # FALLBACK: Try with fewer bars if 500 error (cTrader data availability issue)
-                if response.status_code == 500 and bars > 100:
-                    fallback_counts = [200, 100, 50]
-                    for fallback in fallback_counts:
-                        if fallback >= bars:
-                            continue
-                        logger.warning(f"⚠️ Retrying {symbol} {timeframe} with {fallback} bars (fallback from {bars})")
-                        try:
-                            fallback_response = requests.get(
-                                f"{self.base_url}/data",
-                                params={'symbol': symbol, 'timeframe': timeframe, 'bars': fallback},
-                                timeout=10
-                            )
-                            if fallback_response.status_code == 200:
-                                data = fallback_response.json()
-                                if 'bars' in data and len(data['bars']) > 0:
-                                    df = pd.DataFrame(data['bars'])
-                                    df['time'] = pd.to_datetime(df['time'])
-                                    df = df.set_index('time')
-                                    for col in ['open', 'high', 'low', 'close', 'volume']:
-                                        df[col] = pd.to_numeric(df[col])
-                                    logger.success(f"✅ Fallback success: Got {len(df)} bars for {symbol} (requested {bars}, got {fallback})")
-                                    return df
-                        except Exception as fallback_error:
-                            logger.debug(f"Fallback {fallback} failed: {fallback_error}")
-                            continue
-                
+            df = pd.DataFrame(bars)
+            if df.empty or 'close' not in df.columns:
                 return None
-            
-            data = response.json()
-            
-            if 'bars' not in data or len(data['bars']) == 0:
-                logger.warning(f"⚠️ No data returned for {symbol}")
-                return None
-            
-            # Convert to DataFrame
-            df = pd.DataFrame(data['bars'])
             df['time'] = pd.to_datetime(df['time'])
             df = df.set_index('time')
-            
-            # Ensure numeric types
             for col in ['open', 'high', 'low', 'close', 'volume']:
-                df[col] = pd.to_numeric(df[col])
-            
-            logger.success(f"✅ Got {len(df)} bars for {symbol} (latest: {df['close'].iloc[-1]:.5f})")
+                if col in df.columns:
+                    df[col] = pd.to_numeric(df[col], errors='coerce')
+            if df['close'].isna().all():
+                return None
             return df
-            
+        except Exception as parse_err:
+            logger.warning(f"⚠️ [V36.4] Parse DataFrame eșuat {symbol} {timeframe}: {parse_err}")
+            return None
+
+    def _fetch_bars_once(
+        self,
+        symbol: str,
+        timeframe: str,
+        bars: int,
+        timeout: int = 30,
+    ) -> Optional[pd.DataFrame]:
+        """O singură cerere HTTP — returnează DataFrame sau None, fără excepții neprinse."""
+        params = {'symbol': symbol, 'timeframe': timeframe, 'bars': bars}
+        logger.debug(f"📊 Requesting {bars} {timeframe} bars for {symbol}")
+        response = requests.get(f"{self.base_url}/data", params=params, timeout=timeout)
+        logger.debug(f"🔍 Request URL: {response.url}")
+        logger.debug(f"🔍 Response Status: {response.status_code}")
+        logger.debug(f"🔍 Response Text (first 200 chars): {response.text[:200]}")
+        if response.status_code != 200:
+            logger.error(f"❌ HTTP {response.status_code}: {response.text[:200]}")
+            return None
+        try:
+            payload = response.json()
+        except Exception as json_err:
+            logger.warning(f"⚠️ [V36.4] JSON invalid {symbol} {timeframe}: {json_err}")
+            return None
+        return self._dataframe_from_payload(payload, symbol, timeframe)
+
+    def get_historical_data(self, symbol: str, timeframe: str = 'Daily', bars: int = 200) -> Optional[pd.DataFrame]:
+        """
+        Get historical OHLCV data from cBot — V36.4 fallback automat pe număr de bare.
+        """
+        try:
+            for bar_count in self._bar_fallback_chain(bars):
+                try:
+                    df = self._fetch_bars_once(symbol, timeframe, bar_count)
+                    if df is not None and not df.empty:
+                        if bar_count != bars:
+                            logger.warning(
+                                f"⚠️ [V36.4 FALLBACK] {symbol} {timeframe}: "
+                                f"{bars}→{bar_count} bare OK ({len(df)} primite)"
+                            )
+                        else:
+                            logger.success(
+                                f"✅ Got {len(df)} bars for {symbol} "
+                                f"(latest: {df['close'].iloc[-1]:.5f})"
+                            )
+                        return df
+                except requests.exceptions.Timeout:
+                    logger.warning(
+                        f"⏱️  TIMEOUT {symbol} {timeframe} x{bar_count} — încerc mai puține bare..."
+                    )
+                except Exception as req_err:
+                    logger.warning(
+                        f"⚠️ [V36.4] Cerere eșuată {symbol} {timeframe} x{bar_count}: {req_err}"
+                    )
+            logger.warning(f"⚠️ [V36.4] Toate fallback-urile epuizate pentru {symbol} {timeframe}")
+            return None
         except requests.exceptions.ConnectionError:
             logger.error("❌ Cannot connect to cBot server. Is cTrader running with MarketDataProvider cBot?")
-            return None
-        except requests.exceptions.Timeout:
-            # V10.1: cTrader timeout (GetAccountCalculatedValuesResMessage) — nu blocăm scannerul
-            logger.warning(f"⏱️  cTrader TIMEOUT pentru {symbol} {timeframe} — date indisponibile temporar (cTrader ocupat)")
-            logger.warning(f"   Setup-ul va fi salvat oricum dacă structura există. Retry la scan-ul următor.")
             return None
         except Exception as e:
             logger.error(f"❌ Error fetching data: {e}")

@@ -9,9 +9,10 @@ if sys.stderr.encoding != 'utf-8':
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
 """
-🎯 MULTI-TIMEFRAME EXECUTION RADAR - V36.3 LIVE SYNC EDITION
+🎯 MULTI-TIMEFRAME EXECUTION RADAR - V36.4 COMMODITIES HARDENED
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-V36.3: pip_size Crypto/Commodities aliniat cu scanner | symbol broker map (XTI→WTIUSD, BTC fallbacks) | skip logging verbose
+V36.4: H4/H1 bar fallback (300→150→100) | XTIUSD prioritar vs WTIUSD | crash-safe cBot parse
+V36.3: pip_size Crypto/Commodities | symbol broker map | skip logging verbose
 
 Double Entry Logic: Scans both 1H and 4H for CHoCH confirmation.
 
@@ -184,15 +185,17 @@ class MultiTFRadar:
         # V36.3: motivul ultimului skip — propagat la run_scan pentru logging explicit
         self._last_skip_reason: Optional[str] = None
 
-    # V36.3: JSON symbol → nume recunoscut de IC Markets cTrader (MarketDataProvider.cs)
-    _BROKER_SYMBOL_PRIMARY: Dict[str, str] = {
-        'XTIUSD': 'WTIUSD',
-        'USOIL': 'WTIUSD',
+    # V36.4: IC Markets folosește XTIUSD live — WTIUSD poate returna "Symbol not found"
+    _BROKER_SYMBOL_ALIASES: Dict[str, List[str]] = {
+        'BTCUSD': ['BTC/USD'],
+        'XTIUSD': ['WTIUSD'],
+        'USOIL': ['WTIUSD', 'XTIUSD'],
+        'WTIUSD': ['XTIUSD'],
     }
 
     @classmethod
     def _broker_symbol_candidates(cls, json_symbol: str) -> List[str]:
-        """Ordinea de încercare pentru API cTrader — primul succes câștigă."""
+        """V36.4: simbolul din JSON PRIMUL — apoi alias-uri broker."""
         s = (json_symbol or '').upper().strip()
         if not s:
             return ['UNKNOWN']
@@ -204,16 +207,31 @@ class MultiTFRadar:
                 seen.add(sym)
                 ordered.append(sym)
 
-        _add(cls._BROKER_SYMBOL_PRIMARY.get(s, s))
-        if s == 'BTCUSD':
-            _add('BTC/USD')
-            _add('BTCUSD')
-        elif s in ('XTIUSD', 'WTIUSD', 'USOIL'):
-            _add('WTIUSD')
-            _add('XTIUSD')
-        elif s != cls._BROKER_SYMBOL_PRIMARY.get(s, s):
-            _add(s)
+        _add(s)
+        for alias in cls._BROKER_SYMBOL_ALIASES.get(s, []):
+            _add(alias)
         return ordered
+
+    @staticmethod
+    def _is_commodity_or_crypto(symbol: str) -> bool:
+        s = symbol.upper()
+        return any(x in s for x in [
+            'XTI', 'WTI', 'OIL', 'BRENT', 'USOIL',
+            'XAU', 'XAG', 'GOLD', 'SILVER',
+            'BTC', 'ETH', 'XRP', 'LTC', 'ADA', 'DOGE',
+        ])
+
+    @classmethod
+    def _bar_count_chain(cls, timeframe: str, symbol: str, primary: int) -> List[int]:
+        """V36.4: lanț de bare — mărfuri/crypto reduc agresiv la eșec broker."""
+        chain: List[int] = []
+        seen: set = set()
+        extras = (200, 150, 100, 50) if cls._is_commodity_or_crypto(symbol) else (150, 100, 50)
+        for n in (primary, primary // 2, *extras):
+            if n and n >= 20 and n not in seen:
+                seen.add(n)
+                chain.append(n)
+        return chain
 
     @staticmethod
     def _get_pip_size(symbol: str) -> float:
@@ -228,6 +246,12 @@ class MultiTFRadar:
         if 'JPY' in s:
             return 0.01
         return 0.0001
+
+    @staticmethod
+    def _log_radar_warn(symbol: str, reason: str) -> None:
+        """V36.4: avertisment — setup Daily rămâne în JSON, retry la 30s."""
+        print(f"  ⚠️ [RADAR WARN] {symbol}: {reason} — setup păstrat în monitoring, retry ciclu următor")
+        sys.stdout.flush()
 
     @staticmethod
     def _log_radar_skip(symbol: str, reason: str) -> None:
@@ -321,29 +345,30 @@ class MultiTFRadar:
         timeframe: str,
         num_candles: int = 100
     ) -> Optional[pd.DataFrame]:
-        """Download historical data — V36.3: broker symbol map + fallback + logging explicit."""
+        """V36.4: broker symbol map + bar-count fallback chain + zero crash."""
         candidates = self._broker_symbol_candidates(symbol)
-        print(f"  📥 [V36.3 DATA] {symbol} {timeframe} x{num_candles} — încerc {candidates}")
+        bar_chain = self._bar_count_chain(timeframe, symbol, num_candles)
+        print(f"  📥 [V36.4 DATA] {symbol} {timeframe} — simboluri {candidates} | bare {bar_chain}")
         sys.stdout.flush()
         last_err: Optional[str] = None
-        for broker_sym in candidates:
-            try:
-                df = self.ctrader.get_historical_data(broker_sym, timeframe, num_candles)
-                if df is not None and not df.empty:
-                    if broker_sym != symbol.upper():
-                        print(f"  ✅ [V36.3 SYMBOL MAP] {symbol} → {broker_sym} "
-                              f"({len(df)} bare {timeframe})")
-                        sys.stdout.flush()
-                    return df.reset_index()
-                last_err = f"{broker_sym}: răspuns gol sau DataFrame empty"
-                print(f"  ⚠️ [RADAR ERROR] {symbol} {timeframe} via {broker_sym}: {last_err}")
-                sys.stdout.flush()
-            except Exception as e:
-                last_err = f"{broker_sym}: {e}"
-                print(f"  ⚠️ [RADAR ERROR] Nu s-au putut descărca datele pentru {symbol} "
-                      f"({timeframe}) via {broker_sym} din cauza: {e}")
-                sys.stdout.flush()
-        print(f"  ❌ [RADAR ERROR] {symbol} {timeframe}: toate variantile eșuate {candidates}"
+        for bar_count in bar_chain:
+            for broker_sym in candidates:
+                try:
+                    df = self.ctrader.get_historical_data(broker_sym, timeframe, bar_count)
+                    if df is not None and not df.empty:
+                        if broker_sym != symbol.upper() or bar_count != num_candles:
+                            print(f"  ✅ [V36.4 DATA OK] {symbol} → {broker_sym} "
+                                  f"{timeframe} x{bar_count} ({len(df)} bare)")
+                            sys.stdout.flush()
+                        return df.reset_index()
+                    last_err = f"{broker_sym} x{bar_count}: răspuns gol"
+                except Exception as e:
+                    last_err = f"{broker_sym} x{bar_count}: {e}"
+                    print(f"  ⚠️ [RADAR ERROR] {symbol} {timeframe} via {broker_sym} "
+                          f"x{bar_count}: {e}")
+                    sys.stdout.flush()
+        print(f"  ⚠️ [RADAR WARN] {symbol} {timeframe}: date indisponibile "
+              f"(încercat {candidates} × {bar_chain})"
               f"{f' — ultima: {last_err}' if last_err else ''}")
         sys.stdout.flush()
         return None
@@ -381,10 +406,10 @@ class MultiTFRadar:
         df = self.get_historical_data(symbol, timeframe, num_bars)
         
         if df is None or df.empty:
-            self._log_radar_skip(
+            self._log_radar_warn(
                 symbol,
-                f"Fără date {timeframe_display} ({num_bars} bare) — verifică simbol broker "
-                f"{self._broker_symbol_candidates(symbol)} pe port 8010"
+                f"Fără date {timeframe_display} (lanț bare epuizat) — verifică port 8010 / "
+                f"simbol {self._broker_symbol_candidates(symbol)}"
             )
             return TimeframeAnalysis(
                 timeframe=timeframe_display,
