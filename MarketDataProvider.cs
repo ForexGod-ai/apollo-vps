@@ -24,7 +24,7 @@ namespace cAlgo.Robots
     [Robot(TimeZone = TimeZones.UTC, AccessRights = AccessRights.FullAccess)]
     public class MarketDataProvider : Robot
     {
-        [Parameter("HTTP Port", DefaultValue = 8000)]
+        [Parameter("HTTP Port", DefaultValue = 8010)]
         public int HttpPort { get; set; }
 
         private HttpListener _listener;

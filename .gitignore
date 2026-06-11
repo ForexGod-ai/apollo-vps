@@ -61,3 +61,24 @@ data/backups/
 process_*.lock
 trade_history.json
 monitoring_setups.json
+
+# Telegram runtime state
+data/tg_last_update_id.json
+
+# Agent/session audit artifacts (local only — not for repo)
+AUDIT_*.md
+ARCHITECTURE_*.md
+BUG_REPORT_*.md
+DIAGNOSTIC_*.md
+FORENSIC_*.md
+GEMINI_*.md
+PERFORMANCE_*.md
+RADAR_*.md
+RAPORT_*.md
+SESSION_*.md
+TF_RADAR_*.md
+V19_*.md
+EDITARI_*.md
+DAILY_DATA_*.md
+COMMAND_CENTER_AUDIT_*.md
+COMMAND_CENTER_ELITE.md
