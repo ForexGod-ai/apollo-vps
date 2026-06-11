@@ -95,6 +95,7 @@ def _ascii_sanitize(text: str) -> str:
     t = _EMOJI_RE.sub("", str(text))
     t = t.translate(_ASCII_MAP)
     t = t.replace("⏳", "[WAIT]").replace("✅", "[OK]").replace("❌", "[X]")
+    t = t.replace("\u2705", "[OK]").replace("\u23f3", "[WAIT]").replace("\u274c", "[X]")
     return t.encode("ascii", errors="ignore").decode("ascii")
 
 
@@ -132,6 +133,13 @@ logger.add(
     rotation="10 MB",
     retention="7 days",
     encoding="utf-8",
+)
+# V37.1.2: Consola interactiva — loguri colorate ctrader (Got N bars...) ca inainte
+logger.add(
+    sys.stderr,
+    format="<green>{time:HH:mm:ss.SSS}</green> | <level>{level:<8}</level> | <level>{message}</level>",
+    level="DEBUG",
+    colorize=True,
 )
 
 
@@ -832,7 +840,7 @@ class MultiTFRadar:
                 # ANCORA (<=72b): context structural valid. TRAGACI (<= 3b): CHoCH sau BOS live.
                 try:
                     swing_broken_price = float(latest_choch.swing_broken.price)
-                    choch_break_price = float(latest_choch.break_price)
+                    # choch_break_price setat la L728 — nu reatribui (UnboundLocalError Python)
                     impulse_size = abs(choch_break_price - swing_broken_price)
 
                     # Guard 1: impuls 0 pips (date corupte / tick duplicat)
