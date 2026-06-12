@@ -30,10 +30,10 @@
   },
   
   "position_limits": {
-    "max_open_positions": 5,
+    "max_open_positions": 10,
     "max_positions_per_symbol": 2,
-    "max_trades_per_day": 8,
-    "comment": "Live $1000 account — max 2 per symbol (Entry 1 + scale-in Entry 2)"
+    "max_trades_per_day": 12,
+    "comment": "Max 10 pozitii simultane; max 2 per simbol (E1 + scale-in E2)"
   },
 
   "scale_in": {

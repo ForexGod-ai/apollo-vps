@@ -253,6 +253,7 @@ class MultiTFRadar:
         # V25.2: Contor eșecuri consecutive port 8010 — alertă Telegram la 3 eșecuri
         self._port8010_fail_count: int = 0
         self._port8010_alert_sent: bool = False  # anti-spam: o singură alertă per incident
+        self._execute_now_alert_keys: set = set()  # V37.8: dedup Telegram per symbol+direction
         self._telegram_token: str = _os_global.getenv('TELEGRAM_BOT_TOKEN', '')
         self._telegram_chat_id: str = _os_global.getenv('TELEGRAM_CHAT_ID', '')
         # V36.3: motivul ultimului skip — propagat la run_scan pentru logging explicit
@@ -1384,11 +1385,14 @@ class MultiTFRadar:
 
     def _clear_execute_now_signal(self, setup: dict, reason: str = '') -> None:
         """V37.6: Curata semnalul EXECUTE_NOW + flag alerta Telegram."""
+        sym = setup.get('symbol', '?')
+        direction = str(setup.get('direction', '')).upper()
+        self._execute_now_alert_keys.discard(f"{sym}_{direction}")
         setup.pop('EXECUTE_NOW', None)
         setup.pop('execute_now_trigger_tf', None)
         setup.pop('execute_now_alert_sent', None)
         if reason:
-            logger.info(f"[V37.6] {setup.get('symbol', '?')}: EXECUTE_NOW cleared — {reason}")
+            logger.info(f"[V37.6] {sym}: EXECUTE_NOW cleared — {reason}")
 
     def _flush_execute_now_to_json(self, setup: dict) -> None:
         """V37.6: Scrie EXECUTE_NOW instant in JSON — executorul nu asteapta batch sync."""
@@ -1459,6 +1463,22 @@ class MultiTFRadar:
         setup['execute_now_trigger_tf'] = exec_tf
 
         exec_tf_data = result.tf_1h if exec_tf == '1H' else result.tf_4h
+        # V37.8: SL live din TF-ul de trigger (nu h4_sl stale din JSON)
+        _live_sl = getattr(exec_tf_data, 'h4_sl_price', None)
+        if _live_sl is None and exec_tf == '1H':
+            _live_sl = getattr(result.tf_4h, 'h4_sl_price', None)
+        _entry_ref = (
+            setup.get('radar_4h_fvg_entry') or setup.get('radar_1h_fvg_entry')
+            or setup.get('entry_price')
+        )
+        if _live_sl and _entry_ref:
+            from pip_utils import prices_direction_valid, sl_entry_magnitude_sane
+            if (
+                prices_direction_valid(setup.get('direction', 'buy'), _entry_ref, _live_sl)
+                and sl_entry_magnitude_sane(result.symbol, _entry_ref, _live_sl)
+            ):
+                setup['h4_sl_price'] = _live_sl
+
         exec_fvg_src = getattr(exec_tf_data, 'fvg_source', 'structural')
         exec_zone = (
             f"[{exec_tf_data.fvg_bottom:.5f} - {exec_tf_data.fvg_top:.5f}]"
@@ -1473,27 +1493,28 @@ class MultiTFRadar:
 
         self._flush_execute_now_to_json(setup)
 
-        # V37.6: o singura alerta Telegram per setup — latch/restart nu re-spameaza daca deja trimis
+        # V37.8: Telegram DOAR la primul trigger — latch/restart reconecteaza executorul silent
+        _alert_key = f"{result.symbol}_{str(setup.get('direction', '')).upper()}"
         should_alert = (
             not setup.get('entry1_filled')
             and not setup.get('execute_now_alert_sent')
-            and (
-                (source == 'trigger' and not was_already)
-                or source == 'latch'
-            )
+            and _alert_key not in self._execute_now_alert_keys
+            and source == 'trigger'
+            and not was_already
         )
         if should_alert:
+            setup['execute_now_alert_sent'] = True
+            self._execute_now_alert_keys.add(_alert_key)
+            self._flush_execute_now_to_json(setup)
             try:
                 from telegram_notifier import TelegramNotifier
-                if TelegramNotifier().send_execute_now_alert(setup, exec_tf):
-                    setup['execute_now_alert_sent'] = True
-                    self._flush_execute_now_to_json(setup)
+                TelegramNotifier().send_execute_now_alert(setup, exec_tf)
             except Exception as e:
                 logger.warning(f"[V37.3] EXECUTE_NOW Telegram alert failed: {e}")
-        elif setup.get('execute_now_alert_sent') and source == 'latch':
+        elif source == 'latch':
             logger.debug(
-                f"[V37.6] {result.symbol}: latch reconecteaza executor — "
-                f"Telegram deja trimis, fara re-alertare"
+                f"[V37.8] {result.symbol}: latch EXECUTE_NOW — fara Telegram "
+                f"(alert_sent={setup.get('execute_now_alert_sent')})"
             )
 
     def _update_setup_with_radar(self, setup: Dict, result: 'MultiTFResult') -> None:
@@ -1580,9 +1601,22 @@ class MultiTFRadar:
         if result.tf_4h.equilibrium is not None:
             setup['radar_4h_eq'] = result.tf_4h.equilibrium
 
-        # V24.5: Structural SL din swing_broken 4H — scriem în JSON pentru Executor
-        if result.tf_4h.h4_sl_price is not None:
-            setup['h4_sl_price'] = result.tf_4h.h4_sl_price
+        # V24.5 / V37.8: SL structural — validare directie inainte de scriere in JSON
+        _sl_candidate = result.tf_4h.h4_sl_price
+        if result.tf_1h.h4_sl_price is not None and result.priority_timeframe == '1H':
+            _sl_candidate = result.tf_1h.h4_sl_price
+        if _sl_candidate is not None:
+            from pip_utils import prices_direction_valid, sl_entry_magnitude_sane
+            _entry_chk = (
+                setup.get('radar_1h_fvg_entry') or setup.get('radar_4h_fvg_entry')
+                or setup.get('entry_price') or result.current_price
+            )
+            if (
+                _entry_chk
+                and prices_direction_valid(setup.get('direction', 'buy'), _entry_chk, _sl_candidate)
+                and sl_entry_magnitude_sane(result.symbol, _entry_chk, _sl_candidate)
+            ):
+                setup['h4_sl_price'] = _sl_candidate
 
         setup['radar_4h_status'] = result.tf_4h.status.value
 

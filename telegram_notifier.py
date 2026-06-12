@@ -497,6 +497,7 @@ class TelegramNotifier:
         """
         try:
             from pip_utils import get_pip_size, sl_pips_between, MIN_SL_PIPS
+            from pip_utils import prices_direction_valid, sl_entry_magnitude_sane
 
             symbol = setup_data.get('symbol', 'UNKNOWN')
             direction_raw = str(setup_data.get('direction', 'buy')).lower()
@@ -535,38 +536,51 @@ class TelegramNotifier:
                     entry_f = float(entry)
                     sl_f = float(sl)
                     tp_f = float(tp)
-                    sl_p = sl_pips_between(symbol, entry_f, sl_f)
-                    tp_p = sl_pips_between(symbol, entry_f, tp_f)
-                    rr = (tp_p / sl_p) if sl_p > 0 else 0
-                    rr_str = f"1:{rr:.2f}" if rr > 0 else "N/A"
-
-                    balance = float(os.getenv('ACCOUNT_BALANCE', '10000'))
-                    try:
-                        import json as _json
-                        from pathlib import Path
-                        th = Path(__file__).parent / 'trade_history.json'
-                        if th.exists():
-                            with open(th, encoding='utf-8') as _tf:
-                                bal = float(_json.load(_tf).get('account', {}).get('balance', 0))
-                            if bal > 0:
-                                balance = bal
-                    except Exception:
-                        pass
-                    pip_val = 8.33 if 'JPY' in symbol.upper() else 10.0
-                    risk_usd = balance * 0.05
-                    lots_est = round(risk_usd / (sl_p * pip_val), 2) if sl_p > 0 else 0.01
-                    lots_est = max(0.01, min(lots_est, 10.0))
-
-                    trade_block = (
-                        f"{sep}\n"
-                        f"🔹 Entry  <code>{entry_f:.5f}</code>\n"
-                        f"🔸 SL     <code>{sl_f:.5f}</code>  <i>({sl_p:.0f}p)</i>\n"
-                        f"🎯 TP     <code>{tp_f:.5f}</code>  <i>({tp_p:.0f}p)</i>\n"
-                        f"⚖️ R:R    {rr_str}\n"
-                        f"💵 ~${risk_usd:.0f} risk (5%) | 📦 ~{lots_est:.2f} lots"
+                    _prices_ok = (
+                        prices_direction_valid(direction_raw, entry_f, sl_f, tp_f)
+                        and sl_entry_magnitude_sane(symbol, entry_f, sl_f)
                     )
-                    if sl_p < MIN_SL_PIPS:
-                        trade_block += f"\n⚠️ SL {sl_p:.0f}p — executor recalculează live 4H (min {MIN_SL_PIPS}p)"
+                    if not _prices_ok:
+                        trade_block = (
+                            f"\n⏳ SL/TP — prețuri JSON invalide; "
+                            f"executor recalculează live 4H + D1"
+                        )
+                    else:
+                        sl_p = sl_pips_between(symbol, entry_f, sl_f)
+                        tp_p = sl_pips_between(symbol, entry_f, tp_f)
+                        rr = (tp_p / sl_p) if sl_p > 0 else 0
+                        rr_str = f"1:{rr:.2f}" if rr > 0 else "N/A"
+
+                        balance = float(os.getenv('ACCOUNT_BALANCE', '10000'))
+                        try:
+                            import json as _json
+                            from pathlib import Path
+                            th = Path(__file__).parent / 'trade_history.json'
+                            if th.exists():
+                                with open(th, encoding='utf-8') as _tf:
+                                    bal = float(_json.load(_tf).get('account', {}).get('balance', 0))
+                                if bal > 0:
+                                    balance = bal
+                        except Exception:
+                            pass
+                        pip_val = 8.33 if 'JPY' in symbol.upper() else 10.0
+                        risk_usd = balance * 0.05
+                        lots_est = round(risk_usd / (sl_p * pip_val), 2) if sl_p > 0 else 0.01
+                        lots_est = max(0.01, min(lots_est, 10.0))
+
+                        trade_block = (
+                            f"{sep}\n"
+                            f"🔹 Entry  <code>{entry_f:.5f}</code>\n"
+                            f"🔸 SL     <code>{sl_f:.5f}</code>  <i>({sl_p:.0f}p)</i>\n"
+                            f"🎯 TP     <code>{tp_f:.5f}</code>  <i>({tp_p:.0f}p)</i>\n"
+                            f"⚖️ R:R    {rr_str}\n"
+                            f"💵 ~${risk_usd:.0f} risk (5%) | 📦 ~{lots_est:.2f} lots"
+                        )
+                        if sl_p < MIN_SL_PIPS:
+                            trade_block += (
+                                f"\n⚠️ SL {sl_p:.0f}p — executor recalculează live 4H "
+                                f"(min {MIN_SL_PIPS}p)"
+                            )
                 except (TypeError, ValueError) as _fmt_err:
                     trade_block = f"\n⚠️ Prețuri incomplete — executor calculează live ({_fmt_err})"
             else:

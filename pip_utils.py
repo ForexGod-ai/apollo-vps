@@ -47,3 +47,52 @@ def liquidity_already_swept(
     if side == 'low':
         return float(window['low'].min()) <= lvl + tolerance
     return float(window['high'].max()) >= lvl - tolerance
+
+
+def prices_direction_valid(
+    direction: str,
+    entry: float,
+    stop_loss: float,
+    take_profit: float = None,
+) -> bool:
+    """V37.8: SL/TP trebuie sa fie in directia corecta fata de entry."""
+    if not entry or not stop_loss:
+        return False
+    try:
+        entry_f = float(entry)
+        sl_f = float(stop_loss)
+    except (TypeError, ValueError):
+        return False
+    d = str(direction).lower()
+    if d in ('sell', 'short'):
+        if sl_f <= entry_f:
+            return False
+        if take_profit is not None and float(take_profit) >= entry_f:
+            return False
+    else:
+        if sl_f >= entry_f:
+            return False
+        if take_profit is not None and float(take_profit) <= entry_f:
+            return False
+    return True
+
+
+def sl_entry_magnitude_sane(symbol: str, entry: float, stop_loss: float) -> bool:
+    """V37.8: Respinge SL corupt din JSON (ex. GBPNZD SL 1.38 la entry 2.30)."""
+    if not entry or not stop_loss:
+        return False
+    try:
+        entry_f = abs(float(entry))
+        sl_f = abs(float(stop_loss))
+    except (TypeError, ValueError):
+        return False
+    if entry_f <= 0:
+        return False
+    ratio = sl_f / entry_f
+    s = symbol.upper()
+    if any(x in s for x in ['BTC', 'ETH', 'XRP', 'LTC']):
+        return 0.85 < ratio < 1.15
+    if any(x in s for x in ['XAU', 'XAG', 'GOLD', 'SILVER']):
+        return 0.90 < ratio < 1.10
+    # FX / JPY — SL structural de obicei within ~8% of entry
+    return 0.92 < ratio < 1.08
