@@ -581,6 +581,28 @@ class UnifiedRiskManager:
             print(f"❌ Error deactivating kill switch: {e}")
             return False
     
+    def _manual_resume_active(self) -> bool:
+        """V37.10: /resume manual — bypass daily loss pana la 00:05 ora Romaniei."""
+        try:
+            resume_marker = Path(__file__).parent / 'data' / 'system_resumed.json'
+            if not resume_marker.exists():
+                return False
+            with open(resume_marker, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            resumed_at_str = data.get('resumed_at', '')
+            if not resumed_at_str:
+                return False
+            resumed_at = datetime.fromisoformat(resumed_at_str.replace('Z', '+00:00'))
+            if resumed_at.tzinfo is None:
+                resumed_at = resumed_at.replace(tzinfo=datetime.now().astimezone().tzinfo)
+            if TZ_RO:
+                today_ro = datetime.now(TZ_RO).strftime('%Y-%m-%d')
+                resumed_day_ro = resumed_at.astimezone(TZ_RO).strftime('%Y-%m-%d')
+                return resumed_day_ro == today_ro
+            return resumed_at.date() == datetime.now().date()
+        except Exception:
+            return False
+
     def validate_new_trade(self, symbol="", direction="", entry_price=0, stop_loss=0,
                            risk_override_percent: float = None):
         """
@@ -661,11 +683,17 @@ class UnifiedRiskManager:
         
         # Check daily loss limit → V9.3 DEEP SLEEP: Signal executor to stop ALL scanning
         if daily_loss_pct <= -self.max_daily_loss_pct:
-            result['reason'] = f"Daily loss limit reached ({daily_loss_pct:.2f}%)"
-            result['deep_sleep'] = True  # V9.3: Trigger Deep Sleep in setup_executor
-            print(f"😴 DEEP SLEEP TRIGGER: {result['reason']}")
-            self._send_rejection_alert(symbol, direction, result['reason'])
-            return result
+            if self._manual_resume_active():
+                print(
+                    f"🔱 [V37.10] Daily loss {daily_loss_pct:.2f}% >= -{self.max_daily_loss_pct}% "
+                    f"DAR /resume manual activ — trade PERMIS"
+                )
+            else:
+                result['reason'] = f"Daily loss limit reached ({daily_loss_pct:.2f}%)"
+                result['deep_sleep'] = True  # V9.3: Trigger Deep Sleep in setup_executor
+                print(f"😴 DEEP SLEEP TRIGGER: {result['reason']}")
+                self._send_rejection_alert(symbol, direction, result['reason'])
+                return result
         
         # Send warning if approaching limit (consistent with balance denominator)
         if daily_loss_pct <= -self.daily_warning_pct:
