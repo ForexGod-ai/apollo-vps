@@ -1975,9 +1975,13 @@ class MultiTFRadar:
                                 setups[i][_ek] = _original_setup[_ek]
                         # ── Merge parțial: _update_setup_with_radar scrie DOAR cheile Radarului ──
                         self._update_setup_with_radar(setups[i], result)
-                        for _ek in self._EXECUTE_NOW_FLUSH_KEYS:
-                            if _ek in _original_setup:
-                                setups[i][_ek] = _original_setup[_ek]
+                        if not setups[i].get('entry1_filled'):
+                            for _ek in self._EXECUTE_NOW_FLUSH_KEYS:
+                                if _ek in _original_setup:
+                                    setups[i][_ek] = _original_setup[_ek]
+                        else:
+                            for _ek in ('EXECUTE_NOW', 'execute_now_trigger_tf'):
+                                setups[i].pop(_ek, None)
                         matched_count += 1
                         break
 

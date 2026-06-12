@@ -207,8 +207,39 @@ EQUILIBRIUM_BUFFER_PIPS = 3
 
 
 class SetupExecutorMonitor:
-    """🔥 AGGRESSIVE EXECUTIONER - Instant MONITORING→EXECUTE transition"""
-    
+    """V3.2 Pullback + Scale-In executor — reads EXECUTE_NOW from radar via JSON."""
+
+    # V37.13: chei scrise de multi_tf_radar — executorul NU le sterge la merge JSON
+    _RADAR_EXECUTE_NOW_KEYS = (
+        'EXECUTE_NOW', 'execute_now_trigger_tf', 'execute_now_alert_sent',
+        'execute_now_alert_key', 'radar_execution_ready', 'radar_verdict', 'h4_structure_locked',
+    )
+
+    @staticmethod
+    def _setup_merge_key(setup: dict) -> tuple:
+        sym = (setup.get('symbol') or '').upper()
+        d = str(setup.get('direction', '')).upper()
+        if d in ('LONG', 'BUY'):
+            d = 'BUY'
+        elif d in ('SHORT', 'SELL'):
+            d = 'SELL'
+        return (sym, d)
+
+    @classmethod
+    def _merge_processed_with_fresh_radar(cls, processed: dict, fresh: dict) -> dict:
+        """
+        V37.13: Radar flush poate scrie EXECUTE_NOW intre read-ul executorului (T+0)
+        si save (T+12). Versiunea processed din memorie NU trebuie sa stearga semnalul fresh.
+        """
+        merged = {**fresh, **processed}
+        if fresh.get('EXECUTE_NOW') is True and not processed.get('entry1_filled'):
+            for key in cls._RADAR_EXECUTE_NOW_KEYS:
+                if key in fresh:
+                    merged[key] = fresh[key]
+            sym = fresh.get('symbol', '?')
+            logger.info(f"[V37.13 RADAR MERGE] {sym}: EXECUTE_NOW pastrat din JSON fresh (radar flush)")
+        return merged
+
     def __init__(self, check_interval: int = 5):  # V30.9: 5s constant — radar scrie la 30s, executor citeste la 5s = max 5s lag
         self.check_interval = check_interval
         _script_root = Path(__file__).parent.resolve()  # V22.2: absolut, nu CWD-dependent
@@ -1899,20 +1930,22 @@ class SetupExecutorMonitor:
                     with open(self.monitoring_file, 'r', encoding='utf-8') as _f_fresh:
                         _fresh_data = json.load(_f_fresh)
                     _fresh_setups = _fresh_data.get('setups', []) if isinstance(_fresh_data, dict) else _fresh_data
-                    # Construim map cu setups procesate de executor (keyed by symbol)
-                    _processed_map = {s['symbol']: s for s in setups if s.get('symbol')}
-                    # Mergem: fresh setups actualizate cu modificările executorului
+                    _processed_map = {
+                        self._setup_merge_key(s): s for s in setups if s.get('symbol')
+                    }
                     _merged = []
                     for _fs in _fresh_setups:
-                        _sym = _fs.get('symbol')
-                        if _sym and _sym in _processed_map:
-                            _merged.append(_processed_map[_sym])  # Versiunea procesată (cu last_check etc.)
+                        _key = self._setup_merge_key(_fs)
+                        if _key[0] and _key in _processed_map:
+                            _merged.append(
+                                self._merge_processed_with_fresh_radar(_processed_map[_key], _fs)
+                            )
                         else:
-                            _merged.append(_fs)  # Setup nou adăugat de scanner — PĂSTRAT intact
-                    # Adăugăm orice setup din executor care nu era în fresh (edge case)
-                    _fresh_symbols = {s.get('symbol') for s in _fresh_setups}
+                            _merged.append(_fs)
+                    _fresh_keys = {self._setup_merge_key(s) for s in _fresh_setups if s.get('symbol')}
                     for _ps in setups:
-                        if _ps.get('symbol') and _ps['symbol'] not in _fresh_symbols:
+                        _pk = self._setup_merge_key(_ps)
+                        if _pk[0] and _pk not in _fresh_keys:
                             _merged.append(_ps)
                     if isinstance(_fresh_data, dict):
                         _fresh_data['setups'] = _merged
