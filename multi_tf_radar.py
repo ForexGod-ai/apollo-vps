@@ -1340,9 +1340,83 @@ class MultiTFRadar:
             return tf_name
         return None
 
+    _EXECUTE_NOW_FLUSH_KEYS = (
+        'EXECUTE_NOW', 'execute_now_trigger_tf', 'execute_now_alert_sent',
+        'radar_execution_ready', 'radar_verdict', 'h4_structure_locked',
+    )
+
+    def _clear_execute_now_signal(self, setup: dict, reason: str = '') -> None:
+        """V37.6: Curata semnalul EXECUTE_NOW + flag alerta Telegram."""
+        setup.pop('EXECUTE_NOW', None)
+        setup.pop('execute_now_trigger_tf', None)
+        setup.pop('execute_now_alert_sent', None)
+        if reason:
+            logger.info(f"[V37.6] {setup.get('symbol', '?')}: EXECUTE_NOW cleared — {reason}")
+
+    def _flush_execute_now_to_json(self, setup: dict) -> None:
+        """V37.6: Scrie EXECUTE_NOW instant in JSON — executorul nu asteapta batch sync."""
+        import os as _flush_os
+        try:
+            import numpy as _np
+
+            def _json_safe(obj):
+                if isinstance(obj, (_np.bool_,)):
+                    return bool(obj)
+                if isinstance(obj, (_np.integer,)):
+                    return int(obj)
+                if isinstance(obj, (_np.floating,)):
+                    return float(obj)
+                if isinstance(obj, (_np.ndarray,)):
+                    return obj.tolist()
+                raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
+
+            with open(_MONITORING_FILE, 'r', encoding='utf-8') as _f:
+                data = json.load(_f)
+            setups = data.get('setups', data) if isinstance(data, dict) else data
+
+            sym = setup.get('symbol')
+            setup_dir = setup.get('direction', '').upper()
+            matched = False
+            for i, s in enumerate(setups):
+                s_dir = s.get('direction', '').upper()
+                dir_ok = (
+                    s.get('symbol') == sym
+                    and (
+                        setup_dir == s_dir
+                        or (setup_dir in ('SELL', 'SHORT') and s_dir in ('SELL', 'SHORT'))
+                        or (setup_dir in ('BUY', 'LONG') and s_dir in ('BUY', 'LONG'))
+                    )
+                )
+                if not dir_ok:
+                    continue
+                for key in self._EXECUTE_NOW_FLUSH_KEYS:
+                    if key in setup:
+                        setups[i][key] = setup[key]
+                    elif key in setups[i] and key in ('EXECUTE_NOW', 'execute_now_trigger_tf', 'execute_now_alert_sent'):
+                        setups[i].pop(key, None)
+                matched = True
+                break
+
+            if not matched:
+                return
+
+            if isinstance(data, dict):
+                data['setups'] = setups
+                data['last_updated'] = datetime.now().isoformat()
+            else:
+                data = setups
+
+            tmp_path = _MONITORING_TMP
+            with open(tmp_path, 'w', encoding='utf-8') as _wf:
+                json.dump(data, _wf, indent=2, default=_json_safe)
+            _flush_os.replace(tmp_path, _MONITORING_FILE)
+            logger.debug(f"[V37.6 FLUSH] {sym}: EXECUTE_NOW scris instant in JSON")
+        except Exception as _flush_err:
+            logger.warning(f"[V37.6 FLUSH] {setup.get('symbol', '?')}: flush esuat ({_flush_err})")
+
     def _arm_execute_now(self, setup: dict, result: 'MultiTFResult', exec_tf: str,
                          source: str = 'trigger') -> None:
-        """V37.5: Seteaza EXECUTE_NOW + Telegram edge (o singura alerta per armare)."""
+        """V37.5/6: Seteaza EXECUTE_NOW, flush instant JSON, Telegram o singura data per setup."""
         was_already = setup.get('EXECUTE_NOW') is True
         setup['EXECUTE_NOW'] = True
         setup['execute_now_trigger_tf'] = exec_tf
@@ -1359,12 +1433,31 @@ class MultiTFRadar:
             f"-> EXECUTE_NOW=True | {'FVG structural' if exec_fvg_src == 'structural' else 'Fibo Fallback'} "
             f"| Zona: {exec_zone} | Pret={result.current_price:.5f} | {exec_eq}"
         )
-        if not was_already and not setup.get('entry1_filled'):
+
+        self._flush_execute_now_to_json(setup)
+
+        # V37.6: o singura alerta Telegram per setup — latch/restart nu re-spameaza daca deja trimis
+        should_alert = (
+            not setup.get('entry1_filled')
+            and not setup.get('execute_now_alert_sent')
+            and (
+                (source == 'trigger' and not was_already)
+                or source == 'latch'
+            )
+        )
+        if should_alert:
             try:
                 from telegram_notifier import TelegramNotifier
-                TelegramNotifier().send_execute_now_alert(setup, exec_tf)
+                if TelegramNotifier().send_execute_now_alert(setup, exec_tf):
+                    setup['execute_now_alert_sent'] = True
+                    self._flush_execute_now_to_json(setup)
             except Exception as e:
                 logger.warning(f"[V37.3] EXECUTE_NOW Telegram alert failed: {e}")
+        elif setup.get('execute_now_alert_sent') and source == 'latch':
+            logger.debug(
+                f"[V37.6] {result.symbol}: latch reconecteaza executor — "
+                f"Telegram deja trimis, fara re-alertare"
+            )
 
     def _update_setup_with_radar(self, setup: Dict, result: 'MultiTFResult') -> None:
         """
@@ -1619,19 +1712,14 @@ class MultiTFRadar:
                         source='trigger',
                     )
         elif setup.get('entry1_filled', False):
-            setup.pop('EXECUTE_NOW', None)
-            setup.pop('execute_now_trigger_tf', None)
+            self._clear_execute_now_signal(setup, 'entry1_filled')
         elif setup.get('EXECUTE_NOW') and not setup.get('entry1_filled'):
             # V37.5: Reset DOAR cand pretul paraseste FVG — NU cand CHoCH trece de 3 bare.
             # Bug V31: `not execution_ready` stergea semnalul desi pretul era inca in FVG.
             still_in_fvg = result.tf_1h.in_fvg or result.tf_4h.in_fvg
             if not still_in_fvg:
-                setup.pop('EXECUTE_NOW', None)
-                setup.pop('execute_now_trigger_tf', None)
-                logger.info(
-                    f"[V37.5] {result.symbol}: EXECUTE_NOW resetat — "
-                    f"pretul a iesit din FVG"
-                )
+                self._clear_execute_now_signal(setup, 'pretul a iesit din FVG')
+                self._flush_execute_now_to_json(setup)
             else:
                 setup['radar_execution_ready'] = True
                 _ltf = setup.get('execute_now_trigger_tf') or (
