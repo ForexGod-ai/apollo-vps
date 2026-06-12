@@ -1445,9 +1445,17 @@ class TelegramCommandCenter:
             except Exception:
                 pass
 
+            # V37.12: Reset P&L zilnic — pierderile anterioare nu mai blocheaza dupa /resume
+            try:
+                from unified_risk_manager import UnifiedRiskManager
+                UnifiedRiskManager().reset_pnl_baseline_after_resume('manual /resume')
+            except Exception as _pnl_reset_err:
+                logger.warning(f"⚠️ PnL baseline reset on /resume failed: {_pnl_reset_err}")
+
             msg = (
                 f"🔱 <b>SYSTEM AWAKENED</b>\n\n"
                 f"✅ Deep sleep cleared manually\n"
+                f"📊 Daily P&L baseline reset la equity curent\n"
                 f"🔄 <b>BIAS SYNC STARTING...</b>\n"
                 f"⏰ Time: <code>{_time_label}</code>\n\n"
                 f"⚠️ Watchdog will restart all processes within 60s."

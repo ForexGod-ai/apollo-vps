@@ -67,7 +67,8 @@ class UnifiedRiskManager:
         self.REJECTION_COOLDOWN_HOURS = 4  # Max 1 Telegram alert per reason per 4 hours
         self.WARNING_COOLDOWN_HOURS = 4   # Max 1 warning alert per 4 hours
         
-        # ✅ Load or initialize daily state (with auto-reset for new day)
+        # ✅ Load daily state persistence
+        self._reset_timestamp = None
         self._load_daily_state()
         
         print(f"\n🛡️  UNIFIED RISK MANAGER INITIALIZED")
@@ -102,6 +103,7 @@ class UnifiedRiskManager:
                     # Same day - load existing state
                     self.starting_balance_today = state.get('starting_balance', 0.0)
                     self.daily_trades_count = state.get('trades_count', 0)
+                    self._reset_timestamp = state.get('reset_timestamp')
                     print(f"✅ Daily state loaded: {today} (Starting: ${self.starting_balance_today:.2f})")
                 else:
                     # NEW DAY - reset everything
@@ -136,9 +138,8 @@ class UnifiedRiskManager:
         Reset daily state for new day.
         V14.0: Uses Europe/Bucharest. Sends minimalist SYSTEM RESET alert.
         """
-        # V10.5: Use EQUITY (not balance) as starting point
         equity, balance = self.get_account_balance()
-        self.starting_balance_today = equity  # ← EQUITY, not balance!
+        self.starting_balance_today = equity
         self.daily_trades_count = 0
 
         # V10.6: Force-clear deep_sleep_state.json if it's a natural daily reset
@@ -154,25 +155,23 @@ class UnifiedRiskManager:
         except Exception as e:
             print(f"⚠️ Could not clear sleep file on reset: {e}")
 
-        # Save to file
         state = {
             'date': date,
-            'starting_balance': equity,   # ← EQUITY, not balance!
-            'starting_equity': equity,    # ← explicit equity field for clarity
+            'starting_balance': equity,
+            'starting_equity': equity,
             'starting_balance_note': 'Uses equity (not balance) — includes floating P&L',
             'trades_count': 0,
-            'daily_loss_reached': False,  # V14.0: explicit reset
-            'reset_timestamp': self._now_ro().isoformat(),  # V14.0: EET timestamp
-            'timezone': 'Europe/Bucharest'
+            'daily_loss_reached': False,
+            'reset_timestamp': self._now_ro().isoformat(),
+            'timezone': 'Europe/Bucharest',
         }
+        self._reset_timestamp = state['reset_timestamp']
 
         self.daily_state_file.parent.mkdir(parents=True, exist_ok=True)
         with open(self.daily_state_file, 'w', encoding='utf-8') as f:
             json.dump(state, f, indent=2)
 
         print(f"✅ Daily state RESET: Starting EQUITY = ${equity:.2f} (balance=${balance:.2f})")
-
-        # V10.6: Send Telegram AWAKENED message
         self._send_daily_awakened_alert(equity, balance)
 
     def _send_daily_awakened_alert(self, equity: float, balance: float):
@@ -206,19 +205,84 @@ class UnifiedRiskManager:
             print(f"⚠️ Could not send reset alert: {e}")
     
     def _save_daily_state(self):
-        """Save current daily state to JSON — V14.0: EET date"""
+        """Save current daily state to JSON — V14.0: EET date, preserve reset_timestamp."""
         today = self._today_ro()
 
         state = {
             'date': today,
             'starting_balance': self.starting_balance_today,
             'trades_count': self.daily_trades_count,
-            'last_update': datetime.now().isoformat()
+            'last_update': datetime.now().isoformat(),
         }
+        try:
+            if self.daily_state_file.exists():
+                with open(self.daily_state_file, 'r', encoding='utf-8') as f:
+                    existing = json.load(f)
+                for key in (
+                    'reset_timestamp', 'daily_loss_reached', 'starting_equity',
+                    'starting_balance_note', 'timezone', 'manual_resume_at',
+                ):
+                    if key in existing:
+                        state[key] = existing[key]
+        except Exception:
+            pass
+        if getattr(self, '_reset_timestamp', None):
+            state['reset_timestamp'] = self._reset_timestamp
         
         self.daily_state_file.parent.mkdir(parents=True, exist_ok=True)
         with open(self.daily_state_file, 'w', encoding='utf-8') as f:
             json.dump(state, f, indent=2)
+
+    def _refresh_daily_state_from_disk(self) -> None:
+        """V37.12: Reincarca daily_state dupa /resume (proces long-running)."""
+        try:
+            if not self.daily_state_file.exists():
+                return
+            with open(self.daily_state_file, 'r', encoding='utf-8') as f:
+                state = json.load(f)
+            if state.get('date') == self._today_ro():
+                self.starting_balance_today = float(state.get('starting_balance') or 0)
+                self.daily_trades_count = int(state.get('trades_count') or 0)
+                self._reset_timestamp = state.get('reset_timestamp')
+        except Exception:
+            pass
+
+    def reset_pnl_baseline_after_resume(self, reason: str = 'manual /resume') -> None:
+        """V37.12: /resume — reseteaza P&L zilnic de la equity curent, Colonel continua trading."""
+        today = self._today_ro()
+        equity, balance = self.get_account_balance()
+        now_iso = self._now_ro().isoformat()
+        self.starting_balance_today = equity if equity > 0 else balance
+        self._reset_timestamp = now_iso
+        self._rejection_cooldown.pop('daily_loss_limit', None)
+        self._warning_cooldown.pop('daily_loss_warning', None)
+
+        state = {
+            'date': today,
+            'starting_balance': self.starting_balance_today,
+            'starting_equity': equity,
+            'starting_balance_note': f'Reset by {reason}',
+            'trades_count': self.daily_trades_count,
+            'daily_loss_reached': False,
+            'reset_timestamp': now_iso,
+            'manual_resume_at': now_iso,
+            'timezone': 'Europe/Bucharest',
+            'last_update': datetime.now().isoformat(),
+        }
+        self.daily_state_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(self.daily_state_file, 'w', encoding='utf-8') as f:
+            json.dump(state, f, indent=2)
+
+        sleep_file = self.daily_state_file.parent / 'deep_sleep_state.json'
+        sleep_file.unlink(missing_ok=True)
+        print(f"🔱 [V37.12] PnL baseline reset ({reason}): starting=${self.starting_balance_today:.2f}")
+
+    def _calc_daily_loss_pct(self, total_pnl: float, balance: float) -> float:
+        """V37.12: % fata de starting_balance al zilei (sau balance daca lipseste)."""
+        base = self.starting_balance_today if getattr(self, 'starting_balance_today', 0) > 0 else balance
+        if base <= 0:
+            return 0.0
+        return (total_pnl / base) * 100
     
     def _load_config(self):
         """Load SUPER_CONFIG.json"""
@@ -430,9 +494,14 @@ class UnifiedRiskManager:
                         active = _json.load(_f)
                     for pos in active:
                         opened_at = pos.get('opened_at', '')
-                        # Only count if opened today
-                        if opened_at and opened_at[:10] == today:
-                            open_pnl_today += float(pos.get('net_profit', 0))
+                        if not opened_at:
+                            continue
+                        if reset_cutoff:
+                            if opened_at < reset_cutoff:
+                                continue
+                        elif opened_at[:10] != today:
+                            continue
+                        open_pnl_today += float(pos.get('net_profit', 0))
             except Exception:
                 pass
 
@@ -661,18 +730,14 @@ class UnifiedRiskManager:
             self._send_rejection_alert(symbol, direction, result['reason'])
             return result
         
+        # ✅ Load daily state fresh (long-running executor poate rata /resume de pe disk)
+        self._refresh_daily_state_from_disk()
+
         # 3. Check daily loss
         pnl = self.get_daily_pnl()
         equity, balance = self.get_account_balance()
-        
-        # ✅ V10.9 FIX: Use BALANCE (not equity) as denominator for daily loss %
-        # get_daily_pnl() already EXCLUDES floating losses from positions opened before today.
-        # So total_pnl = only today's closed P&L + today's open floating.
-        # equity is distorted by OLD positions (e.g. USDJPY -$1124 opened weeks ago).
-        # Using equity would make -$310 loss look like -34% when equity=$909 (dragged down by old positions).
-        # Using balance gives the TRUE picture: -$310 / $4519 = -6.86% (only today's actual activity).
-        # V10.5 logic was correct for a NORMAL account — but breaks when old losing positions exist.
-        daily_loss_pct = (pnl['total_pnl'] / balance) * 100 if balance > 0 else 0
+        daily_loss_pct = self._calc_daily_loss_pct(pnl['total_pnl'], balance)
+        _resume_override = self._manual_resume_active()
         
         # Kill switch auto-activation - DISABLED (will redesign later)
         # if self.kill_switch_enabled and daily_loss_pct <= -self.kill_switch_trigger:
@@ -682,22 +747,21 @@ class UnifiedRiskManager:
         #     return result
         
         # Check daily loss limit → V9.3 DEEP SLEEP: Signal executor to stop ALL scanning
-        if daily_loss_pct <= -self.max_daily_loss_pct:
-            if self._manual_resume_active():
-                print(
-                    f"🔱 [V37.10] Daily loss {daily_loss_pct:.2f}% >= -{self.max_daily_loss_pct}% "
-                    f"DAR /resume manual activ — trade PERMIS"
-                )
-            else:
-                result['reason'] = f"Daily loss limit reached ({daily_loss_pct:.2f}%)"
-                result['deep_sleep'] = True  # V9.3: Trigger Deep Sleep in setup_executor
-                print(f"😴 DEEP SLEEP TRIGGER: {result['reason']}")
-                self._send_rejection_alert(symbol, direction, result['reason'])
-                return result
-        
-        # Send warning if approaching limit (consistent with balance denominator)
-        if daily_loss_pct <= -self.daily_warning_pct:
-            self._send_warning_alert(daily_loss_pct, balance)
+        if daily_loss_pct <= -self.max_daily_loss_pct and not _resume_override:
+            result['reason'] = f"Daily loss limit reached ({daily_loss_pct:.2f}%)"
+            result['deep_sleep'] = True
+            print(f"😴 DEEP SLEEP TRIGGER: {result['reason']}")
+            self._send_rejection_alert(symbol, direction, result['reason'])
+            return result
+        elif daily_loss_pct <= -self.max_daily_loss_pct and _resume_override:
+            print(
+                f"🔱 [V37.12] Daily loss {daily_loss_pct:.2f}% >= -{self.max_daily_loss_pct}% "
+                f"DAR /resume manual activ — trade PERMIS, fara alerte"
+            )
+
+        # Warning doar fara /resume manual (Colonelul a acceptat riscul)
+        if not _resume_override and daily_loss_pct <= -self.daily_warning_pct:
+            self._send_warning_alert(daily_loss_pct, balance, pnl['total_pnl'])
         
         # 4. Calculate lot size - CASH RISK ALIGNMENT (The $200 Rule)
         if entry_price > 0 and stop_loss > 0:
@@ -853,11 +917,13 @@ class UnifiedRiskManager:
         )
         self._send_telegram(message)
     
-    def _send_warning_alert(self, daily_loss_pct, balance):
+    def _send_warning_alert(self, daily_loss_pct, balance, total_pnl=None):
         """
         V9.1: Send warning with 4h cooldown — max 1 warning per 4 hours.
         Anti-spam fix by ФорексГод.
         """
+        if self._manual_resume_active():
+            return
         now = datetime.now()
         cooldown_key = 'daily_loss_warning'
         
@@ -869,7 +935,11 @@ class UnifiedRiskManager:
         
         self._warning_cooldown[cooldown_key] = {'last_sent': now}
         
-        pnl = self.get_daily_pnl()
+        if total_pnl is None:
+            pnl = self.get_daily_pnl()
+            total_pnl = pnl['total_pnl']
+        else:
+            total_pnl = total_pnl
         
         sep = "────────────────"
         message = (
@@ -878,7 +948,7 @@ class UnifiedRiskManager:
             f"Warning threshold: <b>{self.daily_warning_pct}%</b>\n"
             f"Kill switch trigger: <b>{self.kill_switch_trigger}%</b>\n\n"
             f"💰 Balance: ${balance:.2f}\n"
-            f"📊 Today's P&L: ${pnl['total_pnl']:.2f}\n\n"
+            f"📊 Today's P&L: ${total_pnl:.2f}\n\n"
             f"🔇 <i>Next warning in {self.WARNING_COOLDOWN_HOURS}h</i>\n\n"
             f"  {sep}\n"
             f"  🔱 <b>AUTHORED BY ФорексГод</b> 🔱\n"

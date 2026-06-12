@@ -451,10 +451,13 @@ class SetupExecutorMonitor:
             except Exception:
                 is_today = (_resumed_at.date() == datetime.now(timezone.utc).date())
             if is_today:
+                if not self.manual_resume_triggered:
+                    _rm = getattr(self.executor, 'risk_manager', None)
+                    if _rm is not None:
+                        _rm.reset_pnl_baseline_after_resume('manual /resume')
                 self.manual_resume_triggered = True
-                # Ștergem și deep_sleep_state.json dacă există
                 self.deep_sleep_state_file.unlink(missing_ok=True)
-                logger.success("🔱 [V19.9] manual_resume_triggered=True — bypass daily loss check activ")
+                logger.success("🔱 [V37.12] manual_resume_triggered=True — bypass daily loss + PnL baseline reset")
         except Exception as _mr_err:
             logger.debug(f"⚠️ _check_manual_resume_marker: {_mr_err}")
 
