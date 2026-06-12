@@ -1340,6 +1340,43 @@ class MultiTFRadar:
             return tf_name
         return None
 
+    def _rr_shield_blocks_execute(self, setup: dict, result: 'MultiTFResult',
+                                  exec_tf_data=None) -> bool:
+        """V37.7: Blocheaza EXECUTE_NOW daca RR entry→TP vs SL < 2.0."""
+        _rr_entry = (
+            setup.get('radar_4h_fvg_entry') or setup.get('radar_1h_fvg_entry')
+            or setup.get('entry_price') or result.current_price
+        )
+        _rr_tp = setup.get('daily_tp_price') or setup.get('daily_target_price')
+        _rr_sl = (
+            (getattr(exec_tf_data, 'h4_sl_price', None) if exec_tf_data else None)
+            or setup.get('h4_sl_price') or setup.get('stop_loss')
+        )
+        _pip_rr = self._get_pip_size(result.symbol)
+        if not (_rr_tp and _rr_sl and _rr_entry):
+            return False
+        try:
+            _rr_entry_f = float(_rr_entry)
+            _rr_dist_tp = abs(float(_rr_tp) - _rr_entry_f)
+            _rr_dist_sl = abs(_rr_entry_f - float(_rr_sl))
+            if _rr_dist_sl <= 0:
+                return False
+            _rr_val = _rr_dist_tp / _rr_dist_sl
+            if _rr_val < 2.0:
+                logger.warning(
+                    f"[V37.7 RR SHIELD] {result.symbol}: EXECUTE BLOCAT — "
+                    f"RR={_rr_val:.2f} < 2.0 "
+                    f"(TP dist={_rr_dist_tp/_pip_rr:.0f}p, SL dist={_rr_dist_sl/_pip_rr:.0f}p) — "
+                    f"TP prea aproape / lichiditate deja atinsa"
+                )
+                print(f"  ⛔ [RADAR SKIP EXECUTE] {result.symbol}: RR Shield RR={_rr_val:.2f}<2.0")
+                sys.stdout.flush()
+                return True
+            logger.info(f"[V37.7 RR SHIELD] {result.symbol}: RR={_rr_val:.2f} >= 2.0 OK")
+        except Exception as _rr_err:
+            logger.debug(f"[V37.7 RR SHIELD] {result.symbol}: calcul RR esuat ({_rr_err})")
+        return False
+
     _EXECUTE_NOW_FLUSH_KEYS = (
         'EXECUTE_NOW', 'execute_now_trigger_tf', 'execute_now_alert_sent',
         'radar_execution_ready', 'radar_verdict', 'h4_structure_locked',
@@ -1662,48 +1699,10 @@ class MultiTFRadar:
                 sys.stdout.flush()
                 # Nu setam EXECUTE_NOW — asteptam CHoCH real
             else:
-                # V32 RR SHIELD (Fix V13): Trigger B (BOS live, CHoCH ancora istorica)
-                # necesita spatiu de profit suficient pana la Daily TP.
-                # Daca trendul e aproape de destinatie (RR < 2.0), blocam intrarea.
+                # V37.7 RR SHIELD — toate trigger-ele (ex. BTC TP la low deja sweep-uit → RR 0.77)
                 _exec_tf_v32 = result.priority_timeframe or '?'
                 _exec_tf_data_v32 = result.tf_1h if _exec_tf_v32 == '1H' else result.tf_4h
-                _is_trigger_b = (
-                    getattr(_exec_tf_data_v32, 'bos_bars_ago', 9999) <= 3
-                    and getattr(_exec_tf_data_v32, 'choch_bars_ago', 9999) > 3
-                )
-                _block_execute = False
-                if _is_trigger_b:
-                    _rr_tp = setup.get('daily_tp_price') or setup.get('daily_target_price')
-                    _rr_sl = (getattr(_exec_tf_data_v32, 'h4_sl_price', None)
-                              or setup.get('h4_sl_price'))
-                    _rr_cp = result.current_price
-                    _pip_rr = self._get_pip_size(result.symbol)
-                    if _rr_tp and _rr_sl and _rr_cp:
-                        try:
-                            _rr_dist_tp = abs(float(_rr_tp) - _rr_cp)
-                            _rr_dist_sl = abs(_rr_cp - float(_rr_sl))
-                            if _rr_dist_sl > 0:
-                                _rr_val = _rr_dist_tp / _rr_dist_sl
-                                if _rr_val < 2.0:
-                                    _block_execute = True
-                                    logger.warning(
-                                        f"[V32 RR SHIELD] {result.symbol}: Trigger-B BLOCAT — "
-                                        f"RR={_rr_val:.2f} < 2.0 "
-                                        f"(TP dist={_rr_dist_tp/_pip_rr:.0f}p, SL dist={_rr_dist_sl/_pip_rr:.0f}p, "
-                                        f"pip={_pip_rr}) — trend prea extins pana la Daily TP"
-                                    )
-                                    print(f"  ⛔ [RADAR SKIP EXECUTE] {result.symbol}: RR Shield Trigger-B "
-                                          f"RR={_rr_val:.2f}<2.0 (pip={_pip_rr})")
-                                    sys.stdout.flush()
-                                else:
-                                    logger.info(
-                                        f"[V32 RR SHIELD] {result.symbol}: Trigger-B OK — "
-                                        f"RR={_rr_val:.2f} >= 2.0 | spatiu suficient pana la TP"
-                                    )
-                        except Exception as _rr_err:
-                            logger.debug(f"[V32 RR SHIELD] {result.symbol}: calcul RR esuat ({_rr_err}) — fara shield")
-                    else:
-                        logger.debug(f"[V32 RR SHIELD] {result.symbol}: date insuficiente (TP={_rr_tp}, SL={_rr_sl}) — fara shield")
+                _block_execute = self._rr_shield_blocks_execute(setup, result, _exec_tf_data_v32)
 
                 if not _block_execute:
                     self._arm_execute_now(
@@ -1736,11 +1735,13 @@ class MultiTFRadar:
             # V37.5: CHoCH confirmat + in FVG dar EXECUTE_NOW pierdut → re-arm pentru executor
             latch_tf = self._evaluate_confirmed_pullback_latch(setup, result)
             if latch_tf:
-                self._arm_execute_now(setup, result, latch_tf, source='latch')
-                setup['radar_execution_ready'] = True
-                setup['radar_verdict'] = (
-                    f"🔥 EXECUTE NOW ({latch_tf} LATCH — reconectat executor)"
-                )
+                _ltf_data = result.tf_1h if latch_tf == '1H' else result.tf_4h
+                if not self._rr_shield_blocks_execute(setup, result, _ltf_data):
+                    self._arm_execute_now(setup, result, latch_tf, source='latch')
+                    setup['radar_execution_ready'] = True
+                    setup['radar_verdict'] = (
+                        f"🔥 EXECUTE NOW ({latch_tf} LATCH — reconectat executor)"
+                    )
 
         # V31.0: Propagam daily_target_price ca daily_tp_price pentru backward compat cu Executor
         if setup.get('daily_target_price') and not setup.get('daily_tp_price'):

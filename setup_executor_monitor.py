@@ -182,7 +182,7 @@ from smc_detector import (
     FVG,
     get_4h_body_close_confirmation,  # ✅ V10.6 FUNCȚIE UNIFICATĂ — același creier ca scanner-ul
 )
-from pip_utils import get_pip_size, MIN_SL_PIPS, MAX_SL_PIPS, sl_pips_between
+from pip_utils import get_pip_size, MIN_SL_PIPS, MAX_SL_PIPS, sl_pips_between, liquidity_already_swept
 
 # 🛡️ V3.8 ANTI-SPAM SYSTEM by ФорексГод
 from signal_cache import (
@@ -1327,7 +1327,8 @@ class SetupExecutorMonitor:
 
                         if _df_d1_en is not None and not _df_d1_en.empty:
                             _tp = self._calc_structural_tp_d1(
-                                _en_direction, _en_entry, _df_4h_en, _df_d1_en, _pip_size_en
+                                _en_direction, _en_entry, _df_4h_en, _df_d1_en, _pip_size_en,
+                                symbol=symbol, stop_loss=_sl,
                             )
                             if _tp:
                                 logger.info(
@@ -1987,11 +1988,25 @@ class SetupExecutorMonitor:
                 return window_high + sl_buffer
         return None
 
-    def _calc_structural_tp_d1(self, direction: str, entry: float, df_4h, df_d1, pip_size: float):
-        """TP = primul swing D1 lichiditate in directia trade-ului (recalc live la executie)."""
+    def _calc_structural_tp_d1(
+        self,
+        direction: str,
+        entry: float,
+        df_4h,
+        df_d1,
+        pip_size: float,
+        symbol: str = '',
+        stop_loss: float = None,
+    ):
+        """
+        TP = primul swing D1 lichiditate NEATINS recent in directia trade-ului.
+        V37.7: exclude swing-uri deja sweep-uite (ex. BTC low luat → pullback sus).
+        """
         if df_d1 is None or df_d1.empty or not entry:
             return None
         try:
+            from pip_utils import liquidity_already_swept as _liq_swept
+
             current = float(df_4h['close'].iloc[-1]) if df_4h is not None and not df_4h.empty else float(df_d1['close'].iloc[-1])
             _tr = (
                 (df_d1['high'] - df_d1['low'])
@@ -2000,7 +2015,13 @@ class SetupExecutorMonitor:
             )
             _atr_d1 = float(_tr.rolling(14).mean().iloc[-1])
             _min_tp_dist = _atr_d1 * 1.0
-            _max_tp_dist = _atr_d1 * 8.0  # cap — respinge TP aberant (ex. AUDJPY 223)
+            _max_tp_dist = _atr_d1 * 8.0
+            _sweep_tol = pip_size * 10 if pip_size else 0.0
+            _sweep_lookback = 25 if any(x in symbol.upper() for x in ['BTC', 'ETH']) else 15
+
+            if stop_loss:
+                _sl_dist = abs(entry - float(stop_loss))
+                _min_tp_dist = max(_min_tp_dist, _sl_dist * 2.0)
 
             direction = direction.lower()
             if direction == 'buy':
@@ -2010,6 +2031,7 @@ class SetupExecutorMonitor:
                     if s.price > current
                     and (s.price - entry) >= _min_tp_dist
                     and (s.price - entry) <= _max_tp_dist
+                    and not _liq_swept(df_d1, s.price, 'high', lookback=_sweep_lookback, tolerance=_sweep_tol)
                 ]
                 if targets:
                     nearest = min(targets, key=lambda s: s.price)
@@ -2021,10 +2043,19 @@ class SetupExecutorMonitor:
                     if s.price < current
                     and (entry - s.price) >= _min_tp_dist
                     and (entry - s.price) <= _max_tp_dist
+                    and not _liq_swept(df_d1, s.price, 'low', lookback=_sweep_lookback, tolerance=_sweep_tol)
                 ]
                 if targets:
                     nearest = max(targets, key=lambda s: s.price)
+                    logger.info(
+                        f"[V37.7 TP D1] {symbol or '?'} SELL: swing low neatin={nearest.price:.5f} "
+                        f"(sweep-uit excluse, min_dist={_min_tp_dist:.1f})"
+                    )
                     return float(df_d1['low'].iloc[nearest.index])
+                logger.warning(
+                    f"[V37.7 TP D1] {symbol or '?'} SELL: niciun swing low D1 valid — "
+                    f"lichiditatea sub pret e deja sweep-uita sau prea aproape"
+                )
         except Exception as _tp_err:
             logger.warning(f"[V37.2] structural TP D1 calc failed: {_tp_err}")
         return None

@@ -25,3 +25,25 @@ def sl_pips_between(symbol: str, entry: float, stop_loss: float) -> float:
         return 0.0
     pip = get_pip_size(symbol)
     return abs(entry - stop_loss) / pip if pip > 0 else 0.0
+
+
+def liquidity_already_swept(
+    df,
+    level: float,
+    side: str,
+    *,
+    lookback: int = 15,
+    tolerance: float = 0.0,
+) -> bool:
+    """
+    V37.7: Lichiditate deja atinsa recent — nu o folosim ca TP.
+    side 'low'  = swing low  (TP pentru SELL)
+    side 'high' = swing high (TP pentru BUY)
+    """
+    if df is None or len(df) < 2 or level is None:
+        return False
+    window = df.iloc[-lookback:]
+    lvl = float(level)
+    if side == 'low':
+        return float(window['low'].min()) <= lvl + tolerance
+    return float(window['high'].max()) >= lvl - tolerance

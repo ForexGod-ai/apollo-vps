@@ -27,6 +27,7 @@ from telegram_notifier import TelegramNotifier
 from ctrader_cbot_client import CTraderCBotClient
 from strategy_optimizer import StrategyOptimizer
 from ai_probability_analyzer import AIProbabilityAnalyzer
+from pip_utils import get_pip_size, liquidity_already_swept
 
 load_dotenv()
 
@@ -470,26 +471,39 @@ class DailyScanner:
                         _atr_daily = float(_tr.rolling(14).mean().iloc[-1])
                         _min_tp_dist = _atr_daily * 1.0  # minim 1x ATR față de entry
                         _entry_ref = setup.entry_price if setup.entry_price else _current_px
+                        _pip_sz = get_pip_size(symbol)
+                        _sweep_tol = _pip_sz * 10
+                        _sweep_lb = 25 if any(x in symbol.upper() for x in ['BTC', 'ETH']) else 15
                         if _d1_dir == 'bullish':
                             _swings = self.smc_detector.detect_swing_highs(df_daily)
-                            # Filtru: swing deasupra prețului SI la minim 1x ATR față de entry
-                            _targets = [s for s in _swings
-                                        if s.price > _current_px
-                                        and (s.price - _entry_ref) >= _min_tp_dist]
+                            _targets = [
+                                s for s in _swings
+                                if s.price > _current_px
+                                and (s.price - _entry_ref) >= _min_tp_dist
+                                and not liquidity_already_swept(
+                                    df_daily, s.price, 'high',
+                                    lookback=_sweep_lb, tolerance=_sweep_tol,
+                                )
+                            ]
                             _daily_tp = min(_targets, key=lambda s: s.price).price if _targets else None
                         else:
                             _swings = self.smc_detector.detect_swing_lows(df_daily)
-                            # Filtru: swing sub prețul SI la minim 1x ATR față de entry
-                            _targets = [s for s in _swings
-                                        if s.price < _current_px
-                                        and (_entry_ref - s.price) >= _min_tp_dist]
+                            _targets = [
+                                s for s in _swings
+                                if s.price < _current_px
+                                and (_entry_ref - s.price) >= _min_tp_dist
+                                and not liquidity_already_swept(
+                                    df_daily, s.price, 'low',
+                                    lookback=_sweep_lb, tolerance=_sweep_tol,
+                                )
+                            ]
                             _daily_tp = max(_targets, key=lambda s: s.price).price if _targets else None
                         setup.daily_tp_price = float(_daily_tp) if _daily_tp else None
                         if setup.daily_tp_price:
-                            _tp_dist_pips = abs(setup.daily_tp_price - _entry_ref) / (0.01 if 'JPY' in symbol else 0.0001)
-                            print(f"   🎯 [V24.6 D1 TP] {symbol} {_d1_dir.upper()}: Target D1 = {setup.daily_tp_price:.5f} ({_tp_dist_pips:.0f} pips | ATR={_atr_daily/(0.01 if 'JPY' in symbol else 0.0001):.0f}p)")
+                            _tp_dist_pips = abs(setup.daily_tp_price - _entry_ref) / _pip_sz
+                            print(f"   🎯 [V37.7 D1 TP] {symbol} {_d1_dir.upper()}: Target D1 = {setup.daily_tp_price:.5f} ({_tp_dist_pips:.0f}p | sweep-uit exclus | ATR={_atr_daily/_pip_sz:.0f}p)")
                         else:
-                            print(f"   ⚠️ [V24.6 D1 TP] {symbol}: Niciun swing {_d1_dir.upper()} D1 la >= 1x ATR față de entry — fallback la TP SMC")
+                            print(f"   ⚠️ [V37.7 D1 TP] {symbol}: Niciun swing D1 valid (lichiditate sweep-uita sau < 1x ATR)")
                             setup.daily_tp_price = None
                     except Exception as _dtp_err:
                         setup.daily_tp_price = None
