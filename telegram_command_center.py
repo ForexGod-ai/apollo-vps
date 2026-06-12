@@ -679,7 +679,139 @@ class TelegramCommandCenter:
         except Exception as e:
             logger.error(f"❌ Monitoring command error: {e}")
             return f"❌ <b>Error:</b> {str(e)}"
-    
+
+    def _status_ro_today(self) -> str:
+        """Data curentă în timezone România (pentru P/L și rejections)."""
+        try:
+            import pytz as _pytz
+            return datetime.now(_pytz.timezone('Europe/Bucharest')).strftime('%Y-%m-%d')
+        except Exception:
+            return (datetime.now(timezone.utc) + timedelta(hours=3)).strftime('%Y-%m-%d')
+
+    def _status_resumed_today(self) -> bool:
+        """True dacă /resume a fost folosit azi (UTC date, ca executorul)."""
+        try:
+            resume_file = Path(__file__).parent.resolve() / 'data' / 'system_resumed.json'
+            if resume_file.exists():
+                rm = json.loads(resume_file.read_text(encoding='utf-8'))
+                resumed_at = datetime.fromisoformat(rm.get('resumed_at', ''))
+                if resumed_at.date() == datetime.now(timezone.utc).date():
+                    return True
+        except Exception:
+            pass
+        return False
+
+    def _status_daily_pnl(self) -> dict:
+        """
+        V37.14: P/L pentru /status — aliniat cu unified_risk_manager (V37.12).
+        Folosește reset_timestamp din daily_state.json și starting_balance pentru %.
+        """
+        script_dir = Path(__file__).parent.resolve()
+        today = self._status_ro_today()
+        reset_cutoff = None
+        starting_balance = 0.0
+
+        daily_state_file = script_dir / 'data' / 'daily_state.json'
+        if daily_state_file.exists():
+            try:
+                state = json.loads(daily_state_file.read_text(encoding='utf-8'))
+                ts = state.get('reset_timestamp') or state.get('manual_resume_at')
+                if ts:
+                    try:
+                        import pytz as _pytz
+                        _ro_tz = _pytz.timezone('Europe/Bucharest')
+                        reset_dt = datetime.fromisoformat(ts)
+                        if reset_dt.tzinfo is None:
+                            reset_dt = reset_dt.replace(tzinfo=timezone.utc)
+                        if reset_dt.astimezone(_ro_tz).strftime('%Y-%m-%d') == today:
+                            reset_cutoff = ts
+                    except Exception:
+                        reset_cutoff = ts
+                if state.get('date') == today or reset_cutoff:
+                    starting_balance = float(state.get('starting_balance') or 0)
+            except Exception:
+                pass
+
+        closed_pnl = 0.0
+        trade_count = 0
+        balance = 0.0
+        trade_history_file = script_dir / 'trade_history.json'
+
+        if trade_history_file.exists():
+            with open(trade_history_file, 'r', encoding='utf-8') as f:
+                th = json.load(f)
+            balance = float(th.get('account', {}).get('balance', 0) or 0)
+            for trade in th.get('closed_trades', []):
+                close_time = trade.get('close_time', '')
+                if not close_time or close_time[:10] != today:
+                    continue
+                if reset_cutoff and close_time < reset_cutoff:
+                    continue
+                closed_pnl += float(trade.get('profit', 0))
+                trade_count += 1
+        else:
+            self.force_sync_from_ctrader()
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            if reset_cutoff:
+                cursor.execute("""
+                    SELECT COALESCE(SUM(profit), 0), COUNT(*)
+                    FROM closed_trades
+                    WHERE DATE(close_time, 'localtime') = ?
+                      AND close_time >= ?
+                """, (today, reset_cutoff))
+            else:
+                cursor.execute("""
+                    SELECT COALESCE(SUM(profit), 0), COUNT(*)
+                    FROM closed_trades WHERE DATE(close_time, 'localtime') = ?
+                """, (today,))
+            closed_pnl, trade_count = cursor.fetchone()
+            cursor.execute("SELECT balance FROM account_snapshots ORDER BY timestamp DESC LIMIT 1")
+            row = cursor.fetchone()
+            balance = row[0] if row else 0
+            conn.close()
+
+        base = starting_balance if starting_balance > 0 else balance
+        pnl_pct = (closed_pnl / base * 100) if base > 0 else 0
+
+        max_loss = 10.0
+        try:
+            config_file = script_dir / 'SUPER_CONFIG.json'
+            if config_file.exists():
+                with open(config_file, 'r', encoding='utf-8') as f:
+                    sc = json.load(f)
+                max_loss = sc.get('daily_limits', {}).get('max_daily_loss_percent', 10.0)
+        except Exception:
+            pass
+
+        resumed_today = self._status_resumed_today()
+        if resumed_today and pnl_pct > -max_loss:
+            risk_label = '🔱 RESUME ACTIVE (session tracking)'
+        elif pnl_pct >= 0:
+            risk_label = '🟢 SAFE'
+        elif pnl_pct > -max_loss:
+            risk_label = f'🟡 CAUTION ({pnl_pct:+.1f}%)'
+        else:
+            risk_label = f'🔴 LIMIT HIT ({pnl_pct:+.1f}%)'
+
+        return {
+            'closed_pnl': closed_pnl,
+            'trade_count': trade_count,
+            'pnl_pct': pnl_pct,
+            'balance': balance,
+            'starting_balance': starting_balance,
+            'max_loss': max_loss,
+            'risk_label': risk_label,
+            'resumed_today': resumed_today,
+            'reset_cutoff': reset_cutoff,
+        }
+
+    _STATUS_WATCHING_STATUSES = frozenset({
+        'MONITORING', 'READY', 'ACTIVE', 'WAITING_D1_PULLBACK',
+        'WAITING_4H_CHOCH', 'WAITING_1H_CHOCH', 'WAITING_4H_PULLBACK',
+        'WAITING_POSITION_CLOSE',
+    })
+
     def handle_status_command(self):
         """
         /status DASHBOARD — Full system health + P/L + Deep Sleep + Rejections + News
@@ -698,7 +830,7 @@ class TelegramCommandCenter:
                 _time_header = (now + timedelta(hours=3)).strftime('%d %b %Y, %H:%M:%S (ora României)')
 
             message = (
-                f"<b>🔧 SYSTEM STATUS — V10.4</b>\n"
+                f"<b>🔧 SYSTEM STATUS — V37.14</b>\n"
                 f"{UNIVERSAL_SEPARATOR}\n\n"
                 f"⏰ {_time_header}\n\n"
             )
@@ -807,70 +939,24 @@ class TelegramCommandCenter:
             
             # ═══ SECTION 3: TODAY'S P/L ═══
             message += "<b>💰 TODAY'S P/L:</b>\n"
+            pnl_ctx = {
+                'closed_pnl': 0.0, 'trade_count': 0, 'pnl_pct': 0.0,
+                'max_loss': 10.0, 'risk_label': '🟢 SAFE', 'resumed_today': False,
+            }
             try:
-                # Read directly from trade_history.json (live data from cBot)
-                trade_history_file = Path(__file__).parent.resolve() / 'trade_history.json'
-                closed_pnl = 0.0
-                trade_count = 0
-                balance = 0.0
-                # V19.6.10: Folosim data României, nu UTC — la 00:11 RO = 21:11 UTC
-                # data UTC e încă ziua precedentă → P/L arată cifre din ziua veche
-                try:
-                    import pytz as _pytz_td
-                    _ro_tz_td = _pytz_td.timezone('Europe/Bucharest')
-                    today = datetime.now(_ro_tz_td).strftime('%Y-%m-%d')
-                except Exception:
-                    today = (datetime.now(timezone.utc) + timedelta(hours=3)).strftime('%Y-%m-%d')
-
-                if trade_history_file.exists():
-                    with open(trade_history_file, 'r', encoding='utf-8') as f:
-                        th = json.load(f)
-                    balance = th.get('account', {}).get('balance', 0.0)
-                    for trade in th.get('closed_trades', []):
-                        close_time = trade.get('close_time', '')
-                        if close_time and close_time[:10] == today:
-                            closed_pnl += float(trade.get('profit', 0))
-                            trade_count += 1
-                else:
-                    # Fallback to SQLite
-                    self.force_sync_from_ctrader()
-                    conn = sqlite3.connect(self.db_path)
-                    cursor = conn.cursor()
-                    cursor.execute("""
-                        SELECT COALESCE(SUM(profit), 0), COUNT(*)
-                        FROM closed_trades WHERE DATE(close_time, 'localtime') = ?
-                    """, (today,))
-                    closed_pnl, trade_count = cursor.fetchone()
-                    cursor.execute("SELECT balance FROM account_snapshots ORDER BY timestamp DESC LIMIT 1")
-                    row = cursor.fetchone()
-                    balance = row[0] if row else 0
-                    conn.close()
-                
-                pnl_pct = (closed_pnl / balance * 100) if balance > 0 else 0
+                pnl_ctx = self._status_daily_pnl()
+                closed_pnl = pnl_ctx['closed_pnl']
+                trade_count = pnl_ctx['trade_count']
+                pnl_pct = pnl_ctx['pnl_pct']
+                max_loss = pnl_ctx['max_loss']
                 pnl_emoji = '🟢' if closed_pnl >= 0 else '🔴'
-                
+
                 message += f"  {pnl_emoji} Closed: <code>${closed_pnl:+.2f}</code> ({pnl_pct:+.1f}%)\n"
                 message += f"  📊 Trades today: <code>{trade_count}</code>\n"
-                
-                # Risk status
-                max_loss = 10.0  # From SUPER_CONFIG
-                try:
-                    config_file = Path(__file__).parent.resolve() / 'SUPER_CONFIG.json'
-                    if config_file.exists():
-                        with open(config_file, 'r') as f:
-                            sc = json.load(f)
-                        max_loss = sc.get('daily_limits', {}).get('max_daily_loss_percent', 10.0)
-                except Exception:
-                    pass
-                
-                if pnl_pct >= 0:
-                    risk_label = '🟢 SAFE'
-                elif pnl_pct > -max_loss:
-                    risk_label = f'🟡 CAUTION ({pnl_pct:+.1f}%)'
-                else:
-                    risk_label = f'🔴 LIMIT HIT ({pnl_pct:+.1f}%)'
-                message += f"  🛡️ Risk: {risk_label} (limit: -{max_loss}%)\n\n"
-                
+                if pnl_ctx.get('reset_cutoff'):
+                    message += f"  📌 Session since: <code>{pnl_ctx['reset_cutoff'][:19]}</code>\n"
+                message += f"  🛡️ Risk: {pnl_ctx['risk_label']} (limit: -{max_loss}%)\n\n"
+
             except Exception as e:
                 message += f"  ⚠️ Data unavailable: {e}\n\n"
             
@@ -892,11 +978,26 @@ class TelegramCommandCenter:
                             setups = data
                         else:
                             setups = []
-                    active = sum(1 for s in setups if s.get('status') == 'ACTIVE')
-                    monitoring = sum(1 for s in setups if s.get('status') == 'MONITORING')
-                    choch_waiting = sum(1 for s in setups if s.get('status') == 'MONITORING' and not s.get('choch_1h_detected', False))
-                    in_zone = sum(1 for s in setups if s.get('choch_1h_detected', False) and s.get('status') in ('MONITORING', 'READY'))
-                    message += f"  🔥 Active: <code>{active}</code> | 👀 Pândă: <code>{monitoring}</code>\n"
+                    active = sum(1 for s in setups if s.get('status') == 'TRADE_OPEN')
+                    watching = self._STATUS_WATCHING_STATUSES
+                    monitoring = sum(1 for s in setups if s.get('status') in watching)
+                    choch_waiting = sum(
+                        1 for s in setups
+                        if s.get('status') in watching
+                        and not (s.get('radar_1h_choch_detected') or s.get('choch_1h_detected'))
+                    )
+                    in_zone = sum(
+                        1 for s in setups
+                        if s.get('status') in watching
+                        and (
+                            s.get('radar_1h_in_fvg') or s.get('radar_4h_in_fvg')
+                            or (
+                                (s.get('radar_1h_choch_detected') or s.get('choch_1h_detected'))
+                                and not s.get('EXECUTE_NOW')
+                            )
+                        )
+                    )
+                    message += f"  🔥 Open: <code>{active}</code> | 👀 Pândă: <code>{monitoring}</code>\n"
                     message += f"  ⏳ CHoCH wait: <code>{choch_waiting}</code> | 🎯 In Zone: <code>{in_zone}</code>\n"
                     # 3-column grid: symbol + strategy label [REV-🔒] / [CNT-🔒]
                     def _setup_cell(s: dict) -> str:
@@ -911,7 +1012,7 @@ class TelegramCommandCenter:
                             tag = stype[:3] if stype else '?'
                         lock_icon = '🔒' if locked else '🔓'
                         return f"• {sym} [{tag}-{lock_icon}]"
-                    mon_syms = [s for s in setups if s.get('status') == 'MONITORING']
+                    mon_syms = [s for s in setups if s.get('status') in self._STATUS_WATCHING_STATUSES]
                     if mon_syms:
                         cols = 3
                         cells = [_setup_cell(s) for s in mon_syms[:cols * 4]]
@@ -947,10 +1048,9 @@ class TelegramCommandCenter:
                         _stored_pct = float(_pct_match.group(1))
                         # Dacă procentul stocat e aberant (>100% sau <-100%), înlocuim cu real
                         if abs(_stored_pct) > 100:
-                            try:
-                                _real_reason = f"Daily loss limit reached ({pnl_pct:+.1f}%) — auto Deep Sleep"
-                            except NameError:
-                                _real_reason = "Daily loss limit reached — auto Deep Sleep"
+                            _real_reason = (
+                                f"Daily loss limit reached ({pnl_ctx.get('pnl_pct', 0):+.1f}%) — auto Deep Sleep"
+                            )
                         else:
                             _real_reason = stored_reason
                     else:
@@ -990,22 +1090,9 @@ class TelegramCommandCenter:
                     # V19.6.2: Fallback — dacă fișierul nu există dar P/L arată LIMIT HIT
                     # (executor vechi nu a scris fișierul, dar știm că limita e atinsă)
                     try:
-                        _pnl_pct_check = pnl_pct
-                        _max_loss_check = max_loss
-                        # V19.6.8: Verifică dacă user-ul a dat /resume manual azi
-                        # Dacă da, nu mai arăta SLEEPING pe baza P/L
-                        _resumed_today = False
-                        try:
-                            _resume_file = Path(__file__).parent.resolve() / 'data' / 'system_resumed.json'
-                            if _resume_file.exists():
-                                import json as _jj
-                                _rm = _jj.loads(_resume_file.read_text())
-                                _resumed_at = datetime.fromisoformat(_rm.get('resumed_at', ''))
-                                # Considerat valid dacă a fost azi (UTC)
-                                if _resumed_at.date() == datetime.now(timezone.utc).date():
-                                    _resumed_today = True
-                        except Exception:
-                            pass
+                        _pnl_pct_check = pnl_ctx.get('pnl_pct', 0)
+                        _max_loss_check = pnl_ctx.get('max_loss', 10.0)
+                        _resumed_today = pnl_ctx.get('resumed_today', False) or self._status_resumed_today()
                         if _pnl_pct_check <= -_max_loss_check and not _resumed_today:
                             message += f"  🔴 <b>SLEEPING</b> — Daily loss limit atins ({_pnl_pct_check:+.1f}%)\n"
                             message += f"  Reason: <i>Daily loss limit reached (auto-detected)</i>\n"
@@ -1044,13 +1131,13 @@ class TelegramCommandCenter:
                     # V19.6.2: Fallback — dacă fișierul nu există dar P/L arată LIMIT HIT
                     # afișăm cel puțin că există rejecții legate de daily loss
                     try:
-                        if pnl_pct <= -max_loss:
+                        if pnl_ctx.get('pnl_pct', 0) <= -pnl_ctx.get('max_loss', 10.0):
                             message += f"  ⚠️ <i>Rejecții detectate via P/L (fișier lipsă)\n"
-                            message += f"  • Daily Loss Limit: <code>≥1</code> (trade respins la {pnl_pct:+.1f}%)\n"
+                            message += f"  • Daily Loss Limit: <code>≥1</code> (trade respins la {pnl_ctx.get('pnl_pct', 0):+.1f}%)\n"
                             message += f"  ℹ️ Restart executor pentru tracking complet</i>\n\n"
                         else:
                             message += "  <code>0</code> (clean day)\n\n"
-                    except NameError:
+                    except Exception:
                         message += "  <code>0</code> (clean day)\n\n"
             except Exception:
                 message += "  ⚠️ Data unavailable\n\n"
@@ -1144,7 +1231,17 @@ class TelegramCommandCenter:
             except Exception as _e:
                 message += f"  ⚠️ News error: <code>{str(_e)[:60]}</code>\n\n"
             
-            message += f"{UNIVERSAL_SEPARATOR}\n<b>🎯 VERDICT:</b> {'😴 DEEP SLEEP' if (Path(__file__).parent.resolve() / 'data' / 'deep_sleep_state.json').exists() or (pnl_pct <= -max_loss if 'pnl_pct' in dir() else False) else '✅ OPERATIONAL'}"
+            _script_dir = Path(__file__).parent.resolve()
+            _deep_sleep_file = _script_dir / 'data' / 'deep_sleep_state.json'
+            _limit_hit = pnl_ctx.get('pnl_pct', 0) <= -pnl_ctx.get('max_loss', 10.0)
+            _resumed = pnl_ctx.get('resumed_today', False)
+            if _deep_sleep_file.exists() and not _resumed:
+                _verdict = '😴 DEEP SLEEP'
+            elif _limit_hit and not _resumed:
+                _verdict = '🔴 LIMIT — NO NEW TRADES'
+            else:
+                _verdict = '✅ OPERATIONAL'
+            message += f"{UNIVERSAL_SEPARATOR}\n<b>🎯 VERDICT:</b> {_verdict}"
             
             return message
             
