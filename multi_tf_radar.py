@@ -253,7 +253,7 @@ class MultiTFRadar:
         # V25.2: Contor eșecuri consecutive port 8010 — alertă Telegram la 3 eșecuri
         self._port8010_fail_count: int = 0
         self._port8010_alert_sent: bool = False  # anti-spam: o singură alertă per incident
-        self._execute_now_alert_keys: set = set()  # V37.8: dedup Telegram per symbol+direction
+        self._execute_now_alert_keys: set = set()  # V37.9: dedup Telegram per setup (persistat in JSON)
         self._telegram_token: str = _os_global.getenv('TELEGRAM_BOT_TOKEN', '')
         self._telegram_chat_id: str = _os_global.getenv('TELEGRAM_CHAT_ID', '')
         # V36.3: motivul ultimului skip — propagat la run_scan pentru logging explicit
@@ -1380,19 +1380,46 @@ class MultiTFRadar:
 
     _EXECUTE_NOW_FLUSH_KEYS = (
         'EXECUTE_NOW', 'execute_now_trigger_tf', 'execute_now_alert_sent',
-        'radar_execution_ready', 'radar_verdict', 'h4_structure_locked',
+        'execute_now_alert_key', 'radar_execution_ready', 'radar_verdict', 'h4_structure_locked',
     )
 
-    def _clear_execute_now_signal(self, setup: dict, reason: str = '') -> None:
-        """V37.6: Curata semnalul EXECUTE_NOW + flag alerta Telegram."""
+    @staticmethod
+    def _execute_now_alert_key(setup: dict) -> str:
+        """Cheie dedup: o singura alerta Telegram per setup (supravietuieste restart + FVG flicker)."""
         sym = setup.get('symbol', '?')
         direction = str(setup.get('direction', '')).upper()
-        self._execute_now_alert_keys.discard(f"{sym}_{direction}")
+        setup_time = setup.get('setup_time') or setup.get('created_at') or ''
+        return f"{sym}_{direction}_{setup_time}"
+
+    def _hydrate_execute_now_dedup(self, setups: list) -> None:
+        """V37.9: Reincarca dedup din JSON la startup — fara re-alert dupa restart."""
+        for s in setups:
+            if not isinstance(s, dict):
+                continue
+            if s.get('execute_now_alert_sent'):
+                self._execute_now_alert_keys.add(
+                    s.get('execute_now_alert_key') or self._execute_now_alert_key(s)
+                )
+
+    def _clear_execute_now_only(self, setup: dict, reason: str = '') -> None:
+        """V37.9: Dezarmeaza EXECUTE_NOW — pastreaza execute_now_alert_sent (fara spam Telegram)."""
+        sym = setup.get('symbol', '?')
+        setup.pop('EXECUTE_NOW', None)
+        setup.pop('execute_now_trigger_tf', None)
+        if reason:
+            logger.info(f"[V37.9] {sym}: EXECUTE_NOW dezarmat — {reason} (alerta Telegram pastrata)")
+
+    def _clear_execute_now_signal(self, setup: dict, reason: str = '') -> None:
+        """V37.9: Curata complet semnalul — doar dupa fill sau setup nou/expirat."""
+        sym = setup.get('symbol', '?')
+        _alert_key = setup.get('execute_now_alert_key') or self._execute_now_alert_key(setup)
+        self._execute_now_alert_keys.discard(_alert_key)
         setup.pop('EXECUTE_NOW', None)
         setup.pop('execute_now_trigger_tf', None)
         setup.pop('execute_now_alert_sent', None)
+        setup.pop('execute_now_alert_key', None)
         if reason:
-            logger.info(f"[V37.6] {sym}: EXECUTE_NOW cleared — {reason}")
+            logger.info(f"[V37.9] {sym}: EXECUTE_NOW + alert dedup cleared — {reason}")
 
     def _flush_execute_now_to_json(self, setup: dict) -> None:
         """V37.6: Scrie EXECUTE_NOW instant in JSON — executorul nu asteapta batch sync."""
@@ -1433,7 +1460,9 @@ class MultiTFRadar:
                 for key in self._EXECUTE_NOW_FLUSH_KEYS:
                     if key in setup:
                         setups[i][key] = setup[key]
-                    elif key in setups[i] and key in ('EXECUTE_NOW', 'execute_now_trigger_tf', 'execute_now_alert_sent'):
+                    elif key in setups[i] and key in ('EXECUTE_NOW', 'execute_now_trigger_tf'):
+                        # V37.9: execute_now_alert_sent/key NU se sterg niciodata la flush —
+                        # doar _clear_execute_now_signal() (entry1_filled / setup nou).
                         setups[i].pop(key, None)
                 matched = True
                 break
@@ -1493,8 +1522,10 @@ class MultiTFRadar:
 
         self._flush_execute_now_to_json(setup)
 
-        # V37.8: Telegram DOAR la primul trigger — latch/restart reconecteaza executorul silent
-        _alert_key = f"{result.symbol}_{str(setup.get('direction', '')).upper()}"
+        # V37.9: Telegram DOAR la primul trigger per setup — latch/FVG flicker/restart = silent
+        _alert_key = setup.get('execute_now_alert_key') or self._execute_now_alert_key(setup)
+        if setup.get('execute_now_alert_sent'):
+            self._execute_now_alert_keys.add(_alert_key)
         should_alert = (
             not setup.get('entry1_filled')
             and not setup.get('execute_now_alert_sent')
@@ -1504,6 +1535,7 @@ class MultiTFRadar:
         )
         if should_alert:
             setup['execute_now_alert_sent'] = True
+            setup['execute_now_alert_key'] = _alert_key
             self._execute_now_alert_keys.add(_alert_key)
             self._flush_execute_now_to_json(setup)
             try:
@@ -1751,7 +1783,7 @@ class MultiTFRadar:
             # Bug V31: `not execution_ready` stergea semnalul desi pretul era inca in FVG.
             still_in_fvg = result.tf_1h.in_fvg or result.tf_4h.in_fvg
             if not still_in_fvg:
-                self._clear_execute_now_signal(setup, 'pretul a iesit din FVG')
+                self._clear_execute_now_only(setup, 'pretul a iesit din FVG')
                 self._flush_execute_now_to_json(setup)
             else:
                 setup['radar_execution_ready'] = True
@@ -1936,9 +1968,16 @@ class MultiTFRadar:
                     matches_buy    = (result_dir == 'LONG'  and setup_dir == 'BUY')
                     matches_direct = (result_dir == setup_dir)
                     if setup.get('symbol') == result.symbol and (matches_sell or matches_buy or matches_direct):
+                        # V37.9: pastreaza dedup alerta din ciclul analyze (in-memory)
+                        # inainte de re-run _update_setup_with_radar pe fresh JSON
+                        for _ek in ('execute_now_alert_sent', 'execute_now_alert_key'):
+                            if _original_setup.get(_ek) is not None:
+                                setups[i][_ek] = _original_setup[_ek]
                         # ── Merge parțial: _update_setup_with_radar scrie DOAR cheile Radarului ──
-                        # Cheile scanner/executor (status, entry_price, sl, tp etc.) rămân INTACTE
                         self._update_setup_with_radar(setups[i], result)
+                        for _ek in self._EXECUTE_NOW_FLUSH_KEYS:
+                            if _ek in _original_setup:
+                                setups[i][_ek] = _original_setup[_ek]
                         matched_count += 1
                         break
 
@@ -2143,6 +2182,7 @@ class MultiTFRadar:
     def run_scan(self, symbol: Optional[str] = None, all_setups: bool = False):
         """Run multi-timeframe scan — V19.4: batch JSON (1 citire, 1 scriere per ciclu)"""
         setups = self.load_monitoring_setups()
+        self._hydrate_execute_now_dedup(setups)
 
         if not setups:
             print("\n📭 No active setups in monitoring\n")

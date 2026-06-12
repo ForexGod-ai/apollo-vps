@@ -600,7 +600,8 @@ class TelegramNotifier:
                 f"{fvg_line}"
                 f"{trade_block}\n"
                 f"{sep}\n"
-                f"⚡ Executor procesează în ~30s → cTrader"
+                f"📡 Semnal confirmat — executor trimite la cTrader\n"
+                f"🔔 Alertă separată doar când tranzacția e executată"
             )
             return self.send_message(msg.strip(), parse_mode="HTML")
         except Exception as e:

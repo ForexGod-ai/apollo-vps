@@ -33,6 +33,9 @@ class SignalConfirmationMonitor:
             confirmation_file = str(script_dir / confirmation_file)
         
         self.confirmation_file = confirmation_file
+        self.execution_report_file = confirmation_file.replace(
+            'trade_confirmations.json', 'execution_report.json'
+        )
         
         # V6.0: Seen confirmations tracking (prevents duplicate alerts on restart)
         self.seen_file = str(Path(__file__).parent.resolve() / ".seen_confirmations.json")
@@ -77,22 +80,29 @@ class SignalConfirmationMonitor:
         except Exception as e:
             logger.error(f"❌ Failed to save seen confirmations: {e}")
     
+    def _read_fresh_confirmation(self) -> tuple:
+        """V37.9: Citeste confirmarea din execution_report.json (nou) sau trade_confirmations (legacy)."""
+        candidates = []
+        for path in (self.execution_report_file, self.confirmation_file):
+            if os.path.exists(path):
+                candidates.append((os.path.getmtime(path), path))
+        if not candidates:
+            return None, None
+        candidates.sort(reverse=True)
+        _mtime, path = candidates[0]
+        if _mtime <= self.last_check_time:
+            return None, None
+        with open(path, 'r', encoding='utf-8') as f:
+            return json.load(f), path
+
     def check_confirmation(self) -> bool:
         """Check for new confirmations"""
         try:
-            if not os.path.exists(self.confirmation_file):
+            data, source_path = self._read_fresh_confirmation()
+            if not data:
                 return False
-            
-            # Check file modification time
-            file_mtime = os.path.getmtime(self.confirmation_file)
-            if file_mtime <= self.last_check_time:
-                return False
-            
-            self.last_check_time = file_mtime
-            
-            # Read confirmation
-            with open(self.confirmation_file, 'r') as f:
-                data = json.load(f)
+
+            self.last_check_time = os.path.getmtime(source_path)
             
             signal_id = data.get('SignalId')
             
@@ -116,8 +126,8 @@ class SignalConfirmationMonitor:
             
             # 🚨 V6.1 CRITICAL: Delete confirmation file to prevent Ghost Notifications
             try:
-                os.remove(self.confirmation_file)
-                logger.debug(f"🗑️  Deleted {os.path.basename(self.confirmation_file)} (anti-spam)")
+                os.remove(source_path)
+                logger.debug(f"🗑️  Deleted {os.path.basename(source_path)} (anti-spam)")
             except Exception as e:
                 logger.warning(f"⚠️  Could not delete confirmation file: {e}")
             
@@ -154,23 +164,21 @@ class SignalConfirmationMonitor:
         # Format volume (cTrader returns units, convert to lots)
         volume_lots = volume / 100000 if volume > 0 else 0
         
-        direction_emoji = "🟢 LONG" if direction.lower() == 'buy' else "🔴 SHORT"
-        
-        message = f"""
-🎯 <b>EXECUTION CONFIRMED</b>
+        direction_emoji = "🟢" if direction.lower() in ('buy', 'long') else "🔴"
+        direction_label = "BUY" if direction.lower() in ('buy', 'long') else "SELL"
+        sep = "────────────────"
 
-<b>{symbol}</b> {direction_emoji}
-
-✅ Trade executed by cTrader
-🎫 Order ID: <code>{order_id}</code>
-📦 Volume: <code>{volume_lots:.2f}</code> lots
-
-📍 Entry: <code>{entry:.5f}</code>
-🛡️ Stop Loss: <code>{sl:.5f}</code>
-🎯 Take Profit: <code>{tp:.5f}</code>
-
-⚡ <b>ZERO-LATENCY V5.0</b>
-"""
+        message = (
+            f"✅ <b>TRANZACȚIE EXECUTATĂ</b> — cTrader fill\n"
+            f"{sep}\n"
+            f"{direction_emoji} <b>{symbol}</b> {direction_label}\n"
+            f"🎫 Order ID: <code>{order_id}</code>\n"
+            f"📦 Volume: <code>{volume_lots:.2f}</code> lots\n"
+            f"{sep}\n"
+            f"🔹 Entry  <code>{entry:.5f}</code>\n"
+            f"🔸 SL     <code>{sl:.5f}</code>\n"
+            f"🎯 TP     <code>{tp:.5f}</code>"
+        )
         
         try:
             self.telegram.send_message(message.strip(), parse_mode="HTML")
