@@ -1313,7 +1313,59 @@ class MultiTFRadar:
             self._sync_to_monitoring_setups(setup_data, result)
         
         return result
-    
+
+    def _evaluate_confirmed_pullback_latch(self, setup: dict, result: 'MultiTFResult') -> Optional[str]:
+        """
+        V37.5: CHoCH apare o singura data — apoi ramane in structura ca ancora.
+        Daca pretul e IN FVG si CHoCH/BOS e confirmat pe TF, executorul trebuie sa
+        execute chiar daca trigger-ul live (<=3 bare) a expirat.
+        Returns: '1H' | '4H' | None
+        """
+        if setup.get('entry1_filled'):
+            return None
+        if not result.pd_guard_passed:
+            return None
+
+        setup_type = setup.get('setup_type', setup.get('strategy_type', '')).upper()
+        is_reversal = 'REVERSAL' in setup_type
+
+        for tf_name, tf_data in (('1H', result.tf_1h), ('4H', result.tf_4h)):
+            if not tf_data.in_fvg or not tf_data.fvg_detected:
+                continue
+            if is_reversal:
+                if not tf_data.choch_detected:
+                    continue
+            elif not (tf_data.choch_detected or tf_data.bos_detected):
+                continue
+            return tf_name
+        return None
+
+    def _arm_execute_now(self, setup: dict, result: 'MultiTFResult', exec_tf: str,
+                         source: str = 'trigger') -> None:
+        """V37.5: Seteaza EXECUTE_NOW + Telegram edge (o singura alerta per armare)."""
+        was_already = setup.get('EXECUTE_NOW') is True
+        setup['EXECUTE_NOW'] = True
+        setup['execute_now_trigger_tf'] = exec_tf
+
+        exec_tf_data = result.tf_1h if exec_tf == '1H' else result.tf_4h
+        exec_fvg_src = getattr(exec_tf_data, 'fvg_source', 'structural')
+        exec_zone = (
+            f"[{exec_tf_data.fvg_bottom:.5f} - {exec_tf_data.fvg_top:.5f}]"
+            if exec_tf_data.fvg_top and exec_tf_data.fvg_bottom else "zona necunoscuta"
+        )
+        exec_eq = f"EQ={exec_tf_data.equilibrium:.5f}" if exec_tf_data.equilibrium else "EQ=N/A"
+        logger.success(
+            f"[V37.5 EXECUTE_NOW {source.upper()} {exec_tf}] {result.symbol} {result.direction} "
+            f"-> EXECUTE_NOW=True | {'FVG structural' if exec_fvg_src == 'structural' else 'Fibo Fallback'} "
+            f"| Zona: {exec_zone} | Pret={result.current_price:.5f} | {exec_eq}"
+        )
+        if not was_already and not setup.get('entry1_filled'):
+            try:
+                from telegram_notifier import TelegramNotifier
+                TelegramNotifier().send_execute_now_alert(setup, exec_tf)
+            except Exception as e:
+                logger.warning(f"[V37.3] EXECUTE_NOW Telegram alert failed: {e}")
+
     def _update_setup_with_radar(self, setup: Dict, result: 'MultiTFResult') -> None:
         """
         V19.4: Pure in-memory update of a single setup dict with radar results.
@@ -1561,38 +1613,46 @@ class MultiTFRadar:
                         logger.debug(f"[V32 RR SHIELD] {result.symbol}: date insuficiente (TP={_rr_tp}, SL={_rr_sl}) — fara shield")
 
                 if not _block_execute:
-                    _was_already_execute = setup.get('EXECUTE_NOW') is True
-                    setup['EXECUTE_NOW'] = True
-                    _exec_tf = result.priority_timeframe or '?'
-                    _exec_tf_data = result.tf_1h if _exec_tf == '1H' else result.tf_4h
-                    _exec_fvg_src = getattr(_exec_tf_data, 'fvg_source', 'unknown')
-                    _exec_zone = (
-                        f"[{_exec_tf_data.fvg_bottom:.5f} - {_exec_tf_data.fvg_top:.5f}]"
-                        if _exec_tf_data.fvg_top and _exec_tf_data.fvg_bottom else "zona necunoscuta"
+                    self._arm_execute_now(
+                        setup, result,
+                        result.priority_timeframe or '1H',
+                        source='trigger',
                     )
-                    _exec_bars = getattr(_exec_tf_data, 'choch_bars_ago', '?')
-                    _exec_eq = f"EQ={_exec_tf_data.equilibrium:.5f}" if _exec_tf_data.equilibrium else "EQ=N/A"
-                    logger.success(
-                        f"[V32 RADAR TRIGGER LIVE {_exec_tf}] {result.symbol} {result.direction} -> EXECUTE_NOW=True"
-                        f" | {'FVG structural' if _exec_fvg_src == 'structural' else 'Fibo Fallback'}"
-                        f" | Zona: {_exec_zone}"
-                        f" | Pret={result.current_price:.5f} | {_exec_eq}"
-                    )
-                    # V37.3: Telegram EXECUTE NOW — o singură alertă per trigger (edge)
-                    if not _was_already_execute and not setup.get('entry1_filled'):
-                        try:
-                            from telegram_notifier import TelegramNotifier
-                            TelegramNotifier().send_execute_now_alert(setup, _exec_tf)
-                        except Exception as _en_alert_err:
-                            logger.warning(f"[V37.3] EXECUTE_NOW Telegram alert failed: {_en_alert_err}")
-        elif not result.execution_ready and setup.get('EXECUTE_NOW') and not setup.get('entry1_filled'):
-            # V31.0: Pretul a iesit din zona FVG — resetam EXECUTE_NOW (semnal expirat)
-            setup.pop('EXECUTE_NOW', None)
-            logger.info(f"[V31.0] {result.symbol}: EXECUTE_NOW resetat — pretul nu mai este in FVG zone")
         elif setup.get('entry1_filled', False):
-            # Executorul a confirmat executia — acum putem curata semnalul
             setup.pop('EXECUTE_NOW', None)
-        # ALTFEL: execution_ready=False dar entry1_filled=False → NU atingem EXECUTE_NOW
+            setup.pop('execute_now_trigger_tf', None)
+        elif setup.get('EXECUTE_NOW') and not setup.get('entry1_filled'):
+            # V37.5: Reset DOAR cand pretul paraseste FVG — NU cand CHoCH trece de 3 bare.
+            # Bug V31: `not execution_ready` stergea semnalul desi pretul era inca in FVG.
+            still_in_fvg = result.tf_1h.in_fvg or result.tf_4h.in_fvg
+            if not still_in_fvg:
+                setup.pop('EXECUTE_NOW', None)
+                setup.pop('execute_now_trigger_tf', None)
+                logger.info(
+                    f"[V37.5] {result.symbol}: EXECUTE_NOW resetat — "
+                    f"pretul a iesit din FVG"
+                )
+            else:
+                setup['radar_execution_ready'] = True
+                _ltf = setup.get('execute_now_trigger_tf') or (
+                    '1H' if result.tf_1h.in_fvg else '4H'
+                )
+                setup['radar_verdict'] = (
+                    f"🔥 EXECUTE NOW ({_ltf} LATCH — CHoCH confirmat, asteptam executor)"
+                )
+                logger.debug(
+                    f"[V37.5 LATCH] {result.symbol}: EXECUTE_NOW pastrat — "
+                    f"in FVG, CHoCH confirmat (trigger >3b OK)"
+                )
+        elif not setup.get('entry1_filled'):
+            # V37.5: CHoCH confirmat + in FVG dar EXECUTE_NOW pierdut → re-arm pentru executor
+            latch_tf = self._evaluate_confirmed_pullback_latch(setup, result)
+            if latch_tf:
+                self._arm_execute_now(setup, result, latch_tf, source='latch')
+                setup['radar_execution_ready'] = True
+                setup['radar_verdict'] = (
+                    f"🔥 EXECUTE NOW ({latch_tf} LATCH — reconectat executor)"
+                )
 
         # V31.0: Propagam daily_target_price ca daily_tp_price pentru backward compat cu Executor
         if setup.get('daily_target_price') and not setup.get('daily_tp_price'):

@@ -120,14 +120,11 @@ class SMCDetector:
         """
         Calculează W1 macro bias folosind EXCLUSIV Body Close (nu wick).
 
-        Reguli:
-          • W1 BULLISH  — ultimul BOS body-close în sus (prețul a închis cu corpul DEASUPRA unui High anterior)
-          • W1 BEARISH  — ultimul BOS body-close în jos  (prețul a închis cu corpul SUB un Low anterior)
-          • W1 NEUTRAL  — niciun BOS confirmat recent (ultimele 40 bare)
-
-        V15.3 FIX: Folosim detect_choch_and_bos() pe W1 — același algoritm structural ca pe Daily.
-        Metoda veche (iterare manuală BOS) detecta BOS-ul bullish din rally-ul vechi ca "cel mai recent"
-        și ignora CHoCH-ul bearish care a inversat trendul. Acum: ultimul semnal structural = bias corect.
+        V37.4 MACRO ANCHOR:
+          • Bias = direcția ultimului CHoCH pe W1 (inversare macro)
+          • BOS counter-trend DUPĂ CHoCH = pullback — NU schimbă bias
+            (fix BTC: BOS bullish pe bounce nu mai bate CHoCH bearish la vârf)
+          • Fără CHoCH pe W1 → fallback ultimul BOS (piețe în range)
 
         Returnează dict:
             {
@@ -142,46 +139,43 @@ class SMCDetector:
             if df_w1 is None or len(df_w1) < 10:
                 return {'bias': 'NEUTRAL', 'last_bos_direction': None, 'last_bos_price': None, 'last_bos_bar_idx': None}
 
-            # V36.0 FIX B2: reset_index(drop=True) ELIMINAT — pastreaza timestamps Datetime!
-            # Motivul bug-ului: RangeIndex facea crash la .total_seconds() in detect_swing_highs
-            # → FRACTAL_WINDOW cadea la 2 (default) in loc de 3 → pseudo-swinguri saptamanale
-            # → bounce recent BTC = BULLISH fals. Fix: .copy() fara reset_index.
-            # V17.5 FIX W1 BIAS — FRACTAL_WINDOW dinamic, nu mai e hardcodat:
-            # swing_lookback=3 → fereastra de 3 bare pe fiecare parte → detecteaza
-            # swing-uri pana la bara[-4] = acum 4 saptamani → prinde CHoCH bearish recent.
-            # Body-only identic cu tot sistemul. Detector separat = fara conflict cache.
-            df_w1_recent = df_w1.iloc[-60:].copy()  # V36.0: fara reset_index — timestamps intacte
+            df_w1_recent = df_w1.iloc[-60:].copy()
             w1_detector = SMCDetector(swing_lookback=3, atr_multiplier=self.atr_multiplier)
             w1_chochs, w1_bos_list = w1_detector.detect_choch_and_bos(df_w1_recent)
 
-            latest_w1_choch = w1_chochs[-1] if w1_chochs else None
-            latest_w1_bos   = w1_bos_list[-1] if w1_bos_list else None
+            all_chochs_info = [f"CHoCH {c.direction} @{c.break_price:.5f} bar{c.index}" for c in w1_chochs]
+            all_bos_info = [f"BOS {b.direction} @{b.break_price:.5f} bar{b.index}" for b in w1_bos_list]
+            print(f"   🔍 [W1 BIAS DEBUG] CHoCH ({len(w1_chochs)}): {all_chochs_info}")
+            print(f"   🔍 [W1 BIAS DEBUG] BOS   ({len(w1_bos_list)}): {all_bos_info}")
 
             last_signal = None
-            last_signal_type = 'BOS'
-            if latest_w1_choch and latest_w1_bos:
-                if latest_w1_choch.index >= latest_w1_bos.index:
-                    last_signal = latest_w1_choch
-                    last_signal_type = 'CHoCH'
-                else:
-                    last_signal = latest_w1_bos
-            elif latest_w1_choch:
-                last_signal = latest_w1_choch
+            last_signal_type = None
+
+            if w1_chochs:
+                # V37.4: ultimul CHoCH cronologic = ancoră macro (BOS nu o suprascrie)
+                macro_choch = max(w1_chochs, key=lambda c: c.index)
+                last_signal = macro_choch
                 last_signal_type = 'CHoCH'
-            elif latest_w1_bos:
-                last_signal = latest_w1_bos
+                latest_bos = max(w1_bos_list, key=lambda b: b.index) if w1_bos_list else None
+                if latest_bos and latest_bos.index > macro_choch.index and latest_bos.direction != macro_choch.direction:
+                    print(
+                        f"   🔒 [V37.4 W1 MACRO ANCHOR] Ignor BOS {latest_bos.direction.upper()} "
+                        f"bar{latest_bos.index} — pullback vs CHoCH {macro_choch.direction.upper()} "
+                        f"bar{macro_choch.index}"
+                    )
+            elif w1_bos_list:
+                last_signal = max(w1_bos_list, key=lambda b: b.index)
+                last_signal_type = 'BOS'
 
             if last_signal is None:
                 print(f"   🔍 [W1 BIAS DEBUG] 0 CHoCH + 0 BOS detectate pe W1 60 bare → NEUTRAL")
                 return {'bias': 'NEUTRAL', 'last_bos_direction': None, 'last_bos_price': None, 'last_bos_bar_idx': None}
 
             bias = 'BULLISH' if last_signal.direction == 'bullish' else 'BEARISH'
-
-            all_chochs_info = [f"CHoCH {c.direction} @{c.break_price:.5f} bar{c.index}" for c in w1_chochs]
-            all_bos_info    = [f"BOS {b.direction} @{b.break_price:.5f} bar{b.index}" for b in w1_bos_list]
-            print(f"   🔍 [W1 BIAS DEBUG] CHoCH ({len(w1_chochs)}): {all_chochs_info}")
-            print(f"   🔍 [W1 BIAS DEBUG] BOS   ({len(w1_bos_list)}): {all_bos_info}")
-            print(f"   🔍 [W1 BIAS DEBUG] Semnal final: {last_signal_type} {last_signal.direction.upper()} @{last_signal.break_price:.5f} → BIAS={bias}")
+            print(
+                f"   🔍 [W1 BIAS DEBUG] Semnal final: {last_signal_type} "
+                f"{last_signal.direction.upper()} @{last_signal.break_price:.5f} → BIAS={bias}"
+            )
 
             return {
                 'bias': bias,
