@@ -151,18 +151,72 @@ class SignalConfirmationMonitor:
         else:
             logger.warning(f"⚠️  Unknown status: {status}")
     
+    @staticmethod
+    def _volume_to_lots(data: dict) -> float:
+        """
+        V37.11: cBot V9.3 scrie Volume deja in LOTS + VolumeInUnits separat.
+        Cod vechi presupunea Volume in units ( / 100000 ) → afisa 0.00 lots.
+        """
+        try:
+            vol = float(data.get('Volume') or 0)
+            vol_units = float(data.get('VolumeInUnits') or 0)
+            if vol_units > 0 and vol > 0 and vol < 100:
+                return vol  # V9.3: Volume = lots, VolumeInUnits = broker units
+            if vol_units > 0:
+                return vol_units / 100000.0
+            if vol > 100:
+                return vol / 100000.0  # legacy: Volume in units
+            return vol
+        except (TypeError, ValueError):
+            return 0.0
+
+    @staticmethod
+    def _prices_plausible(symbol: str, direction: str, entry: float, sl: float, tp: float) -> bool:
+        if entry <= 0:
+            return False
+        d = direction.lower()
+        if sl > 0:
+            if d in ('buy', 'long') and sl >= entry:
+                return False
+            if d in ('sell', 'short') and sl <= entry:
+                return False
+        if tp > 0:
+            if d in ('buy', 'long') and tp <= entry:
+                return False
+            if d in ('sell', 'short') and tp >= entry:
+                return False
+            # TP nu poate fi >2x entry pe FX (ex. AUDJPY TP 223 la entry 112)
+            ratio = tp / entry if entry else 0
+            if 'JPY' in symbol.upper() and (ratio > 1.5 or ratio < 0.5):
+                return False
+            if ratio > 3.0 or ratio < 0.33:
+                return False
+        return True
+
     def _send_execution_notification(self, data: dict):
         """Send execution confirmation to Telegram"""
         symbol = data.get('Symbol', 'Unknown')
         direction = data.get('Direction', 'unknown')
         order_id = data.get('OrderId', 'N/A')
-        volume = data.get('Volume', 0)
-        entry = data.get('EntryPrice', 0)
-        sl = data.get('StopLoss', 0)
-        tp = data.get('TakeProfit', 0)
-        
-        # Format volume (cTrader returns units, convert to lots)
-        volume_lots = volume / 100000 if volume > 0 else 0
+        entry = float(data.get('EntryPrice') or 0)
+        sl = float(data.get('StopLoss') or 0)
+        tp = float(data.get('TakeProfit') or 0)
+
+        volume_lots = self._volume_to_lots(data)
+
+        if volume_lots < 0.01:
+            logger.warning(
+                f"⚠️ Confirmare suspecta {symbol}: volume={volume_lots:.4f} lots — "
+                f"nu trimitem EXECUTAT (posibil ghost/stale)"
+            )
+            return
+
+        if not self._prices_plausible(symbol, direction, entry, sl, tp):
+            logger.warning(
+                f"⚠️ Confirmare suspecta {symbol}: preturi invalide "
+                f"entry={entry} sl={sl} tp={tp} — skip Telegram"
+            )
+            return
         
         direction_emoji = "🟢" if direction.lower() in ('buy', 'long') else "🔴"
         direction_label = "BUY" if direction.lower() in ('buy', 'long') else "SELL"
