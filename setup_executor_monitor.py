@@ -9,7 +9,7 @@ Arhitectura 3 straturi (Apollo / Glitch in Matrix):
 V31.0+ EXECUTOR BLIND:
 - NU face analiză SMC proprie (_check_radar_entry / _check_pullback_entry = stub)
 - Singurul trigger de execuție Entry 1: EXECUTE_NOW=True setat de Radar
-- V37.0: h4_sl_price + daily_tp_price din JSON Radar (prioritate); ATR ultim resort
+- V37.2: SL live 4H obligatoriu la EXECUTE_NOW (min 30p); JSON nu mai poate impune micro-stop
 - V37.0: Entry 2 scale-in dezactivat (validate_choch_confirmation_scale_in)
 
 Sentinela _final_safety_check (Fix #13): RR net ≥ 1:2, SL cap, capital guard, h4_structure_locked
@@ -182,7 +182,7 @@ from smc_detector import (
     FVG,
     get_4h_body_close_confirmation,  # ✅ V10.6 FUNCȚIE UNIFICATĂ — același creier ca scanner-ul
 )
-from pip_utils import get_pip_size
+from pip_utils import get_pip_size, MIN_SL_PIPS, MAX_SL_PIPS, sl_pips_between
 
 # 🛡️ V3.8 ANTI-SPAM SYSTEM by ФорексГод
 from signal_cache import (
@@ -1291,136 +1291,93 @@ class SetupExecutorMonitor:
                         _pip_size_en = get_pip_size(symbol)
                         _pip_value_en = 8.33 if 'JPY' in symbol.upper() else 10.0
 
-                        # ── V37.0 STEP 2: SL/TP — prioritate JSON Radar, ATR ultim resort ───────
+                        # ── V37.2: SL/TP — recalc structural LIVE (SL min 30p pe 4H) ─────────────
                         def _float_price(val):
                             try:
                                 return float(val) if val not in (None, 0, '0', '') else None
                             except (TypeError, ValueError):
                                 return None
 
-                        _sl = _float_price(setup.get('h4_sl_price'))
-                        _tp = _float_price(setup.get('daily_tp_price') or setup.get('daily_target_price'))
-
-                        if _sl and _tp:
-                            if _en_direction == 'buy' and (_sl >= _en_entry or _tp <= _en_entry):
-                                logger.warning(f"[V37.0 JSON GUARD] {symbol} BUY: h4_sl/daily_tp invalid vs entry — recalc")
-                                _sl = _tp = None
-                            elif _en_direction == 'sell' and (_sl <= _en_entry or _tp >= _en_entry):
-                                logger.warning(f"[V37.0 JSON GUARD] {symbol} SELL: h4_sl/daily_tp invalid vs entry — recalc")
-                                _sl = _tp = None
-                            else:
-                                logger.info(
-                                    f"📐 [V37.0 JSON PRIORITY] {symbol}: SL={_sl:.5f} TP={_tp:.5f} "
-                                    f"(h4_sl_price + daily_tp_price din Radar)"
-                                )
-
-                        # ── Recalcul structural live doar dacă JSON Radar lipsește/invalid ────────
                         _df_4h_en = self._get_cached_data(symbol, "H4", 225)
                         _df_d1_en = self._get_cached_data(symbol, "D1", 100)
 
-                        if (_sl is None or _tp is None) and \
-                           _df_4h_en is not None and not _df_4h_en.empty and \
-                           _df_d1_en is not None and not _df_d1_en.empty:
-                            # ── STEP 3: Calcul SL structural pe 4H ───────────────────────────────────
-                            # SL BUY  = ultimul Swing Low semnificativ 4H (sub entry)
-                            # SL SELL = ultimul Swing High semnificativ 4H (deasupra entry)
-                            try:
-                                _sl_buffer = _pip_size_en * 2  # 2 pips buffer
-                                _atr_4h = (_df_4h_en['high'] - _df_4h_en['low']).rolling(14).mean().iloc[-1]
+                        _sl = None
+                        _tp = None
 
-                                if _en_direction == 'buy':
-                                    if _sl is None:
-                                        _swing_lows_en = self.smc_detector.detect_swing_lows(_df_4h_en)
-                                        _valid_sl_candidates = [
-                                            s for s in _swing_lows_en
-                                            if _df_4h_en['low'].iloc[s.index] < _en_entry
-                                            and (_en_entry - _df_4h_en['low'].iloc[s.index]) >= _atr_4h * 0.5
-                                        ]
-                                        if _valid_sl_candidates:
-                                            _best_sl = sorted(_valid_sl_candidates, key=lambda s: s.index, reverse=True)[0]
-                                            _sl = _df_4h_en['low'].iloc[_best_sl.index] - _sl_buffer
-                                        else:
-                                            _sl = _df_4h_en[['open', 'close']].min(axis=1).iloc[-40:].min() - _sl_buffer
-                                else:  # sell
-                                    if _sl is None:
-                                        _swing_highs_en = self.smc_detector.detect_swing_highs(_df_4h_en)
-                                        _valid_sl_candidates = [
-                                            s for s in _swing_highs_en
-                                            if _df_4h_en['high'].iloc[s.index] > _en_entry
-                                            and (_df_4h_en['high'].iloc[s.index] - _en_entry) >= _atr_4h * 0.5
-                                        ]
-                                        if _valid_sl_candidates:
-                                            _best_sl = sorted(_valid_sl_candidates, key=lambda s: s.index, reverse=True)[0]
-                                            _sl = _df_4h_en['high'].iloc[_best_sl.index] + _sl_buffer
-                                        else:
-                                            _sl = _df_4h_en[['open', 'close']].max(axis=1).iloc[-40:].max() + _sl_buffer
-
-                                _current_price_en = _df_4h_en['close'].iloc[-1]
-
-                                if _en_direction == 'buy':
-                                    if _tp is None:
-                                        _swing_highs_d1_en = self.smc_detector.detect_swing_highs(_df_d1_en)
-                                        _highs_above = [sh for sh in _swing_highs_d1_en if sh.price > _current_price_en]
-                                        if _highs_above:
-                                            _nearest_high = min(_highs_above, key=lambda sh: sh.price)
-                                            _tp = _df_d1_en['high'].iloc[_nearest_high.index]
-                                        else:
-                                            _tp = _df_d1_en[['open', 'close']].max(axis=1).iloc[:-1].max()
-                                else:  # sell
-                                    if _tp is None:
-                                        _swing_lows_d1_en = self.smc_detector.detect_swing_lows(_df_d1_en)
-                                        _lows_below = [sl for sl in _swing_lows_d1_en if sl.price < _current_price_en]
-                                        if _lows_below:
-                                            _nearest_low = max(_lows_below, key=lambda sl: sl.price)
-                                            _tp = _df_d1_en['low'].iloc[_nearest_low.index]
-                                        else:
-                                            _tp = _df_d1_en[['open', 'close']].min(axis=1).iloc[:-1].min()
-
+                        if _df_4h_en is not None and not _df_4h_en.empty:
+                            _sl = self._calc_structural_sl_4h(
+                                symbol, _en_direction, _en_entry, _df_4h_en, _pip_size_en, MIN_SL_PIPS
+                            )
+                            if _sl:
                                 logger.info(
-                                    f"📐 [V19.8 STRUCTURAL CALC] {symbol} {_en_direction.upper()}: "
-                                    f"Entry={_en_entry:.5f} | SL={_sl:.5f} ({abs(_en_entry-_sl)/_pip_size_en:.1f}p) | "
-                                    f"TP={_tp:.5f} ({abs(_tp-_en_entry)/_pip_size_en:.1f}p)"
+                                    f"📐 [V37.2 SL LIVE 4H] {symbol}: SL={_sl:.5f} "
+                                    f"({sl_pips_between(symbol, _en_entry, _sl):.1f}p)"
                                 )
-                            except Exception as _calc_err:
-                                logger.warning(f"⚠️ [V19.8 CALC ERR] {symbol}: {_calc_err} — fallback la SL/TP din JSON")
-                                _sl = None
-                                _tp = None
 
-                        # Fallback la valorile legacy din Scanner dacă Radar JSON + recalc lipsesc
                         if _sl is None:
-                            _sl = _float_price(setup.get('stop_loss')) or 0
+                            _sl_json = _float_price(setup.get('h4_sl_price')) or _float_price(setup.get('stop_loss'))
+                            if _sl_json and sl_pips_between(symbol, _en_entry, _sl_json) >= MIN_SL_PIPS:
+                                _sl = _sl_json
+                                logger.info(f"📐 [V37.2 SL JSON OK] {symbol}: SL={_sl:.5f} (>= {MIN_SL_PIPS}p)")
+                            elif _sl_json:
+                                logger.warning(
+                                    f"[V37.2 SL JSON REJECT] {symbol}: "
+                                    f"{sl_pips_between(symbol, _en_entry, _sl_json):.1f}p < min {MIN_SL_PIPS}p"
+                                )
+
+                        if _df_d1_en is not None and not _df_d1_en.empty:
+                            _tp = self._calc_structural_tp_d1(
+                                _en_direction, _en_entry, _df_4h_en, _df_d1_en, _pip_size_en
+                            )
+                            if _tp:
+                                logger.info(
+                                    f"📐 [V37.2 TP LIVE D1] {symbol}: TP={_tp:.5f} "
+                                    f"({sl_pips_between(symbol, _en_entry, _tp):.1f}p)"
+                                )
+
+                        if _tp is None:
+                            _tp_json = _float_price(
+                                setup.get('daily_tp_price') or setup.get('daily_target_price')
+                            )
+                            if _tp_json:
+                                if _en_direction == 'buy' and _tp_json > _en_entry:
+                                    _tp = _tp_json
+                                elif _en_direction == 'sell' and _tp_json < _en_entry:
+                                    _tp = _tp_json
+
                         if _tp is None:
                             _tp = _float_price(setup.get('take_profit')) or 0
-                        if _sl is None or _tp is None or (_sl == 0 and _tp == 0):
-                            logger.warning(f"[V37.0 FALLBACK] {symbol}: SL/TP incomplete — folosim stop_loss/take_profit Scanner")
 
                         # Validare direcție: SL sub entry pentru BUY, deasupra pentru SELL
-                        if _en_direction == 'buy' and _sl >= _en_entry:
-                            _sl = setup.get('stop_loss') or 0
-                            logger.warning(f"[V19.8 DIR GUARD] {symbol} BUY: SL calculat deasupra entry -- revert JSON")
-                        if _en_direction == 'sell' and _sl <= _en_entry:
-                            _sl = setup.get('stop_loss') or 0
-                            logger.warning(f"[V19.8 DIR GUARD] {symbol} SELL: SL calculat sub entry -- revert JSON")
-                        if _en_direction == 'buy' and _tp is not None and _tp <= _en_entry:
+                        if _en_direction == 'buy' and _sl and _sl >= _en_entry:
+                            _sl = None
+                            logger.warning(f"[V19.8 DIR GUARD] {symbol} BUY: SL deasupra entry — invalid")
+                        if _en_direction == 'sell' and _sl and _sl <= _en_entry:
+                            _sl = None
+                            logger.warning(f"[V19.8 DIR GUARD] {symbol} SELL: SL sub entry — invalid")
+                        if _en_direction == 'buy' and _tp and _tp <= _en_entry:
                             _tp = setup.get('take_profit') or 0
-                            logger.warning(f"[V19.8 DIR GUARD] {symbol} BUY: TP calculat sub entry -- revert JSON")
-                        if _en_direction == 'sell' and _tp is not None and _tp >= _en_entry:
+                            logger.warning(f"[V19.8 DIR GUARD] {symbol} BUY: TP sub entry — revert")
+                        if _en_direction == 'sell' and _tp and _tp >= _en_entry:
                             _tp = setup.get('take_profit') or 0
-                            logger.warning(f"[V19.8 DIR GUARD] {symbol} SELL: TP calculat deasupra entry -- revert JSON")
+                            logger.warning(f"[V19.8 DIR GUARD] {symbol} SELL: TP deasupra entry — revert")
 
-                        # V30.5: Guard None/0 dupa toate revert-urile — JSON vechi pot avea null
-                        # Daca SL sau TP = None/0 dupa toate guard-urile → calcul ATR fallback simplu
-                        if not _sl or _sl == 0:
-                            _atr_fb = float(setup.get('atr_daily', 0) or 0)
-                            if _atr_fb > 0:
-                                _sl = (_en_entry + _atr_fb * 1.5) if _en_direction == 'sell' else (_en_entry - _atr_fb * 1.5)
-                                logger.warning(f"[V30.5 SL FALLBACK] {symbol}: SL=null in JSON, calculat din ATR: {_sl:.5f}")
-                            else:
-                                logger.error(f"[V30.5 NO SL] {symbol}: SL=null si ATR indisponibil -- skip executie")
-                                setups[i].pop('EXECUTE_NOW', None)
-                                setups[i]['last_rejection_reason'] = 'V30.5: SL null in JSON + ATR indisponibil'
-                                updated = True
-                                continue
+                        # V37.2: respinge micro-stop — SL structural 4H trebuie >= 30 pips
+                        _sl_pips_en = sl_pips_between(symbol, _en_entry, _sl) if _sl else 0.0
+                        if not _sl or _sl_pips_en < MIN_SL_PIPS:
+                            logger.critical(
+                                f"🚨 [V37.2 MIN SL] {symbol}: {_sl_pips_en:.1f}p < {MIN_SL_PIPS}p — "
+                                f"execuție anulată (structură 4H insuficientă, așteptăm setup valid)"
+                            )
+                            self._track_rejection(f"V37.2 min SL {symbol}: {_sl_pips_en:.1f}p")
+                            setups[i].pop('EXECUTE_NOW', None)
+                            setups[i]['last_rejection_reason'] = (
+                                f'V37.2: SL {_sl_pips_en:.1f}p < min {MIN_SL_PIPS}p structural 4H'
+                            )
+                            updated = True
+                            continue
+
+                        # V30.5: Guard None/0 TP — ATR fallback
                         if not _tp or _tp == 0:
                             _atr_fb = float(setup.get('atr_daily', 0) or 0)
                             if _atr_fb > 0:
@@ -1976,6 +1933,103 @@ class SetupExecutorMonitor:
             traceback.print_exc()
 
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # V37.2: SL/TP structural live — 4H swing + D1 target
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    def _calc_structural_sl_4h(
+        self,
+        symbol: str,
+        direction: str,
+        entry: float,
+        df_4h,
+        pip_size: float,
+        min_sl_pips: float = MIN_SL_PIPS,
+    ):
+        """
+        SL = ultimul swing 4H valid cu distanta >= min_sl_pips (default 30p) fata de entry.
+        Evita micro-stop-ul de 3-5p (AUDJPY bug) care umfla lotul la 5% risc.
+        """
+        if df_4h is None or df_4h.empty or not entry:
+            return None
+        sl_buffer = pip_size * 2
+        min_dist = min_sl_pips * pip_size
+        try:
+            _atr_4h = float((df_4h['high'] - df_4h['low']).rolling(14).mean().iloc[-1])
+            min_dist = max(min_dist, _atr_4h * 0.3)
+        except Exception:
+            pass
+
+        direction = direction.lower()
+        if direction == 'buy':
+            swings = self.smc_detector.detect_swing_lows(df_4h)
+            candidates = [
+                s for s in swings
+                if float(df_4h['low'].iloc[s.index]) < entry
+                and (entry - float(df_4h['low'].iloc[s.index])) >= min_dist
+            ]
+            if candidates:
+                best = sorted(candidates, key=lambda s: s.index, reverse=True)[0]
+                return float(df_4h['low'].iloc[best.index]) - sl_buffer
+            window_low = float(df_4h['low'].iloc[-40:].min())
+            if entry - window_low >= min_dist:
+                return window_low - sl_buffer
+        else:
+            swings = self.smc_detector.detect_swing_highs(df_4h)
+            candidates = [
+                s for s in swings
+                if float(df_4h['high'].iloc[s.index]) > entry
+                and (float(df_4h['high'].iloc[s.index]) - entry) >= min_dist
+            ]
+            if candidates:
+                best = sorted(candidates, key=lambda s: s.index, reverse=True)[0]
+                return float(df_4h['high'].iloc[best.index]) + sl_buffer
+            window_high = float(df_4h['high'].iloc[-40:].max())
+            if window_high - entry >= min_dist:
+                return window_high + sl_buffer
+        return None
+
+    def _calc_structural_tp_d1(self, direction: str, entry: float, df_4h, df_d1, pip_size: float):
+        """TP = primul swing D1 lichiditate in directia trade-ului (recalc live la executie)."""
+        if df_d1 is None or df_d1.empty or not entry:
+            return None
+        try:
+            current = float(df_4h['close'].iloc[-1]) if df_4h is not None and not df_4h.empty else float(df_d1['close'].iloc[-1])
+            _tr = (
+                (df_d1['high'] - df_d1['low'])
+                .combine((df_d1['high'] - df_d1['close'].shift(1)).abs(), max)
+                .combine((df_d1['low'] - df_d1['close'].shift(1)).abs(), max)
+            )
+            _atr_d1 = float(_tr.rolling(14).mean().iloc[-1])
+            _min_tp_dist = _atr_d1 * 1.0
+            _max_tp_dist = _atr_d1 * 8.0  # cap — respinge TP aberant (ex. AUDJPY 223)
+
+            direction = direction.lower()
+            if direction == 'buy':
+                swings = self.smc_detector.detect_swing_highs(df_d1)
+                targets = [
+                    s for s in swings
+                    if s.price > current
+                    and (s.price - entry) >= _min_tp_dist
+                    and (s.price - entry) <= _max_tp_dist
+                ]
+                if targets:
+                    nearest = min(targets, key=lambda s: s.price)
+                    return float(df_d1['high'].iloc[nearest.index])
+            else:
+                swings = self.smc_detector.detect_swing_lows(df_d1)
+                targets = [
+                    s for s in swings
+                    if s.price < current
+                    and (entry - s.price) >= _min_tp_dist
+                    and (entry - s.price) <= _max_tp_dist
+                ]
+                if targets:
+                    nearest = max(targets, key=lambda s: s.price)
+                    return float(df_d1['low'].iloc[nearest.index])
+        except Exception as _tp_err:
+            logger.warning(f"[V37.2] structural TP D1 calc failed: {_tp_err}")
+        return None
+
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     # Fix #13: SENTINELA DE RISC — 4 bariere finale înainte de execuție
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     def _final_safety_check(self, symbol: str, direction: str, entry_price: float,
@@ -1985,8 +2039,13 @@ class SetupExecutorMonitor:
         Returns: (passed: bool, reason: str)
         """
         pip_size = get_pip_size(symbol)
-        sl_pips = abs(entry_price - stop_loss) / pip_size if pip_size > 0 else 0
+        sl_pips = sl_pips_between(symbol, entry_price, stop_loss)
         tp_pips = abs(take_profit - entry_price) / pip_size if pip_size > 0 else 0
+
+        # ── Guard 2b: SL minim structural (V37.2) — respinge micro-stop ─────────
+        if sl_pips < MIN_SL_PIPS:
+            return False, (f"Guard#2b SL={sl_pips:.1f}p < {MIN_SL_PIPS}p min structural 4H "
+                           f"(micro-stop interzis)")
 
         # ── Guard 1: RR Net cu comisionul cTrader (~0.7 pips per side) ──────────
         commission_pips = 0.7  # cTrader spread/commission approximation per side
@@ -2000,10 +2059,8 @@ class SetupExecutorMonitor:
                            f"(TP={tp_pips:.1f}p SL={sl_pips:.1f}p comision~{commission_pips}p)")
 
         # ── Guard 2: SL Sniper Limit — max 100 pips ─────────────────────────────
-        # V19.14b: 50→100 pips — limita de 50p bloca JPY și perechi volatile (GBPJPY 126p, GBPUSD 62p)
-        # Pe cont 300$ cu risc 5%=15$, SL 100p înseamnă lot 0.015 → perfect acceptabil
-        if sl_pips > 100:
-            return False, f"Guard#2 SL={sl_pips:.1f} pips > 100 sniper cap (whale stop)"
+        if sl_pips > MAX_SL_PIPS:
+            return False, f"Guard#2 SL={sl_pips:.1f} pips > {MAX_SL_PIPS} sniper cap (whale stop)"
 
         # ── Guard 3: Capital Guard — pierderea estimată ≤ 5.1% din balanță ──────
         balance = float(os.getenv('ACCOUNT_BALANCE', 1336))

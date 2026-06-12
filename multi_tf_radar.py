@@ -765,37 +765,50 @@ class MultiTFRadar:
 
             # ── V31.0 STRUCTURAL SL: Swing Low/High de baza — nu swing_broken immediate ──
             # Bug #08/#13: swing_broken.price era prea aproape de entry (BOS micro-impuls = 3 pip SL)
-            # Fix: cautam ultimul Swing Low structural SUB swing_broken (baza reala a impulsului)
-            # pentru BUY. Pentru SELL: ultimul Swing High structural DEASUPRA swing_broken.
-            # + 2 pip spread buffer (era 3 pip, insuficient pt spread la deschidere)
+            # V37.2: min 30 pips — fallback swing_broken interzis daca distanta < 30p
             h4_sl_price = None
             try:
                 _sl_pip = self._get_pip_size(symbol)
                 _sl_buffer = _sl_pip * 2  # V31.0: 2 pip spread buffer
+                _min_sl_dist = _sl_pip * 30  # V37.2: acelasi floor ca executorul
+                _ref_px = float(current_price) if current_price else float(choch_break_price)
                 _sb_price = float(latest_choch.swing_broken.price)
                 if choch_direction == 'bullish':
-                    # BUY: cauta Swing Low structural SUB swing_broken (baza reala a impulsului)
                     _all_lows_sl = smc_detector.detect_swing_lows(df)
                     _struct_lows = [s for s in _all_lows_sl
                                     if s.price < _sb_price and s.index < choch_index]
                     if _struct_lows:
-                        _struct_base = max(_struct_lows, key=lambda s: s.index)  # cel mai recent
+                        _struct_base = max(_struct_lows, key=lambda s: s.index)
                         h4_sl_price = float(_struct_base.price) - _sl_buffer
-                    else:
-                        h4_sl_price = _sb_price - _sl_buffer  # fallback: swing_broken direct
+                    if h4_sl_price is None or (_ref_px - h4_sl_price) < _min_sl_dist:
+                        _wide = [s for s in _all_lows_sl
+                                 if s.price < _ref_px and (_ref_px - s.price) >= _min_sl_dist]
+                        if _wide:
+                            _pick = max(_wide, key=lambda s: s.index)
+                            h4_sl_price = float(_pick.price) - _sl_buffer
                 else:
-                    # SELL: cauta Swing High structural DEASUPRA swing_broken (plafonul impulsului)
                     _all_highs_sl = smc_detector.detect_swing_highs(df)
                     _struct_highs = [s for s in _all_highs_sl
                                      if s.price > _sb_price and s.index < choch_index]
                     if _struct_highs:
-                        _struct_ceiling = max(_struct_highs, key=lambda s: s.index)  # cel mai recent
+                        _struct_ceiling = max(_struct_highs, key=lambda s: s.index)
                         h4_sl_price = float(_struct_ceiling.price) + _sl_buffer
-                    else:
-                        h4_sl_price = _sb_price + _sl_buffer  # fallback: swing_broken direct
-                _sl_pips_log = abs(choch_break_price - h4_sl_price) / _sl_pip if h4_sl_price else 0
-                print(f"  🛡️  [V31.0 STRUCT SL] {timeframe_display} base={h4_sl_price:.5f} "
-                      f"({_sl_pips_log:.1f}p de la CHoCH break | dir={choch_direction})")
+                    if h4_sl_price is None or (h4_sl_price - _ref_px) < _min_sl_dist:
+                        _wide = [s for s in _all_highs_sl
+                                 if s.price > _ref_px and (s.price - _ref_px) >= _min_sl_dist]
+                        if _wide:
+                            _pick = max(_wide, key=lambda s: s.index)
+                            h4_sl_price = float(_pick.price) + _sl_buffer
+                if h4_sl_price is not None:
+                    _sl_dist_pips = abs(_ref_px - h4_sl_price) / _sl_pip
+                    if _sl_dist_pips < 30:
+                        print(f"  ⚠️  [V37.2 MIN SL] {timeframe_display} {symbol}: "
+                              f"SL {_sl_dist_pips:.1f}p < 30p — nu scriem h4_sl in JSON")
+                        h4_sl_price = None
+                if h4_sl_price:
+                    _sl_pips_log = abs(choch_break_price - h4_sl_price) / _sl_pip
+                    print(f"  🛡️  [V31.0 STRUCT SL] {timeframe_display} base={h4_sl_price:.5f} "
+                          f"({_sl_pips_log:.1f}p de la CHoCH break | dir={choch_direction})")
                 sys.stdout.flush()
             except Exception as _sl_err:
                 print(f"  ⚠️ [V31.0 SL] Eroare calcul structural SL: {_sl_err}")
