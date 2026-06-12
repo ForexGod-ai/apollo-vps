@@ -360,7 +360,7 @@ class TelegramNotifier:
             return False
     
     def format_setup_alert(self, setup) -> str:
-        """Format trade setup for Telegram message - COMPACT CARD v11.8 (Radar & Sniper)"""
+        """Format scan card — V37.3: bias/strategy/FVG only; Entry/SL/TP la EXECUTE_NOW."""
         SEP = "───────────"
 
         # Direction from Daily CHoCH
@@ -371,18 +371,20 @@ class TelegramNotifier:
         # Load pair stats
         pair_stats = self._load_pair_statistics(setup.symbol)
 
-        # Status
-        status_emoji = "✅" if setup.status == 'READY' else "👀"
-        status = "READY" if setup.status == 'READY' else "MONITORING"
+        # V37.3: scan = setup detectat, nu execuție
+        status_emoji = "✅" if setup.status == 'READY' else "📋"
+        status = "READY" if setup.status == 'READY' else "SCAN OK"
 
         # Strategy type — V15.0: startswith suport pentru reversal_counter_w1 etc.
         strategy_type = getattr(setup, 'strategy_type', 'reversal').upper()
         if strategy_type.startswith('REVERSAL'):
             strategy_emoji = "🔄"
             strategy_label = "REVERSAL (CHoCH)"
+            wait_hint = "Waiting 4H CHoCH"
         else:
             strategy_emoji = "➡️"
             strategy_label = "CONTINUITY (BOS)"
+            wait_hint = "Waiting 4H BOS / Pullback"
 
         # --- HEADER ---
         header = f"{strategy_emoji} <b>{setup.symbol}</b> {direction} {emoji}\n"
@@ -421,22 +423,22 @@ class TelegramNotifier:
             quality = "Exc" if wr >= 60 else "Good" if wr >= 45 else "Avg"
             quality_line = f"\n✨ {quality} | 📊 {trades} trades"
 
-        # --- RADAR & SNIPER STATUS (V11.8) ---
-        # 4H = 📡 Radar (structural scan) → ✅ when CHoCH confirmed
-        # 1H = 🔭 Sniper (entry watch)    → ✅ when CHoCH confirmed
-        h1_choch = getattr(setup, 'h1_choch', None)
-        choch_1h_detected = getattr(setup, 'choch_1h_detected', False)
-
-        if h1_choch or choch_1h_detected:
-            price_1h = h1_choch.break_price if h1_choch else getattr(setup, 'choch_1h_price', 0)
-            h1_line = f"🔭✅ 1H: <code>{price_1h:.5f}</code> READY"
+        # --- TIMEFRAME STATUS (V37.3: la scan = așteptare, nu READY) ---
+        if setup.status == 'READY':
+            h1_choch = getattr(setup, 'h1_choch', None)
+            choch_1h_detected = getattr(setup, 'choch_1h_detected', False)
+            if h1_choch or choch_1h_detected:
+                price_1h = h1_choch.break_price if h1_choch else getattr(setup, 'choch_1h_price', 0)
+                h1_line = f"🔭 ✅ 1H: <code>{price_1h:.5f}</code>"
+            else:
+                h1_line = "🔭 1H: ⏳ Waiting..."
+            if setup.h4_choch:
+                h4_line = f"📡 ✅ 4H: <code>{setup.h4_choch.break_price:.5f}</code>"
+            else:
+                h4_line = "📡 4H: ⏳ Waiting..."
         else:
-            h1_line = "🔭 1H: Scanning..."
-
-        if setup.h4_choch:
-            h4_line = f"📡✅ 4H: <code>{setup.h4_choch.break_price:.5f}</code>"
-        else:
-            h4_line = "📡 4H: Waiting..."
+            h4_line = f"📡 4H: ⏳ {wait_hint}"
+            h1_line = "🔭 1H: ⏳ Waiting pullback + FVG"
 
         # Liquidity (compact)
         liquidity_line = ""
@@ -469,48 +471,128 @@ class TelegramNotifier:
             f"{h1_line}"
         )
 
-        # --- TRADE SECTION (compact) ---
-        account_balance = float(os.getenv('ACCOUNT_BALANCE', '10000'))
-        risk_percent = float(os.getenv('RISK_PER_TRADE', '0.02'))
-        risk_amount = account_balance * risk_percent
-        pip_value = 10
+        # V37.3: fără Entry/SL/TP la scan — vin la alerta EXECUTE_NOW
+        footer_section = (
+            f"\n{SEP}\n"
+            f"⏳ <b>Entry / SL / TP</b> — la semnal <b>EXECUTE NOW</b>\n"
+            f"⚡ Radar monitorizează 4H + 1H live"
+        )
 
-        # GUARD V11.2: dacă entry_price/stop_loss/take_profit sunt None
-        if setup.entry_price is None or setup.stop_loss is None or setup.take_profit is None:
-            trade_section = (
-                f"\n{SEP}\n"
-                f"💰 <b>TRADE</b>\n"
-                f"⚠️ Entry/SL/TP în calcul (MONITORING)\n"
-                f"⏳ Așteptăm confirmare 4H CHoCH + FVG"
-            )
-        else:
-            stop_distance = abs(setup.entry_price - setup.stop_loss)
-            lot_size = risk_amount / (stop_distance * pip_value * 100000) if stop_distance > 0 else 0.01
-            if lot_size < 0.01:
-                lot_size = 0.01
-
-            rr_str = f"1:{setup.risk_reward:.2f}" if setup.risk_reward else "N/A"
-            trade_section = (
-                f"\n{SEP}\n"
-                f"💰 <b>TRADE</b>\n"
-                f"🔹 Entry  <code>{setup.entry_price:.5f}</code>\n"
-                f"🔸 SL     <code>{setup.stop_loss:.5f}</code>\n"
-                f"🎯 TP     <code>{setup.take_profit:.5f}</code>\n"
-                f"💵 ${risk_amount:.2f} | 📦 {lot_size:.2f} lots | ⚖️ {rr_str}"
-            )
-
-        # --- ASSEMBLE: Compact Card V11.8 ---
+        # --- ASSEMBLE: Scan Card V37.3 ---
         message = (
             f"{header}"
             f"{swap_line}"
             f"{ai_fusion}"
             f"{quality_line}"
             f"{daily_section}"
-            f"{trade_section}"
+            f"{footer_section}"
         )
 
         return message.strip()
-    
+
+    def send_execute_now_alert(self, setup_data: dict, exec_tf: str = '?') -> bool:
+        """
+        V37.3: Trimis când radar setează EXECUTE_NOW=True.
+        Conține Entry / SL / TP structural (4H SL + D1 TP) — singura sursă de prețuri de trade.
+        """
+        try:
+            from pip_utils import get_pip_size, sl_pips_between, MIN_SL_PIPS
+
+            symbol = setup_data.get('symbol', 'UNKNOWN')
+            direction_raw = str(setup_data.get('direction', 'buy')).lower()
+            direction = 'BUY' if direction_raw in ('buy', 'long') else 'SELL'
+            dir_emoji = "🟢" if direction == 'BUY' else "🔴"
+            sep = UNIVERSAL_SEPARATOR
+
+            entry = (
+                setup_data.get('radar_4h_fvg_entry')
+                or setup_data.get('radar_1h_fvg_entry')
+                or setup_data.get('entry_price')
+            )
+            sl = setup_data.get('h4_sl_price') or setup_data.get('stop_loss')
+            tp = setup_data.get('daily_tp_price') or setup_data.get('daily_target_price') or setup_data.get('take_profit')
+
+            strategy = str(setup_data.get('strategy_type', 'unknown')).upper()
+            if strategy.startswith('CONTINUATION'):
+                strategy = 'CONTINUITY'
+            strategy = strategy.replace('_COUNTER_W1', '')
+
+            fvg_bot = setup_data.get('radar_4h_fvg_bottom') or setup_data.get('fvg_bottom') or setup_data.get('poi_bottom')
+            fvg_top = setup_data.get('radar_4h_fvg_top') or setup_data.get('fvg_top') or setup_data.get('poi_top')
+
+            swap_val = setup_data.get('swap_long') if direction == 'BUY' else setup_data.get('swap_short')
+            swap_line = ""
+            if swap_val is not None:
+                swap_status = "✅ CREDIT" if float(swap_val) >= 0 else "⚠️ DEBIT"
+                swap_line = f"\n💱 SWAP: {swap_status} | {float(swap_val):+.2f} pips/day"
+
+            w1_bias = setup_data.get('w1_bias', setup_data.get('daily_bias', ''))
+            w1_line = f"\n📅 W1: <b>{w1_bias}</b>" if w1_bias else ""
+
+            trade_block = ""
+            if entry and sl and tp:
+                try:
+                    entry_f = float(entry)
+                    sl_f = float(sl)
+                    tp_f = float(tp)
+                    sl_p = sl_pips_between(symbol, entry_f, sl_f)
+                    tp_p = sl_pips_between(symbol, entry_f, tp_f)
+                    rr = (tp_p / sl_p) if sl_p > 0 else 0
+                    rr_str = f"1:{rr:.2f}" if rr > 0 else "N/A"
+
+                    balance = float(os.getenv('ACCOUNT_BALANCE', '10000'))
+                    try:
+                        import json as _json
+                        from pathlib import Path
+                        th = Path(__file__).parent / 'trade_history.json'
+                        if th.exists():
+                            with open(th, encoding='utf-8') as _tf:
+                                bal = float(_json.load(_tf).get('account', {}).get('balance', 0))
+                            if bal > 0:
+                                balance = bal
+                    except Exception:
+                        pass
+                    pip_val = 8.33 if 'JPY' in symbol.upper() else 10.0
+                    risk_usd = balance * 0.05
+                    lots_est = round(risk_usd / (sl_p * pip_val), 2) if sl_p > 0 else 0.01
+                    lots_est = max(0.01, min(lots_est, 10.0))
+
+                    trade_block = (
+                        f"{sep}\n"
+                        f"🔹 Entry  <code>{entry_f:.5f}</code>\n"
+                        f"🔸 SL     <code>{sl_f:.5f}</code>  <i>({sl_p:.0f}p)</i>\n"
+                        f"🎯 TP     <code>{tp_f:.5f}</code>  <i>({tp_p:.0f}p)</i>\n"
+                        f"⚖️ R:R    {rr_str}\n"
+                        f"💵 ~${risk_usd:.0f} risk (5%) | 📦 ~{lots_est:.2f} lots"
+                    )
+                    if sl_p < MIN_SL_PIPS:
+                        trade_block += f"\n⚠️ SL {sl_p:.0f}p — executor recalculează live 4H (min {MIN_SL_PIPS}p)"
+                except (TypeError, ValueError) as _fmt_err:
+                    trade_block = f"\n⚠️ Prețuri incomplete — executor calculează live ({_fmt_err})"
+            else:
+                trade_block = f"\n⏳ SL/TP — executor calculează structural live (4H + D1)"
+
+            fvg_line = ""
+            if fvg_bot is not None and fvg_top is not None:
+                fvg_line = f"\n🎯 FVG {exec_tf}: <code>{float(fvg_bot):.5f}</code> – <code>{float(fvg_top):.5f}</code>"
+
+            msg = (
+                f"🔥 <b>EXECUTE NOW</b> — semnal activ\n"
+                f"{sep}\n"
+                f"{dir_emoji} <b>{symbol}</b> {direction}\n"
+                f"📡 Trigger: <b>{exec_tf}</b> | 🎯 {strategy}"
+                f"{swap_line}"
+                f"{w1_line}"
+                f"{fvg_line}"
+                f"{trade_block}\n"
+                f"{sep}\n"
+                f"⚡ Executor procesează în ~30s → cTrader"
+            )
+            return self.send_message(msg.strip(), parse_mode="HTML")
+        except Exception as e:
+            print(f"[ERROR] send_execute_now_alert failed for {setup_data.get('symbol', '?')}: {e}")
+            return False
+
     def _load_pair_statistics(self, symbol: str) -> dict:
         """Load pair statistics from trade_history.json"""
         try:

@@ -1561,6 +1561,7 @@ class MultiTFRadar:
                         logger.debug(f"[V32 RR SHIELD] {result.symbol}: date insuficiente (TP={_rr_tp}, SL={_rr_sl}) — fara shield")
 
                 if not _block_execute:
+                    _was_already_execute = setup.get('EXECUTE_NOW') is True
                     setup['EXECUTE_NOW'] = True
                     _exec_tf = result.priority_timeframe or '?'
                     _exec_tf_data = result.tf_1h if _exec_tf == '1H' else result.tf_4h
@@ -1577,6 +1578,13 @@ class MultiTFRadar:
                         f" | Zona: {_exec_zone}"
                         f" | Pret={result.current_price:.5f} | {_exec_eq}"
                     )
+                    # V37.3: Telegram EXECUTE NOW — o singură alertă per trigger (edge)
+                    if not _was_already_execute and not setup.get('entry1_filled'):
+                        try:
+                            from telegram_notifier import TelegramNotifier
+                            TelegramNotifier().send_execute_now_alert(setup, _exec_tf)
+                        except Exception as _en_alert_err:
+                            logger.warning(f"[V37.3] EXECUTE_NOW Telegram alert failed: {_en_alert_err}")
         elif not result.execution_ready and setup.get('EXECUTE_NOW') and not setup.get('entry1_filled'):
             # V31.0: Pretul a iesit din zona FVG — resetam EXECUTE_NOW (semnal expirat)
             setup.pop('EXECUTE_NOW', None)
