@@ -732,19 +732,16 @@ class TelegramNotifier:
                 raw_strat = str(setup.get('strategy_type', 'UNKNOWN')).upper()
                 if raw_strat in ('CONTINUATION',):
                     raw_strat = 'CONTINUITY'
-                # Color coding
+                # V37.2: bulina = directie (🟢 buy / 🔴 sell), nu albastru uniform
+                dot = "🔴" if dir_raw == 'sell' else "🟢"
                 if not h4_locked:
-                    dot = "🔵"
-                    # V30.1: eticheta diferentiata — CONTINUATION vaneaza BOS, REVERSAL vaneaza CHoCH
                     if raw_strat in ('CONTINUATION', 'CONTINUITY'):
                         status_suffix = " (Waiting 4H BOS / Pullback)"
                     else:
                         status_suffix = " (Waiting 4H CHoCH)"
                 elif dir_raw == 'sell':
-                    dot = "🔴"
                     status_suffix = "   (confirmed SELL)"
                 else:
-                    dot = "🟢"
                     status_suffix = "   (confirmed BUY)"
                 message += f"{dot} {symbol} ➔ {raw_strat}{status_suffix}\n"
 
@@ -812,18 +809,16 @@ class TelegramNotifier:
                 # Strip _counter_w1 suffix for display, keep core strategy name
                 raw_strat = raw_strat.replace('_COUNTER_W1', '')
                 h4_locked = sym_info.get('h4_structure_locked', sym_info.get('h4_bias_locked', True))
+                # V37.2: bulina = directie (🟢 buy / 🔴 sell), nu albastru uniform
+                dot = "🔴" if direction == 'sell' else "🟢"
                 if not h4_locked:
-                    dot = "🔵"
-                    # V30.1: eticheta diferentiata — CONTINUATION vaneaza BOS, REVERSAL vaneaza CHoCH
                     if raw_strat in ('CONTINUATION', 'CONTINUITY'):
                         status_suffix = " (Waiting 4H BOS / Pullback)"
                     else:
                         status_suffix = " (Waiting 4H CHoCH)"
                 elif direction == 'sell':
-                    dot = "🔴"
                     status_suffix = " (confirmed SELL)"
                 else:
-                    dot = "🟢"
                     status_suffix = " (confirmed BUY)"
                 report += f"{dot} {symbol} ➔ {raw_strat}{status_suffix}\n"
             report += "\n"
