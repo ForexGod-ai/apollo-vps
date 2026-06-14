@@ -195,7 +195,7 @@ class NewsCalendarMonitor:
         self._war_map_sent_file = Path(__file__).parent / 'data' / 'war_map_last_sent.txt'
         self._load_war_map_sent_week()  # restore from disk
         
-        # Timezone for Romania (GMT+2 / EET)
+        # Timezone for Romania (Europe/Bucharest — EET/EEST automatic)
         if HAS_PYTZ:
             self.local_tz = pytz.timezone('Europe/Bucharest')
             self.utc_tz = pytz.UTC
@@ -237,7 +237,96 @@ class NewsCalendarMonitor:
         
         # Major currencies we trade
         self.major_currencies = ['USD', 'EUR', 'GBP', 'JPY', 'AUD', 'NZD', 'CAD', 'CHF']
-    
+
+    def _format_ro_time(self, dt) -> tuple:
+        """Convert event time to Romania local — returns (HH:MM, EET|EEST)."""
+        if self.local_tz:
+            if dt.tzinfo is None:
+                dt = self.utc_tz.localize(dt)
+            local = dt.astimezone(self.local_tz)
+            label = local.tzname() or 'RO'
+            return local.strftime('%H:%M'), label
+        return dt.strftime('%H:%M'), 'RO'
+
+    def _load_calendar_events(self, days_ahead: int = 7) -> List['NewsEvent']:
+        """V37.15: upcoming_news.json (UTC ISO) → manual calendar → cTrader."""
+        events = self.fetch_upcoming_news_json(days_ahead=days_ahead)
+        if events:
+            logger.info(f"📡 Using upcoming_news.json ({len(events)} events)")
+            return events
+        events = self.fetch_manual_calendar(days_ahead=days_ahead)
+        if events:
+            return events
+        return self.fetch_ctrader_calendar(days_ahead=days_ahead)
+
+    def fetch_upcoming_news_json(self, days_ahead: int = 7) -> List['NewsEvent']:
+        """Load events from data/upcoming_news.json (datetime_utc from news_fetcher)."""
+        try:
+            import json as _json
+            news_file = Path(__file__).parent / 'data' / 'upcoming_news.json'
+            if not news_file.exists():
+                return []
+
+            with open(news_file, 'r', encoding='utf-8') as f:
+                payload = _json.load(f)
+
+            if isinstance(payload, dict):
+                raw_events = payload.get('events', [])
+            elif isinstance(payload, list):
+                raw_events = payload
+            else:
+                return []
+
+            if not raw_events:
+                return []
+
+            now = datetime.now(self.local_tz) if self.local_tz else datetime.now()
+            end_date = now + timedelta(days=days_ahead)
+            events = []
+
+            for e in raw_events:
+                try:
+                    impact_raw = str(e.get('impact', '')).strip()
+                    impact_norm = impact_raw.lower()
+                    if impact_norm not in ('high', 'high impact expected', 'red'):
+                        continue
+
+                    currency = e.get('currency', '')
+                    if currency not in self.major_currencies:
+                        continue
+
+                    dt_str = e.get('datetime_utc') or e.get('datetime', '')
+                    if not dt_str:
+                        continue
+
+                    event_dt = datetime.fromisoformat(str(dt_str).replace('Z', '+00:00'))
+                    if event_dt.tzinfo is None:
+                        event_dt = self.utc_tz.localize(event_dt)
+                    event_local = event_dt.astimezone(self.local_tz)
+
+                    if event_local < now or event_local > end_date:
+                        continue
+
+                    impact = 'High Impact Expected' if impact_norm != 'high impact expected' else impact_raw
+                    events.append(NewsEvent(
+                        time=event_local,
+                        currency=currency,
+                        impact=impact,
+                        event=e.get('event', 'Unknown'),
+                        actual='',
+                        forecast=str(e.get('forecast', '') or ''),
+                        previous=str(e.get('previous', '') or ''),
+                    ))
+                except Exception as ex:
+                    logger.debug(f"upcoming_news parse skip: {ex}")
+                    continue
+
+            logger.info(f"✅ Loaded {len(events)} events from upcoming_news.json")
+            return events
+        except Exception as e:
+            logger.warning(f"⚠️ upcoming_news.json unavailable: {e}")
+            return []
+
     def fetch_manual_calendar(self, days_ahead: int = 7) -> List[NewsEvent]:
         """
         Fetch events from local JSON file
@@ -306,16 +395,13 @@ class NewsCalendarMonitor:
                             hour=int(time_parts[0]),
                             minute=int(time_parts[1])
                         )
-                        # V14.5 FIX: timpii din economic_calendar.json sunt în EET (ora României)
-                        # Verificat: 07:30 EET = Cash Rate RBA, 17:00 EET = ISM/NFP etc.
-                        # Dacă un eveniment e în UTC explicit, adaugă 'tz': 'UTC' în JSON.
-                        tz_field = e.get('tz', 'EET').upper()
-                        if tz_field == 'UTC':
-                            # Explicit UTC: conversie la Romania time
-                            event_date = self.utc_tz.localize(event_date).astimezone(self.local_tz)
-                        else:
-                            # Default: EET — ora din JSON = ora română directă
+                        # V37.15: economic_calendar.json stores UTC/GMT times (see add_monthly_events.py).
+                        # Use tz:'EET' or tz:'RO' only if the time is already Romania local.
+                        tz_field = e.get('tz', 'UTC').upper()
+                        if tz_field in ('EET', 'EEST', 'RO', 'BUCHAREST', 'LOCAL'):
                             event_date = self.local_tz.localize(event_date)
+                        else:
+                            event_date = self.utc_tz.localize(event_date).astimezone(self.local_tz)
                     else:
                         event_date = event_date.replace(hour=9, minute=0)
                         event_date = self.local_tz.localize(event_date)
@@ -378,7 +464,9 @@ class NewsCalendarMonitor:
             for e in raw_events:
                 try:
                     event_time = datetime.strptime(e['time'], '%Y-%m-%d %H:%M:%S')
-                    
+                    if self.utc_tz and event_time.tzinfo is None:
+                        event_time = self.utc_tz.localize(event_time).astimezone(self.local_tz)
+
                     event = NewsEvent(
                         time=event_time,
                         currency=e['currency'],
@@ -1131,7 +1219,8 @@ class NewsCalendarMonitor:
         week_str = f"W{coming_monday.strftime('%W')} • {coming_monday.strftime('%d %b')} – {(coming_monday + timedelta(days=4)).strftime('%d %b %Y')}"
 
         msg  = f"📋 <b>WAR MAP — {week_str}</b>\n"
-        msg += f"🕐 <i>Emis Duminică {now.strftime('%H:%M')} EET</i>\n"
+        _hdr_time, _hdr_tz = self._format_ro_time(now)
+        msg += f"🕐 <i>Emis Duminică {_hdr_time} {_hdr_tz}</i>\n"
         msg += SEP + "\n"
 
         if not days:
@@ -1145,7 +1234,7 @@ class NewsCalendarMonitor:
                 msg   += SEP + "\n"
                 for et, e in devts:
                     flag = _FLAGS.get(e.currency, "🏴")
-                    tstr = et.strftime("%H:%M")
+                    tstr, tz_label = self._format_ro_time(et)
                     # Critical badge
                     is_critical = any(
                         kw.lower() in e.event.lower()
@@ -1155,7 +1244,7 @@ class NewsCalendarMonitor:
                     badge = "🔥 " if is_critical else "⚠️ "
                     fc_str = f" · F:<code>{e.forecast}</code>" if e.forecast else ""
                     msg += f"{badge}{flag} <b>{e.currency}</b> — {e.event}\n"
-                    msg += f"   🕐 <code>{tstr} EET</code>{fc_str}\n"
+                    msg += f"   🕐 <code>{tstr} {tz_label}</code>{fc_str}\n"
                 msg += "\n"
 
         msg += SEP + "\n"
@@ -1248,12 +1337,7 @@ class NewsCalendarMonitor:
         
         # Try manual calendar first (most reliable - updated monthly)
         logger.info("📖 Loading manual economic calendar...")
-        all_events = self.fetch_manual_calendar(days_ahead=7)
-        
-        # Try cTrader Desktop API as backup (if EconomicCalendarBot is running)
-        if not all_events:
-            logger.warning("⚠️ Manual calendar empty, trying cTrader Desktop API...")
-            all_events = self.fetch_ctrader_calendar(days_ahead=7)
+        all_events = self._load_calendar_events(days_ahead=7)
         
         # NO ForexFactory fallback - it crashes Chrome and has Cloudflare protection
         # Manual calendar should be updated monthly using add_monthly_events.py
@@ -1318,7 +1402,7 @@ class NewsCalendarMonitor:
             if needs_refresh:
                 logger.info(f"🔄 Refreshing event cache (iteration #{iteration})...")
                 try:
-                    raw = self.fetch_manual_calendar(days_ahead=8)
+                    raw = self._load_calendar_events(days_ahead=8)
                     if not raw:
                         raw = self.fetch_ctrader_calendar(days_ahead=8)
                     cached_events = self.filter_high_impact_events(raw)
@@ -1338,7 +1422,7 @@ class NewsCalendarMonitor:
                 if self._should_send_war_map():
                     logger.info("📋 Sunday 23:00 detected — sending WAR MAP...")
                     # Fetch full next-week events (not just cached 8 days)
-                    raw_wm = self.fetch_manual_calendar(days_ahead=7)
+                    raw_wm = self._load_calendar_events(days_ahead=7)
                     if not raw_wm:
                         raw_wm = self.fetch_ctrader_calendar(days_ahead=7)
                     war_msg = self.format_war_map(raw_wm)

@@ -130,8 +130,11 @@ def update_calendar():
         with open(calendar_file, 'r', encoding='utf-8') as f:
             calendar_data = json.load(f)
         
-        # Update with new events
-        calendar_data["custom_events_june_2026"] = JUNE_2026_EVENTS
+        # Update with new events — times are UTC/GMT (ForexFactory mirror convention)
+        calendar_data["custom_events_june_2026"] = [
+            {**event, "tz": event.get("tz", "UTC")}
+            for event in JUNE_2026_EVENTS
+        ]
         
         # Save
         with open(calendar_file, 'w', encoding='utf-8') as f:

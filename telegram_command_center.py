@@ -1666,10 +1666,15 @@ class TelegramCommandCenter:
             # ── Group by day and display ALL events
             current_day = None
             for dt, e in upcoming:
-                # ✅ FIX: Convert UTC→Romania FIRST, then use dt_ro for both day label and time
-                _offset_h = 3 if 4 <= dt.month <= 10 else 2   # EEST Apr-Oct (+3), EET Nov-Mar (+2)
-                dt_ro = dt + timedelta(hours=_offset_h)
-                day_label = dt_ro.strftime('%A, %d %b').upper()   # e.g. WEDNESDAY, 01 APR (Romania time)
+                try:
+                    import pytz as _pytz_news
+                    _ro = _pytz_news.timezone('Europe/Bucharest')
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=timezone.utc)
+                    dt_ro = dt.astimezone(_ro)
+                except Exception:
+                    dt_ro = dt + timedelta(hours=3)
+                day_label = dt_ro.strftime('%A, %d %b').upper()
                 if day_label != current_day:
                     if current_day is not None:
                         msg += "\n"
@@ -1681,7 +1686,7 @@ class TelegramCommandCenter:
                 name     = e.get('event', 'N/A')
                 fc       = e.get('forecast', '') or '—'
                 prev     = e.get('previous', '') or '—'
-                tstr = dt_ro.strftime('%H:%M EET')
+                tstr = f"{dt_ro.strftime('%H:%M')} {dt_ro.tzname() or 'RO'}"
 
                 # Countdown
                 delta_s = (dt - now).total_seconds()
