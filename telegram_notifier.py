@@ -601,7 +601,7 @@ class TelegramNotifier:
                 f"{trade_block}\n"
                 f"{sep}\n"
                 f"📡 Semnal confirmat — executor trimite la cTrader\n"
-                f"🔔 Alertă separată doar când tranzacția e executată"
+                f"🔔 La fill: <b>GLITCH ACTIVATED</b> (Position Monitor)"
             )
             return self.send_message(msg.strip(), parse_mode="HTML")
         except Exception as e:

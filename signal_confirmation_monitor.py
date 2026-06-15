@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
 V5.0 ZERO-LATENCY: Signal Confirmation Monitor
-Watches trade_confirmations.json and sends Telegram alerts
+Watches execution_report.json / trade_confirmations.json — logging + rejections only.
+Fill Telegram disabled V37.16 (position_monitor → GLITCH ACTIVATED).
 
 Glitch in Matrix by ФорексГод
 """
@@ -194,7 +195,10 @@ class SignalConfirmationMonitor:
         return True
 
     def _send_execution_notification(self, data: dict):
-        """Send execution confirmation to Telegram"""
+        """
+        V37.16: Fără Telegram la fill — position_monitor trimite deja GLITCH ACTIVATED.
+        Monitorul rămâne activ doar pentru logging + dedup + rejections.
+        """
         symbol = data.get('Symbol', 'Unknown')
         direction = data.get('Direction', 'unknown')
         order_id = data.get('OrderId', 'N/A')
@@ -207,38 +211,22 @@ class SignalConfirmationMonitor:
         if volume_lots < 0.01:
             logger.warning(
                 f"⚠️ Confirmare suspecta {symbol}: volume={volume_lots:.4f} lots — "
-                f"nu trimitem EXECUTAT (posibil ghost/stale)"
+                f"ignorat (posibil ghost/stale)"
             )
             return
 
         if not self._prices_plausible(symbol, direction, entry, sl, tp):
             logger.warning(
                 f"⚠️ Confirmare suspecta {symbol}: preturi invalide "
-                f"entry={entry} sl={sl} tp={tp} — skip Telegram"
+                f"entry={entry} sl={sl} tp={tp} — ignorat"
             )
             return
-        
-        direction_emoji = "🟢" if direction.lower() in ('buy', 'long') else "🔴"
-        direction_label = "BUY" if direction.lower() in ('buy', 'long') else "SELL"
-        sep = "────────────────"
 
-        message = (
-            f"✅ <b>TRANZACȚIE EXECUTATĂ</b> — cTrader fill\n"
-            f"{sep}\n"
-            f"{direction_emoji} <b>{symbol}</b> {direction_label}\n"
-            f"🎫 Order ID: <code>{order_id}</code>\n"
-            f"📦 Volume: <code>{volume_lots:.2f}</code> lots\n"
-            f"{sep}\n"
-            f"🔹 Entry  <code>{entry:.5f}</code>\n"
-            f"🔸 SL     <code>{sl:.5f}</code>\n"
-            f"🎯 TP     <code>{tp:.5f}</code>"
+        logger.success(
+            f"[V37.16] Fill confirmat (fără Telegram): {symbol} {direction.upper()} "
+            f"#{order_id} | {volume_lots:.2f} lots @ {entry:.5f} — "
+            f"Position Monitor → GLITCH ACTIVATED"
         )
-        
-        try:
-            self.telegram.send_message(message.strip(), parse_mode="HTML")
-            logger.success(f"✅ Execution notification sent: {symbol}")
-        except Exception as e:
-            logger.error(f"❌ Failed to send notification: {e}")
     
     def _send_rejection_notification(self, data: dict):
         """Send rejection notification to Telegram"""
