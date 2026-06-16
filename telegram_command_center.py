@@ -480,200 +480,133 @@ class TelegramCommandCenter:
 
     def handle_monitoring_command(self):
         """
-        /monitoring — BROKER-VERIFIED overview.
-        Cross-references monitoring_setups.json with active_positions.json
-        to show only REAL positions as LIVE, and flags desync.
+        V37.17: /monitoring — setup-uri în pândă (JSON + radar).
+        Poziții live la broker → folosește /active
         """
+        _WATCHING = frozenset({
+            'MONITORING', 'READY', 'WAITING_D1_PULLBACK',
+            'WAITING_4H_CHOCH', 'WAITING_1H_CHOCH', 'WAITING_4H_PULLBACK',
+            'WAITING_POSITION_CLOSE',
+        })
+
+        def _setup_radar_hint(s: dict) -> str:
+            if s.get('EXECUTE_NOW'):
+                return '🔥 EXECUTE_NOW'
+            if s.get('radar_1h_in_fvg') or s.get('radar_4h_in_fvg'):
+                return '🎯 In FVG'
+            if s.get('radar_1h_choch_detected') or s.get('choch_1h_detected'):
+                return '⏳ CHoCH → aștept FVG'
+            verdict = (s.get('radar_verdict') or '')[:40]
+            return verdict or s.get('status', '?')
+
         try:
-            # ─── LOAD MONITORING SETUPS ───
             if not self.monitoring_file.exists():
                 return "❌ <b>No monitoring setups found!</b>\n\n<code>monitoring_setups.json</code> missing."
-            
+
             try:
                 with open(self.monitoring_file, 'r', encoding='utf-8') as f:
                     raw = f.read().strip()
-                if not raw:
-                    data = {}
-                else:
-                    data = json.loads(raw)
+                data = json.loads(raw) if raw else {}
             except (json.JSONDecodeError, ValueError):
                 data = {}
-            
+
             if isinstance(data, list):
                 setups = data
             elif isinstance(data, dict):
                 setups = data.get('setups', [])
             else:
                 setups = []
-            
-            # ─── LOAD REAL BROKER POSITIONS ───
+
             broker = self._load_broker_positions()
             broker_symbols = set(broker.keys())
-            
-            # ─── AUTO-EXPIRE stale ACTIVE setups not at broker ───
-            expired_count = self._expire_stale_actives(setups, broker_symbols)
-            
-            # ─── RE-CLASSIFY after cleanup ───
-            monitoring_setups = [s for s in setups if s.get('status') == 'MONITORING']
-            confirmed_live = [s for s in setups if s.get('status') == 'ACTIVE' and s.get('symbol') in broker_symbols]
-            desync_setups = [s for s in setups if s.get('status') == 'ACTIVE' and s.get('symbol') not in broker_symbols]
-            expired_setups = [s for s in setups if s.get('status') == 'EXPIRED']
-            
             total_broker = sum(len(v) for v in broker.values())
-            
-            if not monitoring_setups and not confirmed_live and not broker_symbols:
-                return "⚪ <b>All clear</b>\n\nNo setups in pândă, no positions at broker.\nWaiting for new opportunities."
-            
+            expired_count = self._expire_stale_actives(setups, broker_symbols)
+
+            watching = [s for s in setups if s.get('status') in _WATCHING]
+            trade_open = [s for s in setups if s.get('status') == 'TRADE_OPEN']
+            desync_setups = [
+                s for s in setups
+                if s.get('status') == 'ACTIVE' and s.get('symbol') not in broker_symbols
+            ]
+            execute_now = [s for s in watching if s.get('EXECUTE_NOW')]
+
+            if not watching and not broker_symbols:
+                return (
+                    "⚪ <b>Nicio pândă activă</b>\n\n"
+                    "Nu există setup-uri în <code>monitoring_setups.json</code> "
+                    "și nici poziții la broker.\n"
+                    "Așteptăm următorul scan sau semnal radar."
+                )
+
             message = (
-                f"<b>🎯 COMMAND CENTER — BROKER VERIFIED</b>\n"
+                f"<b>👁️ SETUP-URI ÎN PÂNDĂ</b>\n"
                 f"{UNIVERSAL_SEPARATOR}\n\n"
-                f"👁️ Pândă: <b>{len(monitoring_setups)}</b> | "
-                f"🔥 Live: <b>{len(confirmed_live)}</b> ({total_broker} pos) | "
-                f"🧹 Expired: <b>{expired_count}</b>\n"
+                f"📋 Total pândă: <b>{len(watching)}</b>"
             )
+            if execute_now:
+                message += f" | 🔥 EXECUTE_NOW: <b>{len(execute_now)}</b>"
+            if trade_open:
+                message += f" | 📂 TRADE_OPEN: <b>{len(trade_open)}</b>"
+            message += "\n"
+
+            if total_broker:
+                message += (
+                    f"\n💡 Live la broker: <b>{total_broker}</b> poziții — "
+                    f"detalii: <code>/active</code>\n"
+                )
             
-            # ═══ SECTION 1: 🔥 LIVE AT BROKER (confirmed by active_positions.json) ═══
-            if broker_symbols:
+            if watching:
                 message += f"\n{UNIVERSAL_SEPARATOR}\n"
-                message += "🔥 <b>LIVE LA BROKER</b> (confirmed)\n\n"
-                
-                idx = 0
-                for sym in sorted(broker_symbols):
-                    positions = broker[sym]
-                    for pos in positions:
-                        idx += 1
-                        direction = pos.get('direction', '?')
-                        entry = pos.get('entry_price', 0)
-                        profit = pos.get('net_profit', 0)
-                        pips = pos.get('pips', 0)
-                        sl = pos.get('stop_loss')
-                        tp = pos.get('take_profit')
-                        
-                        dir_emoji = "🟢" if direction in ('buy', 'BUY') else "🔴"
-                        dir_label = direction.upper()
-                        
-                        # Profit coloring
-                        if profit > 0:
-                            pl_emoji = "💚"
-                            pl_text = f"+${profit:.2f}"
-                        elif profit < 0:
-                            pl_emoji = "❤️"
-                            pl_text = f"-${abs(profit):.2f}"
-                        else:
-                            pl_emoji = "💛"
-                            pl_text = "$0.00"
-                        
-                        sl_text = f"{sl:.5f}" if sl else "NONE ⚠️"
-                        tp_text = f"{tp:.5f}" if tp else "NONE ⚠️"
-                        
-                        # ✅ V10.9 CARRY MATRIX: find swap data for this live position from setups
-                        live_carry_line = ""
-                        live_triple_line = ""
-                        matching_setup = next(
-                            (s for s in setups if s.get('symbol', '').upper() == sym.upper()),
-                            None
-                        )
-                        if matching_setup:
-                            swap_long  = matching_setup.get('swap_long')
-                            swap_short = matching_setup.get('swap_short')
-                            swap_triple_day = matching_setup.get('swap_triple_day')
-                            if swap_long is not None and swap_short is not None:
-                                relevant_swap = swap_long if direction.lower() in ('buy', 'long') else swap_short
-                                swap_status = "✅ CREDIT" if relevant_swap > 0 else "⚠️ COST"
-                                swap_str = f"+{relevant_swap:.4f}" if relevant_swap > 0 else f"{relevant_swap:.4f}"
-                                live_carry_line = f"   💱 <b>CARRY:</b> {swap_status} <code>{swap_str} pips/zi</code>\n"
-                                if swap_triple_day:
-                                    from datetime import datetime as _dt
-                                    if _dt.now().strftime('%A').lower() == swap_triple_day.lower():
-                                        t3 = relevant_swap * 3
-                                        live_triple_line = f"   🔥 <b>TRIPLE SWAP DISEARĂ!</b> <code>{'%+.4f' % t3} pips</code>\n"
-                        
-                        message += (
-                            f"<b>{idx}.</b> <code>{sym}</code> {dir_emoji} <b>{dir_label}</b>\n"
-                            f"   📍 Entry: <code>{entry:.5f}</code>\n"
-                            f"   🛡️ SL: <code>{sl_text}</code> | 🎯 TP: <code>{tp_text}</code>\n"
-                            f"   {pl_emoji} P/L: <code>{pl_text}</code> ({pips:+.1f} pips)\n"
-                            f"{live_carry_line}"
-                            f"{live_triple_line}"
-                            f"\n"
-                        )
-            
-            # ═══ SECTION 2: 👁️ PÂNDĂ ACTIVĂ (waiting for confirmation) ═══
-            if monitoring_setups:
-                message += f"{UNIVERSAL_SEPARATOR}\n"
-                message += "👁️ <b>PÂNDĂ ACTIVĂ</b> (waiting 1H CHoCH)\n\n"
-                
-                monitoring_sorted = sorted(monitoring_setups, key=lambda x: x.get('ml_score', 0), reverse=True)
-                
-                for idx, setup in enumerate(monitoring_sorted[:10], 1):
+                message += "<b>📡 RADAR / SCANNER</b>\n\n"
+
+                watching_sorted = sorted(
+                    watching,
+                    key=lambda x: (0 if x.get('EXECUTE_NOW') else 1, x.get('symbol', '')),
+                )
+
+                for idx, setup in enumerate(watching_sorted[:15], 1):
                     symbol = setup.get('symbol', 'UNKNOWN')
-                    direction = setup.get('direction', '?')
-                    entry = setup.get('entry_price') or 0.0
-                    risk_reward = setup.get('risk_reward') or 0.0
-                    ml_score = setup.get('ml_score', 0)
-                    ai_prob = setup.get('ai_probability', 0)
-                    
-                    dir_emoji = "🟢" if direction in ('buy', 'BUY', 'LONG') else "🔴"
-                    dir_label = direction.upper()
-                    
-                    if ml_score >= 70:
-                        stars = "⭐⭐⭐"
-                    elif ml_score >= 50:
-                        stars = "⭐⭐"
-                    else:
-                        stars = "⭐"
-                    
-                    # ✅ V10.9 CARRY MATRIX: Build swap analysis line
-                    swap_long  = setup.get('swap_long')
-                    swap_short = setup.get('swap_short')
-                    swap_triple_day = setup.get('swap_triple_day')
+                    direction = str(setup.get('direction', '?')).upper()
+                    status = setup.get('status', '?')
+                    strategy = str(setup.get('strategy_type', '?')).upper()[:3]
+                    locked = '🔒' if setup.get('strategy_locked') or setup.get('h4_structure_locked') else '🔓'
+                    dir_emoji = "🟢" if direction in ('BUY', 'LONG') else "🔴"
+                    hint = _setup_radar_hint(setup)
+
                     carry_line = ""
-                    triple_line = ""
-                    
+                    swap_long = setup.get('swap_long')
+                    swap_short = setup.get('swap_short')
                     if swap_long is not None and swap_short is not None:
-                        dir_lower = direction.lower()
-                        relevant_swap = swap_long if dir_lower in ('buy', 'long') else swap_short
-                        if relevant_swap > 0:
-                            swap_status = f"✅ POZITIV"
-                            swap_value  = f"+{relevant_swap:.4f} pips/zi"
-                        else:
-                            swap_status = f"⚠️ NEGATIV"
-                            swap_value  = f"{relevant_swap:.4f} pips/zi"
-                        carry_line = f"   💱 <b>CARRY:</b> {swap_status} | <code>{swap_value}</code>\n"
-                        
-                        # Triple swap alert
-                        if swap_triple_day:
-                            from datetime import datetime as _dt
-                            today_name = _dt.now().strftime('%A')  # e.g. "Wednesday"
-                            if today_name.lower() == swap_triple_day.lower():
-                                triple_mult = relevant_swap * 3
-                                triple_sign = f"+{triple_mult:.4f}" if triple_mult > 0 else f"{triple_mult:.4f}"
-                                triple_line = f"   🔥 <b>TRIPLE SWAP DISEARĂ!</b> Profit/Cost x3 = <code>{triple_sign} pips</code>\n"
-                    
+                        rel = swap_long if direction in ('BUY', 'LONG') else swap_short
+                        carry_line = f" | 💱 <code>{rel:+.2f}p/d</code>"
+
                     message += (
-                        f"<b>{idx}.</b> <code>{symbol}</code> {dir_emoji} <b>{dir_label}</b>\n"
-                        f"   📊 ML: <code>{ml_score}/100</code> {stars} | 🧠 AI: <code>{ai_prob}%</code>\n"
-                        f"   💰 Entry: <code>{entry:.5f}</code> | ⚖️ RR: <code>1:{risk_reward:.1f}</code>\n"
-                        f"{carry_line}"
-                        f"{triple_line}"
-                        f"\n"
+                        f"<b>{idx}.</b> {dir_emoji} <code>{symbol}</code> "
+                        f"<b>{direction}</b> [{strategy}-{locked}]\n"
+                        f"   📌 <code>{status}</code> — {hint}{carry_line}\n\n"
                     )
-                
-                if len(monitoring_setups) > 10:
-                    message += f"<i>... and {len(monitoring_setups) - 10} more in pândă</i>\n"
-            
-            # ═══ SECTION 3: ⚠️ DESYNC (ACTIVE in JSON but NOT at broker) ═══
+
+                if len(watching) > 15:
+                    message += f"<i>… + {len(watching) - 15} setup-uri</i>\n"
+
+            elif total_broker:
+                message += (
+                    f"\n<i>Niciun setup în pândă în JSON — "
+                    f"<code>/status</code> pentru health sistem.</i>\n"
+                )
+
             if desync_setups:
-                message += f"{UNIVERSAL_SEPARATOR}\n"
-                message += "⚠️ <b>DESYNC</b> (in JSON, not at broker)\n\n"
-                
+                message += f"\n{UNIVERSAL_SEPARATOR}\n"
+                message += "⚠️ <b>DESYNC</b> (ACTIVE în JSON, lipsă la broker)\n\n"
                 for setup in desync_setups:
-                    symbol = setup.get('symbol', '?')
-                    direction = setup.get('direction', '?').upper()
-                    message += f"   ⚠️ <code>{symbol}</code> {direction} — <i>ghost position</i>\n"
-                
+                    sym = setup.get('symbol', '?')
+                    dr = setup.get('direction', '?').upper()
+                    message += f"   ⚠️ <code>{sym}</code> {dr} — ghost\n"
                 message += "\n"
-            
+
+            if expired_count:
+                message += f"🧹 Auto-expired ghost ACTIVE: <code>{expired_count}</code>\n"
+
             return message
             
         except Exception as e:
@@ -1840,7 +1773,7 @@ class TelegramCommandCenter:
                         f"<b>🎮 COMMAND CENTER V11.5</b>\n"
                         f"{sep}\n\n"
                         f"🔓 <b>PUBLIC</b>\n"
-                        f"<code>/monitoring</code> — Setup-uri pândite active\n"
+                        f"<code>/monitoring</code> — Setup-uri în pândă (JSON/radar)\n"
                         f"<code>/stats</code> — Statistici zilnice trading\n"
                         f"<code>/weekly</code> — Raport 7 zile (P&amp;L, WR, best/worst)\n"
                         f"<code>/status</code> — Health check sistem\n"
@@ -1860,7 +1793,7 @@ class TelegramCommandCenter:
                         f"<b>🎮 COMMAND CENTER V11.5</b>\n"
                         f"{sep}\n\n"
                         f"🔓 <b>COMENZI DISPONIBILE</b>\n"
-                        f"<code>/monitoring</code> — Setup-uri pândite active\n"
+                        f"<code>/monitoring</code> — Setup-uri în pândă (JSON/radar)\n"
                         f"<code>/stats</code> — Statistici zilnice trading\n"
                         f"<code>/weekly</code> — Raport săptămânal P&amp;L\n"
                         f"<code>/status</code> — Stare tehnică sistem\n"
