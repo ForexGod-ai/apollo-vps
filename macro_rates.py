@@ -79,6 +79,8 @@ PAIRS_CONFIG_FILE = ROOT / "pairs_config.json"
 SWAP_FETCH_TIMEOUT_SEC = 3
 SWAP_COL_SIZE = 8
 SWAP_COL_WIDTH = 22
+CARRY_PAIR_WIDTH = 8
+CARRY_SPREAD_WIDTH = 6
 CARRY_MEDALS = ("🥇", "🥈", "🥉")
 
 MIN_LIVE_CURRENCIES = 6
@@ -357,9 +359,17 @@ def _swap_cbot_base_url() -> str:
         return "http://localhost:8010"
 
 
-def _format_swap_chip(symbol: str, swap_long: float, swap_short: float) -> str:
-    """Compact: GBPJPY +1.17/-2.32"""
+def _format_swap_entry(symbol: str, swap_long: float, swap_short: float) -> str:
+    """Raw swap cell: GBPJPY +1.17/-2.32"""
     return f"{symbol} {swap_long:+.2f}/{swap_short:+.2f}"
+
+
+def _format_carry_row(item: dict) -> str:
+    """Monospaced carry row: pair(8) + spread(6) + rate math."""
+    pair = f"{item['base']}/{item['quote']}"
+    spread = f"+{item['spread']:.2f}%"
+    calc = f"{item['base_rate']:.2f}-{item['quote_rate']:.2f}"
+    return f"{pair:<{CARRY_PAIR_WIDTH}}{spread:>{CARRY_SPREAD_WIDTH}}  {calc}"
 
 
 def _chunked(items: List[str], size: int) -> List[List[str]]:
@@ -371,13 +381,14 @@ def _format_two_columns(
     right: List[str],
     width: int = SWAP_COL_WIDTH,
 ) -> str:
-    """Monospace grid: equal rows, left column padded."""
+    """Monospace grid: left column ljust(width), right column flush."""
     rows = max(len(left), len(right))
     lines = []
     for i in range(rows):
-        l_cell = left[i] if i < len(left) else ""
-        r_cell = right[i] if i < len(right) else ""
-        lines.append(f"{l_cell:<{width}}{r_cell}")
+        l_raw = left[i] if i < len(left) else ""
+        r_raw = right[i] if i < len(right) else ""
+        l_cell = l_raw.ljust(width) if l_raw else " " * width
+        lines.append(f"{l_cell}{r_raw}")
     return "\n".join(lines)
 
 
@@ -436,7 +447,7 @@ def format_rates_telegram_message(
     force_refresh: bool = True,
     notify_on_change: bool = True,
 ) -> str:
-    """Build compact /rates Telegram HTML card (V38.4)."""
+    """Build compact /rates Telegram HTML card (V38.5)."""
     rates, source, fetched_at, changes = get_effective_rates(force_refresh=force_refresh)
     badge = _source_badge(source, fetched_at)
 
@@ -475,31 +486,25 @@ def format_rates_telegram_message(
         msg += "  ".join(f"{cell:<14}" for cell in row) + "\n"
     msg += "</code>\n"
 
-    # Top carry — aligned rows
+    # Top carry — monospace rows (medal outside <code> for Telegram alignment)
     top3 = get_top_carry_pairs(rates, 3)
-    msg += f"\n{separator}\n<b>🎯 CARRY SPREADS</b>\n<code>"
+    msg += f"\n{separator}\n<b>🎯 CARRY SPREADS</b>\n"
     for i, item in enumerate(top3):
-        b, q = item["base"], item["quote"]
-        msg += (
-            f"{CARRY_MEDALS[i]} {b}/{q:<7} +{item['spread']:>5.2f}%"
-            f"   {item['base_rate']:.2f} − {item['quote_rate']:.2f}\n"
-        )
-    msg += "</code>\n\n"
+        msg += f"{CARRY_MEDALS[i]} <code>{_format_carry_row(item)}</code>\n"
+    msg += "\n"
 
     if include_swaps:
         swaps = fetch_ic_markets_swaps()
         msg += f"{separator}\n"
         if swaps:
-            chips = [
-                _format_swap_chip(s["symbol"], s["swap_long"], s["swap_short"])
+            entries = [
+                _format_swap_entry(s["symbol"], s["swap_long"], s["swap_short"])
                 for s in swaps
             ]
-            mid = (len(chips) + 1) // 2
-            left_col = chips[:mid]
-            right_col = chips[mid:]
+            mid = (len(entries) + 1) // 2
             msg += (
                 f"<b>💱 SWAP</b> <i>L/S pips/zi · {len(swaps)} perechi Matrix</i>\n"
-                f"<code>{_format_two_columns(left_col, right_col)}</code>\n\n"
+                f"<code>{_format_two_columns(entries[:mid], entries[mid:])}</code>\n\n"
             )
         else:
             msg += "<i>💱 Swap offline · cBot DATA port 8010</i>\n\n"
