@@ -454,7 +454,7 @@ def format_rates_telegram_message(
     force_refresh: bool = True,
     notify_on_change: bool = True,
 ) -> str:
-    """Build compact /rates Telegram HTML card (V38.7)."""
+    """Build compact /rates Telegram HTML card (V38.8)."""
     rates, source, fetched_at, changes = get_effective_rates(force_refresh=force_refresh)
     badge = _source_badge(source, fetched_at)
 
@@ -475,7 +475,7 @@ def format_rates_telegram_message(
     median_rate = sorted(all_vals)[len(all_vals) // 2] if all_vals else 0.0
 
     msg = (
-        f"<b>🏦 RATE DOBÂNZI BĂNCI CENTRALE</b>  {badge}  <i>{ts_str} EET</i>\n"
+        f"<b>🏦 CENTRAL BANK RATES</b>  {badge}  <i>{ts_str} EET</i>\n"
         f"{separator}\n"
     )
 
@@ -508,7 +508,7 @@ def format_rates_telegram_message(
             ]
             mid = (len(cells) + 1) // 2
             msg += (
-                f"<b>💱 SWAP</b> <i>L/S pips/zi · {len(swaps)} perechi Matrix</i>\n"
+                f"<b>💱 SWAP</b> <i>L/S pips/day · {len(swaps)} Matrix pairs</i>\n"
                 f"<pre>{_format_two_columns(cells[:mid], cells[mid:])}</pre>\n\n"
             )
         else:
