@@ -1651,13 +1651,14 @@ class TelegramCommandCenter:
             return f"❌ <b>NEWS ERROR:</b> {str(e)}"
 
     def handle_rates_command(self) -> str:
-        """/rates — Live central bank rates + carry pairs + IC Markets swap (V38)"""
+        """/rates — Live central bank rates + carry + IC Markets swap (V38.1)"""
         try:
             from macro_rates import format_rates_telegram_message
             return format_rates_telegram_message(
                 separator=UNIVERSAL_SEPARATOR,
                 include_swaps=True,
-                force_refresh=False,
+                force_refresh=True,
+                notify_on_change=True,
             )
         except Exception as e:
             logger.error(f"❌ /rates error: {e}")

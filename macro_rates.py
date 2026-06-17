@@ -12,6 +12,7 @@ Used by: telegram_command_center (/rates), news_calendar_monitor (weekly macro),
 from __future__ import annotations
 
 import json
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -39,6 +40,10 @@ except ImportError:
 ROOT = Path(__file__).parent.resolve()
 CACHE_FILE = ROOT / "data" / "cb_rates_cache.json"
 LAST_REFRESH_FILE = ROOT / "data" / "last_cb_rates_refresh.json"
+LAST_ALERT_FILE = ROOT / "data" / "last_cb_rate_alert.json"
+
+FETCH_RETRIES = 3
+FETCH_RETRY_DELAY_SEC = 2
 
 # Last-resort baseline (~June 2026 public policy rates). NOT used when cache/live exists.
 FALLBACK_RATES: Dict[str, float] = {
@@ -105,7 +110,7 @@ def save_cache(rates: Dict[str, float], source: str) -> None:
     tmp.replace(CACHE_FILE)
 
 
-def fetch_live_cb_rates() -> Dict[str, float]:
+def fetch_live_cb_rates(retries: int = FETCH_RETRIES) -> Dict[str, float]:
     """
     Scrape official central bank rates from investing.com.
     Returns partial or empty dict on failure.
@@ -113,70 +118,76 @@ def fetch_live_cb_rates() -> Dict[str, float]:
     if not HAS_REQUESTS:
         logger.warning("[macro_rates] requests not installed — skip live fetch")
         return {}
+    if not HAS_BS4:
+        logger.warning("[macro_rates] BeautifulSoup not installed — run: pip install beautifulsoup4")
+        return {}
 
-    live: Dict[str, float] = {}
     url = "https://www.investing.com/central-banks/"
     headers = {
         "User-Agent": (
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
             "AppleWebKit/537.36 (KHTML, like Gecko) "
             "Chrome/122.0.0.0 Safari/537.36"
         ),
         "Accept-Language": "en-US,en;q=0.9",
+        "Accept": "text/html,application/xhtml+xml",
     }
-    try:
-        resp = requests.get(url, headers=headers, timeout=12)
-        if resp.status_code != 200:
-            logger.warning(f"[macro_rates] HTTP {resp.status_code} from investing.com")
-            return {}
+    bank_map = [
+        ("federal reserve", "USD"),
+        ("european central", "EUR"),
+        ("bank of england", "GBP"),
+        ("swiss national", "CHF"),
+        ("reserve bank of australia", "AUD"),
+        ("bank of canada", "CAD"),
+        ("reserve bank of new zealand", "NZD"),
+        ("bank of japan", "JPY"),
+    ]
 
-        if not HAS_BS4:
-            logger.warning("[macro_rates] BeautifulSoup not available")
-            return {}
-
-        soup = BeautifulSoup(resp.text, "html.parser")
-        # investing.com layout (2026): col0=flag, col1=bank name, col2=rate %
-        bank_map = [
-            ("federal reserve", "USD"),
-            ("european central", "EUR"),
-            ("bank of england", "GBP"),
-            ("swiss national", "CHF"),
-            ("reserve bank of australia", "AUD"),
-            ("bank of canada", "CAD"),
-            ("reserve bank of new zealand", "NZD"),
-            ("bank of japan", "JPY"),
-        ]
-        for row in soup.select("table tr"):
-            cols = row.find_all("td")
-            if len(cols) < 2:
+    for attempt in range(1, retries + 1):
+        live: Dict[str, float] = {}
+        try:
+            resp = requests.get(url, headers=headers, timeout=15)
+            if resp.status_code != 200:
+                logger.warning(f"[macro_rates] HTTP {resp.status_code} (attempt {attempt}/{retries})")
+                if attempt < retries:
+                    time.sleep(FETCH_RETRY_DELAY_SEC)
                 continue
-            row_text = " ".join(c.get_text(" ", strip=True) for c in cols).lower()
-            rate_val: Optional[float] = None
-            for col in cols:
-                txt = col.get_text(strip=True).replace("%", "").replace(",", ".")
-                try:
-                    val = float(txt)
-                    if 0.0 <= val <= 30.0:
-                        rate_val = val
-                        break
-                except ValueError:
+
+            soup = BeautifulSoup(resp.text, "html.parser")
+            for row in soup.select("table tr"):
+                cols = row.find_all("td")
+                if len(cols) < 2:
                     continue
-            if rate_val is None:
-                continue
-            for key, ccy in bank_map:
-                if key in row_text and ccy not in live:
-                    live[ccy] = rate_val
-                    break
+                row_text = " ".join(c.get_text(" ", strip=True) for c in cols).lower()
+                rate_val: Optional[float] = None
+                for col in cols:
+                    txt = col.get_text(strip=True).replace("%", "").replace(",", ".")
+                    try:
+                        val = float(txt)
+                        if 0.0 <= val <= 30.0:
+                            rate_val = val
+                            break
+                    except ValueError:
+                        continue
+                if rate_val is None:
+                    continue
+                for key, ccy in bank_map:
+                    if key in row_text and ccy not in live:
+                        live[ccy] = rate_val
+                        break
 
-        if len(live) >= MIN_LIVE_CURRENCIES:
-            logger.success(f"[macro_rates] live fetch OK ({len(live)} currencies): {live}")
-        else:
-            logger.warning(f"[macro_rates] only {len(live)} currencies parsed — rejected")
+            if len(live) >= MIN_LIVE_CURRENCIES:
+                logger.success(f"[macro_rates] live fetch OK ({len(live)} currencies): {live}")
+                return live
+            logger.warning(f"[macro_rates] only {len(live)} currencies parsed (attempt {attempt}/{retries})")
 
-    except Exception as e:
-        logger.warning(f"[macro_rates] scrape failed: {e}")
+        except Exception as e:
+            logger.warning(f"[macro_rates] scrape failed (attempt {attempt}/{retries}): {e}")
 
-    return live if len(live) >= MIN_LIVE_CURRENCIES else {}
+        if attempt < retries:
+            time.sleep(FETCH_RETRY_DELAY_SEC)
+
+    return {}
 
 
 def _cache_age_hours(cache: dict) -> float:
@@ -206,6 +217,61 @@ def detect_rate_changes(
     return changes
 
 
+def _source_badge(source: str, fetched_at: Optional[str]) -> str:
+    if source.startswith("live"):
+        return "🟢 LIVE"
+    if source.startswith("cache"):
+        if fetched_at:
+            try:
+                age_h = (_now_bucharest() - datetime.fromisoformat(fetched_at)).total_seconds() / 3600
+                if age_h < 1:
+                    return "🟡 CACHE (<1h)"
+                return f"🟡 CACHE ({int(age_h)}h)"
+            except Exception:
+                pass
+        return "🟡 CACHE"
+    return "🔴 OFFLINE"
+
+
+def _rate_bar(rate: float, max_rate: float = 5.0) -> str:
+    """Visual bar scaled to max_rate (default 5%)."""
+    if max_rate <= 0:
+        max_rate = 5.0
+    filled = min(8, max(0, round((rate / max_rate) * 8)))
+    return "▰" * filled + "▱" * (8 - filled)
+
+
+def _changes_fingerprint(changes: List[Tuple[str, float, float]]) -> str:
+    return "|".join(f"{c}:{o:.2f}>{n:.2f}" for c, o, n in sorted(changes))
+
+
+def _should_send_alert(changes: List[Tuple[str, float, float]]) -> bool:
+    if not changes:
+        return False
+    fp = _changes_fingerprint(changes)
+    try:
+        if LAST_ALERT_FILE.exists():
+            data = json.loads(LAST_ALERT_FILE.read_text(encoding="utf-8"))
+            if data.get("fingerprint") == fp:
+                sent_at = datetime.fromisoformat(data["sent_at"])
+                if (_now_bucharest() - sent_at).total_seconds() < 6 * 3600:
+                    return False
+    except Exception:
+        pass
+    return True
+
+
+def _mark_alert_sent(changes: List[Tuple[str, float, float]]) -> None:
+    LAST_ALERT_FILE.parent.mkdir(parents=True, exist_ok=True)
+    LAST_ALERT_FILE.write_text(
+        json.dumps({
+            "fingerprint": _changes_fingerprint(changes),
+            "sent_at": _now_bucharest().isoformat(),
+        }, indent=2),
+        encoding="utf-8",
+    )
+
+
 def get_effective_rates(
     force_refresh: bool = False,
     ttl_hours: float = DEFAULT_TTL_HOURS,
@@ -219,34 +285,33 @@ def get_effective_rates(
       3. FALLBACK_RATES
     """
     cache = load_cache()
-    changes: List[Tuple[str, float, float]] = []
     previous_rates = cache.get("rates", {}) if cache else dict(FALLBACK_RATES)
 
     needs_refresh = force_refresh
     if cache and not needs_refresh:
         needs_refresh = _cache_age_hours(cache) >= ttl_hours
 
-    if needs_refresh:
+    if needs_refresh or force_refresh:
         live = fetch_live_cb_rates()
         if live:
             effective = _merge_rates(live, FALLBACK_RATES)
             changes = detect_rate_changes(previous_rates, effective)
             save_cache(effective, "investing.com")
             fetched_at = _now_bucharest().isoformat()
-            return effective, "live (investing.com)", fetched_at, changes
+            return effective, "live", fetched_at, changes
 
     if cache and cache.get("rates"):
         age_h = _cache_age_hours(cache)
-        if age_h < ttl_hours * 4:  # accept cache up to 24h when live fails
+        if age_h < ttl_hours * 4:
             return (
                 cache["rates"],
-                f"cache ({cache.get('source', 'unknown')})",
+                "cache",
                 cache.get("fetched_at"),
                 [],
             )
 
     logger.warning("[macro_rates] using FALLBACK_RATES — no live data and no recent cache")
-    return dict(FALLBACK_RATES), "fallback (manual baseline)", None, []
+    return dict(FALLBACK_RATES), "fallback", None, []
 
 
 def is_cache_stale(days: int = STALE_CACHE_DAYS) -> bool:
@@ -310,71 +375,91 @@ def fetch_ic_markets_swaps(symbols: Optional[List[str]] = None) -> List[dict]:
 def format_rates_telegram_message(
     separator: str = "────────────────",
     include_swaps: bool = True,
-    force_refresh: bool = False,
+    force_refresh: bool = True,
+    notify_on_change: bool = True,
 ) -> str:
-    """Build /rates Telegram HTML card."""
-    rates, source, fetched_at, _ = get_effective_rates(force_refresh=force_refresh)
+    """Build /rates Telegram HTML card (V38.1 polished layout)."""
+    rates, source, fetched_at, changes = get_effective_rates(force_refresh=force_refresh)
     now = _now_bucharest()
+    badge = _source_badge(source, fetched_at)
+
+    if notify_on_change and changes and _should_send_alert(changes):
+        _send_rate_change_alert(changes, source, rates)
+        _mark_alert_sent(changes)
 
     if fetched_at:
         try:
-            ts = datetime.fromisoformat(fetched_at)
-            ts_str = ts.strftime("%d %b %Y %H:%M EET")
+            ts_str = datetime.fromisoformat(fetched_at).strftime("%d %b %Y · %H:%M")
         except Exception:
             ts_str = fetched_at
     else:
-        ts_str = now.strftime("%d %b %Y %H:%M EET")
+        ts_str = now.strftime("%d %b %Y · %H:%M")
 
-    year = now.year
+    sorted_rates = sorted(rates.items(), key=lambda x: x[1], reverse=True)
+    all_vals = [v for _, v in sorted_rates]
+    median_rate = sorted(all_vals)[len(all_vals) // 2] if all_vals else 0.0
+    max_rate = max(all_vals) if all_vals else 5.0
+
     msg = (
-        f"<b>🏦 CENTRAL BANK RATES — {year}</b>\n"
-        f"<i>Actualizat: {ts_str} | sursă: {source}</i>\n"
+        f"<b>🏦 MACRO PULSE</b> · Central Bank Rates\n"
+        f"{badge} · <i>{ts_str} EET</i>\n"
         f"{separator}\n\n"
     )
 
-    if is_cache_stale() and source.startswith("fallback"):
-        msg += "⚠️ <b>Date posibil depășite — verifică VPS / rețea</b>\n\n"
+    if badge == "🔴 OFFLINE":
+        msg += (
+            "⚠️ <b>Live fetch indisponibil</b>\n"
+            "<code>pip install beautifulsoup4</code>\n"
+            "Windows: <code>python scripts/refresh_cb_rates.py --print</code>\n\n"
+        )
 
-    sorted_rates = sorted(rates.items(), key=lambda x: x[1], reverse=True)
-    strong_threshold = 3.50
-
+    msg += "<code>"
+    msg += f"{'CCY':<4}{'RATE':>7}  {'VISUAL':<10} STATUS\n"
+    msg += f"{'─'*4}{'─'*7}  {'─'*10} {'─'*6}\n"
     for ccy, rate in sorted_rates:
         flag = FLAGS.get(ccy, "")
-        filled = min(6, max(0, round(rate)))
-        bar = "▰" * filled + "▱" * (6 - filled)
-        status = "🟢 Strong" if rate >= strong_threshold else "🔴 Weak"
-        live_marker = ""
-        if abs(rate - FALLBACK_RATES.get(ccy, rate)) >= 0.01:
-            live_marker = " *"
-        msg += f"{flag} <b>{ccy}</b>  {rate:.2f}%  {bar}  {status}{live_marker}\n"
+        bar = _rate_bar(rate, max_rate=max(max_rate, 4.0))
+        status = "STRONG" if rate >= median_rate else "WEAK"
+        msg += f"{flag}{ccy:<3}{rate:>6.2f}%  {bar:<10}{status}\n"
+    msg += "</code>\n"
 
     msg += f"\n{separator}\n"
-    msg += f"<b>🎯 TOP CARRY PAIRS (Buy High / Sell Low)</b>\n\n"
+    msg += "<b>🎯 TOP CARRY SPREADS</b>\n\n"
     medals = ["🥇", "🥈", "🥉"]
     for idx, item in enumerate(get_top_carry_pairs(rates, 3)):
         b, q = item["base"], item["quote"]
         msg += (
-            f"{medals[idx]} <b>{FLAGS.get(b,'')}{b}/{FLAGS.get(q,'')}{q}</b>\n"
-            f"   📈 Diff: <b>+{item['spread']:.2f}%</b>  "
-            f"({item['base_rate']:.2f}% vs {item['quote_rate']:.2f}%)\n\n"
+            f"{medals[idx]} <b>{FLAGS.get(b,'')}{b}/{FLAGS.get(q,'')}{q}</b>  "
+            f"<code>+{item['spread']:.2f}%</code>\n"
+            f"   <i>{item['base_rate']:.2f}% − {item['quote_rate']:.2f}%</i>\n"
         )
 
     if include_swaps:
         swaps = fetch_ic_markets_swaps()
+        msg += f"\n{separator}\n"
         if swaps:
-            msg += f"{separator}\n"
-            msg += f"<b>💱 IC MARKETS CARRY (live swap cTrader)</b>\n\n"
+            msg += "<b>💱 IC MARKETS OVERNIGHT</b>\n"
+            msg += "<code>"
+            msg += f"{'PAIR':<8}{'LONG':>8}{'SHORT':>8}\n"
             for s in swaps[:6]:
-                sym = s["symbol"]
                 msg += (
-                    f"• <b>{sym}</b>  "
-                    f"Long: <code>{s['swap_long']:+.2f}</code>  "
-                    f"Short: <code>{s['swap_short']:+.2f}</code> pips/zi\n"
+                    f"{s['symbol']:<8}"
+                    f"{s['swap_long']:+7.2f}p"
+                    f"{s['swap_short']:+7.2f}p\n"
                 )
-            msg += f"\n<i>Swap = cost/credit overnight real de la broker</i>\n"
+            msg += "</code>\n"
+            msg += "<i>Swap = cost/credit real broker · pips/zi</i>\n"
+        else:
+            msg += "<i>💱 IC Markets swap: cTrader offline (:8767)</i>\n"
 
-    msg += f"\n{separator}\n"
-    msg += f"<i>* = diferă de baseline fallback</i>"
+    strongest_ccy, strongest_rate = sorted_rates[0]
+    weakest_ccy, weakest_rate = sorted_rates[-1]
+    msg += (
+        f"\n{separator}\n"
+        f"💪 {FLAGS.get(strongest_ccy,'')}<b>{strongest_ccy}</b> {strongest_rate:.2f}%  ·  "
+        f"😴 {FLAGS.get(weakest_ccy,'')}<b>{weakest_ccy}</b> {weakest_rate:.2f}%\n"
+        f"<i>investing.com · Glitch in Matrix V38</i>"
+    )
     return msg
 
 
@@ -477,7 +562,7 @@ def refresh_rates_daily(notify_telegram: bool = True) -> dict:
     rates, source, fetched_at, changes = get_effective_rates(force_refresh=True)
 
     summary = {
-        "success": source.startswith("live") or bool(cache_before),
+        "success": source in ("live", "cache") or bool(cache_before),
         "source": source,
         "fetched_at": fetched_at,
         "changes": [{"ccy": c, "old": o, "new": n} for c, o, n in changes],
@@ -488,10 +573,11 @@ def refresh_rates_daily(notify_telegram: bool = True) -> dict:
     with open(LAST_REFRESH_FILE, "w", encoding="utf-8") as f:
         json.dump({**summary, "refreshed_at": _now_bucharest().isoformat()}, f, indent=2)
 
-    if notify_telegram and changes:
-        _send_rate_change_alert(changes, source)
+    if notify_telegram and changes and _should_send_alert(changes):
+        _send_rate_change_alert(changes, source, rates)
+        _mark_alert_sent(changes)
 
-    if notify_telegram and is_cache_stale() and not source.startswith("live"):
+    if notify_telegram and is_cache_stale() and source == "fallback":
         _send_stale_alert(source)
 
     return summary
@@ -513,13 +599,49 @@ def _send_telegram_html(text: str) -> None:
         logger.warning(f"[macro_rates] Telegram send failed: {e}")
 
 
-def _send_rate_change_alert(changes: List[Tuple[str, float, float]], source: str) -> None:
-    lines = ["🚨 <b>MACRO RATE CHANGE</b>", "────────────────"]
+def _send_rate_change_alert(
+    changes: List[Tuple[str, float, float]],
+    source: str,
+    rates: Optional[Dict[str, float]] = None,
+) -> None:
+    """Professional Telegram alert when a central bank rate moves."""
+    now = _now_bucharest().strftime("%d %b %Y · %H:%M EET")
+    lines = [
+        "<b>🏦 MACRO PULSE — RATE CHANGE</b>",
+        "────────────────",
+        "",
+    ]
     for ccy, old, new in changes:
-        arrow = "🔺" if new > old else "🔻"
+        arrow = "🔺 HIKED" if new > old else "🔻 CUT"
+        delta = new - old
         flag = FLAGS.get(ccy, "")
-        lines.append(f"{arrow} {flag} <b>{ccy}</b>: {old:.2f}% → <b>{new:.2f}%</b>")
-    lines.append(f"\n<i>Sursă: {source}</i>")
+        lines.append(
+            f"{arrow}  {flag}<b>{ccy}</b>  "
+            f"<code>{old:.2f}%</code> → <code>{new:.2f}%</code>  "
+            f"({'+' if delta >= 0 else ''}{delta:.2f}%)"
+        )
+
+    if rates:
+        lines.append("")
+        lines.append("<b>📊 Carry impact (top shifts):</b>")
+        old_rates = dict(rates)
+        for ccy, old, new in changes[:3]:
+            old_rates[ccy] = old
+        old_top = get_top_carry_pairs(old_rates, 1)
+        new_top = get_top_carry_pairs(rates, 1)
+        if old_top and new_top:
+            o, n = old_top[0], new_top[0]
+            lines.append(
+                f"  • Best carry: {o['pair']} +{o['spread']:.2f}% → "
+                f"{n['pair']} +{n['spread']:.2f}%"
+            )
+
+    lines.extend([
+        "",
+        "────────────────",
+        f"<i>🕐 {now} · {source} · investing.com</i>",
+        "<i>Verifică setup-uri carry afectate.</i>",
+    ])
     _send_telegram_html("\n".join(lines))
 
 

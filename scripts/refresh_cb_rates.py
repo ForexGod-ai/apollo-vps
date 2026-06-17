@@ -2,12 +2,12 @@
 """
 Daily central bank rates refresh for VPS cron.
 
-Usage:
+Usage (Windows VPS — use python, not python3):
     python scripts/refresh_cb_rates.py
     python scripts/refresh_cb_rates.py --no-notify
     python scripts/refresh_cb_rates.py --print
 
-Cron example (08:00 EET daily):
+Cron example (08:00 EET daily, Linux):
     0 8 * * * cd /path/to/apollo && python3 scripts/refresh_cb_rates.py >> logs/cb_rates_refresh.log 2>&1
 """
 from __future__ import annotations
