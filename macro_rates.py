@@ -436,7 +436,7 @@ def format_rates_telegram_message(
     force_refresh: bool = True,
     notify_on_change: bool = True,
 ) -> str:
-    """Build compact /rates Telegram HTML card (V38.3)."""
+    """Build compact /rates Telegram HTML card (V38.4)."""
     rates, source, fetched_at, changes = get_effective_rates(force_refresh=force_refresh)
     badge = _source_badge(source, fetched_at)
 
@@ -457,7 +457,7 @@ def format_rates_telegram_message(
     median_rate = sorted(all_vals)[len(all_vals) // 2] if all_vals else 0.0
 
     msg = (
-        f"<b>🏦 MACRO PULSE</b>  {badge}  <i>{ts_str} EET</i>\n"
+        f"<b>🏦 RATE DOBÂNZI BĂNCI CENTRALE</b>  {badge}  <i>{ts_str} EET</i>\n"
         f"{separator}\n"
     )
 
@@ -484,7 +484,7 @@ def format_rates_telegram_message(
             f"{CARRY_MEDALS[i]} {b}/{q:<7} +{item['spread']:>5.2f}%"
             f"   {item['base_rate']:.2f} − {item['quote_rate']:.2f}\n"
         )
-    msg += "</code>\n"
+    msg += "</code>\n\n"
 
     if include_swaps:
         swaps = fetch_ic_markets_swaps()
@@ -499,10 +499,10 @@ def format_rates_telegram_message(
             right_col = chips[mid:]
             msg += (
                 f"<b>💱 SWAP</b> <i>L/S pips/zi · {len(swaps)} perechi Matrix</i>\n"
-                f"<code>{_format_two_columns(left_col, right_col)}</code>\n"
+                f"<code>{_format_two_columns(left_col, right_col)}</code>\n\n"
             )
         else:
-            msg += "<i>💱 Swap offline · cBot DATA port 8010</i>\n"
+            msg += "<i>💱 Swap offline · cBot DATA port 8010</i>\n\n"
 
     strongest_ccy, strongest_rate = sorted_rates[0]
     weakest_ccy, weakest_rate = sorted_rates[-1]
