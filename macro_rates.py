@@ -80,7 +80,7 @@ SWAP_FETCH_TIMEOUT_SEC = 3
 SWAP_COL_SIZE = 8
 SWAP_COL_WIDTH = 22
 CARRY_PAIR_WIDTH = 8
-CARRY_SPREAD_WIDTH = 6
+CARRY_SPREAD_WIDTH = 7
 CARRY_MEDALS = ("🥇", "🥈", "🥉")
 
 MIN_LIVE_CURRENCIES = 6
@@ -365,11 +365,19 @@ def _format_swap_grid_cell(symbol: str, swap_long: float, swap_short: float) -> 
 
 
 def _format_carry_row(item: dict) -> str:
-    """Monospaced carry row: pair(8) + spread(6) + rate math."""
+    """Monospaced carry row: pair(8) + spread(7) + rate math."""
     pair = f"{item['base']}/{item['quote']}"
     spread = f"+{item['spread']:.2f}%"
     calc = f"{item['base_rate']:.2f}-{item['quote_rate']:.2f}"
     return f"{pair:<{CARRY_PAIR_WIDTH}}{spread:>{CARRY_SPREAD_WIDTH}}  {calc}"
+
+
+def _format_carry_block(items: List[dict]) -> str:
+    """All carry rows in one monospace block, medals included."""
+    return "\n".join(
+        f"{CARRY_MEDALS[i]} {_format_carry_row(item)}"
+        for i, item in enumerate(items)
+    )
 
 
 def _chunked(items: List[str], size: int) -> List[List[str]]:
@@ -446,7 +454,7 @@ def format_rates_telegram_message(
     force_refresh: bool = True,
     notify_on_change: bool = True,
 ) -> str:
-    """Build compact /rates Telegram HTML card (V38.6)."""
+    """Build compact /rates Telegram HTML card (V38.7)."""
     rates, source, fetched_at, changes = get_effective_rates(force_refresh=force_refresh)
     badge = _source_badge(source, fetched_at)
 
@@ -485,12 +493,10 @@ def format_rates_telegram_message(
         msg += "  ".join(f"{cell:<14}" for cell in row) + "\n"
     msg += "</code>\n"
 
-    # Top carry — fixed-width rows (medal outside monospace block)
+    # Top carry — blank line after title, single pre block for column alignment
     top3 = get_top_carry_pairs(rates, 3)
-    msg += f"\n{separator}\n<b>🎯 CARRY SPREADS</b>\n"
-    for i, item in enumerate(top3):
-        msg += f"{CARRY_MEDALS[i]} <code>{_format_carry_row(item)}</code>\n"
-    msg += "\n"
+    msg += f"\n{separator}\n<b>🎯 CARRY SPREADS</b>\n\n"
+    msg += f"<pre>{_format_carry_block(top3)}</pre>\n\n"
 
     if include_swaps:
         swaps = fetch_ic_markets_swaps()
