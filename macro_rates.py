@@ -77,7 +77,9 @@ SWAP_CARRY_SYMBOLS = ["GBPJPY", "NZDJPY", "AUDJPY", "USDJPY", "GBPNZD", "EURJPY"
 
 PAIRS_CONFIG_FILE = ROOT / "pairs_config.json"
 SWAP_FETCH_TIMEOUT_SEC = 3
-SWAP_PER_LINE = 3
+SWAP_COL_SIZE = 8
+SWAP_COL_WIDTH = 22
+CARRY_MEDALS = ("🥇", "🥈", "🥉")
 
 MIN_LIVE_CURRENCIES = 6
 DEFAULT_TTL_HOURS = 6
@@ -364,6 +366,21 @@ def _chunked(items: List[str], size: int) -> List[List[str]]:
     return [items[i:i + size] for i in range(0, len(items), size)]
 
 
+def _format_two_columns(
+    left: List[str],
+    right: List[str],
+    width: int = SWAP_COL_WIDTH,
+) -> str:
+    """Monospace grid: equal rows, left column padded."""
+    rows = max(len(left), len(right))
+    lines = []
+    for i in range(rows):
+        l_cell = left[i] if i < len(left) else ""
+        r_cell = right[i] if i < len(right) else ""
+        lines.append(f"{l_cell:<{width}}{r_cell}")
+    return "\n".join(lines)
+
+
 def get_top_carry_pairs(rates: Dict[str, float], top_n: int = 3) -> List[dict]:
     spreads = []
     for base, quote in CARRY_PAIRS:
@@ -419,7 +436,7 @@ def format_rates_telegram_message(
     force_refresh: bool = True,
     notify_on_change: bool = True,
 ) -> str:
-    """Build compact /rates Telegram HTML card (V38.2)."""
+    """Build compact /rates Telegram HTML card (V38.3)."""
     rates, source, fetched_at, changes = get_effective_rates(force_refresh=force_refresh)
     badge = _source_badge(source, fetched_at)
 
@@ -458,13 +475,16 @@ def format_rates_telegram_message(
         msg += "  ".join(f"{cell:<14}" for cell in row) + "\n"
     msg += "</code>\n"
 
-    # Top carry — one line
+    # Top carry — aligned rows
     top3 = get_top_carry_pairs(rates, 3)
-    carry_bits = [
-        f"{'🥇🥈🥉'[i]}{item['pair']} +{item['spread']:.2f}%"
-        for i, item in enumerate(top3)
-    ]
-    msg += f"\n{separator}\n<b>🎯 CARRY</b>  " + "  ·  ".join(carry_bits) + "\n"
+    msg += f"\n{separator}\n<b>🎯 CARRY SPREADS</b>\n<code>"
+    for i, item in enumerate(top3):
+        b, q = item["base"], item["quote"]
+        msg += (
+            f"{CARRY_MEDALS[i]} {b}/{q:<7} +{item['spread']:>5.2f}%"
+            f"   {item['base_rate']:.2f} − {item['quote_rate']:.2f}\n"
+        )
+    msg += "</code>\n"
 
     if include_swaps:
         swaps = fetch_ic_markets_swaps()
@@ -474,10 +494,13 @@ def format_rates_telegram_message(
                 _format_swap_chip(s["symbol"], s["swap_long"], s["swap_short"])
                 for s in swaps
             ]
-            msg += f"<b>💱 SWAP</b> <i>L/S pips/zi · {len(swaps)} perechi Matrix</i>\n<code>"
-            for row in _chunked(chips, SWAP_PER_LINE):
-                msg += "  ".join(f"{c:<22}" for c in row) + "\n"
-            msg += "</code>\n"
+            mid = (len(chips) + 1) // 2
+            left_col = chips[:mid]
+            right_col = chips[mid:]
+            msg += (
+                f"<b>💱 SWAP</b> <i>L/S pips/zi · {len(swaps)} perechi Matrix</i>\n"
+                f"<code>{_format_two_columns(left_col, right_col)}</code>\n"
+            )
         else:
             msg += "<i>💱 Swap offline · cBot DATA port 8010</i>\n"
 
