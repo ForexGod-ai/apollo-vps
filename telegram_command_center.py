@@ -1651,7 +1651,7 @@ class TelegramCommandCenter:
             return f"❌ <b>NEWS ERROR:</b> {str(e)}"
 
     def handle_rates_command(self) -> str:
-        """/rates — Live central bank rates + carry + IC Markets swap (V38.1)"""
+        """/rates — Live central bank rates + carry + IC Markets swap (V38.6)"""
         try:
             from macro_rates import format_rates_telegram_message
             return format_rates_telegram_message(

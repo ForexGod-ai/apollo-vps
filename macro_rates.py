@@ -359,9 +359,9 @@ def _swap_cbot_base_url() -> str:
         return "http://localhost:8010"
 
 
-def _format_swap_entry(symbol: str, swap_long: float, swap_short: float) -> str:
-    """Raw swap cell: GBPJPY +1.17/-2.32"""
-    return f"{symbol} {swap_long:+.2f}/{swap_short:+.2f}"
+def _format_swap_grid_cell(symbol: str, swap_long: float, swap_short: float) -> str:
+    """Fixed 22-char swap cell — no trailing spaces (Telegram strips them)."""
+    return f"{symbol:<6} {swap_long:+7.2f}/{swap_short:+7.2f}"
 
 
 def _format_carry_row(item: dict) -> str:
@@ -381,14 +381,13 @@ def _format_two_columns(
     right: List[str],
     width: int = SWAP_COL_WIDTH,
 ) -> str:
-    """Monospace grid: left column ljust(width), right column flush."""
+    """Monospace grid: fixed-width left cells concatenated with right cells."""
     rows = max(len(left), len(right))
     lines = []
     for i in range(rows):
-        l_raw = left[i] if i < len(left) else ""
-        r_raw = right[i] if i < len(right) else ""
-        l_cell = l_raw.ljust(width) if l_raw else " " * width
-        lines.append(f"{l_cell}{r_raw}")
+        l_cell = left[i] if i < len(left) else " " * width
+        r_cell = right[i] if i < len(right) else ""
+        lines.append(f"{l_cell} {r_cell}")
     return "\n".join(lines)
 
 
@@ -447,7 +446,7 @@ def format_rates_telegram_message(
     force_refresh: bool = True,
     notify_on_change: bool = True,
 ) -> str:
-    """Build compact /rates Telegram HTML card (V38.5)."""
+    """Build compact /rates Telegram HTML card (V38.6)."""
     rates, source, fetched_at, changes = get_effective_rates(force_refresh=force_refresh)
     badge = _source_badge(source, fetched_at)
 
@@ -486,7 +485,7 @@ def format_rates_telegram_message(
         msg += "  ".join(f"{cell:<14}" for cell in row) + "\n"
     msg += "</code>\n"
 
-    # Top carry — monospace rows (medal outside <code> for Telegram alignment)
+    # Top carry — fixed-width rows (medal outside monospace block)
     top3 = get_top_carry_pairs(rates, 3)
     msg += f"\n{separator}\n<b>🎯 CARRY SPREADS</b>\n"
     for i, item in enumerate(top3):
@@ -497,14 +496,14 @@ def format_rates_telegram_message(
         swaps = fetch_ic_markets_swaps()
         msg += f"{separator}\n"
         if swaps:
-            entries = [
-                _format_swap_entry(s["symbol"], s["swap_long"], s["swap_short"])
+            cells = [
+                _format_swap_grid_cell(s["symbol"], s["swap_long"], s["swap_short"])
                 for s in swaps
             ]
-            mid = (len(entries) + 1) // 2
+            mid = (len(cells) + 1) // 2
             msg += (
                 f"<b>💱 SWAP</b> <i>L/S pips/zi · {len(swaps)} perechi Matrix</i>\n"
-                f"<code>{_format_two_columns(entries[:mid], entries[mid:])}</code>\n\n"
+                f"<pre>{_format_two_columns(cells[:mid], cells[mid:])}</pre>\n\n"
             )
         else:
             msg += "<i>💱 Swap offline · cBot DATA port 8010</i>\n\n"
