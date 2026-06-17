@@ -72,8 +72,12 @@ CARRY_PAIRS: List[Tuple[str, str]] = [
     ("GBP", "CAD"), ("NZD", "CAD"), ("AUD", "CAD"), ("USD", "CAD"),
 ]
 
-# Forex symbols for live IC Markets swap section on /rates card
+# Fallback if pairs_config.json unavailable
 SWAP_CARRY_SYMBOLS = ["GBPJPY", "NZDJPY", "AUDJPY", "USDJPY", "GBPNZD", "EURJPY"]
+
+PAIRS_CONFIG_FILE = ROOT / "pairs_config.json"
+SWAP_FETCH_TIMEOUT_SEC = 3
+SWAP_PER_LINE = 3
 
 MIN_LIVE_CURRENCIES = 6
 DEFAULT_TTL_HOURS = 6
@@ -325,6 +329,41 @@ def is_cache_stale(days: int = STALE_CACHE_DAYS) -> bool:
         return True
 
 
+def load_project_symbols() -> List[str]:
+    """All active scanner symbols from pairs_config.json."""
+    try:
+        if PAIRS_CONFIG_FILE.exists():
+            with open(PAIRS_CONFIG_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            symbols = [
+                p["symbol"].upper()
+                for p in data.get("pairs", [])
+                if isinstance(p, dict) and p.get("symbol")
+            ]
+            if symbols:
+                return symbols
+    except Exception as e:
+        logger.warning(f"[macro_rates] pairs_config load failed: {e}")
+    return list(SWAP_CARRY_SYMBOLS)
+
+
+def _swap_cbot_base_url() -> str:
+    try:
+        from ctrader_cbot_client import get_cbot_client
+        return get_cbot_client().base_url
+    except Exception:
+        return "http://localhost:8010"
+
+
+def _format_swap_chip(symbol: str, swap_long: float, swap_short: float) -> str:
+    """Compact: GBPJPY +1.17/-2.32"""
+    return f"{symbol} {swap_long:+.2f}/{swap_short:+.2f}"
+
+
+def _chunked(items: List[str], size: int) -> List[List[str]]:
+    return [items[i:i + size] for i in range(0, len(items), size)]
+
+
 def get_top_carry_pairs(rates: Dict[str, float], top_n: int = 3) -> List[dict]:
     spreads = []
     for base, quote in CARRY_PAIRS:
@@ -344,19 +383,23 @@ def get_top_carry_pairs(rates: Dict[str, float], top_n: int = 3) -> List[dict]:
 
 
 def fetch_ic_markets_swaps(symbols: Optional[List[str]] = None) -> List[dict]:
-    """Live swap from cTrader MarketDataProvider (IC Markets on VPS, port 8010)."""
-    symbols = symbols or SWAP_CARRY_SYMBOLS
-    results = []
-    try:
-        from ctrader_cbot_client import get_cbot_client
-        client = get_cbot_client()
-    except Exception as e:
-        logger.debug(f"[macro_rates] cBot client unavailable: {e}")
+    """Live swap for all project pairs via MarketDataProvider (port 8010)."""
+    symbols = symbols or load_project_symbols()
+    if not HAS_REQUESTS:
         return []
 
+    base_url = _swap_cbot_base_url()
+    results = []
     for sym in symbols:
         try:
-            data = client.get_swap_info(sym)
+            resp = requests.get(
+                f"{base_url}/swap_info",
+                params={"symbol": sym},
+                timeout=SWAP_FETCH_TIMEOUT_SEC,
+            )
+            if resp.status_code != 200:
+                continue
+            data = resp.json()
             if not data.get("success"):
                 continue
             results.append({
@@ -376,9 +419,8 @@ def format_rates_telegram_message(
     force_refresh: bool = True,
     notify_on_change: bool = True,
 ) -> str:
-    """Build /rates Telegram HTML card (V38.1 polished layout)."""
+    """Build compact /rates Telegram HTML card (V38.2)."""
     rates, source, fetched_at, changes = get_effective_rates(force_refresh=force_refresh)
-    now = _now_bucharest()
     badge = _source_badge(source, fetched_at)
 
     if notify_on_change and changes and _should_send_alert(changes):
@@ -387,79 +429,63 @@ def format_rates_telegram_message(
 
     if fetched_at:
         try:
-            ts_str = datetime.fromisoformat(fetched_at).strftime("%d %b %Y · %H:%M")
+            ts_str = datetime.fromisoformat(fetched_at).strftime("%d %b · %H:%M")
         except Exception:
             ts_str = fetched_at
     else:
-        ts_str = now.strftime("%d %b %Y · %H:%M")
+        ts_str = _now_bucharest().strftime("%d %b · %H:%M")
 
     sorted_rates = sorted(rates.items(), key=lambda x: x[1], reverse=True)
     all_vals = [v for _, v in sorted_rates]
     median_rate = sorted(all_vals)[len(all_vals) // 2] if all_vals else 0.0
-    max_rate = max(all_vals) if all_vals else 5.0
 
     msg = (
-        f"<b>🏦 MACRO PULSE</b> · Central Bank Rates\n"
-        f"{badge} · <i>{ts_str} EET</i>\n"
-        f"{separator}\n\n"
+        f"<b>🏦 MACRO PULSE</b>  {badge}  <i>{ts_str} EET</i>\n"
+        f"{separator}\n"
     )
 
     if badge == "🔴 OFFLINE":
-        msg += (
-            "⚠️ <b>Live fetch indisponibil</b>\n"
-            "<code>pip install beautifulsoup4</code>\n"
-            "Windows: <code>python scripts/refresh_cb_rates.py --print</code>\n\n"
-        )
+        msg += "⚠️ Live indisponibil · <code>pip install beautifulsoup4</code>\n"
 
-    msg += "<code>"
-    msg += f"{'CCY':<4}{'RATE':>7}  {'VISUAL':<10} STATUS\n"
-    msg += f"{'─'*4}{'─'*7}  {'─'*10} {'─'*6}\n"
+    # CB rates — 2 per line, compact
+    rate_lines = []
     for ccy, rate in sorted_rates:
         flag = FLAGS.get(ccy, "")
-        bar = _rate_bar(rate, max_rate=max(max_rate, 4.0))
-        status = "STRONG" if rate >= median_rate else "WEAK"
-        msg += f"{flag}{ccy:<3}{rate:>6.2f}%  {bar:<10}{status}\n"
+        tag = "🟢" if rate >= median_rate else "🔴"
+        rate_lines.append(f"{flag}{ccy} {rate:.2f}% {tag}")
+    msg += "<code>"
+    for row in _chunked(rate_lines, 2):
+        msg += "  ".join(f"{cell:<14}" for cell in row) + "\n"
     msg += "</code>\n"
 
-    msg += f"\n{separator}\n"
-    msg += "<b>🎯 TOP CARRY SPREADS</b>\n\n"
-    medals = ["🥇", "🥈", "🥉"]
-    for idx, item in enumerate(get_top_carry_pairs(rates, 3)):
-        b, q = item["base"], item["quote"]
-        msg += (
-            f"{medals[idx]} <b>{FLAGS.get(b,'')}{b}/{FLAGS.get(q,'')}{q}</b>  "
-            f"<code>+{item['spread']:.2f}%</code>\n"
-            f"   <i>{item['base_rate']:.2f}% − {item['quote_rate']:.2f}%</i>\n"
-        )
+    # Top carry — one line
+    top3 = get_top_carry_pairs(rates, 3)
+    carry_bits = [
+        f"{'🥇🥈🥉'[i]}{item['pair']} +{item['spread']:.2f}%"
+        for i, item in enumerate(top3)
+    ]
+    msg += f"\n{separator}\n<b>🎯 CARRY</b>  " + "  ·  ".join(carry_bits) + "\n"
 
     if include_swaps:
         swaps = fetch_ic_markets_swaps()
-        msg += f"\n{separator}\n"
+        msg += f"{separator}\n"
         if swaps:
-            msg += "<b>💱 IC MARKETS OVERNIGHT</b>\n"
-            msg += "<code>"
-            msg += f"{'PAIR':<8}{'LONG':>8}{'SHORT':>8}\n"
-            for s in swaps[:6]:
-                msg += (
-                    f"{s['symbol']:<8}"
-                    f"{s['swap_long']:+7.2f}p"
-                    f"{s['swap_short']:+7.2f}p\n"
-                )
+            chips = [
+                _format_swap_chip(s["symbol"], s["swap_long"], s["swap_short"])
+                for s in swaps
+            ]
+            msg += f"<b>💱 SWAP</b> <i>L/S pips/zi · {len(swaps)} perechi Matrix</i>\n<code>"
+            for row in _chunked(chips, SWAP_PER_LINE):
+                msg += "  ".join(f"{c:<22}" for c in row) + "\n"
             msg += "</code>\n"
-            msg += "<i>Swap = cost/credit real broker · pips/zi</i>\n"
         else:
-            msg += (
-                "<i>💱 IC Markets swap: MarketDataProvider offline</i>\n"
-                "<i>Pornește cBot-ul DATA pe port 8010 în cTrader Desktop</i>\n"
-            )
+            msg += "<i>💱 Swap offline · cBot DATA port 8010</i>\n"
 
     strongest_ccy, strongest_rate = sorted_rates[0]
     weakest_ccy, weakest_rate = sorted_rates[-1]
     msg += (
-        f"\n{separator}\n"
-        f"💪 {FLAGS.get(strongest_ccy,'')}<b>{strongest_ccy}</b> {strongest_rate:.2f}%  ·  "
-        f"😴 {FLAGS.get(weakest_ccy,'')}<b>{weakest_ccy}</b> {weakest_rate:.2f}%\n"
-        f"<i>investing.com · Glitch in Matrix V38</i>"
+        f"{separator}\n"
+        f"💪{strongest_ccy} {strongest_rate:.2f}% · 😴{weakest_ccy} {weakest_rate:.2f}%"
     )
     return msg
 
