@@ -113,7 +113,7 @@
             border-radius: 10px;
             margin-bottom: 10px;
             display: grid;
-            grid-template-columns: 100px 100px 150px 1fr 100px;
+            grid-template-columns: 100px 100px 150px 90px 1fr 100px;
             gap: 15px;
             align-items: center;
         }
@@ -338,6 +338,22 @@
             `;
         }
 
+        function formatLotSize(trade) {
+            if (trade.lot_size != null && trade.lot_size > 0) {
+                return Number(trade.lot_size).toFixed(2);
+            }
+            const vol = trade.volume || trade.lots || 0;
+            if (!vol) return null;
+            const sym = (trade.symbol || '').toUpperCase();
+            if (['BTC', 'ETH', 'LTC', 'XRP'].some(c => sym.includes(c))) {
+                return Number(vol).toFixed(2);
+            }
+            if (sym.includes('XAU') || sym.includes('GOLD')) {
+                return (Number(vol) / 100).toFixed(2);
+            }
+            return (Number(vol) / 100000).toFixed(2);
+        }
+
         function updateOpenPositions(trades) {
             const section = document.getElementById('openPositions');
             const list = document.getElementById('openTradesList');
@@ -348,19 +364,23 @@
             }
 
             section.style.display = 'block';
-            list.innerHTML = trades.map(trade => `
+            list.innerHTML = trades.map(trade => {
+                const lots = formatLotSize(trade);
+                const lotsLabel = lots != null ? `${lots} lots` : '—';
+                return `
                 <div class="trade-item">
                     <div class="trade-symbol">${trade.symbol || 'N/A'}</div>
                     <div class="trade-direction ${(trade.direction || '').toLowerCase()}">
                         ${trade.direction || 'N/A'}
                     </div>
-                    <div>Entry: ${(trade.entry_price || 0).toFixed(5)}</div>
+                    <div>Entry: ${(trade.entry_price || trade.open_price || 0).toFixed(5)}</div>
+                    <div style="font-weight:600;color:#c4b5fd;text-align:center" title="Volume / lot size">${lotsLabel}</div>
                     <div>SL: ${(trade.stop_loss || 0).toFixed(5)} | TP: ${(trade.take_profit || 0).toFixed(5)}</div>
                     <div class="${(trade.profit || 0) >= 0 ? 'positive' : 'negative'}">
                         ${(trade.profit || 0) >= 0 ? '+' : ''}$${(trade.profit || 0).toFixed(2)}
                     </div>
                 </div>
-            `).join('');
+            `}).join('');
         }
 
         function updateClosedTrades(trades) {
