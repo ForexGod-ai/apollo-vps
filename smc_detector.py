@@ -2839,7 +2839,7 @@ class SMCDetector:
 
         print(f"✅ [V14.1 SL STRUCTURAL] {symbol} {'LONG' if fvg.direction == 'bullish' else 'SHORT'}: "
               f"Entry={entry:.5f} | SL={stop_loss:.5f} | TP={take_profit:.5f} | RR=1:{rr:.2f}")
-        pip_size_final = 0.01 if 'JPY' in symbol else 0.0001
+        pip_size_final = self._get_pip_size(symbol)  # V37.17: pip corect XAU/BTC/JPY/FX
         print(f"   📐 SL dist={abs(entry-stop_loss)/pip_size_final:.1f} pips | TP dist={abs(take_profit-entry)/pip_size_final:.1f} pips")
 
         return entry, stop_loss, take_profit
@@ -2945,7 +2945,51 @@ class SMCDetector:
     # din scan_for_setup() (index CHoCH vs BOS). detect_strategy_type() eliminat
     # — era motor paralel neapelat; nu modifica Body Close detect_choch_and_bos().
 
-    
+    def _build_v246_synthetic_fvg(
+        self,
+        df_daily: pd.DataFrame,
+        latest_signal,
+        current_trend: str,
+        symbol: str = "",
+    ) -> FVG:
+        """V24.6 / V37.17 — zonă Equilibrium sintetică când FVG organic lipsește sau e degradat."""
+        _db_swing_highs = self.detect_swing_highs(df_daily)
+        _db_swing_lows = self.detect_swing_lows(df_daily)
+        _signal_idx = latest_signal.index
+        _recent_highs = [s for s in _db_swing_highs if s.index >= _signal_idx]
+        _recent_lows = [s for s in _db_swing_lows if s.index >= _signal_idx]
+        if not _recent_highs:
+            _recent_highs = _db_swing_highs[-5:] if _db_swing_highs else []
+        if not _recent_lows:
+            _recent_lows = _db_swing_lows[-5:] if _db_swing_lows else []
+        if _recent_highs and _recent_lows:
+            _eq_h = max(s.price for s in _recent_highs)
+            _eq_l = min(s.price for s in _recent_lows)
+            _eq_range = _eq_h - _eq_l
+            _eq_mid = _eq_l + _eq_range * 0.50
+            _eq_top = _eq_l + _eq_range * 0.60
+            _eq_bottom = _eq_l + _eq_range * 0.40
+        else:
+            _eq_h = float(df_daily['high'].iloc[-20:].max())
+            _eq_l = float(df_daily['low'].iloc[-20:].min())
+            _eq_mid = (_eq_h + _eq_l) / 2
+            _eq_top = _eq_l + (_eq_h - _eq_l) * 0.60
+            _eq_bottom = _eq_l + (_eq_h - _eq_l) * 0.40
+        fvg = FVG(
+            index=latest_signal.index,
+            direction=current_trend,
+            top=_eq_top,
+            bottom=_eq_bottom,
+            middle=_eq_mid,
+            candle_time=latest_signal.candle_time,
+            is_momentum_entry=False,
+        )
+        fvg.quality_score = 75
+        fvg._is_daily_bias_zone = True
+        _lbl = f" {symbol}" if symbol else ""
+        print(f"   ✅ [V24.6/V37.17]{_lbl} Zonă Equilibrium sintetică: {_eq_bottom:.5f} - {_eq_top:.5f} (mid={_eq_mid:.5f})")
+        return fvg
+
     def scan_for_setup(
         self, 
         symbol: str,
@@ -3253,56 +3297,9 @@ class SMCDetector:
                     print(f"   ✅ MOMENTUM Entry Zone (fallback 20bars): {entry_zone_bottom:.5f} - {entry_zone_top:.5f}")
         
         if not fvg:
-            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-            # V24.6 PERMISSIVE DAILY FLOW — Colonel's Philosophy
-            # Scanner Daily = plasă largă (Daily Bias). Radarul 4H = arbitrul final.
-            # Dacă structura Daily e validă (CHoCH/BOS confirmat) dar FVG corp lipsește
-            # sau e mituit → NU mai respingem. Construim o zonă sintetică de Equilibrium
-            # din swing-urile recente și lăsăm Radarul 4H să decidă.
-            # Flag daily_bias_active=True → multi_tf_radar știe că FVG-ul nu e organic.
-            # REGULA DE AUR: NICIODATĂ nu se execută un daily_bias_active fără 4H CHoCH!
-            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            # V24.6 PERMISSIVE DAILY FLOW — FVG absent → Equilibrium sintetic (Radar 4H arbitrează)
             print(f"⚠️ [V24.6 DAILY BIAS] {symbol}: FVG corp absent/mituit — construiesc zonă Equilibrium sintetică (Radar 4H va valida)")
-            _db_swing_highs = self.detect_swing_highs(df_daily)
-            _db_swing_lows  = self.detect_swing_lows(df_daily)
-            # Găsim cel mai recent swing high și low din ultimele 30 bare (după semnal)
-            _signal_idx = latest_signal.index
-            _recent_highs = [s for s in _db_swing_highs if s.index >= _signal_idx]
-            _recent_lows  = [s for s in _db_swing_lows  if s.index >= _signal_idx]
-            # Fallback: dacă nu avem swing-uri post-semnal, folosim ultimele 30 bare
-            if not _recent_highs:
-                _recent_highs = _db_swing_highs[-5:] if _db_swing_highs else []
-            if not _recent_lows:
-                _recent_lows = _db_swing_lows[-5:] if _db_swing_lows else []
-            if _recent_highs and _recent_lows:
-                _eq_h = max(s.price for s in _recent_highs)
-                _eq_l = min(s.price for s in _recent_lows)
-                _eq_range = _eq_h - _eq_l
-                # Zona Equilibrium = 40-60% din range — zona de interes instituțional
-                _eq_mid   = _eq_l + _eq_range * 0.50
-                _eq_top   = _eq_l + _eq_range * 0.60
-                _eq_bottom= _eq_l + _eq_range * 0.40
-            else:
-                # Ultra-fallback: ultimele 20 bare high/low
-                _eq_h = float(df_daily['high'].iloc[-20:].max())
-                _eq_l = float(df_daily['low'].iloc[-20:].min())
-                _eq_mid    = (_eq_h + _eq_l) / 2
-                _eq_top    = _eq_l + (_eq_h - _eq_l) * 0.60
-                _eq_bottom = _eq_l + (_eq_h - _eq_l) * 0.40
-            fvg = FVG(
-                index=latest_signal.index,
-                direction=current_trend,
-                top=_eq_top,
-                bottom=_eq_bottom,
-                middle=_eq_mid,
-                candle_time=latest_signal.candle_time,
-                is_momentum_entry=False  # nu e MOMENTUM — e Daily Bias
-            )
-            fvg.quality_score = 75  # V28.0: Scor 75 = trece filtrele de calitate; Radar 4H confirmă structura reală
-            # (scor 0 era respins de filtrele GBP ≠45 și non-GBP ≥15 — acum 75 trece ambele praguri)
-            # Marcăm setup-ul — va fi propagat în TradeSetup.daily_bias_active
-            fvg._is_daily_bias_zone = True
-            print(f"   ✅ [V24.6] Zonă Equilibrium sintetică: {_eq_bottom:.5f} - {_eq_top:.5f} (mid={_eq_mid:.5f})")
+            fvg = self._build_v246_synthetic_fvg(df_daily, latest_signal, current_trend, symbol)
 
         if debug:
             gap_size = fvg.top - fvg.bottom
@@ -3474,31 +3471,25 @@ class SMCDetector:
                     print(f"\n✅ CRYPTO FVG V24.4 PASSED: Gap {gap_pct:.3f}%, Body {body_ratio:.1%}")
 
             elif is_gold:
-                # ✅ V14.0 XAUUSD FIX: Praguri relaxate de la 0.15%/40% la 0.10%/25%
-                # Motivul: Gold are frecvent doji pe Daily (body_ratio 20-35%) = structuri valide
-                # dar respinse de pragul strict de 40%. Cu 0.10%/25%, setup-urile reale trec.
-                # Gap 0.10% pe XAUUSD @ 3200 = ~3.2$ gap — suficient pentru imbalance real.
-                
+                # V37.17: FVG organic imperfect → degradare V24.6, NU return None (bias D1 păstrat)
                 gap_size = fvg.top - fvg.bottom
-                gap_pct = (gap_size / fvg.bottom) * 100
-                
-                if gap_pct < 0.10:  # V14.0: relaxat de la 0.15% la 0.10%
-                    if debug:
-                        print(f"\n❌ REJECTED XAUUSD FVG: Gap {gap_pct:.3f}% < 0.10%")
-                    return None
-                
-                # Check body strength
-                gap_candle = df_daily.iloc[fvg.index]
+                gap_pct = (gap_size / fvg.bottom) * 100 if fvg.bottom else 0
+                _gap_idx = min(max(fvg.index, 0), len(df_daily) - 1)
+                gap_candle = df_daily.iloc[_gap_idx]
                 candle_body = abs(gap_candle['close'] - gap_candle['open'])
                 candle_range = gap_candle['high'] - gap_candle['low']
                 body_ratio = candle_body / candle_range if candle_range > 0 else 0
-                
-                if body_ratio < 0.25:  # V14.0: relaxat de la 0.40 la 0.25 (Gold = doji frecvent)
-                    if debug:
-                        print(f"\n❌ REJECTED XAUUSD FVG: Body {body_ratio:.1%} < 25%")
-                    return None
-                
-                if debug:
+                _already_synthetic = getattr(fvg, '_is_daily_bias_zone', False)
+
+                if not _already_synthetic and (gap_pct < 0.10 or body_ratio < 0.25):
+                    _reason = []
+                    if gap_pct < 0.10:
+                        _reason.append(f"gap {gap_pct:.3f}% < 0.10%")
+                    if body_ratio < 0.25:
+                        _reason.append(f"body {body_ratio:.1%} < 25%")
+                    print(f"⚠️ [V37.17 {symbol}] FVG organic imperfect ({', '.join(_reason)}) → V24.6 Equilibrium sintetic (WAITING_D1_PULLBACK)")
+                    fvg = self._build_v246_synthetic_fvg(df_daily, latest_signal, current_trend, symbol)
+                elif debug:
                     print(f"\n✅ XAUUSD FVG V14.0 PASSED: Gap {gap_pct:.3f}%, Body {body_ratio:.1%}")
                     
             elif is_gbp:
@@ -4248,12 +4239,26 @@ class SMCDetector:
         _is_momentum = hasattr(fvg, 'is_momentum_entry') and fvg.is_momentum_entry
         _is_reversal = (strategy_type == 'reversal')
         if not skip_fvg_quality and not _is_momentum and not _is_reversal:
-            premium_discount = self.calculate_premium_discount(
-                df_daily=df_daily,
-                current_price=current_price,
-                debug=debug
+            # V37.17: calculate_premium_discount() era inexistentă → crash pe CONTINUATION (XAUUSD)
+            macro_high, macro_low, premium_threshold, discount_threshold = (
+                self.calculate_premium_discount_zones(df_daily)
             )
-            
+            _macro_range = macro_high - macro_low
+            if _macro_range > 0:
+                _pd_pct = ((current_price - macro_low) / _macro_range) * 100.0
+            else:
+                _pd_pct = 50.0
+            if current_price >= premium_threshold:
+                _pd_zone = 'PREMIUM'
+            elif current_price <= discount_threshold:
+                _pd_zone = 'DISCOUNT'
+            else:
+                _pd_zone = 'EQUILIBRIUM'
+            premium_discount = {'percentage': _pd_pct, 'zone': _pd_zone}
+            if debug:
+                print(f"\n📊 [V37.17 P/D] Macro range {macro_low:.5f}-{macro_high:.5f} → "
+                      f"{_pd_zone} {_pd_pct:.1f}%")
+
             # V26.0: P/D filter relaxat — prag extreme 85/15 + bypass complet la MONITORING
             # PROBLEMA V15.2: calculate_premium_discount() citește O SINGURĂ lumânare Daily.
             # Trend bullish → lumânare closes la high → 85-95% = PREMIUM → LONG respins greșit.

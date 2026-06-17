@@ -766,8 +766,9 @@ class DailyScanner:
             except Exception as e:
                 logger.debug(f"Could not check Deep Sleep state: {e}")
             
-            # Build setup symbols info for the report
+            # Build setup symbols info for the report (V37.17: include bias fallback entries)
             setup_symbols = []
+            _report_syms = set()
             for s in setups_found:
                 direction_str = "buy" if s.daily_choch.direction == 'bullish' else "sell"
                 strategy_str = getattr(s, 'strategy_type', 'UNKNOWN').upper()
@@ -776,8 +777,22 @@ class DailyScanner:
                     'symbol': s.symbol,
                     'direction': direction_str,
                     'strategy': strategy_str,
-                    'h4_structure_locked': h4_locked
+                    'h4_structure_locked': h4_locked,
+                    'bias_fallback': False,
                 })
+                _report_syms.add(s.symbol)
+            for entry in bias_fallback_entries:
+                sym = entry.get('symbol')
+                if not sym or sym in _report_syms:
+                    continue
+                setup_symbols.append({
+                    'symbol': sym,
+                    'direction': entry.get('direction', 'buy'),
+                    'strategy': (entry.get('setup_type') or 'CONTINUATION').upper(),
+                    'h4_structure_locked': False,
+                    'bias_fallback': True,
+                })
+                _report_syms.add(sym)
             
             # Send the OFFICIAL scan report (mirrors console exactly)
             try:

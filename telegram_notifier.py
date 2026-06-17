@@ -860,6 +860,29 @@ class TelegramNotifier:
 
         return self.send_message(message.strip(), parse_mode="HTML")
     
+    def _format_scan_report_line(self, sym_info: dict, bias_fallback: bool = False) -> str:
+        """V37.17 — formatare linie setup / bias fallback pentru MARKET_REPORT."""
+        symbol = sym_info.get('symbol', '?')
+        direction = str(sym_info.get('direction', '?')).lower()
+        raw_strat = str(sym_info.get('strategy', 'UNKNOWN')).upper()
+        if raw_strat == 'CONTINUITY':
+            raw_strat = 'CONTINUATION'
+        raw_strat = raw_strat.replace('_COUNTER_W1', '')
+        h4_locked = sym_info.get('h4_structure_locked', sym_info.get('h4_bias_locked', True))
+        dot = "🔴" if direction == 'sell' else "🟢"
+        if bias_fallback:
+            status_suffix = " (Daily Bias — WAITING_D1_PULLBACK)"
+        elif not h4_locked:
+            if raw_strat in ('CONTINUATION', 'CONTINUITY'):
+                status_suffix = " (Waiting 4H BOS / Pullback)"
+            else:
+                status_suffix = " (Waiting 4H CHoCH)"
+        elif direction == 'sell':
+            status_suffix = " (confirmed SELL)"
+        else:
+            status_suffix = " (confirmed BUY)"
+        return f"{dot} {symbol} ➔ {raw_strat}{status_suffix}\n"
+
     def send_scan_report(
         self,
         total_pairs: int,
@@ -896,29 +919,18 @@ class TelegramNotifier:
 
         # ── SETUP-URI ──
         if setup_symbols:
-            report += "🎯 <b>SETUP-URI DETECTATE (Daily Bias)</b>\n"
-            for sym_info in setup_symbols:
-                symbol = sym_info.get('symbol', '?')
-                direction = str(sym_info.get('direction', '?')).lower()
-                raw_strat = str(sym_info.get('strategy', 'UNKNOWN')).upper()
-                if raw_strat == 'CONTINUITY':
-                    raw_strat = 'CONTINUATION'
-                # Strip _counter_w1 suffix for display, keep core strategy name
-                raw_strat = raw_strat.replace('_COUNTER_W1', '')
-                h4_locked = sym_info.get('h4_structure_locked', sym_info.get('h4_bias_locked', True))
-                # V37.2: bulina = directie (🟢 buy / 🔴 sell), nu albastru uniform
-                dot = "🔴" if direction == 'sell' else "🟢"
-                if not h4_locked:
-                    if raw_strat in ('CONTINUATION', 'CONTINUITY'):
-                        status_suffix = " (Waiting 4H BOS / Pullback)"
-                    else:
-                        status_suffix = " (Waiting 4H CHoCH)"
-                elif direction == 'sell':
-                    status_suffix = " (confirmed SELL)"
-                else:
-                    status_suffix = " (confirmed BUY)"
-                report += f"{dot} {symbol} ➔ {raw_strat}{status_suffix}\n"
-            report += "\n"
+            _full_setups = [s for s in setup_symbols if not s.get('bias_fallback')]
+            _bias_only = [s for s in setup_symbols if s.get('bias_fallback')]
+            if _full_setups:
+                report += "🎯 <b>SETUP-URI DETECTATE (Daily Bias)</b>\n"
+                for sym_info in _full_setups:
+                    report += self._format_scan_report_line(sym_info)
+                report += "\n"
+            if _bias_only:
+                report += "📡 <b>DAILY BIAS FALLBACK</b> <i>(structură D1 confirmată, FVG degradat)</i>\n"
+                for sym_info in _bias_only:
+                    report += self._format_scan_report_line(sym_info, bias_fallback=True)
+                report += "\n"
 
         # ── STATUS ──
         if deep_sleep_active and deep_sleep_until:
