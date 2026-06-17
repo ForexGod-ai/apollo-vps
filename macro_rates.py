@@ -344,21 +344,19 @@ def get_top_carry_pairs(rates: Dict[str, float], top_n: int = 3) -> List[dict]:
 
 
 def fetch_ic_markets_swaps(symbols: Optional[List[str]] = None) -> List[dict]:
-    """Live swap from cTrader MarketDataProvider (IC Markets on VPS)."""
-    if not HAS_REQUESTS:
-        return []
+    """Live swap from cTrader MarketDataProvider (IC Markets on VPS, port 8010)."""
     symbols = symbols or SWAP_CARRY_SYMBOLS
     results = []
+    try:
+        from ctrader_cbot_client import get_cbot_client
+        client = get_cbot_client()
+    except Exception as e:
+        logger.debug(f"[macro_rates] cBot client unavailable: {e}")
+        return []
+
     for sym in symbols:
         try:
-            resp = requests.get(
-                "http://localhost:8767/swap_info",
-                params={"symbol": sym},
-                timeout=5,
-            )
-            if resp.status_code != 200:
-                continue
-            data = resp.json()
+            data = client.get_swap_info(sym)
             if not data.get("success"):
                 continue
             results.append({
@@ -450,7 +448,10 @@ def format_rates_telegram_message(
             msg += "</code>\n"
             msg += "<i>Swap = cost/credit real broker · pips/zi</i>\n"
         else:
-            msg += "<i>💱 IC Markets swap: cTrader offline (:8767)</i>\n"
+            msg += (
+                "<i>💱 IC Markets swap: MarketDataProvider offline</i>\n"
+                "<i>Pornește cBot-ul DATA pe port 8010 în cTrader Desktop</i>\n"
+            )
 
     strongest_ccy, strongest_rate = sorted_rates[0]
     weakest_ccy, weakest_rate = sorted_rates[-1]
