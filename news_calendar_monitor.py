@@ -118,29 +118,17 @@ class NewsEvent:
 
 
 # ═══════════════════════════════════════════════════════════════════
-# 🏦 V11.0 MACRO WEEKLY TABLE — Central Bank Rates (hardcoded 2026)
+# 🏦 V38 MACRO RATES — live service (macro_rates.py)
 # ═══════════════════════════════════════════════════════════════════
 
-CENTRAL_BANK_RATES: Dict[str, float] = {
-    "NZD": 5.25,
-    "GBP": 5.00,
-    "USD": 4.75,
-    "AUD": 4.35,
-    "CAD": 3.75,
-    "EUR": 3.50,
-    "CHF": 1.50,
-    "JPY": 0.25,
-}
+from macro_rates import (
+    CENTRAL_BANK_RATES,
+    FALLBACK_RATES,
+    FLAGS as _FLAGS,
+    CARRY_PAIRS as _CARRY_PAIRS,
+)
 
-# Watched pairs for top-carry calculation
-_CARRY_PAIRS = [
-    ("GBP", "JPY"), ("NZD", "JPY"), ("AUD", "JPY"), ("USD", "JPY"),
-    ("GBP", "CHF"), ("NZD", "CHF"), ("AUD", "CHF"), ("USD", "CHF"),
-    ("GBP", "EUR"), ("NZD", "EUR"), ("AUD", "EUR"), ("USD", "EUR"),
-    ("GBP", "CAD"), ("NZD", "CAD"), ("AUD", "CAD"), ("USD", "CAD"),
-]
-
-# Central bank names (for live scraping)
+# Central bank names (for display / future use)
 _CB_NAMES = {
     "USD": "Federal Reserve (Fed)",
     "EUR": "European Central Bank (ECB)",
@@ -150,12 +138,6 @@ _CB_NAMES = {
     "NZD": "Reserve Bank of New Zealand (RBNZ)",
     "CAD": "Bank of Canada (BOC)",
     "CHF": "Swiss National Bank (SNB)",
-}
-
-# Currency flags
-_FLAGS = {
-    "USD": "🇺🇸", "EUR": "🇪🇺", "GBP": "🇬🇧", "JPY": "🇯🇵",
-    "AUD": "🇦🇺", "NZD": "🇳🇿", "CAD": "🇨🇦", "CHF": "🇨🇭",
 }
 
 
@@ -877,190 +859,24 @@ class NewsCalendarMonitor:
     # ═══════════════════════════════════════════════════════════════════
 
     def fetch_live_cb_rates(self) -> Dict[str, float]:
-        """
-        Tentative scraping of live central bank rates from investing.com.
-        Returns a dict {currency: rate}.
-        Falls back to CENTRAL_BANK_RATES hardcoded values if scraping fails.
-        """
-        if not HAS_REQUESTS:
-            return {}
+        """Delegate to macro_rates service (V38)."""
+        from macro_rates import fetch_live_cb_rates
+        return fetch_live_cb_rates()
 
-        live: Dict[str, float] = {}
-        # investing.com central-bank-rates page (public, no JS needed)
-        url = "https://www.investing.com/central-banks/"
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                          "AppleWebKit/537.36 (KHTML, like Gecko) "
-                          "Chrome/122.0.0.0 Safari/537.36",
-            "Accept-Language": "en-US,en;q=0.9",
-        }
-        try:
-            import requests as _req
-            resp = _req.get(url, headers=headers, timeout=12)
-            if resp.status_code != 200:
-                logger.warning(f"⚠️ Live CB rates fetch returned HTTP {resp.status_code} — using hardcoded")
-                return {}
-
-            if not HAS_BS4:
-                logger.warning("⚠️ BeautifulSoup not available — using hardcoded rates")
-                return {}
-
-            soup = BeautifulSoup(resp.text, "html.parser")
-
-            # investing.com table: rows contain flag img + currency name + rate
-            # Pattern: <td class="...flagCur...">USD</td>  <td>4.75%</td>
-            currency_map = {
-                "united states": "USD", "euro zone": "EUR", "eurozone": "EUR",
-                "united kingdom": "GBP", "japan": "JPY", "australia": "AUD",
-                "new zealand": "NZD", "canada": "CAD", "switzerland": "CHF",
-            }
-            rows = soup.select("table tr")
-            for row in rows:
-                cols = row.find_all("td")
-                if len(cols) < 3:
-                    continue
-                country_text = cols[0].get_text(" ", strip=True).lower()
-                rate_text = ""
-                # rate is usually in the 3rd or 4th column — find first % sign
-                for col in cols[1:]:
-                    txt = col.get_text(strip=True).replace("%", "").replace(",", ".")
-                    try:
-                        val = float(txt)
-                        rate_text = txt
-                        break
-                    except ValueError:
-                        continue
-
-                if not rate_text:
-                    continue
-
-                for key, ccy in currency_map.items():
-                    if key in country_text and ccy not in live:
-                        try:
-                            live[ccy] = float(rate_text)
-                        except ValueError:
-                            pass
-                        break
-
-            if len(live) >= 5:
-                logger.success(f"✅ Live CB rates fetched: {live}")
-            else:
-                logger.warning(f"⚠️ Only {len(live)} live rates parsed — partial result")
-
-        except Exception as e:
-            logger.warning(f"⚠️ Live CB rate scrape failed: {e} — using hardcoded")
-
-        return live
-
-    def _get_effective_rates(self) -> Dict[str, float]:
-        """
-        Returns merged rate dict: live rates override hardcoded where available.
-        Detects changes vs hardcoded baseline and logs them.
-        """
-        effective = dict(CENTRAL_BANK_RATES)  # start with hardcoded
-        live = self.fetch_live_cb_rates()
-
-        changes: list = []
-        for ccy, live_rate in live.items():
-            hardcoded = CENTRAL_BANK_RATES.get(ccy)
-            if hardcoded is not None and abs(live_rate - hardcoded) >= 0.01:
-                changes.append((ccy, hardcoded, live_rate))
-                logger.warning(f"🚨 RATE CHANGE DETECTED: {ccy} {hardcoded}% → {live_rate}%")
-            effective[ccy] = live_rate
-
-        # Store for re-use
-        self._live_rates = effective
-        return effective, changes
+    def _get_effective_rates(self):
+        """Delegate to macro_rates service (V38)."""
+        from macro_rates import get_effective_rates
+        rates, source, _fetched_at, changes = get_effective_rates(force_refresh=True)
+        self._live_rates = rates
+        if changes:
+            for ccy, old, new in changes:
+                logger.warning(f"🚨 RATE CHANGE DETECTED: {ccy} {old}% → {new}%")
+        return rates, changes
 
     def generate_weekly_macro_report(self) -> str:
-        """
-        🏦 V11.0 MACRO WEEKLY TABLE
-        Generates Telegram-ready macro report with:
-         - Central bank rates table (sorted highest→lowest)
-         - Strong / Weak classification
-         - Top 3 carry opportunities from _CARRY_PAIRS
-         - Rate change alerts (vs hardcoded baseline)
-        """
-        rates, changes = self._get_effective_rates()
-
-        # ── Sort currencies by rate (desc)
-        sorted_rates = sorted(rates.items(), key=lambda x: x[1], reverse=True)
-
-        # ── Median for Strong/Weak threshold
-        all_vals = [v for _, v in sorted_rates]
-        median_rate = sorted(all_vals)[len(all_vals) // 2]
-
-        now_ro = datetime.now(self.local_tz) if self.local_tz else datetime.now()
-        week_str = now_ro.strftime("W%W • %d %b %Y")
-
-        SEP = "━━━━━━━━━━━━━━━━"   # 16 chars (scurtat cu 3 față de 19)
-
-        msg = "🏦 <b>MACRO WEEKLY TABLE</b>\n"
-        msg += f"📅 <b>{week_str}</b>\n"
-        msg += f"🕐 <i>Transmis {now_ro.strftime('%H:%M')} EET</i>\n"
-        msg += SEP + "\n"
-
-        # ── Rate change alerts (if any)
-        if changes:
-            msg += "🚨 <b>RATE CHANGES!</b>\n"
-            for ccy, old, new in changes:
-                arrow = "🔺" if new > old else "🔻"
-                flag = _FLAGS.get(ccy, "")
-                msg += f"  {arrow} {flag} <b>{ccy}</b>: {old:.2f}% → <b>{new:.2f}%</b>\n"
-            msg += SEP + "\n"
-
-        # ── Rates table
-        msg += "📊 <b>DOBÂNZI BĂNCI CENTRALE</b>\n"
-        msg += "<code>"
-        msg += f"{'CCY':<5} {'RATĂ':>6}  STATUS\n"
-        msg += f"{'─'*5} {'─'*6}  {'─'*8}\n"
-        for ccy, rate in sorted_rates:
-            flag = _FLAGS.get(ccy, " ")
-            status = "🟢 STRONG" if rate >= median_rate else "🔴 WEAK"
-            source = "*" if ccy in self._live_rates and abs(self._live_rates.get(ccy, 0) - CENTRAL_BANK_RATES.get(ccy, 0)) >= 0.01 else " "
-            msg += f"{flag}{ccy:<3} {rate:>5.2f}%  {status}{source}\n"
-        msg += "</code>"
-        msg += "<i>* = live update</i>\n"
-        msg += SEP + "\n"
-
-        # ── Top 3 carry pairs
-        pair_spreads = []
-        for base, quote in _CARRY_PAIRS:
-            b_rate = rates.get(base, 0)
-            q_rate = rates.get(quote, 0)
-            spread = round(b_rate - q_rate, 2)
-            pair_spreads.append((f"{base}/{quote}", base, quote, spread, b_rate, q_rate))
-
-        top3 = sorted(pair_spreads, key=lambda x: x[3], reverse=True)[:3]
-
-        msg += "🚀 <b>TOP 3 CARRY OPPORTUNITIES</b>\n"
-        for rank, (pair, base, quote, spread, b_rate, q_rate) in enumerate(top3, 1):
-            b_flag = _FLAGS.get(base, "")
-            q_flag = _FLAGS.get(quote, "")
-            medal = ["🥇", "🥈", "🥉"][rank - 1]
-            msg += (
-                f"{medal} <b>{b_flag}{base}/{q_flag}{quote}</b>  "
-                f"<code>+{spread:.2f}%</code>\n"
-                f"   {b_rate:.2f}% − {q_rate:.2f}% spread\n"
-            )
-
-        msg += SEP + "\n"
-
-        # ── Strongest vs weakest
-        strongest_ccy, strongest_rate = sorted_rates[0]
-        weakest_ccy, weakest_rate = sorted_rates[-1]
-        msg += (
-            f"💪 {_FLAGS.get(strongest_ccy,'')} <b>{strongest_ccy}</b> {strongest_rate:.2f}% · "
-            f"😴 {_FLAGS.get(weakest_ccy,'')} <b>{weakest_ccy}</b> {weakest_rate:.2f}%\n"
-        )
-        msg += SEP + "\n"
-
-        # ── Semnătură oficială V11.8
-        msg += "─────────────────\n"
-        msg += "🔱 <b>AUTHORED BY ФорексГод</b> 🔱\n"
-        msg += "🏛️ <b>Глитч Ин Матрикс</b> 🏛️"
-
-        return msg
+        """V38 — weekly macro table via unified macro_rates service."""
+        from macro_rates import format_weekly_macro_report
+        return format_weekly_macro_report(local_tz=self.local_tz)
 
     def _load_macro_sent_date(self):
         """Load last sent date from disk (fail-safe: survives process restarts)."""

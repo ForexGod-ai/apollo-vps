@@ -1651,61 +1651,14 @@ class TelegramCommandCenter:
             return f"❌ <b>NEWS ERROR:</b> {str(e)}"
 
     def handle_rates_command(self) -> str:
-        """/rates — Central Bank rates + top carry pairs (V11.5)"""
+        """/rates — Live central bank rates + carry pairs + IC Markets swap (V38)"""
         try:
-            # Rates hardcoded 2026
-            RATES = {
-                'NZD': ('🇳🇿', 5.25),
-                'GBP': ('🇬🇧', 5.00),
-                'USD': ('🇺🇸', 4.75),
-                'AUD': ('🇦🇺', 4.35),
-                'CAD': ('🇨🇦', 3.75),
-                'EUR': ('🇪🇺', 3.50),
-                'CHF': ('🇨🇭', 1.50),
-                'JPY': ('🇯🇵', 0.25),
-            }
-
-            # Status: >= 3.5% = Strong, altfel Weak
-            def status(rate):
-                return '🟢 Strong' if rate >= 3.50 else '🔴 Weak'
-
-            msg = (
-                f"<b>🏦 CENTRAL BANK RATES — 2026</b>\n"
-                f"{UNIVERSAL_SEPARATOR}\n\n"
+            from macro_rates import format_rates_telegram_message
+            return format_rates_telegram_message(
+                separator=UNIVERSAL_SEPARATOR,
+                include_swaps=True,
+                force_refresh=False,
             )
-            sorted_rates = sorted(RATES.items(), key=lambda x: x[1][1], reverse=True)
-            for ccy, (flag, rate) in sorted_rates:
-                filled = round(rate / 1.0)
-                bar = '▰' * filled + '▱' * (6 - filled)
-                msg += f"{flag} <b>{ccy}</b>  {rate:.2f}%  {bar}  {status(rate)}\n"
-
-            # Top 3 carry pairs
-            pairs = []
-            currencies = list(RATES.keys())
-            for i in range(len(currencies)):
-                for j in range(len(currencies)):
-                    if i == j:
-                        continue
-                    c1, c2 = currencies[i], currencies[j]
-                    diff = RATES[c1][1] - RATES[c2][1]
-                    if diff > 0:
-                        pairs.append((diff, c1, c2, RATES[c1][0], RATES[c2][0]))
-
-            pairs.sort(reverse=True)
-            top3 = pairs[:3]
-
-            msg += f"\n{UNIVERSAL_SEPARATOR}\n"
-            msg += f"<b>🎯 TOP CARRY PAIRS (Buy High / Sell Low)</b>\n\n"
-            medals = ['🥇', '🥈', '🥉']
-            for idx, (diff, c1, c2, f1, f2) in enumerate(top3):
-                msg += (
-                    f"{medals[idx]} <b>{f1}{c1}/{f2}{c2}</b>\n"
-                    f"   📈 Diff: <b>+{diff:.2f}%</b>  "
-                    f"({RATES[c1][1]:.2f}% vs {RATES[c2][1]:.2f}%)\n\n"
-                )
-
-            return msg
-
         except Exception as e:
             logger.error(f"❌ /rates error: {e}")
             return f"❌ <b>RATES ERROR:</b> {str(e)}"

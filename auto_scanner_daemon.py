@@ -45,6 +45,11 @@ WEEKLY_REPORT_DAY = 4  # Friday
 BASE_DIR = Path(__file__).parent
 LAST_SCAN_FILE = BASE_DIR / "data" / "last_auto_scan.json"
 LAST_WEEKLY_REPORT_FILE = BASE_DIR / "data" / "last_weekly_report.json"
+LAST_CB_RATES_REFRESH_FILE = BASE_DIR / "data" / "last_cb_rates_refresh.json"
+
+# V38: daily macro rates refresh at 08:00 Bucharest
+CB_RATES_REFRESH_HOUR = 8
+CB_RATES_REFRESH_MINUTE = 0
 
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
@@ -247,6 +252,46 @@ def save_last_weekly_report_date(report_date: str):
             }, f, indent=2)
     except Exception as e:
         logger.warning(f"Could not save weekly report date: {e}")
+
+
+# ━━━ V38: DAILY CB RATES REFRESH ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+def get_last_cb_rates_refresh_date() -> str:
+    try:
+        if LAST_CB_RATES_REFRESH_FILE.exists():
+            with open(LAST_CB_RATES_REFRESH_FILE, 'r') as f:
+                data = json.load(f)
+                return data.get('last_refresh_date', '')
+    except Exception:
+        pass
+    return ''
+
+
+def save_last_cb_rates_refresh_date(refresh_date: str):
+    try:
+        LAST_CB_RATES_REFRESH_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(LAST_CB_RATES_REFRESH_FILE, 'w') as f:
+            json.dump({
+                'last_refresh_date': refresh_date,
+                'last_refresh_timestamp': datetime.now().isoformat(),
+                'updated_by': 'auto_scanner_daemon.py',
+            }, f, indent=2)
+    except Exception as e:
+        logger.warning(f"Could not save CB rates refresh date: {e}")
+
+
+def run_daily_cb_rates_refresh():
+    """Refresh central bank rates cache + optional Telegram alert on change."""
+    try:
+        from macro_rates import refresh_rates_daily
+        result = refresh_rates_daily(notify_telegram=True)
+        logger.info(
+            f"[CB_RATES] refresh source={result.get('source')} "
+            f"changes={len(result.get('changes', []))}"
+        )
+        return True
+    except Exception as e:
+        logger.error(f"[CB_RATES] refresh failed: {e}")
+        return False
 
 
 def send_weekly_report():
@@ -452,6 +497,17 @@ def main():
                 logger.info(f"[WEEKLY] Vineri 23:59 — trimit Weekly Report...")
                 save_last_weekly_report_date(today_str)
                 send_weekly_report()
+
+            # ── V38: Daily CB rates refresh 08:00 EET ───────────────────────
+            is_cb_rates_time = (
+                now.hour == CB_RATES_REFRESH_HOUR
+                and CB_RATES_REFRESH_MINUTE <= now.minute <= CB_RATES_REFRESH_MINUTE + 4
+            )
+            already_refreshed_cb = (get_last_cb_rates_refresh_date() == today_str)
+            if is_cb_rates_time and not already_refreshed_cb:
+                logger.info("[CB_RATES] 08:00 — refresh macro rates cache...")
+                save_last_cb_rates_refresh_date(today_str)
+                run_daily_cb_rates_refresh()
 
             if is_scan_day and is_scan_time and not already_scanned_today:
                 logger.info(f"[TRIGGER] {DAY_NAMES[weekday]} {now.strftime('%H:%M')} — SCAN START!")
