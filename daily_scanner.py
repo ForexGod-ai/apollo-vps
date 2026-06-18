@@ -239,7 +239,7 @@ class DailyScanner:
             keep_connection: If True, don't disconnect MT5 after scan (for auto-trader)
         """
         print("\n" + "="*60)
-        print("🔥 ForexGod - Glitch Daily Scanner Starting... [V40.3 W1 INFO + SMART RE-HYDRATE]")
+        print("🔥 ForexGod - Glitch Daily Scanner Starting... [V37.15 DYNAMIC REVERSAL + V40.3]")
         print(f"⏰ Scan Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         print("="*60 + "\n")
 
@@ -665,14 +665,22 @@ class DailyScanner:
                                     f"⚠️ [V40.3 W1 INFO] {symbol}: bias fallback LONG — "
                                     f"⚠️ [COUNTER-TREND W1] (salvat cu confidence={_bf_confidence})"
                                 )
-                            print(f"📡 [V31.0 BIAS FALLBACK] {symbol}: bias={_bias_dir.upper()} → colectat WAITING_D1_PULLBACK")
+                            # V37.15: strategy din semnal D1 real (CHoCH/BOS), nu hardcod continuation
+                            _bf_strategy, _bf_sig = self.smc_detector.infer_d1_strategy_type(
+                                df_daily, symbol=symbol
+                            )
+                            _bf_setup_type = _bf_strategy.upper()
+                            print(
+                                f"📡 [V31.0 BIAS FALLBACK] {symbol}: bias={_bias_dir.upper()} "
+                                f"→ {_bf_sig}/{_bf_strategy.upper()} WAITING_D1_PULLBACK"
+                            )
                             bias_fallback_entries.append({
                                 'symbol': symbol,
                                 'direction': _bias_trade_dir,
                                 'd1_bias_direction': _bias_dir,
                                 'daily_bias': _bias_dir.upper(),
-                                'setup_type': 'CONTINUATION',
-                                'strategy_type': 'continuation',
+                                'setup_type': _bf_setup_type,
+                                'strategy_type': _bf_strategy,
                                 'strategy_locked': True,
                                 'daily_bias_active': True,
                                 'confidence': _bf_confidence,
@@ -1021,8 +1029,8 @@ def _trade_setup_to_monitoring_dict(setup: TradeSetup, setup_time_str: str) -> d
         "symbol": setup.symbol,
         "direction": direction,
         "daily_bias": setup.daily_choch.direction.upper(),
-        "setup_type": (getattr(setup, 'strategy_type', 'continuation') or 'continuation').upper(),
-        "strategy_type": getattr(setup, 'strategy_type', 'continuation'),
+        "setup_type": (getattr(setup, 'strategy_type', 'reversal') or 'reversal').upper(),
+        "strategy_type": getattr(setup, 'strategy_type', 'reversal'),
         "strategy_locked": True,
         "d1_bias_direction": setup.daily_choch.direction,
         "daily_bias_active": True,

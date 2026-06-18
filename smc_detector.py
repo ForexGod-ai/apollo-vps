@@ -1834,6 +1834,7 @@ class SMCDetector:
     # V40.0 — STRICT TRADING RANGE (anti sub-structure bias, all pairs)
     # V40.1 — CRYPTO MACRO CEILING
     # V40.3 — W1 PURE INFORMATIVE (confidence flag, fără reject)
+    # V37.15 — strategy_type din semnal real CHoCH/BOS (fără kill switch V40 lock)
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     @staticmethod
     def _swing_body_high(df: pd.DataFrame, idx: int) -> float:
@@ -3191,6 +3192,43 @@ class SMCDetector:
     # din scan_for_setup() (index CHoCH vs BOS). detect_strategy_type() eliminat
     # — era motor paralel neapelat; nu modifica Body Close detect_choch_and_bos().
 
+    def infer_d1_strategy_type(
+        self,
+        df_daily: pd.DataFrame,
+        symbol: Optional[str] = None,
+    ) -> Tuple[str, str]:
+        """V37.15: CHoCH → reversal, BOS → continuation (inclusiv sub V40 range lock)."""
+        sh = self.detect_swing_highs(df_daily)
+        sl = self.detect_swing_lows(df_daily)
+        chochs, bos_list = self.detect_choch_and_bos(df_daily)
+        rs = self.compute_structural_range(df_daily, sh, sl, symbol=symbol)
+        chochs, bos_list, rs = self.filter_internal_range_signals(
+            symbol or '', df_daily, chochs, bos_list, rs
+        )
+        latest_choch = chochs[-1] if chochs else None
+        latest_bos = bos_list[-1] if bos_list else None
+        latest_signal = None
+        signal_label = 'BOS'
+        if latest_choch and latest_bos:
+            if latest_choch.index >= latest_bos.index:
+                latest_signal = latest_choch
+            else:
+                latest_signal = latest_bos
+        elif latest_choch:
+            latest_signal = latest_choch
+        elif latest_bos:
+            latest_signal = latest_bos
+        if rs and rs.locked:
+            aligned = [s for s in (chochs + bos_list) if s.direction == rs.locked_bias]
+            if aligned:
+                latest_signal = max(aligned, key=lambda s: s.index)
+        if latest_signal:
+            signal_label = 'CHoCH' if isinstance(latest_signal, CHoCH) else 'BOS'
+            strategy = 'reversal' if signal_label == 'CHoCH' else 'continuation'
+        else:
+            strategy = 'continuation'
+        return strategy, signal_label
+
     def _build_v246_synthetic_fvg(
         self,
         df_daily: pd.DataFrame,
@@ -3441,7 +3479,6 @@ class SMCDetector:
 
         if _range_state and _range_state.locked:
             current_trend = _range_state.locked_bias
-            strategy_type = 'continuation'
             _aligned = [
                 s for s in (daily_chochs + daily_bos_list)
                 if s.direction == _range_state.locked_bias
@@ -3449,6 +3486,11 @@ class SMCDetector:
             if _aligned:
                 latest_signal = max(_aligned, key=lambda s: s.index)
                 _signal_label = 'CHoCH' if isinstance(latest_signal, CHoCH) else 'BOS'
+            # V37.15: strategy din semnalul real (CHoCH→reversal, BOS→continuation) — nu kill switch static
+            if latest_signal:
+                strategy_type = 'reversal' if _signal_label == 'CHoCH' else 'continuation'
+            else:
+                strategy_type = 'continuation'
             if current_trend == 'bearish' and _unconfirmed_bullish_choch:
                 print(
                     f"   ⛔ [V40 GUARD] {symbol}: blocat bias LONG — bounce intern in range bearish locked"
@@ -4688,7 +4730,9 @@ class SMCDetector:
         if _range_state and _range_state.locked:
             if current_trend != _range_state.locked_bias:
                 current_trend = _range_state.locked_bias
-                strategy_type = 'continuation'
+                # V37.15: păstrăm tipul din semnalul structural real, nu forțăm continuation
+                if latest_signal:
+                    strategy_type = 'reversal' if _signal_label == 'CHoCH' else 'continuation'
             if status == 'READY' and current_trend == 'bearish' and _unconfirmed_bullish_choch:
                 status = 'MONITORING'
                 print(f"⏳ [V40] {symbol}: READY LONG blocat — range bearish locked, asteptam 4H CHoCH bearish")
