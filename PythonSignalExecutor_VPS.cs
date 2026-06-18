@@ -495,6 +495,66 @@ namespace cAlgo.Robots
             // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
             
             // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            // 🔒 V39.5 MODIFY SL HANDLER — Liquidity Sniper BE protection
+            // Python sends Action="MODIFY_SL" → update SL on matching open position
+            // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            if (!string.IsNullOrEmpty(signal.Action) && signal.Action.ToUpper() == "MODIFY_SL")
+            {
+                Print("");
+                Print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+                Print($"🔒 V39.5 MODIFY SL: {signal.Symbol} {signal.Direction}");
+                Print($"   New SL: {signal.StopLoss}");
+                Print($"   Reason: {signal.CloseReason ?? "N/A"}");
+                Print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+
+                var modSymbol = signal.Symbol.Replace("/", "").Replace(" ", "");
+                var modMapped = MapSymbolName(modSymbol);
+                if (string.IsNullOrEmpty(modMapped)) modMapped = modSymbol;
+
+                var modDir = signal.Direction?.ToLower().Trim();
+                TradeType? modTradeType = null;
+                if (modDir == "sell" || modDir == "short")
+                    modTradeType = TradeType.Sell;
+                else if (modDir == "buy" || modDir == "long")
+                    modTradeType = TradeType.Buy;
+
+                int modifiedCount = 0;
+                foreach (var pos in Positions)
+                {
+                    if (pos.SymbolName != modMapped)
+                        continue;
+                    if (pos.Label == null || (!pos.Label.StartsWith("Glitch Matrix") && !pos.Label.StartsWith("BTC_NUCLEAR")))
+                        continue;
+                    if (modTradeType.HasValue && pos.TradeType != modTradeType.Value)
+                        continue;
+
+                    double? newSl = signal.StopLoss > 0 ? signal.StopLoss : (double?)null;
+                    double? keepTp = pos.TakeProfit > 0 ? pos.TakeProfit : (double?)null;
+
+                    var modResult = ModifyPosition(pos, newSl, keepTp, ProtectionType.Absolute);
+                    if (modResult.IsSuccessful)
+                    {
+                        modifiedCount++;
+                        Print($"   ✅ SL updated: {pos.SymbolName} {pos.TradeType} → SL={signal.StopLoss:F5}");
+                    }
+                    else
+                    {
+                        Print($"   ❌ MODIFY SL FAILED: {modResult.Error}");
+                    }
+                }
+
+                Print($"📊 MODIFY SL RESULT: {modifiedCount} position(s) updated for {modMapped}");
+                Print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+
+                WriteExecutionConfirmation(signal, null, modifiedCount > 0 ? "MODIFIED" : "NO_POSITION",
+                    modifiedCount > 0
+                        ? $"Modified SL on {modifiedCount} position(s) for {modMapped}"
+                        : $"No matching position found for {modMapped}");
+
+                return;
+            }
+
+            // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
             // 🔴 V8.0 CLOSE POSITION HANDLER
             // Python sends Action="CLOSE" → find matching position → ClosePosition()
             // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

@@ -1,24 +1,25 @@
 #!/usr/bin/env python3
 """
-📡 NEWS FETCHER V10.0 — DAILY AUTO-SYNC
+📡 NEWS FETCHER V39.5 — DAILY + WEEKLY AUTO-SYNC
 ────────────────
 🔱 AUTHORED BY ФорексГод 🔱
 🏛️ Глитч Ин Матрикс 🏛️
 
-Automatically downloads HIGH + MEDIUM impact economic events every day.
-Runs at 05:00 UTC via launchd — populates data/upcoming_news.json.
+Automatically downloads HIGH + MEDIUM impact economic events.
+Populates data/upcoming_news.json for executor, monitor, and reminders.
 
 Data Sources (in priority order):
-    1. Manual economic_calendar.json (authoritative)
-    2. ForexFactory mirror fallback
+    1. Manual economic_calendar.json (authoritative — all custom_events_* sections)
+    2. ForexFactory mirror fallback (thisweek + nextweek JSON)
     3. Trading Economics API fallback
 
-NO TRADE BLOCKING — information only.
-The news_reminder_engine.py reads the output file for 15-min alerts.
+V39.5 Weekly pipeline:
+    --weekly  → 14-day horizon, FF mirror merge, state file tracks last run (7-day cadence)
 
 Usage:
     python3 news_fetcher.py              # Fetch today + 7 days
     python3 news_fetcher.py --days 14    # Fetch today + 14 days
+    python3 news_fetcher.py --weekly     # Weekly auto-sync (14 days, FF merge)
 ────────────────
 """
 
@@ -56,6 +57,8 @@ SCRIPT_DIR = Path(__file__).parent.resolve()
 OUTPUT_FILE = SCRIPT_DIR / 'data' / 'upcoming_news.json'
 CALENDAR_FILE = SCRIPT_DIR / 'economic_calendar.json'
 LOGS_DIR = SCRIPT_DIR / 'logs'
+WEEKLY_STATE_FILE = SCRIPT_DIR / 'data' / 'news_fetcher_weekly_state.json'
+WEEKLY_INTERVAL_DAYS = 7
 
 # Currencies we trade
 MAJOR_CURRENCIES = ['USD', 'EUR', 'GBP', 'JPY', 'AUD', 'NZD', 'CAD', 'CHF']
@@ -258,7 +261,7 @@ def fetch_trading_economics(days_ahead: int = 7) -> List[Dict]:
 def fetch_from_manual_calendar(days_ahead: int = 7) -> List[Dict]:
     """
     Source #1 (PRIMARY): Load from local economic_calendar.json.
-    Uses the manually curated monthly sections.
+    Scans ALL custom_events_* sections within the date window.
     """
     try:
         logger.info("📖 [Source 1] Loading from manual economic_calendar.json...")
@@ -273,21 +276,21 @@ def fetch_from_manual_calendar(days_ahead: int = 7) -> List[Dict]:
         now = datetime.now(timezone.utc)
         end_date = now + timedelta(days=days_ahead)
 
-        # Try current month and next month sections
         events = []
-        for month_offset in range(2):
-            target = now + timedelta(days=month_offset * 30)
-            section_name = f"custom_events_{target.strftime('%B_%Y').lower()}"
-            section_events = data.get(section_name, [])
+        for section_name, section_events in data.items():
+            if not section_name.startswith('custom_events_') or not isinstance(section_events, list):
+                continue
 
             for e in section_events:
                 try:
                     date_str = e.get('date', '')
                     time_str = e.get('time', '12:00')
+                    if str(time_str).lower() in ('tentative', 'all day', 'day'):
+                        time_str = '00:00'
                     event_dt = datetime.strptime(f"{date_str} {time_str}", '%Y-%m-%d %H:%M')
                     event_dt = event_dt.replace(tzinfo=timezone.utc)
 
-                    if event_dt < now or event_dt > end_date:
+                    if event_dt < now - timedelta(hours=1) or event_dt > end_date:
                         continue
 
                     impact = e.get('impact', 'High')
@@ -308,12 +311,67 @@ def fetch_from_manual_calendar(days_ahead: int = 7) -> List[Dict]:
                 except Exception:
                     continue
 
-        logger.info(f"✅ Loaded {len(events)} events from manual calendar")
+        logger.info(f"✅ Loaded {len(events)} events from manual calendar (all sections)")
         return events
 
     except Exception as e:
         logger.error(f"❌ Manual calendar error: {e}")
         return []
+
+
+def should_run_weekly_sync(force: bool = False) -> bool:
+    """Return True if weekly sync is due (every 7 days)."""
+    if force:
+        return True
+    try:
+        if not WEEKLY_STATE_FILE.exists():
+            return True
+        with open(WEEKLY_STATE_FILE, 'r', encoding='utf-8') as f:
+            state = json.load(f)
+        last_run = state.get('last_weekly_run')
+        if not last_run:
+            return True
+        last_dt = datetime.fromisoformat(str(last_run).replace('Z', '+00:00'))
+        if last_dt.tzinfo is None:
+            last_dt = last_dt.replace(tzinfo=timezone.utc)
+        return datetime.now(timezone.utc) - last_dt >= timedelta(days=WEEKLY_INTERVAL_DAYS)
+    except Exception:
+        return True
+
+
+def mark_weekly_sync_done():
+    try:
+        WEEKLY_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(WEEKLY_STATE_FILE, 'w', encoding='utf-8') as f:
+            json.dump({
+                'last_weekly_run': datetime.now(timezone.utc).isoformat(),
+                'interval_days': WEEKLY_INTERVAL_DAYS,
+            }, f, indent=2)
+    except Exception as e:
+        logger.warning(f"⚠️ Could not write weekly state: {e}")
+
+
+def run_weekly_auto_sync(days_ahead: int = 14, force: bool = False) -> List[Dict]:
+    """
+    V39.5 weekly pipeline: manual calendar + FF mirror merge → upcoming_news.json.
+    Designed for cron/Task Scheduler every 7 days.
+    """
+    if not should_run_weekly_sync(force=force):
+        logger.info("⏭️ Weekly sync not due yet — skipping FF mirror fetch")
+        return fetch_from_manual_calendar(days_ahead=days_ahead)
+
+    logger.info("🔄 V39.5 WEEKLY AUTO-SYNC — manual + ForexFactory mirror")
+
+    manual = fetch_from_manual_calendar(days_ahead=days_ahead)
+    ff = fetch_forexfactory_mirror(days_ahead=days_ahead)
+
+    merged = deduplicate_events(manual + ff)
+    mark_weekly_sync_done()
+
+    logger.info(
+        f"📊 Weekly merge: {len(manual)} manual + {len(ff)} FF → {len(merged)} unique"
+    )
+    return merged
 
 
 def deduplicate_events(events: List[Dict]) -> List[Dict]:
@@ -425,17 +483,23 @@ def send_sync_summary(events: List[Dict]):
 
 def main():
     """Main entry point — fetch, merge, save, notify"""
-    parser = argparse.ArgumentParser(description='News Fetcher V10.0 — Daily Auto-Sync')
+    parser = argparse.ArgumentParser(description='News Fetcher V39.5 — Daily + Weekly Auto-Sync')
     parser.add_argument('--days', type=int, default=7, help='Days ahead to fetch (default: 7)')
+    parser.add_argument('--weekly', action='store_true', help='Weekly auto-sync (14 days, FF merge)')
+    parser.add_argument('--force-weekly', action='store_true', help='Force weekly sync even if not due')
     args = parser.parse_args()
+
+    days_ahead = 14 if args.weekly else args.days
 
     # Ensure logs directory exists
     LOGS_DIR.mkdir(parents=True, exist_ok=True)
 
     logger.info("=" * 60)
-    logger.info("📡 NEWS FETCHER V10.0 — DAILY AUTO-SYNC")
+    logger.info("📡 NEWS FETCHER V39.5 — AUTO-SYNC")
     logger.info(f"⏰ {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')} UTC")
-    logger.info(f"📅 Fetching next {args.days} days")
+    logger.info(f"📅 Fetching next {days_ahead} days")
+    if args.weekly:
+        logger.info("🔄 Mode: WEEKLY (manual + FF mirror merge)")
     logger.info("=" * 60)
 
     # Load .env for Telegram credentials
@@ -447,52 +511,51 @@ def main():
 
     all_events = []
 
-    # Source 1 (PRIMARY): Manual calendar (authoritative schedule)
-    manual_events = fetch_from_manual_calendar(days_ahead=args.days)
-    if manual_events:
-        all_events.extend(manual_events)
-        logger.info(f"✅ Manual Calendar (primary): {len(manual_events)} events")
+    if args.weekly:
+        all_events = run_weekly_auto_sync(days_ahead=days_ahead, force=args.force_weekly)
     else:
-        logger.warning("⚠️ Manual Calendar: 0 events for selected window")
-
-    # Source 2 (fallback): ForexFactory mirror (used only when manual calendar is empty)
-    ff_events = []
-    if not manual_events:
-        ff_events = fetch_forexfactory_mirror(days_ahead=args.days)
-        if ff_events:
-            all_events.extend(ff_events)
-            logger.info(f"✅ ForexFactory mirror (fallback): {len(ff_events)} events")
+        # Source 1 (PRIMARY): Manual calendar (authoritative schedule)
+        manual_events = fetch_from_manual_calendar(days_ahead=days_ahead)
+        if manual_events:
+            all_events.extend(manual_events)
+            logger.info(f"✅ Manual Calendar (primary): {len(manual_events)} events")
         else:
-            logger.warning("⚠️ ForexFactory mirror: 0 events")
+            logger.warning("⚠️ Manual Calendar: 0 events for selected window")
 
-    # Source 3 (fallback): Trading Economics API (used only when previous sources are empty)
-    if not manual_events and not ff_events:
-        te_events = fetch_trading_economics(days_ahead=args.days)
-        if te_events:
-            all_events.extend(te_events)
-            logger.info(f"✅ Trading Economics (fallback): {len(te_events)} events")
-        else:
-            logger.warning("⚠️ Trading Economics: 0 events (API down or needs key)")
+        # Source 2 (fallback): ForexFactory mirror (used only when manual calendar is empty)
+        ff_events = []
+        if not manual_events:
+            ff_events = fetch_forexfactory_mirror(days_ahead=days_ahead)
+            if ff_events:
+                all_events.extend(ff_events)
+                logger.info(f"✅ ForexFactory mirror (fallback): {len(ff_events)} events")
+            else:
+                logger.warning("⚠️ ForexFactory mirror: 0 events")
+
+        # Source 3 (fallback): Trading Economics API (used only when previous sources are empty)
+        if not manual_events and not ff_events:
+            te_events = fetch_trading_economics(days_ahead=days_ahead)
+            if te_events:
+                all_events.extend(te_events)
+                logger.info(f"✅ Trading Economics (fallback): {len(te_events)} events")
+            else:
+                logger.warning("⚠️ Trading Economics: 0 events (API down or needs key)")
+
+        all_events = deduplicate_events(all_events)
 
     if not all_events:
         logger.error("❌ NO EVENTS from any source! Check API connectivity.")
         logger.error("💡 Update economic_calendar.json: python3 add_monthly_events.py")
         return
 
-    # Deduplicate
-    unique_events = deduplicate_events(all_events)
-    logger.info(f"📊 Total unique events: {len(unique_events)} (from {len(all_events)} raw)")
+    logger.info(f"📊 Total unique events: {len(all_events)}")
 
     # Save to data/upcoming_news.json
-    if save_events(unique_events):
+    if save_events(all_events):
         logger.info(f"💾 Output: {OUTPUT_FILE}")
 
-    # NOTE: Telegram summary intentionally disabled — sync is silent.
-    # News are visible via /status (NEWS TODAY section) + 15-min reminders.
-    # send_sync_summary(unique_events)  ← disabled V15.4
-
     logger.info("=" * 60)
-    logger.info("✅ NEWS FETCHER V10.0 — SYNC COMPLETE")
+    logger.info("✅ NEWS FETCHER V39.5 — SYNC COMPLETE")
     logger.info("=" * 60)
 
 

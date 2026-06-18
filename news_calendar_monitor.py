@@ -1116,13 +1116,16 @@ class NewsCalendarMonitor:
             flag = _FLAGS.get(e.currency, "🏴")
             tstr = et.strftime("%H:%M")
 
-            # ── V13.2 FORMAT MINIMALIST VOLATILITY RADAR ──────────────────
+            # ── V39.5 FORMAT — VOLATILITY RADAR + LIQUIDITY SNIPER ──────────
             msg  = "⚡ <b>VOLATILITY RADAR</b>\n"
             msg += "━━━━━━━━━━━━━━\n"
             msg += f"📅 <b>Event:</b> {e.event}\n"
             msg += f"🌍 <b>Impact:</b> {flag} {e.currency}\n"
             msg += "⏳ <b>Timer:</b> 15 Minutes\n"
-            msg += f"🏛️ <b>Status:</b> Matrix Hunting\n"
+            msg += f"🎯 <b>Mode:</b> Liquidity Sniper Active\n"
+            msg += "   • Open ITM → BE+commission @ T-2min\n"
+            msg += "   • New entries blocked (spread guard)\n"
+            msg += "   • Scanner stays ON — Protect & Ride\n"
             msg += "━━━━━━━━━━━━━━\n"
             msg += "🔱 <b>AUTHORED BY ФорексГод</b> 🔱\n"
             msg += "🏛️ <b>Глитч Ин Матрикс</b> 🏛️"

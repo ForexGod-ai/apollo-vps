@@ -183,6 +183,15 @@ from smc_detector import (
     get_4h_body_close_confirmation,  # ✅ V10.6 FUNCȚIE UNIFICATĂ — același creier ca scanner-ul
 )
 from pip_utils import get_pip_size, MIN_SL_PIPS, MAX_SL_PIPS, sl_pips_between, liquidity_already_swept
+from news_calendar_utils import (
+    load_high_impact_events,
+    get_affected_currencies,
+    parse_event_datetime,
+    liquidity_sniper_blocks_new_entry,
+    liquidity_sniper_be_candidates,
+    NEW_ENTRY_BLOCK_BEFORE_MIN,
+    BE_PROTECT_BEFORE_MIN,
+)
 
 # 🛡️ V3.8 ANTI-SPAM SYSTEM by ФорексГод
 from signal_cache import (
@@ -285,6 +294,11 @@ class SetupExecutorMonitor:
         self._check_manual_resume_marker()  # Verifică la pornire dacă există marker
 
         self._load_deep_sleep_state()
+
+        # V39.5 LIQUIDITY SNIPER — BE protection dedup (position_key → event_key)
+        self._liquidity_sniper_be_applied: set = set()
+        self._liquidity_sniper_be_file = Path("data/liquidity_sniper_be_applied.json")
+        self._load_liquidity_sniper_be_state()
         
         # V9.3 DAILY REJECTION COUNTER (for /status dashboard)
         self.daily_rejections = 0
@@ -869,117 +883,153 @@ class SetupExecutorMonitor:
 
         return ""
 
+    def _load_liquidity_sniper_be_state(self):
+        """Restore BE-protection dedup keys across restarts."""
+        try:
+            if self._liquidity_sniper_be_file.exists():
+                with open(self._liquidity_sniper_be_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                if isinstance(data, list):
+                    self._liquidity_sniper_be_applied = set(data)
+        except Exception as e:
+            logger.debug(f"V39.5 BE state load skipped: {e}")
+
+    def _save_liquidity_sniper_be_state(self):
+        try:
+            self._liquidity_sniper_be_file.parent.mkdir(parents=True, exist_ok=True)
+            with open(self._liquidity_sniper_be_file, "w", encoding="utf-8") as f:
+                json.dump(sorted(self._liquidity_sniper_be_applied), f, indent=2)
+        except Exception as e:
+            logger.debug(f"V39.5 BE state save skipped: {e}")
+
     def _check_news_guard(self, symbol: str) -> str:
         """
-        V10.3 NEWS GUARD: Check if HIGH impact news is within 30 minutes.
-        
-        Reads data/upcoming_news.json (populated by news_fetcher.py daily at 05:00 UTC).
-        Returns a warning string if news found, empty string if clear.
-        
-        PRINCIPLE: INFORMATION ONLY — does NOT block execution.
-        The warning is logged + included in Telegram notification.
+        V39.5 LIQUIDITY SNIPER — NEW ENTRY GUARD.
+
+        Blocks NEW positions 15 min before HIGH impact (spread/slippage protection).
+        Scanner stays active — no total shutdown.
+        Returns block reason string, or empty if clear.
         """
         try:
-            news_file = Path("data/upcoming_news.json")
-            if not news_file.exists():
-                return ""
-            
-            with open(news_file, 'r', encoding='utf-8') as f:
-                events = json.load(f)
-            
-            if not events or not isinstance(events, list):
-                return ""
-            
-            now = datetime.now(timezone.utc)
-            warnings = []
-            
-            # Map symbols to affected currencies
-            symbol_upper = symbol.upper().replace(' ', '').replace('/', '')
-            affected_currencies = set()
-            
-            # Extract currencies from pair name (e.g., EURUSD → EUR, USD)
-            currency_list = ['USD', 'EUR', 'GBP', 'JPY', 'AUD', 'NZD', 'CAD', 'CHF']
-            for ccy in currency_list:
-                if ccy in symbol_upper:
-                    affected_currencies.add(ccy)
-            
-            # BTC/XAU affected by USD
-            if any(x in symbol_upper for x in ['BTC', 'XAU', 'GOLD']):
-                affected_currencies.add('USD')
-            
-            for event in events:
-                try:
-                    impact = event.get('impact', '').lower()
-                    if impact != 'high':
-                        continue
-                    
-                    event_currency = event.get('currency', '').upper()
-                    if event_currency not in affected_currencies:
-                        continue
-                    
-                    # Parse event time
-                    event_time_str = event.get('time', event.get('datetime', ''))
-                    if not event_time_str:
-                        continue
-                    
-                    # Try multiple time formats
-                    event_time = None
-                    for fmt in ['%Y-%m-%dT%H:%M:%S%z', '%Y-%m-%dT%H:%M:%S', '%Y-%m-%d %H:%M:%S', '%Y-%m-%d %H:%M']:
-                        try:
-                            event_time = datetime.strptime(event_time_str, fmt)
-                            if event_time.tzinfo is None:
-                                event_time = event_time.replace(tzinfo=timezone.utc)
-                            break
-                        except ValueError:
-                            continue
-                    
-                    if event_time is None:
-                        continue
-                    
-                    # Check if event is within 30 minutes
-                    time_until = (event_time - now).total_seconds() / 60
-                    if 0 <= time_until <= 30:
-                        event_name = event.get('title', event.get('event', 'Unknown'))
-                        warnings.append(f"🔴 {event_currency} {event_name} in {time_until:.0f}min")
-                    
-                except Exception:
-                    continue
-            
-            if warnings:
-                warning_text = " | ".join(warnings)
-                
-                # Send dedicated NEWS WARNING to Telegram
-                try:
-                    sep = "────────────────"
-                    news_msg = (
-                        f"⚠️ <b>V10.4 NEWS GUARD — WARNING</b>\n\n"
-                        f"Trade executing for <b>{symbol}</b> near HIGH IMPACT news:\n"
-                        f"<code>{warning_text}</code>\n\n"
-                        f"ℹ️ <i>15-min reminder — execution NOT blocked</i>\n"
-                        f"⚡ <i>Monitor position closely!</i>\n\n"
-                        f"  {sep}\n"
-                        f"  🔱 AUTHORED BY <b>ФорексГод</b> 🔱\n"
-                        f"  {sep}\n"
-                        f"  🏛 <b>ГЛИТЧ ИН МАТРИКС</b> 🏛"
-                    )
-                    url = f"https://api.telegram.org/bot{self._telegram_token}/sendMessage"
-                    requests.post(url, json={
-                        'chat_id': self._telegram_chat_id,
-                        'text': news_msg,
-                        'parse_mode': 'HTML'
-                    }, timeout=10)
-                except Exception:
-                    pass
-                
-                return warning_text
-            
-            return ""
-            
+            block = liquidity_sniper_blocks_new_entry(symbol)
+            if block:
+                logger.warning(f"   🎯 V39.5 LIQUIDITY SNIPER: {block}")
+            return block
         except Exception as e:
-            logger.debug(f"V10.3 News Guard check error: {e}")
+            logger.debug(f"V39.5 News Guard check error: {e}")
             return ""
-    
-    # ━━━ END V10.3 NEWS GUARD ━━━
+
+    def _liquidity_sniper_be_protect_open_positions(self):
+        """
+        V39.5 LIQUIDITY SNIPER — TRADE MANAGEMENT (Protect & Ride).
+
+        At T-2 min before HIGH impact: if position is ITM, move SL to BE + commission.
+        Does NOT close trades — leaves them open to ride liquidity spike toward TP.
+        """
+        try:
+            active_pos_file = Path(__file__).parent / "active_positions.json"
+            if not active_pos_file.exists():
+                return
+
+            file_age = time.time() - active_pos_file.stat().st_mtime
+            if file_age > 300:
+                return
+
+            with open(active_pos_file, encoding="utf-8") as f:
+                positions = json.load(f)
+            if not isinstance(positions, list) or not positions:
+                return
+
+            commission_pips_per_side = 0.7
+            be_buffer_pips = commission_pips_per_side * 2  # both sides
+
+            for pos in positions:
+                symbol = pos.get("symbol", "")
+                direction = str(pos.get("direction", "")).lower()
+                entry = float(pos.get("entry_price") or 0)
+                current_sl = float(pos.get("stop_loss") or 0)
+                pips = float(pos.get("pips") or 0)
+                net_profit = float(pos.get("net_profit") or 0)
+
+                if not symbol or not entry or direction not in ("buy", "sell"):
+                    continue
+
+                # ITM check
+                if pips <= 0 and net_profit <= 0:
+                    continue
+
+                candidates = liquidity_sniper_be_candidates(symbol=symbol)
+                if not candidates:
+                    continue
+
+                event, mins = candidates[0]
+                event_key = f"{event['currency']}_{event['event']}_{event['date']}_{event['time']}"
+                pos_key = f"{symbol}_{direction}_{entry:.5f}"
+                dedup_key = f"{pos_key}|{event_key}"
+                if dedup_key in self._liquidity_sniper_be_applied:
+                    continue
+
+                pip_size = get_pip_size(symbol)
+                buffer = be_buffer_pips * pip_size
+
+                if direction == "buy":
+                    new_sl = entry + buffer
+                    if current_sl >= new_sl - pip_size * 0.1:
+                        self._liquidity_sniper_be_applied.add(dedup_key)
+                        continue
+                else:
+                    new_sl = entry - buffer
+                    if current_sl > 0 and current_sl <= new_sl + pip_size * 0.1:
+                        self._liquidity_sniper_be_applied.add(dedup_key)
+                        continue
+
+                reason = (
+                    f"LIQUIDITY_SNIPER_BE|{event['currency']} {event['event']} "
+                    f"T-{mins:.1f}min"
+                )
+                ok = self.executor.modify_stop_loss(
+                    symbol=symbol,
+                    direction=direction.upper(),
+                    new_stop_loss=new_sl,
+                    reason=reason,
+                )
+                if ok:
+                    self._liquidity_sniper_be_applied.add(dedup_key)
+                    self._save_liquidity_sniper_be_state()
+                    logger.success(
+                        f"🔒 V39.5 LIQUIDITY SNIPER BE: {symbol} {direction.upper()} "
+                        f"SL→{new_sl:.5f} ({reason})"
+                    )
+                    try:
+                        sep = "────────────────"
+                        msg = (
+                            f"🔒 <b>LIQUIDITY SNIPER — BE PROTECT</b>\n\n"
+                            f"<b>{symbol}</b> {direction.upper()} ITM\n"
+                            f"SL moved to BE+commission: <code>{new_sl:.5f}</code>\n"
+                            f"News: {event['currency']} {event['event']} in {mins:.0f}min\n\n"
+                            f"ℹ️ <i>Position kept open — riding liquidity to TP</i>\n\n"
+                            f"  {sep}\n"
+                            f"  🔱 AUTHORED BY <b>ФорексГод</b> 🔱\n"
+                            f"  {sep}\n"
+                            f"  🏛 <b>ГЛИТЧ ИН МАТРИКС</b> 🏛"
+                        )
+                        url = f"https://api.telegram.org/bot{self._telegram_token}/sendMessage"
+                        requests.post(
+                            url,
+                            json={
+                                "chat_id": self._telegram_chat_id,
+                                "text": msg,
+                                "parse_mode": "HTML",
+                            },
+                            timeout=10,
+                        )
+                    except Exception:
+                        pass
+
+        except Exception as e:
+            logger.debug(f"V39.5 BE protect error: {e}")
+
+    # ━━━ END V39.5 LIQUIDITY SNIPER ━━━
     
     def _get_setup_key(self, setup: dict) -> str:
         """Generate unique key for setup"""
@@ -2284,11 +2334,13 @@ class SetupExecutorMonitor:
                 return False
             # ━━━ END SPREAD GUARD ━━━
 
-            # ━━━ V10.4: NEWS GUARD (15-min Warning, No Execution Block) ━━━
-            news_warning = self._check_news_guard(symbol)
-            if news_warning:
-                logger.warning(f"   ⚠️ V10.4 NEWS GUARD: {news_warning}")
-            # ━━━ END NEWS GUARD ━━━
+            # ━━━ V39.5: LIQUIDITY SNIPER — block NEW entries 15 min pre-news ━━━
+            news_block = self._check_news_guard(symbol)
+            if news_block:
+                logger.warning(f"   ⏸️ V39.5 LIQUIDITY SNIPER: {news_block}")
+                setup['last_rejection_ts'] = time.time()
+                return False
+            # ━━━ END LIQUIDITY SNIPER ENTRY GUARD ━━━
 
             # ━━━ V12.0: LIVE SWAP FETCH — Transparență financiară la execuție ━━━
             swap_info = {}
@@ -2378,6 +2430,9 @@ class SetupExecutorMonitor:
                 # Setup-urile stale blochează sloturi — trebuie șterse imediat ce devin invalide
                 self._cleanup_monitoring_setups()
 
+                # V39.5: BE protect open ITM positions at T-2 min before news
+                self._liquidity_sniper_be_protect_open_positions()
+
                 self._process_monitoring_setups()
                 
                 # Wait before next check
@@ -2420,6 +2475,7 @@ def main():
     else:
         # Single check mode
         logger.info("🔍 Single check mode...")
+        monitor._liquidity_sniper_be_protect_open_positions()
         monitor._process_monitoring_setups()
         logger.info("✅ Check complete!")
 

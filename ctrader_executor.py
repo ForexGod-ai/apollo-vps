@@ -811,6 +811,61 @@ class CTraderExecutor:
         except Exception as e:
             logger.error(f"❌ Failed to write close signal for {symbol}: {e}")
             return False
+
+    def modify_stop_loss(
+        self,
+        symbol: str,
+        direction: str,
+        new_stop_loss: float,
+        reason: str = "MODIFY_SL",
+    ) -> bool:
+        """
+        V39.5 MODIFY SL: Write MODIFY_SL signal for cBot to update stop loss in-place.
+
+        Used by Liquidity Sniper BE protection — keeps position open, zero risk.
+        """
+        try:
+            signal_id = f"MODIFY_{symbol}_{direction}_{int(datetime.now().timestamp())}"
+
+            modify_signal = {
+                "SignalId": signal_id,
+                "Symbol": symbol,
+                "Direction": direction.lower(),
+                "Action": "MODIFY_SL",
+                "StrategyType": "LIQUIDITY_SNIPER_BE",
+                "EntryPrice": 0,
+                "StopLoss": float(new_stop_loss),
+                "TakeProfit": 0,
+                "StopLossPips": 0,
+                "TakeProfitPips": 0,
+                "RiskReward": 0,
+                "Timestamp": datetime.now().isoformat(),
+                "LotSize": 0,
+                "RawUnits": None,
+                "CloseReason": reason,
+                "LiquiditySweep": False,
+                "SweepType": "",
+                "ConfidenceBoost": 0,
+                "OrderBlockUsed": False,
+                "OrderBlockScore": 0,
+                "PremiumDiscountZone": "BE_PROTECT",
+                "DailyRangePercentage": 0.0,
+            }
+
+            success = self.signal_queue.enqueue(modify_signal)
+
+            if success:
+                logger.success(
+                    f"🔒 MODIFY SL QUEUED: {symbol} {direction} → SL={new_stop_loss:.5f} ({reason})"
+                )
+            else:
+                logger.error(f"❌ Failed to queue MODIFY SL for {symbol}")
+
+            return success
+
+        except Exception as e:
+            logger.error(f"❌ Failed to write MODIFY SL signal for {symbol}: {e}")
+            return False
     
     def clear_signals(self):
         """Clear all signals from signals.json (write empty array)"""

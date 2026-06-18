@@ -1,98 +1,184 @@
-[
-  {
-    "datetime": "2026-04-06 20:00",
-    "currency": "USD",
-    "event": "ISM Services PMI (Mar)",
-    "impact": "HIGH",
-    "forecast": "54.8",
-    "previous": "56.1"
-  },
-  {
-    "datetime": "2026-04-09 08:00",
-    "currency": "NZD",
-    "event": "Official Cash Rate (RBNZ)",
-    "impact": "HIGH",
-    "forecast": "2.25%",
-    "previous": "2.25%"
-  },
-  {
-    "datetime": "2026-04-09 08:00",
-    "currency": "NZD",
-    "event": "RBNZ Rate Statement",
-    "impact": "HIGH",
-    "forecast": "",
-    "previous": ""
-  },
-  {
-    "datetime": "2026-04-09 09:00",
-    "currency": "NZD",
-    "event": "RBNZ Press Conference",
-    "impact": "HIGH",
-    "forecast": "",
-    "previous": ""
-  },
-  {
-    "datetime": "2026-04-10 04:00",
-    "currency": "USD",
-    "event": "FOMC Meeting Minutes",
-    "impact": "HIGH",
-    "forecast": "",
-    "previous": ""
-  },
-  {
-    "datetime": "2026-04-10 10:30",
-    "currency": "USD",
-    "event": "Core PCE Price Index m/m (Feb)",
-    "impact": "HIGH",
-    "forecast": "0.4%",
-    "previous": "0.4%"
-  },
-  {
-    "datetime": "2026-04-10 10:30",
-    "currency": "USD",
-    "event": "Final GDP q/q (Q4)",
-    "impact": "HIGH",
-    "forecast": "0.7%",
-    "previous": "0.7%"
-  },
-  {
-    "datetime": "2026-04-11 10:30",
-    "currency": "CAD",
-    "event": "Employment Change (Mar)",
-    "impact": "HIGH",
-    "forecast": "12.6K",
-    "previous": "-83.9K"
-  },
-  {
-    "datetime": "2026-04-11 10:30",
-    "currency": "CAD",
-    "event": "Unemployment Rate (Mar)",
-    "impact": "HIGH",
-    "forecast": "6.8%",
-    "previous": "6.7%"
-  },
-  {
-    "datetime": "2026-04-11 10:30",
-    "currency": "USD",
-    "event": "Core CPI m/m (Mar)",
-    "impact": "HIGH",
-    "forecast": "0.3%",
-    "previous": "0.2%"
-  },
-  {
-    "datetime": "2026-04-11 10:30",
-    "currency": "USD",
-    "event": "CPI m/m (Mar)",
-    "impact": "HIGH",
-    "forecast": "1.0%",
-    "previous": "0.3%"
-  },
-  {
-    "datetime": "2026-04-11 10:30",
-    "currency": "USD",
-    "event": "CPI y/y (Mar)",
-    "impact": "HIGH",
-    "forecast": "3.4%",
-    "previous": "2.4%"
-  }
-]
+{
+  "last_updated": "2026-06-18T12:04:41.048119+00:00",
+  "event_count": 16,
+  "high_count": 16,
+  "medium_count": 0,
+  "events": [
+    {
+      "date": "2026-06-22",
+      "time": "12:30",
+      "datetime_utc": "2026-06-22T12:30:00+00:00",
+      "currency": "CAD",
+      "event": "CPI m/m",
+      "impact": "High",
+      "forecast": "",
+      "previous": "",
+      "source": "manual_calendar"
+    },
+    {
+      "date": "2026-06-22",
+      "time": "12:30",
+      "datetime_utc": "2026-06-22T12:30:00+00:00",
+      "currency": "CAD",
+      "event": "Median CPI y/y",
+      "impact": "High",
+      "forecast": "",
+      "previous": "",
+      "source": "manual_calendar"
+    },
+    {
+      "date": "2026-06-22",
+      "time": "12:30",
+      "datetime_utc": "2026-06-22T12:30:00+00:00",
+      "currency": "CAD",
+      "event": "Trimmed CPI y/y",
+      "impact": "High",
+      "forecast": "",
+      "previous": "",
+      "source": "manual_calendar"
+    },
+    {
+      "date": "2026-06-23",
+      "time": "08:30",
+      "datetime_utc": "2026-06-23T08:30:00+00:00",
+      "currency": "GBP",
+      "event": "Flash Manufacturing PMI",
+      "impact": "High",
+      "forecast": "",
+      "previous": "",
+      "source": "manual_calendar"
+    },
+    {
+      "date": "2026-06-23",
+      "time": "08:30",
+      "datetime_utc": "2026-06-23T08:30:00+00:00",
+      "currency": "GBP",
+      "event": "Flash Services PMI",
+      "impact": "High",
+      "forecast": "",
+      "previous": "",
+      "source": "manual_calendar"
+    },
+    {
+      "date": "2026-06-24",
+      "time": "01:30",
+      "datetime_utc": "2026-06-24T01:30:00+00:00",
+      "currency": "AUD",
+      "event": "CPI m/m",
+      "impact": "High",
+      "forecast": "",
+      "previous": "",
+      "source": "manual_calendar"
+    },
+    {
+      "date": "2026-06-24",
+      "time": "01:30",
+      "datetime_utc": "2026-06-24T01:30:00+00:00",
+      "currency": "AUD",
+      "event": "CPI y/y",
+      "impact": "High",
+      "forecast": "",
+      "previous": "",
+      "source": "manual_calendar"
+    },
+    {
+      "date": "2026-06-24",
+      "time": "01:30",
+      "datetime_utc": "2026-06-24T01:30:00+00:00",
+      "currency": "AUD",
+      "event": "Trimmed Mean CPI m/m",
+      "impact": "High",
+      "forecast": "",
+      "previous": "",
+      "source": "manual_calendar"
+    },
+    {
+      "date": "2026-06-25",
+      "time": "01:30",
+      "datetime_utc": "2026-06-25T01:30:00+00:00",
+      "currency": "AUD",
+      "event": "Employment Change",
+      "impact": "High",
+      "forecast": "",
+      "previous": "",
+      "source": "manual_calendar"
+    },
+    {
+      "date": "2026-06-25",
+      "time": "01:30",
+      "datetime_utc": "2026-06-25T01:30:00+00:00",
+      "currency": "AUD",
+      "event": "Unemployment Rate",
+      "impact": "High",
+      "forecast": "",
+      "previous": "",
+      "source": "manual_calendar"
+    },
+    {
+      "date": "2026-06-25",
+      "time": "12:30",
+      "datetime_utc": "2026-06-25T12:30:00+00:00",
+      "currency": "USD",
+      "event": "Core PCE Price Index m/m",
+      "impact": "High",
+      "forecast": "",
+      "previous": "",
+      "source": "manual_calendar"
+    },
+    {
+      "date": "2026-06-25",
+      "time": "12:30",
+      "datetime_utc": "2026-06-25T12:30:00+00:00",
+      "currency": "USD",
+      "event": "Final GDP q/q",
+      "impact": "High",
+      "forecast": "",
+      "previous": "",
+      "source": "manual_calendar"
+    },
+    {
+      "date": "2026-06-30",
+      "time": "09:00",
+      "datetime_utc": "2026-06-30T09:00:00+00:00",
+      "currency": "EUR",
+      "event": "CPI Flash Estimate y/y",
+      "impact": "High",
+      "forecast": "",
+      "previous": "",
+      "source": "manual_calendar"
+    },
+    {
+      "date": "2026-06-30",
+      "time": "12:30",
+      "datetime_utc": "2026-06-30T12:30:00+00:00",
+      "currency": "CAD",
+      "event": "GDP m/m",
+      "impact": "High",
+      "forecast": "",
+      "previous": "",
+      "source": "manual_calendar"
+    },
+    {
+      "date": "2026-06-30",
+      "time": "14:45",
+      "datetime_utc": "2026-06-30T14:45:00+00:00",
+      "currency": "USD",
+      "event": "Chicago PMI",
+      "impact": "High",
+      "forecast": "",
+      "previous": "",
+      "source": "manual_calendar"
+    },
+    {
+      "date": "2026-07-01",
+      "time": "14:00",
+      "datetime_utc": "2026-07-01T14:00:00+00:00",
+      "currency": "USD",
+      "event": "ISM Manufacturing PMI",
+      "impact": "High",
+      "forecast": "",
+      "previous": "",
+      "source": "manual_calendar"
+    }
+  ]
+}
