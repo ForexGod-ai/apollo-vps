@@ -64,7 +64,7 @@ class OrderBlock:
 
 @dataclass
 class StructuralRangeState:
-    """V39 BTCUSD — macro trading range (LH major / LL major)."""
+    """V40 — macro trading range (LH major / LL major), all pairs."""
     macro_range_high: float
     macro_range_low: float
     macro_range_high_bar: int
@@ -1824,7 +1824,7 @@ class SMCDetector:
         return chochs, bos_list
 
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    # V39.0 BTCUSD — STRICT TRADING RANGE (anti sub-structure bias)
+    # V40.0 — STRICT TRADING RANGE (anti sub-structure bias, all pairs)
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     @staticmethod
     def _swing_body_high(df: pd.DataFrame, idx: int) -> float:
@@ -1834,7 +1834,7 @@ class SMCDetector:
     def _swing_body_low(df: pd.DataFrame, idx: int) -> float:
         return min(float(df['open'].iloc[idx]), float(df['close'].iloc[idx]))
 
-    def compute_btcusd_structural_range(
+    def compute_structural_range(
         self,
         df: pd.DataFrame,
         swing_highs: List[SwingPoint],
@@ -1879,14 +1879,18 @@ class SMCDetector:
             return None
 
         close = float(df['close'].iloc[-1])
-        locked = macro_range_low < close < macro_range_high
         locked_bias = 'bearish'
-
         if close > macro_range_high:
-            locked = False
-        elif close < macro_range_low:
-            locked = False
+            locked = True
+            locked_bias = 'bullish'
+        elif close <= macro_range_low:
+            locked = True
             locked_bias = 'bearish'
+        elif macro_range_low < close < macro_range_high:
+            locked = True
+            locked_bias = 'bearish'
+        else:
+            locked = False
 
         return StructuralRangeState(
             macro_range_high=macro_range_high,
@@ -1897,30 +1901,33 @@ class SMCDetector:
             locked_bias=locked_bias,
         )
 
-    def _btcusd_signal_level(self, df: pd.DataFrame, signal) -> float:
+    def _range_signal_level(self, df: pd.DataFrame, signal) -> float:
         return float(signal.break_price)
 
-    def _is_btcusd_internal_signal(
+    def _is_internal_range_signal(
         self,
         df: pd.DataFrame,
         signal,
         range_state: StructuralRangeState,
     ) -> bool:
-        if not range_state.locked or range_state.locked_bias != 'bearish':
+        if not range_state.locked or signal.direction != 'bullish':
             return False
-        level = self._btcusd_signal_level(df, signal)
+        if range_state.locked_bias == 'bullish':
+            return signal.direction == 'bearish' and signal.index >= range_state.macro_range_high_bar
+        level = self._range_signal_level(df, signal)
+        close = float(df['close'].iloc[-1])
         if range_state.macro_range_low < level < range_state.macro_range_high:
-            if signal.direction == 'bullish':
-                return True
+            return True
+        if close <= range_state.macro_range_low and signal.index >= range_state.macro_range_low_bar:
+            return level <= range_state.macro_range_high
         if (
             signal.index >= range_state.macro_range_low_bar
-            and signal.direction == 'bullish'
             and level < range_state.macro_range_high
         ):
             return True
         return False
 
-    def filter_btcusd_internal_signals(
+    def filter_internal_range_signals(
         self,
         symbol: str,
         df: pd.DataFrame,
@@ -1928,29 +1935,36 @@ class SMCDetector:
         bos_list: List[BOS],
         range_state: Optional[StructuralRangeState],
     ) -> Tuple[List[CHoCH], List[BOS], Optional[StructuralRangeState]]:
-        if symbol.upper() != 'BTCUSD' or range_state is None:
+        if range_state is None:
             return chochs, bos_list, range_state
 
         if range_state.locked:
+            _close = float(df['close'].iloc[-1])
+            if _close > range_state.macro_range_high:
+                _zone = 'ABOVE (breakout)'
+            elif _close <= range_state.macro_range_low:
+                _zone = 'BELOW (breakdown)'
+            else:
+                _zone = 'INSIDE'
             print(
-                f"🔒 [V39 RANGE LOCK] BTCUSD: LH={range_state.macro_range_high:.2f} "
-                f"LL={range_state.macro_range_low:.2f} | close={float(df['close'].iloc[-1]):.2f} "
-                f"INSIDE → LOCK {range_state.locked_bias.upper()}"
+                f"🔒 [V40 RANGE LOCK] {symbol}: LH={range_state.macro_range_high:.2f} "
+                f"LL={range_state.macro_range_low:.2f} | close={_close:.2f} "
+                f"{_zone} → LOCK {range_state.locked_bias.upper()}"
             )
 
         kept_chochs, kept_bos = [], []
         for c in chochs:
-            if self._is_btcusd_internal_signal(df, c, range_state):
+            if self._is_internal_range_signal(df, c, range_state):
                 print(
-                    f"   🧹 [V39 SUB-STRUCTURE] Ignor CHoCH {c.direction} bar{c.index} "
+                    f"   🧹 [V40 SUB-STRUCTURE] Ignor CHoCH {c.direction} bar{c.index} "
                     f"@{c.break_price:.2f} — internal bounce in range"
                 )
             else:
                 kept_chochs.append(c)
         for b in bos_list:
-            if self._is_btcusd_internal_signal(df, b, range_state):
+            if self._is_internal_range_signal(df, b, range_state):
                 print(
-                    f"   🧹 [V39 SUB-STRUCTURE] Ignor BOS {b.direction} bar{b.index} "
+                    f"   🧹 [V40 SUB-STRUCTURE] Ignor BOS {b.direction} bar{b.index} "
                     f"@{b.break_price:.2f} — internal bounce in range"
                 )
             else:
@@ -2038,14 +2052,14 @@ class SMCDetector:
                 print(f"      Last 3 Lows:  HL={hl_count}, LL={ll_count}")
                 print(f"      Swing Pattern: {macro_trend_swings.upper()}")
         
-        # V39 BTCUSD range lock (bias guard before V22 latest-signal rule)
-        if symbol and symbol.upper() == 'BTCUSD':
+        # V40 range lock (bias guard before V22 latest-signal rule)
+        if symbol:
             _v39_sh = self.detect_swing_highs(df)
             _v39_sl = self.detect_swing_lows(df)
-            _v39_rs = self.compute_btcusd_structural_range(df, _v39_sh, _v39_sl)
+            _v39_rs = self.compute_structural_range(df, _v39_sh, _v39_sl)
             if _v39_rs and _v39_rs.locked:
                 if debug:
-                    print(f"   🔒 [V39] determine_daily_trend → {_v39_rs.locked_bias.upper()} (range locked)")
+                    print(f"   🔒 [V40] determine_daily_trend → {_v39_rs.locked_bias.upper()} (range locked)")
                 return _v39_rs.locked_bias
 
         # LAYER 2: CHoCH/BOS analysis (latest signal direction)
@@ -3267,15 +3281,13 @@ class SMCDetector:
                 print(f"   ⚠️ [V11.9] {symbol}: CHoCH bullish neconfirmat — preț a urcat {_unconf_bullish_rise_pct:.1f}% față de swing low @ {_unconf_bullish_ref:.3f} (în 60 bare)")
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-        # V39 BTCUSD — filter internal sub-structure before V25 bias
-        _btc_range_state = None
-        if symbol.upper() == 'BTCUSD':
-            _btc_range_state = self.compute_btcusd_structural_range(
-                df_daily, _swing_highs_unconf, _swing_lows_unconf
-            )
-            daily_chochs, daily_bos_list, _btc_range_state = self.filter_btcusd_internal_signals(
-                symbol, df_daily, daily_chochs, daily_bos_list, _btc_range_state
-            )
+        # V40 — filter internal sub-structure before V25 bias
+        _range_state = self.compute_structural_range(
+            df_daily, _swing_highs_unconf, _swing_lows_unconf
+        )
+        daily_chochs, daily_bos_list, _range_state = self.filter_internal_range_signals(
+            symbol, df_daily, daily_chochs, daily_bos_list, _range_state
+        )
 
         # 🆕 V7.1 LOGIC: BOS HIERARCHY - 3+ consecutive BOS = DOMINANT TREND
         # PHILOSOPHY by ФорексГод: "One CHoCH cannot overturn 3+ BOS army."
@@ -3351,12 +3363,19 @@ class SMCDetector:
         current_trend = latest_signal.direction
         _signal_label = 'CHoCH' if isinstance(latest_signal, CHoCH) else 'BOS'
 
-        if symbol.upper() == 'BTCUSD' and _btc_range_state and _btc_range_state.locked:
-            current_trend = _btc_range_state.locked_bias
+        if _range_state and _range_state.locked:
+            current_trend = _range_state.locked_bias
             strategy_type = 'continuation'
+            _aligned = [
+                s for s in (daily_chochs + daily_bos_list)
+                if s.direction == _range_state.locked_bias
+            ]
+            if _aligned:
+                latest_signal = max(_aligned, key=lambda s: s.index)
+                _signal_label = 'CHoCH' if isinstance(latest_signal, CHoCH) else 'BOS'
             if current_trend == 'bearish' and _unconfirmed_bullish_choch:
                 print(
-                    "   ⛔ [V39 GUARD] BTCUSD: blocat bias LONG — bounce intern in range bearish locked"
+                    f"   ⛔ [V40 GUARD] {symbol}: blocat bias LONG — bounce intern in range bearish locked"
                 )
 
         if debug:
@@ -3372,12 +3391,11 @@ class SMCDetector:
         # 🔥 V8.2: MOMENTUM_CONTINUATION - If 3+ consecutive BOS, prioritize MOMENTUM entry (even if FVG exists)
         # EURJPY case: 4 BEARISH BOS = strong trend, generate setup regardless of FVG
         _v39_block_momentum = (
-            symbol.upper() == 'BTCUSD'
-            and _btc_range_state
-            and _btc_range_state.locked
+            _range_state
+            and _range_state.locked
             and (
-                dominant_bos_direction != _btc_range_state.locked_bias
-                or current_trend != _btc_range_state.locked_bias
+                dominant_bos_direction != _range_state.locked_bias
+                or current_trend != _range_state.locked_bias
             )
         )
         if consecutive_bos_count >= 3 and strategy_type == 'continuation' and not _v39_block_momentum:
@@ -4015,8 +4033,8 @@ class SMCDetector:
             _unconf_choch_blocks = (
                 (_momentum_dir == 'bullish' and _unconfirmed_bearish_choch) or
                 (_momentum_dir == 'bearish' and _unconfirmed_bullish_choch) or
-                (symbol.upper() == 'BTCUSD' and _btc_range_state and _btc_range_state.locked
-                 and _btc_range_state.locked_bias == 'bearish' and _momentum_dir == 'bullish')
+                (_range_state and _range_state.locked
+                 and _range_state.locked_bias == 'bearish' and _momentum_dir == 'bullish')
             )
             if _unconf_choch_blocks:
                 # Posibil pullback major neconfirmat → nu executăm breakout, așteptăm 4H
@@ -4590,14 +4608,14 @@ class SMCDetector:
             return None
         
 
-        # V39 BTCUSD — nu permite READY pe bias opus range-ului locked
-        if symbol.upper() == 'BTCUSD' and _btc_range_state and _btc_range_state.locked:
-            if current_trend != _btc_range_state.locked_bias:
-                current_trend = _btc_range_state.locked_bias
+        # V40 — nu permite READY pe bias opus range-ului locked
+        if _range_state and _range_state.locked:
+            if current_trend != _range_state.locked_bias:
+                current_trend = _range_state.locked_bias
                 strategy_type = 'continuation'
             if status == 'READY' and current_trend == 'bearish' and _unconfirmed_bullish_choch:
                 status = 'MONITORING'
-                print("⏳ [V39] BTCUSD: READY LONG blocat — range bearish locked, asteptam 4H CHoCH bearish")
+                print(f"⏳ [V40] {symbol}: READY LONG blocat — range bearish locked, asteptam 4H CHoCH bearish")
 
         # Return setup (MONITORING or READY)
         # Convert pandas Timestamp to Python datetime properly

@@ -251,7 +251,8 @@ class DailyScanner:
             raise RuntimeError(error_msg)
         
         setups_found = []
-        bias_fallback_entries = []  # V31.0: Bias-only entries colectate pentru WIPE final
+        bias_fallback_entries = []  # V31.0: Bias-only entries colectate pentru WIPE final
+        daily_bias_map = {}  # V40: D1 bias per symbol pentru invalidare setup-uri stale
 
         # V3.0: Load existing monitoring setups to re-evaluate their status
         monitoring_symbols = set()
@@ -318,6 +319,13 @@ class DailyScanner:
                 if df_4h is None:
                     print(f"⚠️ Skipping {symbol} - no 4H data")
                     continue
+
+                # V40: înregistrăm bias D1 înainte de scan — folosit la SMART MERGE invalidare
+                try:
+                    daily_bias_map[symbol] = self.smc_detector.determine_daily_trend(df_daily, symbol=symbol)
+                except Exception as _dbm_err:
+                    daily_bias_map[symbol] = 'neutral'
+                    print(f"   ⚠️ [V40] bias map error {symbol}: {_dbm_err}")
                 
                 # V3.1 SCALE_IN: Download 1H data for ALL pairs (Entry 1 validation)
                 print(f"   📊 Downloading 1H data (SCALE_IN strategy)...") 
@@ -715,7 +723,7 @@ class DailyScanner:
         re_evaluated_setups = [s for s in all_active_setups if s.symbol in monitoring_symbols]
 
         # SAVE first, then show final summary — V31.0: WIPE + bias fallback
-        save_monitoring_setups(all_active_setups, bias_fallback_entries)
+        save_monitoring_setups(all_active_setups, bias_fallback_entries, daily_bias_map)
 
         # Now reload to get accurate count
         final_monitoring_count = 0
@@ -889,7 +897,7 @@ class DailyScanner:
             self.data_provider.disconnect()
 
 
-def save_monitoring_setups(setups: List[TradeSetup], bias_fallback: list = None):
+def save_monitoring_setups(setups: List[TradeSetup], bias_fallback: list = None, daily_bias_map: dict = None):
     """[V33 SMART MERGE] Scanner adauga setups NOI dar pastreaza paritati active din zilele trecute.
     Un pullback pe Daily poate dura zile — stergerea oarba de dimineata este interzisa.
 
@@ -904,6 +912,8 @@ def save_monitoring_setups(setups: List[TradeSetup], bias_fallback: list = None)
     """
     if bias_fallback is None:
         bias_fallback = []
+    if daily_bias_map is None:
+        daily_bias_map = {}
 
     # Status-uri active — PASTRATE INTACTE de la o zi la alta
     _ACTIVE_STATUSES = {
@@ -951,6 +961,23 @@ def save_monitoring_setups(setups: List[TradeSetup], bias_fallback: list = None)
         except json.JSONDecodeError:
             print("\u26a0\ufe0f  monitoring_setups.json corupt — pornim fresh")
 
+        # V40: Invalidează setup-uri stale când D1 bias contradictă direcția salvată
+        _invalidated = []
+        for sym, stored in list(existing_active.items()):
+            bias = daily_bias_map.get(sym)
+            if bias not in ('bullish', 'bearish'):
+                continue
+            expected = 'buy' if bias == 'bullish' else 'sell'
+            stored_dir = (stored.get('direction') or '').lower()
+            if stored_dir and stored_dir != expected:
+                _invalidated.append(sym)
+                print(
+                    f"  🔄 [V40 BIAS INVALIDATE] {sym}: JSON {stored_dir.upper()} "
+                    f"≠ D1 {bias.upper()} — setup vechi eliminat"
+                )
+        for sym in _invalidated:
+            existing_active.pop(sym, None)
+
         # Pasul 2: Construim lista finala
         monitoring_setups = list(existing_active.values())  # Incepem cu ce era activ
         preserved_symbols = set(existing_active.keys())
@@ -970,29 +997,22 @@ def save_monitoring_setups(setups: List[TradeSetup], bias_fallback: list = None)
                       f"open {open_dir.upper()} position exists")
                 continue
 
-            # V39 BTCUSD: bias flip → invalidate stale setup (ex. BUY fals in range bearish)
+            # V40: bias flip → invalidate stale setup (ex. BUY fals in range bearish)
             if setup.symbol in preserved_symbols:
-                if setup.symbol == 'BTCUSD':
-                    _old = existing_active.get('BTCUSD', {})
-                    _old_dir = (_old.get('direction') or '').lower()
-                    if _old_dir and _old_dir != direction:
-                        monitoring_setups = [s for s in monitoring_setups if s.get('symbol') != 'BTCUSD']
-                        preserved_symbols.discard('BTCUSD')
-                        existing_active.pop('BTCUSD', None)
-                        print(
-                            f"  🔄 [V39 BIAS FLIP] BTCUSD: {_old_dir.upper()} → {direction.upper()} "
-                            f"— setup vechi eliminat (INVALIDATED_BIAS_FLIP)"
-                        )
-                    else:
-                        print(
-                            f"  ⏭️  [V33 MERGE] {setup.symbol}: deja activ in JSON "
-                            f"({existing_active.get(setup.symbol, {}).get('status')}) — scan nou ignorat"
-                        )
-                        continue
+                _old = existing_active.get(setup.symbol, {})
+                _old_dir = (_old.get('direction') or '').lower()
+                if _old_dir and _old_dir != direction:
+                    monitoring_setups = [s for s in monitoring_setups if s.get('symbol') != setup.symbol]
+                    preserved_symbols.discard(setup.symbol)
+                    existing_active.pop(setup.symbol, None)
+                    print(
+                        f"  🔄 [V40 BIAS FLIP] {setup.symbol}: {_old_dir.upper()} → {direction.upper()} "
+                        f"— setup vechi eliminat (INVALIDATED_BIAS_FLIP)"
+                    )
                 else:
                     print(
                         f"  ⏭️  [V33 MERGE] {setup.symbol}: deja activ in JSON "
-                        f"({existing_active[setup.symbol].get('status')}) — scan nou ignorat"
+                        f"({existing_active.get(setup.symbol, {}).get('status')}) — scan nou ignorat"
                     )
                     continue
 
@@ -1040,19 +1060,15 @@ def save_monitoring_setups(setups: List[TradeSetup], bias_fallback: list = None)
             sym = entry.get('symbol')
             direction = entry.get('direction', '')
             if sym in preserved_symbols:
-                if sym == 'BTCUSD':
-                    _old = existing_active.get('BTCUSD', {})
-                    _old_dir = (_old.get('direction') or '').lower()
-                    if _old_dir and _old_dir != direction:
-                        monitoring_setups = [s for s in monitoring_setups if s.get('symbol') != 'BTCUSD']
-                        preserved_symbols.discard('BTCUSD')
-                        existing_active.pop('BTCUSD', None)
-                        print(
-                            f"  🔄 [V39 BIAS FLIP] BTCUSD fallback: {_old_dir.upper()} → {direction.upper()}"
-                        )
-                    else:
-                        print(f"  ⏭️  [V33 MERGE] {sym}: deja activ in JSON — bias fallback ignorat")
-                        continue
+                _old = existing_active.get(sym, {})
+                _old_dir = (_old.get('direction') or '').lower()
+                if _old_dir and _old_dir != direction:
+                    monitoring_setups = [s for s in monitoring_setups if s.get('symbol') != sym]
+                    preserved_symbols.discard(sym)
+                    existing_active.pop(sym, None)
+                    print(
+                        f"  🔄 [V40 BIAS FLIP] {sym} fallback: {_old_dir.upper()} → {direction.upper()}"
+                    )
                 else:
                     print(f"  ⏭️  [V33 MERGE] {sym}: deja activ in JSON — bias fallback ignorat")
                     continue
