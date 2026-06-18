@@ -196,6 +196,18 @@
     <script>
         let lastDataHash = '';
 
+        function tradeCloseMs(trade) {
+            const raw = trade.close_time_utc || trade.close_time_iso || trade.close_time || 0;
+            return new Date(raw).getTime();
+        }
+
+        function formatTradeCloseTime(trade) {
+            if (trade.close_time_display) {
+                return trade.close_time_display.substring(0, 16);
+            }
+            return (trade.close_time || '').substring(0, 16).replace('T', ' ');
+        }
+
         async function loadDashboardData() {
             try {
                 // Fetch trade_history.json with cache-busting
@@ -270,11 +282,9 @@
                 }
 
                 // Sort closed trades by close_time (most recent first)
-                const sortedClosedTrades = [...closedTrades].sort((a, b) => {
-                    const timeA = new Date(a.close_time || 0).getTime();
-                    const timeB = new Date(b.close_time || 0).getTime();
-                    return timeB - timeA; // Descending (newest first)
-                });
+                const sortedClosedTrades = [...closedTrades].sort((a, b) => 
+                    tradeCloseMs(b) - tradeCloseMs(a)
+                );
 
                 // Update closed trades based on dropdown selection
                 const limit = document.getElementById('tradesLimit')?.value || '10';
@@ -401,7 +411,7 @@
             list.innerHTML = tradesToShow.map(trade => {
                 const profit = trade.profit || 0;
                 const outcome = profit > 0 ? '✅ WIN' : '❌ LOSS';
-                const closeTime = (trade.close_time || '').substring(0, 16).replace('T', ' ');
+                const closeTime = formatTradeCloseTime(trade);
                 
                 return `
                     <div class="trade-item">

@@ -383,6 +383,19 @@
         let currentPLPeriod = 'daily';
         let dashboardData = null;
 
+        // V40.5: sort/charts use UTC; list display uses close_time (RO from API)
+        function tradeCloseMs(trade) {
+            const raw = trade.close_time_utc || trade.close_time_iso || trade.close_time || 0;
+            return new Date(raw).getTime();
+        }
+
+        function formatTradeCloseTime(trade) {
+            if (trade.close_time_display) {
+                return trade.close_time_display.substring(0, 16);
+            }
+            return (trade.close_time || '').substring(0, 16).replace('T', ' ');
+        }
+
         async function loadDashboardData() {
             try {
                 const response = await fetch('trade_history.json?t=' + Date.now());
@@ -416,7 +429,8 @@
                 updateClosedTrades(closedTrades);
 
                 document.getElementById('lastUpdate').textContent = 
-                    '⏰ ' + new Date().toLocaleTimeString();
+                    '⏰ ' + new Date().toLocaleTimeString() +
+                    (dashboardData.timezone_label ? ' • ' + dashboardData.timezone_label : '');
 
                 // Hide loading overlay once data is fully parsed
                 const overlay = document.getElementById('loadingOverlay');
@@ -534,7 +548,7 @@
 
         function updateEquityCurve(closedTrades, currentBalance) {
             const sortedTrades = [...closedTrades].sort((a, b) => 
-                new Date(a.close_time) - new Date(b.close_time)
+                tradeCloseMs(a) - tradeCloseMs(b)
             );
 
             // Use actual account balance as base; subtract all closed trade P/L to get initial deposit
@@ -545,7 +559,7 @@
 
             sortedTrades.forEach(trade => {
                 runningBalance += (trade.profit || 0);
-                const date = new Date(trade.close_time).toLocaleDateString();
+                const date = new Date(trade.close_time_iso || trade.close_time_utc || trade.close_time).toLocaleDateString();
                 equityData.push({ x: date, y: runningBalance });
             });
 
@@ -591,7 +605,7 @@
             const plByPeriod = [];
             
             closedTrades.forEach(trade => {
-                const date = new Date(trade.close_time);
+                const date = new Date(trade.close_time_iso || trade.close_time_utc || trade.close_time);
                 let key, sortKey;
                 
                 if (period === 'daily') {
@@ -854,7 +868,7 @@
         function updateClosedTrades(trades) {
             const limit = document.getElementById('tradesLimit')?.value || '30';
             const sortedTrades = [...trades].sort((a, b) => 
-                new Date(b.close_time) - new Date(a.close_time)
+                tradeCloseMs(b) - tradeCloseMs(a)
             );
             const tradesToShow = limit === 'all' ? sortedTrades : sortedTrades.slice(0, parseInt(limit));
 
@@ -862,7 +876,7 @@
             list.innerHTML = tradesToShow.map(trade => {
                 const profit = trade.profit || 0;
                 const outcome = profit > 0 ? '✅ WIN' : '❌ LOSS';
-                const closeTime = (trade.close_time || '').substring(0, 16).replace('T', ' ');
+                const closeTime = formatTradeCloseTime(trade);
                 
                 return `
                     <div class="trade-item">
