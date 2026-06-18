@@ -55,8 +55,8 @@ namespace cAlgo.Robots
             Print("");
             
             // 🚨 AUDIT: Validate signal file path
-            var signalDir = Path.GetDirectoryName(SignalFilePath);
-            if (!Directory.Exists(signalDir))
+            var signalDir = System.IO.Path.GetDirectoryName(SignalFilePath);
+            if (!System.IO.Directory.Exists(signalDir))
             {
                 Print($"❌ ERROR: Signal directory does not exist: {signalDir}");
                 Print($"⚠️  Bot will NOT receive signals! Check path configuration.");
@@ -87,10 +87,10 @@ namespace cAlgo.Robots
                 ExportActivePositions();
                 
                 // THEN: Check for new signals
-                if (!File.Exists(SignalFilePath))
+                if (!System.IO.File.Exists(SignalFilePath))
                     return;
                 
-                var fileInfo = new FileInfo(SignalFilePath);
+                var fileInfo = new System.IO.FileInfo(SignalFilePath);
                 if (fileInfo.LastWriteTime <= _lastFileCheck)
                     return;
                 
@@ -99,7 +99,7 @@ namespace cAlgo.Robots
                 string json;
                 try
                 {
-                    json = File.ReadAllText(SignalFilePath);
+                    json = System.IO.File.ReadAllText(SignalFilePath);
                 }
                 catch (IOException ioEx)
                 {
@@ -173,13 +173,13 @@ namespace cAlgo.Robots
                 Print($"📦 V7.0 ARRAY: {signals.Count} signal(s) received");
                 
                 // ━━━ LOAD PERSISTENT PROCESSED LIST ━━━
-                string processedSignalsFile = Path.Combine(Path.GetDirectoryName(SignalFilePath), "processed_signals.txt");
+                string processedSignalsFile = System.IO.Path.Combine(System.IO.Path.GetDirectoryName(SignalFilePath), "processed_signals.txt");
                 HashSet<string> persistentProcessed = new HashSet<string>();
-                if (File.Exists(processedSignalsFile))
+                if (System.IO.File.Exists(processedSignalsFile))
                 {
                     try
                     {
-                        var lines = File.ReadAllLines(processedSignalsFile);
+                        var lines = System.IO.File.ReadAllLines(processedSignalsFile);
                         foreach (var line in lines)
                         {
                             if (!string.IsNullOrWhiteSpace(line))
@@ -243,7 +243,7 @@ namespace cAlgo.Robots
                         _sessionProcessedSignals.Add(signal.SignalId);
                         try
                         {
-                            File.AppendAllText(processedSignalsFile, signal.SignalId + Environment.NewLine);
+                            System.IO.File.AppendAllText(processedSignalsFile, signal.SignalId + Environment.NewLine);
                         }
                         catch (Exception markEx)
                         {
@@ -329,9 +329,9 @@ namespace cAlgo.Robots
         {
             try
             {
-                if (File.Exists(SignalFilePath))
+                if (System.IO.File.Exists(SignalFilePath))
                 {
-                    File.Delete(SignalFilePath);
+                    System.IO.File.Delete(SignalFilePath);
                     Print($"🗑️  Signal file deleted (atomic cleanup)");
                 }
             }
@@ -413,7 +413,7 @@ namespace cAlgo.Robots
                 };
                 
                 var options = new JsonSerializerOptions { WriteIndented = true };
-                File.WriteAllText(closurePath, JsonSerializer.Serialize(closure, options));
+                System.IO.File.WriteAllText(closurePath, JsonSerializer.Serialize(closure, options));
             }
             catch (Exception ex)
             {
@@ -452,7 +452,7 @@ namespace cAlgo.Robots
                 };
                 
                 var options = new JsonSerializerOptions { WriteIndented = true };
-                File.WriteAllText(accountInfoPath, JsonSerializer.Serialize(accountStatus, options));
+                System.IO.File.WriteAllText(accountInfoPath, JsonSerializer.Serialize(accountStatus, options));
             }
             catch (Exception ex)
             {
@@ -883,8 +883,8 @@ namespace cAlgo.Robots
                 var json = JsonSerializer.Serialize(confirmation, options);
                 
                 // Write to BOTH files (legacy + new protocol)
-                File.WriteAllText(confirmationPath, json);
-                File.WriteAllText(executionReportPath, json);
+                System.IO.File.WriteAllText(confirmationPath, json);
+                System.IO.File.WriteAllText(executionReportPath, json);
                 
                 Print($"✅ Execution report written: {status}");
                 Print($"   Volume: {volumeInLots:F2} lots ({position?.VolumeInUnits ?? 0:F2} units)");
@@ -900,7 +900,7 @@ namespace cAlgo.Robots
                 {
                     var errorPath = SignalFilePath.Replace("signals.json", "execution_report.json");
                     var errorData = $"{{\"SignalId\":\"{signal.SignalId}\",\"Status\":\"ERROR\",\"Message\":\"{ex.Message.Replace("\"", "'")}\",\"Timestamp\":\"{DateTime.UtcNow:O}\"}}";
-                    File.WriteAllText(errorPath, errorData);
+                    System.IO.File.WriteAllText(errorPath, errorData);
                     Print($"✅ Error report written (fallback)");
                 }
                 catch
@@ -1036,7 +1036,7 @@ namespace cAlgo.Robots
                 
                 var exportPath = SignalFilePath.Replace("signals.json", "active_positions.json");
                 var options = new JsonSerializerOptions { WriteIndented = true };
-                File.WriteAllText(exportPath, JsonSerializer.Serialize(positionsList, options));
+                System.IO.File.WriteAllText(exportPath, JsonSerializer.Serialize(positionsList, options));
             }
             catch (Exception ex)
             {
