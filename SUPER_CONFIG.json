@@ -72,10 +72,10 @@
   
   "auto_management": {
     "breakeven_trigger_pips": 50.0,
-    "auto_close_profit_pips": 100.0,
+    "auto_close_profit_pips": 0.0,
     "trailing_stop_enabled": false,
     "trailing_stop_distance_pips": 30.0,
-    "comment": "Automatic position management by cBot"
+    "comment": "V40.5: auto_close 0=OFF — exits only via broker SL/TP (100 pips killed XTIUSD structural trades)"
   },
   
   "telegram_alerts": {

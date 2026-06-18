@@ -21,7 +21,8 @@ namespace cAlgo.Robots
         [Parameter("Max Risk %", DefaultValue = 2.0)]
         public double MaxRiskPercent { get; set; }
 
-        [Parameter("Auto Close at Profit (pips)", DefaultValue = 100.0)]
+        // V40.5: 0 = DISABLED — exits only via broker SL/TP (no premature scalp cut)
+        [Parameter("Auto Close at Profit (pips)", DefaultValue = 0.0)]
         public double AutoCloseProfitPips { get; set; }
 
         [Parameter("Move SL to Breakeven at (pips)", DefaultValue = 50.0)]
@@ -49,7 +50,9 @@ namespace cAlgo.Robots
             Print($"   📁 Signal File: {SignalFilePath}");
             Print($"   ⏱️  Check Interval: {CheckInterval}s");
             Print($"   💰 Max Risk: {MaxRiskPercent}%");
-            Print($"   🎯 Auto-Close: +{AutoCloseProfitPips} pips");
+            Print(AutoCloseProfitPips > 0
+                ? $"   🎯 Auto-Close: +{AutoCloseProfitPips} pips"
+                : "   🎯 Auto-Close: OFF (broker SL/TP only)");
             Print($"   🔒 Breakeven: +{BreakevenTriggerPips} pips");
             Print($"   📦 Protocol: V7.0 ARRAY (List<TradeSignal>)");
             Print("");
@@ -375,13 +378,13 @@ namespace cAlgo.Robots
                 
                 double profitPips = position.Pips;
                 
-                // AUTO CLOSE at 100 pips profit
-                if (profitPips >= AutoCloseProfitPips)
+                // V40.5: Auto-close OFF by default — structural trades run to broker SL/TP
+                if (AutoCloseProfitPips > 0 && profitPips >= AutoCloseProfitPips)
                 {
                     Print($"🎯 AUTO-CLOSE TRIGGERED: {position.SymbolName} at +{profitPips:F1} pips");
                     ClosePosition(position);
                     Print($"✅ POSITION CLOSED: ${position.NetProfit:F2} profit");
-                    LogTradeClosure(position, profitPips, "auto_close_100pips");
+                    LogTradeClosure(position, profitPips, "auto_close_profit_pips");
                     continue;
                 }
 

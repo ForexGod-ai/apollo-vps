@@ -167,8 +167,13 @@ class PositionMonitor:
         profit = trade.get('profit', 0)
         lot = trade.get('lot_size', 0)
         ticket = trade.get('ticket', 'N/A')
-        entry = trade.get('entry_price', 0)
-        close_price = trade.get('close_price', 0)
+        entry = trade.get('entry_price') or trade.get('open_price') or 0
+        close_price = (
+            trade.get('close_price')
+            or trade.get('closing_price')
+            or trade.get('closePrice')
+            or 0
+        )
         close_time = trade.get('close_time', 'N/A')
         
         # Get account info from trade_history.json
