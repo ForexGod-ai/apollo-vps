@@ -180,32 +180,15 @@ class TelegramCommandCenter:
     def force_sync_from_ctrader(self):
         """
         🔄 FORCE SYNC - Fetch fresh data from cTrader before showing stats
-        Ensures we see the latest closed trades (including today's SL hits)
+        V40.4: delegates to trade_manager.refresh_account_balance()
         """
         try:
             logger.info("🔄 Force syncing from cTrader...")
-            
-            # Fetch from cTrader API (root endpoint returns full JSON)
-            ctrader_api_url = "http://localhost:8767/"
-            response = requests.get(ctrader_api_url, timeout=5)
-            
-            if response.status_code == 200:
-                data = response.json()
-                
-                # Quick sync to database
-                from ctrader_sync_daemon import TradeDatabase, write_trade_history
-                db = TradeDatabase()
-                write_trade_history(data, db)
-                
+            from trade_manager import TradeManager
+            ok = TradeManager(Path(__file__).parent.resolve()).refresh_account_balance()
+            if ok:
                 logger.success("✅ Force sync complete - data is fresh!")
-                return True
-            else:
-                logger.warning(f"⚠️  cTrader API returned {response.status_code}")
-                return False
-                
-        except requests.exceptions.ConnectionError:
-            logger.warning("⚠️  cTrader API offline - using cached data")
-            return False
+            return ok
         except Exception as e:
             logger.error(f"❌ Force sync error: {e}")
             return False
@@ -635,10 +618,14 @@ class TelegramCommandCenter:
             pass
         return False
 
+    def get_today_pnl(self) -> dict:
+        """V40.4: Broker-first today's P/L (cTrader history_deals via trade_manager)."""
+        return self._status_daily_pnl()
+
     def _status_daily_pnl(self) -> dict:
         """
-        V37.14: P/L pentru /status — aliniat cu unified_risk_manager (V37.12).
-        Folosește reset_timestamp din daily_state.json și starting_balance pentru %.
+        V40.4: P/L pentru /status — sursă cTrader (8767), nu log local înghețat.
+        Afișează P/L calendaristic (00:00 RO → acum); /resume nu mai ascunde deal-uri dimineața.
         """
         script_dir = Path(__file__).parent.resolve()
         today = self._status_ro_today()
@@ -666,47 +653,19 @@ class TelegramCommandCenter:
             except Exception:
                 pass
 
-        closed_pnl = 0.0
-        trade_count = 0
-        balance = 0.0
-        trade_history_file = script_dir / 'trade_history.json'
-
-        if trade_history_file.exists():
-            with open(trade_history_file, 'r', encoding='utf-8') as f:
-                th = json.load(f)
-            balance = float(th.get('account', {}).get('balance', 0) or 0)
-            for trade in th.get('closed_trades', []):
-                close_time = trade.get('close_time', '')
-                if not close_time or close_time[:10] != today:
-                    continue
-                if reset_cutoff and close_time < reset_cutoff:
-                    continue
-                closed_pnl += float(trade.get('profit', 0))
-                trade_count += 1
-        else:
-            self.force_sync_from_ctrader()
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            if reset_cutoff:
-                cursor.execute("""
-                    SELECT COALESCE(SUM(profit), 0), COUNT(*)
-                    FROM closed_trades
-                    WHERE DATE(close_time, 'localtime') = ?
-                      AND close_time >= ?
-                """, (today, reset_cutoff))
-            else:
-                cursor.execute("""
-                    SELECT COALESCE(SUM(profit), 0), COUNT(*)
-                    FROM closed_trades WHERE DATE(close_time, 'localtime') = ?
-                """, (today,))
-            closed_pnl, trade_count = cursor.fetchone()
-            cursor.execute("SELECT balance FROM account_snapshots ORDER BY timestamp DESC LIMIT 1")
-            row = cursor.fetchone()
-            balance = row[0] if row else 0
-            conn.close()
-
-        base = starting_balance if starting_balance > 0 else balance
-        pnl_pct = (closed_pnl / base * 100) if base > 0 else 0
+        from trade_manager import TradeManager
+        tm = TradeManager(script_dir)
+        pnl = tm.get_today_pnl(
+            today=today,
+            reset_cutoff=reset_cutoff,
+            starting_balance=starting_balance,
+            calendar_day_pnl=True,
+        )
+        closed_pnl = pnl['closed_pnl']
+        trade_count = pnl['trade_count']
+        balance = pnl['balance']
+        pnl_pct = pnl['pnl_pct']
+        broker_synced = pnl.get('broker_synced', False)
 
         max_loss = 10.0
         try:
@@ -738,6 +697,7 @@ class TelegramCommandCenter:
             'risk_label': risk_label,
             'resumed_today': resumed_today,
             'reset_cutoff': reset_cutoff,
+            'broker_synced': broker_synced,
         }
 
     _STATUS_WATCHING_STATUSES = frozenset({
@@ -764,7 +724,7 @@ class TelegramCommandCenter:
                 _time_header = (now + timedelta(hours=3)).strftime('%d %b %Y, %H:%M:%S (ora României)')
 
             message = (
-                f"<b>🔧 SYSTEM STATUS — V37.14</b>\n"
+                f"<b>🔧 SYSTEM STATUS — V40.4</b>\n"
                 f"{UNIVERSAL_SEPARATOR}\n\n"
                 f"⏰ {_time_header}\n\n"
             )
@@ -887,8 +847,10 @@ class TelegramCommandCenter:
 
                 message += f"  {pnl_emoji} Closed: <code>${closed_pnl:+.2f}</code> ({pnl_pct:+.1f}%)\n"
                 message += f"  📊 Trades today: <code>{trade_count}</code>\n"
+                if pnl_ctx.get('broker_synced'):
+                    message += "  📡 Source: <code>cTrader broker (synced)</code>\n"
                 if pnl_ctx.get('reset_cutoff'):
-                    message += f"  📌 Session since: <code>{pnl_ctx['reset_cutoff'][:19]}</code>\n"
+                    message += f"  📌 Risk session since: <code>{pnl_ctx['reset_cutoff'][:19]}</code>\n"
                 message += f"  🛡️ Risk: {pnl_ctx['risk_label']} (limit: -{max_loss}%)\n\n"
 
             except Exception as e:
@@ -1473,11 +1435,28 @@ class TelegramCommandCenter:
 
     def handle_resume_command(self) -> str:
         """
-        V39.1 /resume — Deep sleep OFF, reset P&L anchor, bypass loss limit, scan instant.
+        V40.4 /resume — State Recovery (broker PNL sync) + deep sleep OFF + scan instant.
         """
         try:
             script_dir = Path(__file__).parent.resolve()
             sleep_file = script_dir / 'data' / 'deep_sleep_state.json'
+
+            # V40.4: State Recovery — sync closed deals from 00:00 (calendar day) before resume
+            _recovery_pnl = 'N/A'
+            _recovery_trades = 0
+            try:
+                from trade_manager import TradeManager
+                _today = self._status_ro_today()
+                _recovery = TradeManager(script_dir).recover_state_since_midnight(_today)
+                if _recovery.get('sync_ok'):
+                    _recovery_pnl = f"${_recovery['today_pnl']:+.2f}"
+                    _recovery_trades = _recovery['trade_count']
+                    logger.info(
+                        f"[V40.4] State Recovery: today PNL {_recovery_pnl}, "
+                        f"{_recovery_trades} trades (broker sync)"
+                    )
+            except Exception as _rec_err:
+                logger.warning(f"⚠️ [V40.4] State Recovery failed: {_rec_err}")
 
             # Ora României pentru afișare
             try:
@@ -1522,15 +1501,17 @@ class TelegramCommandCenter:
             ).start()
 
             msg = (
-                f"🔱 <b>SYSTEM AWAKENED — V39.1</b>\n\n"
+                f"🔱 <b>SYSTEM AWAKENED — V40.4</b>\n\n"
                 f"✅ Deep sleep cleared\n"
+                f"📡 State Recovery: P/L azi <code>{_recovery_pnl}</code> "
+                f"(<code>{_recovery_trades}</code> tranzacții, cTrader sync)\n"
                 f"📊 P&L anchor reset → {_equity_label} (0% loss pe noul interval)\n"
                 f"🔓 <code>force_bypass_loss_limit</code> activ pana la 00:05\n"
                 f"🔄 <b>BIAS SYNC STARTING...</b> (scan instant lansat)\n"
                 f"⏰ Time: <code>{_time_label}</code>\n\n"
                 f"⚡ Executor + Radar reluate imediat — fara asteptare watchdog."
             )
-            logger.info("🔱 /resume V39.1 executed — deep sleep cleared, scan triggered")
+            logger.info("🔱 /resume V40.4 executed — state recovery, deep sleep cleared, scan triggered")
             return msg
 
         except Exception as e:
