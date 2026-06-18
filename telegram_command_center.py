@@ -29,6 +29,7 @@ import sqlite3
 import subprocess
 import sys
 import atexit
+import threading
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
@@ -1440,10 +1441,39 @@ class TelegramCommandCenter:
             logger.error(f"❌ KILLALL error: {e}")
             return f"❌ <b>KILLALL ERROR:</b> {str(e)}"
 
+    def _trigger_post_resume_scan(self, script_dir: Path) -> None:
+        """V39.1: Lanseaza daily_scanner imediat dupa /resume (non-blocking)."""
+        scanner = script_dir / 'daily_scanner.py'
+        if not scanner.exists():
+            logger.warning("⚠️ [V39.1] daily_scanner.py not found — skip post-resume scan")
+            return
+        try:
+            trigger_file = script_dir / 'data' / 'resume_scan_trigger.json'
+            trigger_file.parent.mkdir(parents=True, exist_ok=True)
+            trigger_file.write_text(
+                json.dumps({
+                    'triggered_at': datetime.now(timezone.utc).isoformat(),
+                    'source': 'manual /resume',
+                }, indent=2),
+                encoding='utf-8',
+            )
+        except Exception as _tf_err:
+            logger.warning(f"⚠️ resume_scan_trigger write failed: {_tf_err}")
+
+        try:
+            subprocess.Popen(
+                [sys.executable, str(scanner), '--live'],
+                cwd=str(script_dir),
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            logger.info("🔱 [V39.1] Post-resume scan launched (daily_scanner.py --live)")
+        except Exception as _scan_err:
+            logger.warning(f"⚠️ [V39.1] Post-resume scan launch failed: {_scan_err}")
+
     def handle_resume_command(self) -> str:
         """
-        V10.6 /resume — Remove deep_sleep_state.json and unlock trading.
-        Sends: 🔱 SYSTEM AWAKENED. BIAS SYNC STARTING...
+        V39.1 /resume — Deep sleep OFF, reset P&L anchor, bypass loss limit, scan instant.
         """
         try:
             script_dir = Path(__file__).parent.resolve()
@@ -1461,36 +1491,46 @@ class TelegramCommandCenter:
             if sleep_file.exists():
                 sleep_file.unlink()
 
-            # V19.6.8: Scrie marker de resume manual — /status îl verifică ca să nu
-            # mai afișeze SLEEPING pe baza P/L când user-ul a ieșit manual din deep sleep
+            # V19.6.8: Marker resume — executor + /status il citesc live
+            _equity_label = 'N/A'
             try:
                 resume_marker = script_dir / 'data' / 'system_resumed.json'
                 resume_marker.parent.mkdir(parents=True, exist_ok=True)
-                import json as _json
-                with open(resume_marker, 'w') as _f:
-                    _json.dump({
+                with open(resume_marker, 'w', encoding='utf-8') as _f:
+                    json.dump({
                         'resumed_at': datetime.now(timezone.utc).isoformat(),
-                        'resumed_by': 'manual /resume'
-                    }, _f)
+                        'resumed_by': 'manual /resume',
+                    }, _f, indent=2)
             except Exception:
                 pass
 
-            # V37.12: Reset P&L zilnic — pierderile anterioare nu mai blocheaza dupa /resume
+            # V39.1: Reset ancora P&L + force_bypass_loss_limit in daily_state.json
             try:
                 from unified_risk_manager import UnifiedRiskManager
-                UnifiedRiskManager().reset_pnl_baseline_after_resume('manual /resume')
+                _rm = UnifiedRiskManager()
+                _rm.reset_pnl_baseline_after_resume('manual /resume')
+                _eq, _bal = _rm.get_account_balance()
+                _equity_label = f"${(_eq if _eq > 0 else _bal):,.2f}"
             except Exception as _pnl_reset_err:
                 logger.warning(f"⚠️ PnL baseline reset on /resume failed: {_pnl_reset_err}")
 
+            # V39.1: Scan imediat — nu asteptam 00:05 sau watchdog
+            threading.Thread(
+                target=self._trigger_post_resume_scan,
+                args=(script_dir,),
+                daemon=True,
+            ).start()
+
             msg = (
-                f"🔱 <b>SYSTEM AWAKENED</b>\n\n"
-                f"✅ Deep sleep cleared manually\n"
-                f"📊 Daily P&L baseline reset la equity curent\n"
-                f"🔄 <b>BIAS SYNC STARTING...</b>\n"
+                f"🔱 <b>SYSTEM AWAKENED — V39.1</b>\n\n"
+                f"✅ Deep sleep cleared\n"
+                f"📊 P&L anchor reset → {_equity_label} (0% loss pe noul interval)\n"
+                f"🔓 <code>force_bypass_loss_limit</code> activ pana la 00:05\n"
+                f"🔄 <b>BIAS SYNC STARTING...</b> (scan instant lansat)\n"
                 f"⏰ Time: <code>{_time_label}</code>\n\n"
-                f"⚠️ Watchdog will restart all processes within 60s."
+                f"⚡ Executor + Radar reluate imediat — fara asteptare watchdog."
             )
-            logger.info("🔱 /resume executed — deep sleep cleared")
+            logger.info("🔱 /resume V39.1 executed — deep sleep cleared, scan triggered")
             return msg
 
         except Exception as e:

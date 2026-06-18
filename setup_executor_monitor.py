@@ -487,14 +487,25 @@ class SetupExecutorMonitor:
                     if _rm is not None:
                         _rm.reset_pnl_baseline_after_resume('manual /resume')
                 self.manual_resume_triggered = True
+                # V39.1 CRITICAL: curata starea in-memory — altfel _check_deep_sleep ramane True
+                self.deep_sleep_until = None
                 self.deep_sleep_state_file.unlink(missing_ok=True)
-                logger.success("🔱 [V37.12] manual_resume_triggered=True — bypass daily loss + PnL baseline reset")
+                logger.success(
+                    "🔱 [V39.1] manual_resume_triggered=True — Deep Sleep OFF, "
+                    "PnL baseline reset, loss limit bypass activ"
+                )
         except Exception as _mr_err:
             logger.debug(f"⚠️ _check_manual_resume_marker: {_mr_err}")
 
     def _load_deep_sleep_state(self):
         """Load Deep Sleep state from disk (survives restarts)"""
         try:
+            # V39.1: /resume manual are prioritate — nu reactiva Deep Sleep din fisier
+            if self.manual_resume_triggered:
+                self.deep_sleep_until = None
+                self.deep_sleep_state_file.unlink(missing_ok=True)
+                return
+
             if self.deep_sleep_state_file.exists():
                 with open(self.deep_sleep_state_file, 'r', encoding='utf-8') as f:
                     state = json.load(f)
@@ -560,9 +571,8 @@ class SetupExecutorMonitor:
         Impact: 77,760 HTTP calls/day → ZERO.
         """
         # V19.9 MANUAL RESUME GUARD: Dacă Colonelul a dat /resume azi, NU intrăm în Deep Sleep
-        # indiferent de daily loss. Override-ul expiră automat la 00:05 ora României.
-        if self.manual_resume_triggered:
-            logger.warning(f"🔱 [V19.9] _enter_deep_sleep BLOCAT — manual_resume_triggered=True ({reason})")
+        if self._loss_limit_bypassed():
+            logger.warning(f"🔱 [V39.1] _enter_deep_sleep BLOCAT — loss limit bypass activ ({reason})")
             return
 
         # V19.6.2 FIX: guard — dacă deja în Deep Sleep, nu mai scriem/trimitem din nou
@@ -609,11 +619,34 @@ class SetupExecutorMonitor:
             f"🌅 Auto-resume la 00:05 ora României (new trading day)"
         )
     
+    def _loss_limit_bypassed(self) -> bool:
+        """V39.1: Colonel /resume sau force_bypass_loss_limit din daily_state.json."""
+        if self.manual_resume_triggered:
+            return True
+        try:
+            _rm = getattr(self.executor, 'risk_manager', None)
+            if _rm is not None and hasattr(_rm, '_loss_limit_bypassed'):
+                return _rm._loss_limit_bypassed()
+        except Exception:
+            pass
+        return False
+
     def _check_deep_sleep(self) -> bool:
         """
         Check if system is in Deep Sleep. Returns True if sleeping (skip all work).
         Auto-wakes when time expires.
         """
+        # V39.1: /resume — iesire instantanee din Deep Sleep (memorie + disk)
+        if self._loss_limit_bypassed():
+            if self.deep_sleep_until is not None:
+                logger.success("🔱 [V39.1] Deep Sleep anulat — loss limit bypass activ (/resume)")
+                self.deep_sleep_until = None
+            try:
+                self.deep_sleep_state_file.unlink(missing_ok=True)
+            except Exception:
+                pass
+            return False
+
         if self.deep_sleep_until is None:
             return False
         
@@ -1554,14 +1587,16 @@ class SetupExecutorMonitor:
                                         logger.warning(f"[V37.0] Deep Sleep Telegram alert failed: {_ds_tg_err}")
                                     _loss_pct = (_pnl.get('total_pnl', 0) / _bal * 100) if _bal > 0 else 0
                                     _limit = getattr(_rm, 'max_daily_loss_pct', 10.0)
-                                    # V19.9: BYPASS dacă Colonelul a dat /resume manual
-                                    if _loss_pct <= -_limit and not self.manual_resume_triggered:
+                                    if _loss_pct <= -_limit and not self._loss_limit_bypassed():
                                         self._enter_deep_sleep(
                                             f"Daily loss limit reached ({_loss_pct:.2f}%) — auto Deep Sleep"
                                         )
                                         logger.warning(f"😴 [V19.8] Deep Sleep activat: {_loss_pct:.2f}% loss >= -{_limit}%")
-                                    elif _loss_pct <= -_limit and self.manual_resume_triggered:
-                                        logger.warning(f"🔱 [V19.9] Daily loss {_loss_pct:.2f}% >= -{_limit}% DAR manual_resume_triggered=True — Deep Sleep BLOCAT")
+                                    elif _loss_pct <= -_limit and self._loss_limit_bypassed():
+                                        logger.warning(
+                                            f"🔱 [V39.1] Daily loss {_loss_pct:.2f}% >= -{_limit}% "
+                                            f"DAR bypass activ — Deep Sleep BLOCAT"
+                                        )
                             except Exception as _ds_err:
                                 logger.warning(f"⚠️ Deep Sleep check error: {_ds_err}")
                         continue

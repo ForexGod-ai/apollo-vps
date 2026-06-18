@@ -35,6 +35,33 @@ load_dotenv()
 IGNORE_OPEN_POSITIONS = False
 
 
+def _clear_deep_sleep_on_resume() -> bool:
+    """V39.1: Daca /resume activ, sterge deep_sleep_state.json inainte de scan."""
+    try:
+        resume_marker = os.path.join('data', 'system_resumed.json')
+        if not os.path.exists(resume_marker):
+            return False
+        with open(resume_marker, 'r', encoding='utf-8') as f:
+            rm = json.load(f)
+        resumed_at = datetime.fromisoformat(rm.get('resumed_at', '').replace('Z', '+00:00'))
+        try:
+            import pytz
+            ro_tz = pytz.timezone('Europe/Bucharest')
+            is_today = resumed_at.astimezone(ro_tz).strftime('%Y-%m-%d') == datetime.now(ro_tz).strftime('%Y-%m-%d')
+        except Exception:
+            is_today = resumed_at.date() == datetime.utcnow().date()
+        if not is_today:
+            return False
+        ds_file = os.path.join('data', 'deep_sleep_state.json')
+        if os.path.exists(ds_file):
+            os.remove(ds_file)
+            print("🔱 [V39.1] deep_sleep_state.json sters — scan permis dupa /resume")
+        return True
+    except Exception as e:
+        logger.debug(f"[V39.1] resume wake check: {e}")
+        return False
+
+
 class CTraderDataProvider:
     """Downloads historical data from cTrader via cBot HTTP server"""
     
@@ -215,6 +242,10 @@ class DailyScanner:
         print("🔥 ForexGod - Glitch Daily Scanner Starting...")
         print(f"⏰ Scan Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         print("="*60 + "\n")
+
+        # V39.1: /resume — nu bloca scanul daca deep_sleep ramane pe disk
+        if _clear_deep_sleep_on_resume():
+            print("🔱 [V39.1] Post-resume scan — daily loss bypass activ (PnL anchor resetat de /resume)")
         
         # ✅ V14.4 RETRY: 3 încercări la 30s — cTrader poate fi lent la start VPS
         connected = False
@@ -251,7 +282,7 @@ class DailyScanner:
             raise RuntimeError(error_msg)
         
         setups_found = []
-        bias_fallback_entries = []  # V31.0: Bias-only entries colectate pentru WIPE final
+        bias_fallback_entries = []  # V31.0: Bias-only entries colectate pentru WIPE final
         daily_bias_map = {}  # V40: D1 bias per symbol pentru invalidare setup-uri stale
 
         # V3.0: Load existing monitoring setups to re-evaluate their status

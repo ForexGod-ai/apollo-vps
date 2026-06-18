@@ -69,6 +69,7 @@ class UnifiedRiskManager:
         
         # ✅ Load daily state persistence
         self._reset_timestamp = None
+        self._force_bypass_loss_limit = False
         self._load_daily_state()
         
         print(f"\n🛡️  UNIFIED RISK MANAGER INITIALIZED")
@@ -104,6 +105,7 @@ class UnifiedRiskManager:
                     self.starting_balance_today = state.get('starting_balance', 0.0)
                     self.daily_trades_count = state.get('trades_count', 0)
                     self._reset_timestamp = state.get('reset_timestamp')
+                    self._force_bypass_loss_limit = bool(state.get('force_bypass_loss_limit', False))
                     print(f"✅ Daily state loaded: {today} (Starting: ${self.starting_balance_today:.2f})")
                 else:
                     # NEW DAY - reset everything
@@ -162,9 +164,11 @@ class UnifiedRiskManager:
             'starting_balance_note': 'Uses equity (not balance) — includes floating P&L',
             'trades_count': 0,
             'daily_loss_reached': False,
+            'force_bypass_loss_limit': False,
             'reset_timestamp': self._now_ro().isoformat(),
             'timezone': 'Europe/Bucharest',
         }
+        self._force_bypass_loss_limit = False
         self._reset_timestamp = state['reset_timestamp']
 
         self.daily_state_file.parent.mkdir(parents=True, exist_ok=True)
@@ -234,7 +238,7 @@ class UnifiedRiskManager:
             json.dump(state, f, indent=2)
 
     def _refresh_daily_state_from_disk(self) -> None:
-        """V37.12: Reincarca daily_state dupa /resume (proces long-running)."""
+        """V37.12 / V39.1: Reincarca daily_state dupa /resume (proces long-running)."""
         try:
             if not self.daily_state_file.exists():
                 return
@@ -244,6 +248,7 @@ class UnifiedRiskManager:
                 self.starting_balance_today = float(state.get('starting_balance') or 0)
                 self.daily_trades_count = int(state.get('trades_count') or 0)
                 self._reset_timestamp = state.get('reset_timestamp')
+                self._force_bypass_loss_limit = bool(state.get('force_bypass_loss_limit', False))
         except Exception:
             pass
 
@@ -264,11 +269,13 @@ class UnifiedRiskManager:
             'starting_balance_note': f'Reset by {reason}',
             'trades_count': self.daily_trades_count,
             'daily_loss_reached': False,
+            'force_bypass_loss_limit': True,
             'reset_timestamp': now_iso,
             'manual_resume_at': now_iso,
             'timezone': 'Europe/Bucharest',
             'last_update': datetime.now().isoformat(),
         }
+        self._force_bypass_loss_limit = True
         self.daily_state_file.parent.mkdir(parents=True, exist_ok=True)
         with open(self.daily_state_file, 'w', encoding='utf-8') as f:
             json.dump(state, f, indent=2)
@@ -651,7 +658,7 @@ class UnifiedRiskManager:
             return False
     
     def _manual_resume_active(self) -> bool:
-        """V37.10: /resume manual — bypass daily loss pana la 00:05 ora Romaniei."""
+        """V37.10 / V39.1: /resume manual — bypass daily loss pana la 00:05 ora Romaniei."""
         try:
             resume_marker = Path(__file__).parent / 'data' / 'system_resumed.json'
             if not resume_marker.exists():
@@ -671,6 +678,27 @@ class UnifiedRiskManager:
             return resumed_at.date() == datetime.now().date()
         except Exception:
             return False
+
+    def _force_bypass_loss_limit_active(self) -> bool:
+        """V39.1: Flag explicit din daily_state.json — supravietuieste refresh-ului in-memory."""
+        if getattr(self, '_force_bypass_loss_limit', False):
+            return True
+        try:
+            if not self.daily_state_file.exists():
+                return False
+            with open(self.daily_state_file, 'r', encoding='utf-8') as f:
+                state = json.load(f)
+            if state.get('date') != self._today_ro():
+                return False
+            active = bool(state.get('force_bypass_loss_limit', False))
+            self._force_bypass_loss_limit = active
+            return active
+        except Exception:
+            return False
+
+    def _loss_limit_bypassed(self) -> bool:
+        """V39.1: Colonel /resume sau force_bypass_loss_limit din JSON."""
+        return self._manual_resume_active() or self._force_bypass_loss_limit_active()
 
     def validate_new_trade(self, symbol="", direction="", entry_price=0, stop_loss=0,
                            risk_override_percent: float = None):
@@ -737,7 +765,7 @@ class UnifiedRiskManager:
         pnl = self.get_daily_pnl()
         equity, balance = self.get_account_balance()
         daily_loss_pct = self._calc_daily_loss_pct(pnl['total_pnl'], balance)
-        _resume_override = self._manual_resume_active()
+        _resume_override = self._loss_limit_bypassed()
         
         # Kill switch auto-activation - DISABLED (will redesign later)
         # if self.kill_switch_enabled and daily_loss_pct <= -self.kill_switch_trigger:
@@ -922,7 +950,7 @@ class UnifiedRiskManager:
         V9.1: Send warning with 4h cooldown — max 1 warning per 4 hours.
         Anti-spam fix by ФорексГод.
         """
-        if self._manual_resume_active():
+        if self._loss_limit_bypassed():
             return
         now = datetime.now()
         cooldown_key = 'daily_loss_warning'
