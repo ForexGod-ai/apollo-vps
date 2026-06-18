@@ -239,7 +239,7 @@ class DailyScanner:
             keep_connection: If True, don't disconnect MT5 after scan (for auto-trader)
         """
         print("\n" + "="*60)
-        print("🔥 ForexGod - Glitch Daily Scanner Starting...")
+        print("🔥 ForexGod - Glitch Daily Scanner Starting... [V40.3 W1 INFO + SMART RE-HYDRATE]")
         print(f"⏰ Scan Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         print("="*60 + "\n")
 
@@ -284,6 +284,8 @@ class DailyScanner:
         setups_found = []
         bias_fallback_entries = []  # V31.0: Bias-only entries colectate pentru WIPE final
         daily_bias_map = {}  # V40: D1 bias per symbol pentru invalidare setup-uri stale
+        w1_bias_map = {}  # V40.3: W1 macro bias informativ (confidence flag)
+        symbol_price_map = {}  # V40.3: preț D1 close per simbol — soft TTL POI
 
         # V3.0: Load existing monitoring setups to re-evaluate their status
         monitoring_symbols = set()
@@ -340,6 +342,8 @@ class DailyScanner:
                         print(f"⚠️  Could not write to data_errors.log: {log_err}")
                     continue
                 
+                symbol_price_map[symbol] = float(df_daily['close'].iloc[-1])
+
                 # Download 4H data
                 df_4h = self.data_provider.get_historical_data(
                     symbol, 
@@ -368,17 +372,22 @@ class DailyScanner:
                 if df_1h is None:
                     print(f"⚠️ Warning: {symbol} has no 1H data (Entry 1 disabled)")
 
-                # V31.0: W1 = 52 bare = 1 an (INFORMATIV — nu blochează niciun setup)
+                # V40.3: W1 = macro anchor informativ (confidence flag, fără reject)
                 print(f"   📅 Downloading W1 data (Weekly Anchor — 52 bars, ~1 an)...")
                 df_w1 = None
+                w1_result = {'bias': 'NEUTRAL', 'last_bos_direction': None, 'last_bos_price': None, 'last_bos_bar_idx': None}
                 try:
                     df_w1 = self.data_provider.get_historical_data(symbol, "W1", 52)  # V31.0
                     if df_w1 is not None:
                         print(f"   ✅ W1 data: {len(df_w1)} bars")
+                        w1_result = self.smc_detector.calculate_w1_bias(df_w1)
+                        w1_bias_map[symbol] = w1_result.get('bias', 'NEUTRAL')
                     else:
                         print(f"   ⚠️ W1 data unavailable for {symbol} — bias = NEUTRAL")
+                        w1_bias_map[symbol] = 'NEUTRAL'
                 except Exception as w1_err:
                     print(f"   ⚠️ W1 fetch error for {symbol}: {w1_err} — continuing")
+                    w1_bias_map[symbol] = 'NEUTRAL'
                 
                 # V8.0: Run SMC detection with ATR + Premium/Discount filters
                 # These filters may reject setups:
@@ -433,6 +442,9 @@ class DailyScanner:
                         print(f"✅ [V13.0 SNIPER ALIGNED] {symbol}: 4H CHoCH {h4_direction.upper()} = aliniat cu D1 {d1_direction.upper()} → {d1_label} valid")
                     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+                    # V40.3 W1 INFO — annotare counter-trend, fără reject
+                    setup = self.smc_detector.apply_w1_gate(setup, w1_bias_map.get(symbol, 'NEUTRAL'))
+
                 if setup:
                     # V10.1: Display strategy type immediately
                     strategy = setup.strategy_type.upper() if hasattr(setup, 'strategy_type') else "UNKNOWN"
@@ -473,25 +485,24 @@ class DailyScanner:
                     
                     setups_found.append(setup)
 
-                    # V34 FIX V17: W1 = EXCLUSIV INFORMATIV
-                    # Nu mai modifica strategy_type, nu mai blocheaza niciun setup.
-                    # Bias-ul W1 se salveaza in setup.w1_bias pentru context Telegram/loguri.
+                    # V40.3: W1 context informativ pe setup
                     try:
-                        w1_result = self.smc_detector.calculate_w1_bias(df_w1)
-                        setup.w1_bias = w1_result['bias']
+                        setup.w1_bias = w1_result.get('bias', 'NEUTRAL')
                         setup.w1_last_bos_price = w1_result.get('last_bos_price')
                         d1_dir = setup.daily_choch.direction
-                        w1_bias_lower = w1_result['bias'].lower()
+                        w1_bias_lower = (w1_result.get('bias') or 'NEUTRAL').lower()
                         if w1_bias_lower != 'neutral' and w1_bias_lower != d1_dir:
-                            # V34: LOG ONLY — nu mai tagam strategy_type cu _counter_w1
-                            print(f"   ⚠️ [W1 INFO] {symbol}: D1={d1_dir.upper()} opus W1={w1_result['bias']} — context informativ, setup VALID")
+                            print(
+                                f"   ⚠️ [V40.3 W1 INFO] {symbol}: D1={d1_dir.upper()} vs W1={w1_result['bias']} "
+                                f"— ⚠️ [COUNTER-TREND W1] (confidence={getattr(setup, 'confidence', 'LOW_W1_COUNTER_TREND')})"
+                            )
                         else:
                             align_label = "ALINIAT" if w1_bias_lower == d1_dir else "NEUTRAL"
                             print(f"   📅 [W1 INFO] {symbol}: {w1_result['bias']} — {align_label} cu D1")
                     except Exception as w1_bias_err:
                         setup.w1_bias = 'NEUTRAL'
                         setup.w1_last_bos_price = None
-                        print(f"   ⚠️ W1 bias error: {w1_bias_err}")
+                        print(f"   ⚠️ W1 bias attach error: {w1_bias_err}")
 
                     # ✅ V24.6 DAILY LIQUIDITY TARGET: D1 Swing High/Low SEMNIFICATIV
                     # LONG: nearest Swing High deasupra prețului curent = TP Lichiditate
@@ -645,7 +656,15 @@ class DailyScanner:
                     try:
                         _bias_dir = self.smc_detector.determine_daily_trend(df_daily, symbol=symbol)
                         if _bias_dir in ('bullish', 'bearish'):
+                            _w1 = w1_bias_map.get(symbol, 'NEUTRAL')
                             _bias_trade_dir = 'buy' if _bias_dir == 'bullish' else 'sell'
+                            _bf_confidence = 'NORMAL'
+                            if _bias_dir == 'bullish' and _w1 == 'BEARISH':
+                                _bf_confidence = 'LOW_W1_COUNTER_TREND'
+                                print(
+                                    f"⚠️ [V40.3 W1 INFO] {symbol}: bias fallback LONG — "
+                                    f"⚠️ [COUNTER-TREND W1] (salvat cu confidence={_bf_confidence})"
+                                )
                             print(f"📡 [V31.0 BIAS FALLBACK] {symbol}: bias={_bias_dir.upper()} → colectat WAITING_D1_PULLBACK")
                             bias_fallback_entries.append({
                                 'symbol': symbol,
@@ -656,6 +675,8 @@ class DailyScanner:
                                 'strategy_type': 'continuation',
                                 'strategy_locked': True,
                                 'daily_bias_active': True,
+                                'confidence': _bf_confidence,
+                                'w1_bias': _w1,
                                 'poi_top': None,
                                 'poi_bottom': None,
                                 'fvg_top': None,
@@ -754,7 +775,7 @@ class DailyScanner:
         re_evaluated_setups = [s for s in all_active_setups if s.symbol in monitoring_symbols]
 
         # SAVE first, then show final summary — V31.0: WIPE + bias fallback
-        save_monitoring_setups(all_active_setups, bias_fallback_entries, daily_bias_map)
+        save_monitoring_setups(all_active_setups, bias_fallback_entries, daily_bias_map, w1_bias_map, symbol_price_map)
 
         # Now reload to get accurate count
         final_monitoring_count = 0
@@ -928,9 +949,111 @@ class DailyScanner:
             self.data_provider.disconnect()
 
 
-def save_monitoring_setups(setups: List[TradeSetup], bias_fallback: list = None, daily_bias_map: dict = None):
-    """[V33 SMART MERGE] Scanner adauga setups NOI dar pastreaza paritati active din zilele trecute.
+def _norm_strategy_type(val) -> str:
+    """Normalize continuation vs reversal for SMART MERGE comparisons."""
+    s = (val or 'continuation').lower()
+    return 'reversal' if s.startswith('reversal') else 'continuation'
+
+
+def _parse_setup_time_days(setup_time_str) -> Optional[float]:
+    """Return setup age in days, or None if unparseable."""
+    if not setup_time_str:
+        return None
+    try:
+        ts = str(setup_time_str).replace('Z', '+00:00')
+        if '1970-01-01' in ts:
+            return None
+        st = datetime.fromisoformat(ts)
+        if st.tzinfo is not None:
+            st = st.replace(tzinfo=None)
+        return (datetime.now() - st).total_seconds() / 86400.0
+    except Exception:
+        return None
+
+
+def _price_in_daily_poi(price: float, stored: dict) -> bool:
+    """True dacă prețul curent intersectează zona POI/FVG Daily salvată."""
+    top = stored.get('poi_top') if stored.get('poi_top') is not None else stored.get('fvg_top')
+    bottom = stored.get('poi_bottom') if stored.get('poi_bottom') is not None else stored.get('fvg_bottom')
+    if top is None or bottom is None:
+        return False
+    lo, hi = min(float(top), float(bottom)), max(float(top), float(bottom))
+    return lo <= float(price) <= hi
+
+
+def _level_differs(old_val, new_val, rel_tol: float = 1e-6) -> bool:
+    if old_val is None and new_val is None:
+        return False
+    if old_val is None or new_val is None:
+        return True
+    return abs(float(old_val) - float(new_val)) > max(abs(float(old_val)), abs(float(new_val)), 1.0) * rel_tol
+
+
+def _structural_rehydrate_needed(old: dict, new: dict) -> bool:
+    """V40.3: strategy flip sau niveluri structurale diferite → re-hidratare."""
+    if _norm_strategy_type(old.get('strategy_type')) != _norm_strategy_type(new.get('strategy_type')):
+        return True
+    for key in ('poi_top', 'poi_bottom', 'daily_swing_low', 'daily_swing_high', 'daily_target_price'):
+        if _level_differs(old.get(key), new.get(key)):
+            return True
+    return False
+
+
+def _setup_time_to_iso(setup_time) -> str:
+    if isinstance(setup_time, (int, float)):
+        return datetime.fromtimestamp(setup_time).isoformat()
+    if isinstance(setup_time, str):
+        return setup_time
+    if hasattr(setup_time, 'isoformat'):
+        return setup_time.isoformat()
+    return datetime.now().isoformat()
+
+
+def _trade_setup_to_monitoring_dict(setup: TradeSetup, setup_time_str: str) -> dict:
+    """Construiește dict JSON din TradeSetup (scan proaspăt)."""
+    direction = "buy" if setup.daily_choch.direction == "bullish" else "sell"
+    fvg_top = setup.fvg.top if setup.fvg and hasattr(setup.fvg, 'top') else None
+    fvg_bottom = setup.fvg.bottom if setup.fvg and hasattr(setup.fvg, 'bottom') else None
+    scan_status = getattr(setup, 'status', 'WAITING_D1_PULLBACK')
+    if scan_status not in ('MONITORING', 'READY', 'WAITING_D1_PULLBACK', 'WAITING_4H_CHOCH', 'WAITING_1H_CHOCH'):
+        scan_status = 'WAITING_D1_PULLBACK'
+    return {
+        "symbol": setup.symbol,
+        "direction": direction,
+        "daily_bias": setup.daily_choch.direction.upper(),
+        "setup_type": (getattr(setup, 'strategy_type', 'continuation') or 'continuation').upper(),
+        "strategy_type": getattr(setup, 'strategy_type', 'continuation'),
+        "strategy_locked": True,
+        "d1_bias_direction": setup.daily_choch.direction,
+        "daily_bias_active": True,
+        "confidence": getattr(setup, 'confidence', 'NORMAL'),
+        "w1_bias": getattr(setup, 'w1_bias', 'NEUTRAL'),
+        "poi_top": float(fvg_top) if fvg_top is not None else None,
+        "poi_bottom": float(fvg_bottom) if fvg_bottom is not None else None,
+        "fvg_top": float(fvg_top) if fvg_top is not None else None,
+        "fvg_bottom": float(fvg_bottom) if fvg_bottom is not None else None,
+        "daily_target_price": getattr(setup, 'daily_tp_price', None),
+        "status": scan_status,
+        "setup_time": setup_time_str,
+        "priority": setup.priority,
+        "swap_long": getattr(setup, 'swap_long', None),
+        "swap_short": getattr(setup, 'swap_short', None),
+        "swap_triple_day": getattr(setup, 'swap_triple_day', None),
+        "daily_swing_low": getattr(setup, 'daily_swing_low', None),
+        "daily_swing_high": getattr(setup, 'daily_swing_high', None),
+    }
+
+
+def save_monitoring_setups(
+    setups: List[TradeSetup],
+    bias_fallback: list = None,
+    daily_bias_map: dict = None,
+    w1_bias_map: dict = None,
+    symbol_price_map: dict = None,
+):
+    """[V33 SMART MERGE] + V40.3 re-hidratare strategică + soft TTL 4 zile fără POI.
     Un pullback pe Daily poate dura zile — stergerea oarba de dimineata este interzisa.
+    V40.3: W1 strict informativ; continuation↔reversal re-hidratează JSON; TTL 4d fără POI.
 
     Logica:
       1. Citim JSON existent.
@@ -945,6 +1068,12 @@ def save_monitoring_setups(setups: List[TradeSetup], bias_fallback: list = None,
         bias_fallback = []
     if daily_bias_map is None:
         daily_bias_map = {}
+    if w1_bias_map is None:
+        w1_bias_map = {}
+    if symbol_price_map is None:
+        symbol_price_map = {}
+
+    _SOFT_TTL_DAYS = 4
 
     # Status-uri active — PASTRATE INTACTE de la o zi la alta
     _ACTIVE_STATUSES = {
@@ -992,20 +1121,50 @@ def save_monitoring_setups(setups: List[TradeSetup], bias_fallback: list = None,
         except json.JSONDecodeError:
             print("\u26a0\ufe0f  monitoring_setups.json corupt — pornim fresh")
 
+        # V40.3 SOFT TTL — MONITORING / WAITING_D1_PULLBACK > 4 zile fără atingere POI
+        _soft_ttl_expired = []
+        for sym, stored in list(existing_active.items()):
+            st = stored.get('status', '')
+            if st not in ('MONITORING', 'WAITING_D1_PULLBACK'):
+                continue
+            age_days = _parse_setup_time_days(stored.get('setup_time'))
+            if age_days is None or age_days <= _SOFT_TTL_DAYS:
+                continue
+            poi_top = stored.get('poi_top') if stored.get('poi_top') is not None else stored.get('fvg_top')
+            poi_bottom = stored.get('poi_bottom') if stored.get('poi_bottom') is not None else stored.get('fvg_bottom')
+            if poi_top is None or poi_bottom is None:
+                continue
+            price = symbol_price_map.get(sym)
+            if price is not None and _price_in_daily_poi(price, stored):
+                continue
+            _soft_ttl_expired.append(sym)
+            print(
+                f"  ⏱️ [V40.3 SOFT TTL] {sym}: {age_days:.1f}d > {_SOFT_TTL_DAYS}d, "
+                f"POI [{poi_bottom}–{poi_top}] neatins (close={price}) → EXPIRED_TIMEOUT"
+            )
+        for sym in _soft_ttl_expired:
+            existing_active.pop(sym, None)
+
         # V40: Invalidează setup-uri stale când D1 bias contradictă direcția salvată
         _invalidated = []
         for sym, stored in list(existing_active.items()):
             bias = daily_bias_map.get(sym)
-            if bias not in ('bullish', 'bearish'):
-                continue
-            expected = 'buy' if bias == 'bullish' else 'sell'
             stored_dir = (stored.get('direction') or '').lower()
-            if stored_dir and stored_dir != expected:
+            if not stored_dir:
+                continue
+
+            _purge = False
+            _reason = ''
+
+            if bias in ('bullish', 'bearish'):
+                expected = 'buy' if bias == 'bullish' else 'sell'
+                if stored_dir != expected:
+                    _purge = True
+                    _reason = f"JSON {stored_dir.upper()} ≠ D1 {bias.upper()}"
+
+            if _purge:
                 _invalidated.append(sym)
-                print(
-                    f"  🔄 [V40 BIAS INVALIDATE] {sym}: JSON {stored_dir.upper()} "
-                    f"≠ D1 {bias.upper()} — setup vechi eliminat"
-                )
+                print(f"  🔄 [V40 BIAS INVALIDATE] {sym}: {_reason} — setup vechi eliminat")
         for sym in _invalidated:
             existing_active.pop(sym, None)
 
@@ -1021,6 +1180,11 @@ def save_monitoring_setups(setups: List[TradeSetup], bias_fallback: list = None,
 
             direction = "buy" if setup.daily_choch.direction == "bullish" else "sell"
 
+            _d1b = daily_bias_map.get(setup.symbol)
+            if direction == 'buy' and _d1b == 'bearish':
+                print(f"  ⛔ [V40 SAVE GUARD] {setup.symbol}: BUY blocat — D1 LOCK BEARISH")
+                continue
+
             # Conflict guard
             open_dir = open_position_dir_map.get(setup.symbol)
             if open_dir and open_dir != direction:
@@ -1028,7 +1192,8 @@ def save_monitoring_setups(setups: List[TradeSetup], bias_fallback: list = None,
                       f"open {open_dir.upper()} position exists")
                 continue
 
-            # V40: bias flip → invalidate stale setup (ex. BUY fals in range bearish)
+            setup_time_str = _setup_time_to_iso(setup.setup_time)
+
             if setup.symbol in preserved_symbols:
                 _old = existing_active.get(setup.symbol, {})
                 _old_dir = (_old.get('direction') or '').lower()
@@ -1041,48 +1206,33 @@ def save_monitoring_setups(setups: List[TradeSetup], bias_fallback: list = None,
                         f"— setup vechi eliminat (INVALIDATED_BIAS_FLIP)"
                     )
                 else:
-                    print(
-                        f"  ⏭️  [V33 MERGE] {setup.symbol}: deja activ in JSON "
-                        f"({existing_active.get(setup.symbol, {}).get('status')}) — scan nou ignorat"
-                    )
+                    monitoring_setup = _trade_setup_to_monitoring_dict(setup, setup_time_str)
+                    if _structural_rehydrate_needed(_old, monitoring_setup):
+                        strategy_flipped = (
+                            _norm_strategy_type(_old.get('strategy_type'))
+                            != _norm_strategy_type(monitoring_setup.get('strategy_type'))
+                        )
+                        if not strategy_flipped:
+                            monitoring_setup['setup_time'] = _old.get('setup_time', setup_time_str)
+                        monitoring_setups = [
+                            s for s in monitoring_setups if s.get('symbol') != setup.symbol
+                        ]
+                        monitoring_setups.append(monitoring_setup)
+                        existing_active[setup.symbol] = monitoring_setup
+                        _chg = 'strategy flip' if strategy_flipped else 'niveluri structurale'
+                        print(
+                            f"  🔄 [V40.3 RE-HYDRATE] {setup.symbol}: {_chg} "
+                            f"({_norm_strategy_type(_old.get('strategy_type'))} → "
+                            f"{_norm_strategy_type(monitoring_setup.get('strategy_type'))}) — JSON actualizat"
+                        )
+                    else:
+                        print(
+                            f"  ✅ [V40.3 MERGE] {setup.symbol}: structură neschimbată "
+                            f"({existing_active.get(setup.symbol, {}).get('status')}) — păstrat"
+                        )
                     continue
 
-            # Convert setup_time
-            if isinstance(setup.setup_time, (int, float)):
-                setup_time_str = datetime.fromtimestamp(setup.setup_time).isoformat()
-            elif isinstance(setup.setup_time, str):
-                setup_time_str = setup.setup_time
-            elif hasattr(setup.setup_time, 'isoformat'):
-                setup_time_str = setup.setup_time.isoformat()
-            else:
-                setup_time_str = datetime.now().isoformat()
-
-            fvg_top    = setup.fvg.top    if setup.fvg and hasattr(setup.fvg, 'top')    else None
-            fvg_bottom = setup.fvg.bottom if setup.fvg and hasattr(setup.fvg, 'bottom') else None
-
-            monitoring_setup = {
-                "symbol":             setup.symbol,
-                "direction":          direction,
-                "daily_bias":         setup.daily_choch.direction.upper(),
-                "setup_type":         (getattr(setup, 'strategy_type', 'continuation') or 'continuation').upper(),
-                "strategy_type":      getattr(setup, 'strategy_type', 'continuation'),
-                "strategy_locked":    True,
-                "d1_bias_direction":  setup.daily_choch.direction,
-                "daily_bias_active":  True,
-                "poi_top":            float(fvg_top)    if fvg_top    is not None else None,
-                "poi_bottom":         float(fvg_bottom) if fvg_bottom is not None else None,
-                "fvg_top":            float(fvg_top)    if fvg_top    is not None else None,
-                "fvg_bottom":         float(fvg_bottom) if fvg_bottom is not None else None,
-                "daily_target_price": getattr(setup, 'daily_tp_price', None),
-                "status":             "WAITING_D1_PULLBACK",
-                "setup_time":         setup_time_str,
-                "priority":           setup.priority,
-                "swap_long":          getattr(setup, 'swap_long', None),
-                "swap_short":         getattr(setup, 'swap_short', None),
-                "swap_triple_day":    getattr(setup, 'swap_triple_day', None),
-                "daily_swing_low":    getattr(setup, 'daily_swing_low',  None),  # V35 T2: Gate 1 baza structurala (LONG)
-                "daily_swing_high":   getattr(setup, 'daily_swing_high', None),  # V35 T2: Gate 1 plafon structural (SHORT)
-            }
+            monitoring_setup = _trade_setup_to_monitoring_dict(setup, setup_time_str)
             monitoring_setups.append(monitoring_setup)
             preserved_symbols.add(setup.symbol)
 
@@ -1101,7 +1251,19 @@ def save_monitoring_setups(setups: List[TradeSetup], bias_fallback: list = None,
                         f"  🔄 [V40 BIAS FLIP] {sym} fallback: {_old_dir.upper()} → {direction.upper()}"
                     )
                 else:
-                    print(f"  ⏭️  [V33 MERGE] {sym}: deja activ in JSON — bias fallback ignorat")
+                    _new_fb = dict(entry)
+                    _old_st = _norm_strategy_type(_old.get('strategy_type'))
+                    _new_st = _norm_strategy_type(_new_fb.get('strategy_type'))
+                    if _old_st != _new_st or _structural_rehydrate_needed(_old, _new_fb):
+                        monitoring_setups = [s for s in monitoring_setups if s.get('symbol') != sym]
+                        _new_fb['setup_time'] = _old.get('setup_time', _new_fb.get('setup_time'))
+                        if _old_st != _new_st:
+                            _new_fb['setup_time'] = entry.get('setup_time', datetime.now().isoformat())
+                        monitoring_setups.append(_new_fb)
+                        existing_active[sym] = _new_fb
+                        print(f"  🔄 [V40.3 RE-HYDRATE] {sym}: bias fallback actualizat")
+                    else:
+                        print(f"  ✅ [V40.3 MERGE] {sym}: bias fallback neschimbat — păstrat")
                     continue
             open_dir = open_position_dir_map.get(sym)
             if open_dir and open_dir != direction:
@@ -1123,9 +1285,9 @@ def save_monitoring_setups(setups: List[TradeSetup], bias_fallback: list = None,
         import os as _ms_os
         _ms_os.replace(_ms_tmp, 'monitoring_setups.json')
 
-        new_count = len(monitoring_setups) - len(existing_active)
-        print(f"\n💾 [V33 SMART MERGE] {len(monitoring_setups)} total — "
-              f"{len(existing_active)} pastrate din trecut + {new_count} noi din scan de azi")
+        new_count = max(0, len(monitoring_setups) - len(existing_active))
+        print(f"\n💾 [V40.3 SMART MERGE] {len(monitoring_setups)} total — "
+              f"{len(existing_active)} pastrate/rehidratate + {new_count} noi din scan de azi")
 
     except Exception as e:
         print(f"❌ Error saving monitoring setups: {e}")

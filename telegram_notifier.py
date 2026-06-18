@@ -391,6 +391,23 @@ class TelegramNotifier:
         header += f"{status_emoji} <b>{status}</b>\n"
         header += f"🎯 <b>Strategy: {strategy_label}</b>"
 
+        # V40.3: W1 counter-trend — avertisment vizual (informativ, nu blocant)
+        _confidence = getattr(setup, 'confidence', 'NORMAL')
+        w1_bias_val_hdr = getattr(setup, 'w1_bias', None)
+        raw_dir_hdr = setup.daily_choch.direction
+        _w1_counter = (
+            _confidence == 'LOW_W1_COUNTER_TREND'
+            or (
+                w1_bias_val_hdr and w1_bias_val_hdr != 'NEUTRAL'
+                and (
+                    (w1_bias_val_hdr == 'BEARISH' and raw_dir_hdr == 'bullish')
+                    or (w1_bias_val_hdr == 'BULLISH' and raw_dir_hdr == 'bearish')
+                )
+            )
+        )
+        if _w1_counter:
+            header += f"\n⚠️ <b>[COUNTER-TREND W1]</b> — D1 vs W1 macro nealiniat"
+
         # --- SWAP ROW (V11.7) ---
         swap_line = ""
         swap_val = getattr(setup, 'swap_long', None) if raw_dir == 'bullish' \
@@ -456,7 +473,7 @@ class TelegramNotifier:
             raw_dir = setup.daily_choch.direction
             is_aligned = (w1_bias_val == 'BULLISH' and raw_dir == 'bullish') or \
                          (w1_bias_val == 'BEARISH' and raw_dir == 'bearish')
-            w1_align_emoji = "✅" if is_aligned else "⚠️ COUNTER-TREND"
+            w1_align_emoji = "✅" if is_aligned else "⚠️ [COUNTER-TREND W1]"
             w1_line = f"\n📅 W1: <b>{w1_bias_val}</b> {w1_align_emoji}"
         else:
             w1_line = "\n📅 W1: NEUTRAL ⏳"

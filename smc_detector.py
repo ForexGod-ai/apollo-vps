@@ -62,9 +62,14 @@ class OrderBlock:
     impulse_strength: float = 0.0  # Mărimea impulsului după OB (în pips/pct)
 
 
+# V40.1 — crypto/metals: tavan macro = max body-high pe fereastra D1 (nu LH local post-crash)
+CRYPTO_MACRO_CEILING_LOOKBACK = 150
+CRYPTO_MACRO_CEILING_MIN_BARS = 90
+
+
 @dataclass
 class StructuralRangeState:
-    """V40 — macro trading range (LH major / LL major), all pairs."""
+    """V40 / V40.1 — macro trading range (LH major / LL major), all pairs."""
     macro_range_high: float
     macro_range_low: float
     macro_range_high_bar: int
@@ -97,6 +102,8 @@ class TradeSetup:
     # V24.6 PERMISSIVE DAILY FLOW: True = FVG corp absent/mituit — setup validat NUMAI prin
     # structura Daily (CHoCH/BOS). Radarul 4H este arbitrul final — NU se execută fără 4H CHoCH!
     daily_bias_active: bool = False
+    confidence: str = 'NORMAL'  # V40.3: LOW_W1_COUNTER_TREND when D1 vs W1 macro conflict
+    w1_bias: Optional[str] = None
 
 # ------------------- SMCDetector -------------------
 
@@ -1825,6 +1832,8 @@ class SMCDetector:
 
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     # V40.0 — STRICT TRADING RANGE (anti sub-structure bias, all pairs)
+    # V40.1 — CRYPTO MACRO CEILING
+    # V40.3 — W1 PURE INFORMATIVE (confidence flag, fără reject)
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     @staticmethod
     def _swing_body_high(df: pd.DataFrame, idx: int) -> float:
@@ -1839,8 +1848,13 @@ class SMCDetector:
         df: pd.DataFrame,
         swing_highs: List[SwingPoint],
         swing_lows: List[SwingPoint],
+        symbol: Optional[str] = None,
     ) -> Optional[StructuralRangeState]:
-        """Lock bearish range between major LH (body high) and LL (body low)."""
+        """Lock bearish range between major LH (body high) and LL (body low).
+
+        V40.1: pe crypto/metals/energy, macro_range_high = max(body-high) ultimele
+        90–150 bare D1 — evită LH local ~63k care genera LOCK BULLISH fals pe BTCUSD.
+        """
         if df is None or len(df) < 20 or len(swing_highs) < 3 or len(swing_lows) < 2:
             return None
 
@@ -1877,6 +1891,22 @@ class SMCDetector:
 
         if macro_range_high is None or macro_range_high <= macro_range_low:
             return None
+
+        # V40.1 CRYPTO MACRO CEILING — tavan real (~77k BTC), nu LH din ultimul picior
+        if self._uses_macro_ceiling(symbol):
+            avail = len(df)
+            lookback = min(CRYPTO_MACRO_CEILING_LOOKBACK, avail)
+            if lookback >= CRYPTO_MACRO_CEILING_MIN_BARS:
+                ceiling, ceiling_bar = self._compute_macro_ceiling_d1(df, lookback)
+                if ceiling > macro_range_low:
+                    _old_lh = macro_range_high
+                    macro_range_high = ceiling
+                    macro_range_high_bar = ceiling_bar
+                    _sym = symbol or 'CRYPTO'
+                    print(
+                        f"   📐 [V40.1 MACRO CEILING] {_sym}: LH local {_old_lh:.2f} → "
+                        f"max body-high {lookback}D = {ceiling:.2f} (bar {ceiling_bar})"
+                    )
 
         close = float(df['close'].iloc[-1])
         locked_bias = 'bearish'
@@ -2056,7 +2086,7 @@ class SMCDetector:
         if symbol:
             _v39_sh = self.detect_swing_highs(df)
             _v39_sl = self.detect_swing_lows(df)
-            _v39_rs = self.compute_structural_range(df, _v39_sh, _v39_sl)
+            _v39_rs = self.compute_structural_range(df, _v39_sh, _v39_sl, symbol=symbol)
             if _v39_rs and _v39_rs.locked:
                 if debug:
                     print(f"   🔒 [V40] determine_daily_trend → {_v39_rs.locked_bias.upper()} (range locked)")
@@ -2596,6 +2626,52 @@ class SMCDetector:
             return 'jpy_pairs'
         else:
             return 'forex'
+
+    def _uses_macro_ceiling(self, symbol: Optional[str]) -> bool:
+        """V40.1: BTC/crypto + mărfuri volatile — tavan D1 din fereastra 90–150 bare."""
+        if not symbol:
+            return False
+        return self._get_asset_class(symbol) in ('crypto', 'metals', 'energy')
+
+    def _compute_macro_ceiling_d1(self, df: pd.DataFrame, lookback: int) -> Tuple[float, int]:
+        """Max body-high (open/close) pe ultimele `lookback` bare D1."""
+        lb = min(lookback, len(df))
+        if lb < 1:
+            return 0.0, 0
+        start = len(df) - lb
+        best_high = 0.0
+        best_bar = start
+        for pos in range(start, len(df)):
+            bh = self._swing_body_high(df, pos)
+            if bh > best_high:
+                best_high = bh
+                best_bar = pos
+        return best_high, best_bar
+
+    def apply_w1_gate(self, setup: Optional['TradeSetup'], w1_bias: str) -> Optional['TradeSetup']:
+        """
+        V40.3 W1 PURE INFORMATIVE — nu respinge și nu degradează setup-uri Daily.
+        Annothează counter-trend macro cu confidence=LOW_W1_COUNTER_TREND.
+        """
+        if setup is None or not getattr(setup, 'daily_choch', None):
+            return setup
+        w1 = (w1_bias or 'NEUTRAL').upper()
+        setup.w1_bias = w1 if w1 != 'NEUTRAL' else getattr(setup, 'w1_bias', None)
+        d1_dir = setup.daily_choch.direction
+        is_counter = (
+            (w1 == 'BEARISH' and d1_dir == 'bullish') or
+            (w1 == 'BULLISH' and d1_dir == 'bearish')
+        )
+        sym = getattr(setup, 'symbol', '?')
+        if is_counter:
+            setup.confidence = 'LOW_W1_COUNTER_TREND'
+            print(
+                f"⚠️ [V40.3 W1 INFO] {sym}: D1 {d1_dir.upper()} vs W1 {w1} — "
+                f"confidence=LOW_W1_COUNTER_TREND (informativ, setup păstrat)"
+            )
+        elif not getattr(setup, 'confidence', None) or setup.confidence == 'NORMAL':
+            setup.confidence = 'NORMAL'
+        return setup
     
     def _get_pip_size(self, symbol: str) -> float:
         """V37.0 — delegat la pip_utils.get_pip_size."""
@@ -3283,7 +3359,7 @@ class SMCDetector:
 
         # V40 — filter internal sub-structure before V25 bias
         _range_state = self.compute_structural_range(
-            df_daily, _swing_highs_unconf, _swing_lows_unconf
+            df_daily, _swing_highs_unconf, _swing_lows_unconf, symbol=symbol
         )
         daily_chochs, daily_bos_list, _range_state = self.filter_internal_range_signals(
             symbol, df_daily, daily_chochs, daily_bos_list, _range_state
