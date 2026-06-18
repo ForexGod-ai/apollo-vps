@@ -21,10 +21,6 @@ namespace cAlgo.Robots
         [Parameter("Max Risk %", DefaultValue = 2.0)]
         public double MaxRiskPercent { get; set; }
 
-        // V40.5: 0 = DISABLED — exits only via broker SL/TP (no premature scalp cut)
-        [Parameter("Auto Close at Profit (pips)", DefaultValue = 0.0)]
-        public double AutoCloseProfitPips { get; set; }
-
         [Parameter("Move SL to Breakeven at (pips)", DefaultValue = 50.0)]
         public double BreakevenTriggerPips { get; set; }
 
@@ -50,9 +46,7 @@ namespace cAlgo.Robots
             Print($"   📁 Signal File: {SignalFilePath}");
             Print($"   ⏱️  Check Interval: {CheckInterval}s");
             Print($"   💰 Max Risk: {MaxRiskPercent}%");
-            Print(AutoCloseProfitPips > 0
-                ? $"   🎯 Auto-Close: +{AutoCloseProfitPips} pips"
-                : "   🎯 Auto-Close: OFF (broker SL/TP only)");
+            Print("   🎯 Exits: broker SL/TP only (auto-close removed V40.5)");
             Print($"   🔒 Breakeven: +{BreakevenTriggerPips} pips");
             Print($"   📦 Protocol: V7.0 ARRAY (List<TradeSignal>)");
             Print("");
@@ -366,64 +360,11 @@ namespace cAlgo.Robots
 
         private void ManageOpenPositions()
         {
-            foreach (var position in Positions)
-            {
-                // Skip positions not from this bot
-                if (!position.Label.StartsWith("Glitch Matrix"))
-                    continue;
-                
-                var symbol = Symbols.GetSymbol(position.SymbolName);
-                if (symbol == null)
-                    continue;
-                
-                double profitPips = position.Pips;
-                
-                // V40.5: Auto-close OFF by default — structural trades run to broker SL/TP
-                if (AutoCloseProfitPips > 0 && profitPips >= AutoCloseProfitPips)
-                {
-                    Print($"🎯 AUTO-CLOSE TRIGGERED: {position.SymbolName} at +{profitPips:F1} pips");
-                    ClosePosition(position);
-                    Print($"✅ POSITION CLOSED: ${position.NetProfit:F2} profit");
-                    LogTradeClosure(position, profitPips, "auto_close_profit_pips");
-                    continue;
-                }
-
-                // TODO: BREAKEVEN FEATURE DISABLED (cTrader API deprecation)
-                // Will be re-implemented later with new ProtectionType parameter
-            }
+            // V40.5: Auto-close at N pips REMOVED permanently.
+            // Positions close only via broker SL/TP or Python Action=CLOSE signal.
+            // Breakeven/trailing reserved for future cTrader API update.
         }
 
-        private void LogTradeClosure(Position position, double profitPips, string reason)
-        {
-            try
-            {
-                var closurePath = SignalFilePath.Replace("signals.json", "trade_closures.json");
-                
-                var closure = new
-                {
-                    position_id = position.Id.ToString(),
-                    symbol = position.SymbolName,
-                    direction = position.TradeType.ToString().ToLower(),
-                    entry_price = position.EntryPrice,
-                    close_price = position.TradeType == TradeType.Buy 
-                        ? Symbols.GetSymbol(position.SymbolName).Bid 
-                        : Symbols.GetSymbol(position.SymbolName).Ask,
-                    profit_pips = profitPips,
-                    profit_usd = position.NetProfit,
-                    reason = reason,
-                    closed_at = DateTime.Now,
-                    duration_hours = (DateTime.Now - position.EntryTime).TotalHours
-                };
-                
-                var options = new JsonSerializerOptions { WriteIndented = true };
-                System.IO.File.WriteAllText(closurePath, JsonSerializer.Serialize(closure, options));
-            }
-            catch (Exception ex)
-            {
-                Print($"⚠️  Could not log closure: {ex.Message}");
-            }
-        }
-        
         private void WriteAccountStatus()
         {
             // ✅ V10.2 LIVE SYNC: Write real-time account status for Python Risk Manager
