@@ -2,7 +2,24 @@
 
 # V37.2: SL structural minim pe 4H — sub 30p = micro-stop (ex. AUDJPY 3.5p + lot 0.61)
 MIN_SL_PIPS = 30
-MAX_SL_PIPS = 100  # sniper cap (executor sentinel Guard#2)
+MAX_SL_PIPS = 100  # sniper cap — forex default (executor sentinel Guard#2)
+
+
+def get_max_sl_pips(symbol: str) -> float:
+    """
+    V40.6: SL maxim permis per instrument — aliniat cu Radar structural + Fix #7.
+    BTC/XAU au SL mult peste 100p; cap-ul forex-only bloca EXECUTE_NOW valide.
+    """
+    s = symbol.upper()
+    if any(x in s for x in ['BTC', 'ETH', 'LTC', 'XRP', 'ADA', 'DOGE']):
+        return 2000.0
+    if any(x in s for x in ['XAU', 'XAG', 'GOLD', 'SILVER']):
+        return 500.0
+    if any(x in s for x in ['XTI', 'WTI', 'OIL', 'BRENT', 'USOIL']):
+        return 300.0
+    if 'JPY' in s:
+        return 150.0
+    return float(MAX_SL_PIPS)
 
 
 def get_pip_size(symbol: str) -> float:

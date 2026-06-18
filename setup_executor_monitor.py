@@ -182,7 +182,7 @@ from smc_detector import (
     FVG,
     get_4h_body_close_confirmation,  # ✅ V10.6 FUNCȚIE UNIFICATĂ — același creier ca scanner-ul
 )
-from pip_utils import get_pip_size, MIN_SL_PIPS, MAX_SL_PIPS, sl_pips_between, liquidity_already_swept
+from pip_utils import get_pip_size, get_max_sl_pips, MIN_SL_PIPS, sl_pips_between, liquidity_already_swept
 from news_calendar_utils import (
     load_high_impact_events,
     get_affected_currencies,
@@ -1578,6 +1578,12 @@ class SetupExecutorMonitor:
                             self._track_rejection(f"EXECUTE_NOW sentinel rejected: {_sentinel_reason_en[:60]}")
                             setups[i].pop('EXECUTE_NOW', None)  # V22.2: pop (nu False) → radar re-triggereaza
                             setups[i]['last_rejection_reason'] = f'Sentinel: {_sentinel_reason_en}'
+                            try:
+                                self.telegram.send_execute_now_blocked_alert(
+                                    symbol, _en_direction, _sentinel_reason_en
+                                )
+                            except Exception as _tg_blk:
+                                logger.warning(f"[V40.6] blocked alert failed: {_tg_blk}")
                             updated = True
                             continue
 
@@ -1614,11 +1620,24 @@ class SetupExecutorMonitor:
                             import time as _time_module
                             _time_module.sleep(0.5)
                         else:
-                            logger.error(f"❌ [V19.8 EXECUTE_NOW] {symbol} execuție respinsă de Risk Manager")
+                            _block_reason = 'Risk Manager: EXECUTE_NOW rejected'
+                            try:
+                                _rej = getattr(self.executor, 'rejected_trades', {}).get(symbol, {})
+                                if _rej.get('reason'):
+                                    _block_reason = str(_rej['reason'])
+                            except Exception:
+                                pass
+                            logger.error(f"❌ [V19.8 EXECUTE_NOW] {symbol} execuție respinsă: {_block_reason}")
                             self._track_rejection(f"EXECUTE_NOW loss limit rejected for {symbol}")
                             setups[i].pop('EXECUTE_NOW', None)
                             setups[i]['last_rejection_time'] = datetime.now(timezone.utc).isoformat()
-                            setups[i]['last_rejection_reason'] = 'Risk Manager: EXECUTE_NOW rejected'
+                            setups[i]['last_rejection_reason'] = _block_reason
+                            try:
+                                self.telegram.send_execute_now_blocked_alert(
+                                    symbol, _en_direction, _block_reason
+                                )
+                            except Exception as _tg_rm:
+                                logger.warning(f"[V40.6] risk block alert failed: {_tg_rm}")
                             updated = True
                             try:
                                 _rm = getattr(self.executor, 'risk_manager', None)
@@ -2210,9 +2229,12 @@ class SetupExecutorMonitor:
             return False, (f"Guard#1 RR Net={rr_net:.2f} < 1:2 "
                            f"(TP={tp_pips:.1f}p SL={sl_pips:.1f}p comision~{commission_pips}p)")
 
-        # ── Guard 2: SL Sniper Limit — max 100 pips ─────────────────────────────
-        if sl_pips > MAX_SL_PIPS:
-            return False, f"Guard#2 SL={sl_pips:.1f} pips > {MAX_SL_PIPS} sniper cap (whale stop)"
+        # ── Guard 2: SL cap per instrument (V40.6 — BTC structural OK, forex sniper 100p) ──
+        _max_sl = get_max_sl_pips(symbol)
+        if sl_pips > _max_sl:
+            return False, (
+                f"Guard#2 SL={sl_pips:.1f}p > {_max_sl:.0f}p max for {symbol} (whale stop)"
+            )
 
         # ── Guard 3: Capital Guard — pierderea estimată ≤ 5.1% din balanță ──────
         balance = float(os.getenv('ACCOUNT_BALANCE', 1336))

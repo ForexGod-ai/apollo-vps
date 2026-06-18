@@ -617,12 +617,31 @@ class TelegramNotifier:
                 f"{fvg_line}"
                 f"{trade_block}\n"
                 f"{sep}\n"
-                f"📡 Semnal confirmat — executor trimite la cTrader\n"
+                f"📡 Radar confirmat — <b>executor procesează</b> (5–15s)\n"
                 f"🔔 La fill: <b>GLITCH ACTIVATED</b> (Position Monitor)"
             )
             return self.send_message(msg.strip(), parse_mode="HTML")
         except Exception as e:
             print(f"[ERROR] send_execute_now_alert failed for {setup_data.get('symbol', '?')}: {e}")
+            return False
+
+    def send_execute_now_blocked_alert(self, symbol: str, direction: str, reason: str) -> bool:
+        """V40.6: Radar a zis EXECUTE NOW dar executor/cTrader a blocat — motiv explicit."""
+        try:
+            dir_u = str(direction).upper()
+            dir_emoji = "🟢" if dir_u in ('BUY', 'LONG') else "🔴"
+            msg = (
+                f"⛔ <b>EXECUTE NOW BLOCAT</b>\n"
+                f"{UNIVERSAL_SEPARATOR}\n"
+                f"{dir_emoji} <b>{symbol}</b> {dir_u}\n"
+                f"📡 Radar: confirmat ✅\n"
+                f"🛑 Executor: <code>{reason[:200]}</code>\n"
+                f"{UNIVERSAL_SEPARATOR}\n"
+                f"<i>Ordinul NU a ajuns la cTrader.</i>"
+            )
+            return self.send_message(msg.strip(), parse_mode="HTML")
+        except Exception as e:
+            print(f"[ERROR] send_execute_now_blocked_alert failed for {symbol}: {e}")
             return False
 
     def _load_pair_statistics(self, symbol: str) -> dict:
