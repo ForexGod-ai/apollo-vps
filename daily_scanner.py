@@ -604,7 +604,7 @@ class DailyScanner:
                     # Nu mai scriem direct în JSON. Colectăm în bias_fallback_entries[].
                     # save_monitoring_setups() face WIPE&OVERWRITE la final cu tot.
                     try:
-                        _bias_dir = self.smc_detector.determine_daily_trend(df_daily)
+                        _bias_dir = self.smc_detector.determine_daily_trend(df_daily, symbol=symbol)
                         if _bias_dir in ('bullish', 'bearish'):
                             _bias_trade_dir = 'buy' if _bias_dir == 'bullish' else 'sell'
                             print(f"📡 [V31.0 BIAS FALLBACK] {symbol}: bias={_bias_dir.upper()} → colectat WAITING_D1_PULLBACK")
@@ -970,10 +970,31 @@ def save_monitoring_setups(setups: List[TradeSetup], bias_fallback: list = None)
                       f"open {open_dir.upper()} position exists")
                 continue
 
-            # Nu suprascriem o paritate deja activa din zilele trecute
+            # V39 BTCUSD: bias flip → invalidate stale setup (ex. BUY fals in range bearish)
             if setup.symbol in preserved_symbols:
-                print(f"  ⏭️  [V33 MERGE] {setup.symbol}: deja activ in JSON ({existing_active[setup.symbol].get('status')}) — scan nou ignorat")
-                continue
+                if setup.symbol == 'BTCUSD':
+                    _old = existing_active.get('BTCUSD', {})
+                    _old_dir = (_old.get('direction') or '').lower()
+                    if _old_dir and _old_dir != direction:
+                        monitoring_setups = [s for s in monitoring_setups if s.get('symbol') != 'BTCUSD']
+                        preserved_symbols.discard('BTCUSD')
+                        existing_active.pop('BTCUSD', None)
+                        print(
+                            f"  🔄 [V39 BIAS FLIP] BTCUSD: {_old_dir.upper()} → {direction.upper()} "
+                            f"— setup vechi eliminat (INVALIDATED_BIAS_FLIP)"
+                        )
+                    else:
+                        print(
+                            f"  ⏭️  [V33 MERGE] {setup.symbol}: deja activ in JSON "
+                            f"({existing_active.get(setup.symbol, {}).get('status')}) — scan nou ignorat"
+                        )
+                        continue
+                else:
+                    print(
+                        f"  ⏭️  [V33 MERGE] {setup.symbol}: deja activ in JSON "
+                        f"({existing_active[setup.symbol].get('status')}) — scan nou ignorat"
+                    )
+                    continue
 
             # Convert setup_time
             if isinstance(setup.setup_time, (int, float)):
@@ -1019,8 +1040,22 @@ def save_monitoring_setups(setups: List[TradeSetup], bias_fallback: list = None)
             sym = entry.get('symbol')
             direction = entry.get('direction', '')
             if sym in preserved_symbols:
-                print(f"  ⏭️  [V33 MERGE] {sym}: deja activ in JSON — bias fallback ignorat")
-                continue
+                if sym == 'BTCUSD':
+                    _old = existing_active.get('BTCUSD', {})
+                    _old_dir = (_old.get('direction') or '').lower()
+                    if _old_dir and _old_dir != direction:
+                        monitoring_setups = [s for s in monitoring_setups if s.get('symbol') != 'BTCUSD']
+                        preserved_symbols.discard('BTCUSD')
+                        existing_active.pop('BTCUSD', None)
+                        print(
+                            f"  🔄 [V39 BIAS FLIP] BTCUSD fallback: {_old_dir.upper()} → {direction.upper()}"
+                        )
+                    else:
+                        print(f"  ⏭️  [V33 MERGE] {sym}: deja activ in JSON — bias fallback ignorat")
+                        continue
+                else:
+                    print(f"  ⏭️  [V33 MERGE] {sym}: deja activ in JSON — bias fallback ignorat")
+                    continue
             open_dir = open_position_dir_map.get(sym)
             if open_dir and open_dir != direction:
                 print(f"⛔ SAVE GUARD: {sym} — NOT saving bias fallback {direction.upper()}, "
