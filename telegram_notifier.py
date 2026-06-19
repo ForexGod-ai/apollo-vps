@@ -626,8 +626,17 @@ class TelegramNotifier:
             return False
 
     def send_execute_now_blocked_alert(self, symbol: str, direction: str, reason: str) -> bool:
-        """V40.6: Radar a zis EXECUTE NOW dar executor/cTrader a blocat — motiv explicit."""
+        """V40.6/V41.1: o singura alerta BLOCAT per simbol — dedup atomic pe disc."""
         try:
+            from telegram_alert_dedup import claim_execute_now_blocked_alert
+
+            if not claim_execute_now_blocked_alert(symbol, direction):
+                print(
+                    f"[V41.1 DEDUP] skip EXECUTE NOW BLOCAT {symbol} {direction} "
+                    f"(alerta deja trimisa in ultima ora)"
+                )
+                return False
+
             dir_u = str(direction).upper()
             dir_emoji = "🟢" if dir_u in ('BUY', 'LONG') else "🔴"
             msg = (

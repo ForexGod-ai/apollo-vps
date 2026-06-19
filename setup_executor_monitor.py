@@ -2334,32 +2334,9 @@ class SetupExecutorMonitor:
         reason: str,
         setup: dict = None,
     ) -> None:
-        """V41: maxim O alerta Telegram per simbol+motiv / 24h (fisier + memorie + debouncer)."""
-        alert_key = f"{symbol.upper()}|{direction.lower()}|{reason[:100]}"
-
-        # Reincarca de pe disc — alt proces executor poate fi pornit de watchdog
-        self._load_execute_now_block_alert_state()
-        if alert_key in self._execute_now_block_alert_keys:
-            logger.debug(f"[V41] blocked alert dedup (mem/file): {alert_key}")
-            return
-        if setup and setup.get("execute_now_block_alert_sent"):
-            logger.debug(f"[V41] blocked alert dedup (JSON flag): {alert_key}")
-            return
-        if not self.telegram_debouncer.should_send(
-            symbol, "execute_now_blocked", reason[:80]
-        ):
-            logger.debug(f"[V41] blocked alert dedup (debouncer): {alert_key}")
-            return
-
-        self._execute_now_block_alert_keys.add(alert_key)
-        self._save_execute_now_block_alert_state()
-        if setup is not None:
-            setup["execute_now_block_alert_sent"] = True
-            setup["execute_now_block_alert_key"] = alert_key
-
+        """V41.1: delegare dedup la telegram_notifier (file lock — anti 15 procese paralele)."""
         try:
             self.telegram.send_execute_now_blocked_alert(symbol, direction, reason)
-            logger.info(f"[V41] blocked alert sent once: {alert_key}")
         except Exception as exc:
             logger.warning(f"[V40.7] blocked alert failed: {exc}")
 

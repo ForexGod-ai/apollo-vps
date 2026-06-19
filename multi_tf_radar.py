@@ -1492,7 +1492,7 @@ class MultiTFRadar:
         if _blocked_at:
             try:
                 _bt = datetime.fromisoformat(str(_blocked_at).replace('Z', '+00:00'))
-                if datetime.now(timezone.utc) - _bt < timedelta(minutes=10):
+                if datetime.now(timezone.utc) - _bt < timedelta(minutes=30):
                     logger.debug(
                         f"[V40.9] {setup.get('symbol', '?')}: skip EXECUTE_NOW re-arm — "
                         f"executor block cooldown ({setup.get('last_rejection_reason', '')[:60]})"
