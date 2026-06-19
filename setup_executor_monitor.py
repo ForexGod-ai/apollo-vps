@@ -300,8 +300,10 @@ class SetupExecutorMonitor:
         self._liquidity_sniper_be_file = Path("data/liquidity_sniper_be_applied.json")
         self._load_liquidity_sniper_be_state()
 
-        # V40.9: o singura alerta Telegram per motiv de blocare EXECUTE_NOW (Radar re-armeaza la 30s)
+        # V40.9/V41: o singura alerta Telegram per blocare EXECUTE_NOW (persista pe disc)
         self._execute_now_block_alert_keys: set = set()
+        self._execute_now_block_alert_file = Path("data/execute_now_block_alerts.json")
+        self._load_execute_now_block_alert_state()
         
         # V9.3 DAILY REJECTION COUNTER (for /status dashboard)
         self.daily_rejections = 0
@@ -904,6 +906,37 @@ class SetupExecutorMonitor:
                 json.dump(sorted(self._liquidity_sniper_be_applied), f, indent=2)
         except Exception as e:
             logger.debug(f"V39.5 BE state save skipped: {e}")
+
+    def _load_execute_now_block_alert_state(self):
+        """V41: dedup alerte EXECUTE NOW BLOCAT — supravietuieste restart + procese paralele."""
+        try:
+            if not self._execute_now_block_alert_file.exists():
+                return
+            with open(self._execute_now_block_alert_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+                for key, ts in data.items():
+                    try:
+                        sent = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+                        if sent >= cutoff:
+                            self._execute_now_block_alert_keys.add(key)
+                    except Exception:
+                        self._execute_now_block_alert_keys.add(key)
+            elif isinstance(data, list):
+                self._execute_now_block_alert_keys.update(data)
+        except Exception as e:
+            logger.debug(f"V41 block alert state load skipped: {e}")
+
+    def _save_execute_now_block_alert_state(self):
+        try:
+            self._execute_now_block_alert_file.parent.mkdir(parents=True, exist_ok=True)
+            now = datetime.now(timezone.utc).isoformat()
+            payload = {k: now for k in sorted(self._execute_now_block_alert_keys)}
+            with open(self._execute_now_block_alert_file, "w", encoding="utf-8") as f:
+                json.dump(payload, f, indent=2)
+        except Exception as e:
+            logger.debug(f"V41 block alert state save skipped: {e}")
 
     def _check_news_guard(self, symbol: str) -> str:
         """
@@ -2301,18 +2334,32 @@ class SetupExecutorMonitor:
         reason: str,
         setup: dict = None,
     ) -> None:
+        """V41: maxim O alerta Telegram per simbol+motiv / 24h (fisier + memorie + debouncer)."""
         alert_key = f"{symbol.upper()}|{direction.lower()}|{reason[:100]}"
+
+        # Reincarca de pe disc — alt proces executor poate fi pornit de watchdog
+        self._load_execute_now_block_alert_state()
         if alert_key in self._execute_now_block_alert_keys:
-            logger.debug(f"[V40.9] blocked alert dedup: {alert_key}")
+            logger.debug(f"[V41] blocked alert dedup (mem/file): {alert_key}")
             return
-        if setup and setup.get('execute_now_block_alert_key') == alert_key:
-            logger.debug(f"[V40.9] blocked alert dedup (JSON): {alert_key}")
+        if setup and setup.get("execute_now_block_alert_sent"):
+            logger.debug(f"[V41] blocked alert dedup (JSON flag): {alert_key}")
             return
+        if not self.telegram_debouncer.should_send(
+            symbol, "execute_now_blocked", reason[:80]
+        ):
+            logger.debug(f"[V41] blocked alert dedup (debouncer): {alert_key}")
+            return
+
         self._execute_now_block_alert_keys.add(alert_key)
+        self._save_execute_now_block_alert_state()
         if setup is not None:
-            setup['execute_now_block_alert_key'] = alert_key
+            setup["execute_now_block_alert_sent"] = True
+            setup["execute_now_block_alert_key"] = alert_key
+
         try:
             self.telegram.send_execute_now_blocked_alert(symbol, direction, reason)
+            logger.info(f"[V41] blocked alert sent once: {alert_key}")
         except Exception as exc:
             logger.warning(f"[V40.7] blocked alert failed: {exc}")
 
