@@ -1408,7 +1408,7 @@ class SetupExecutorMonitor:
                         _pip_size_en = get_pip_size(symbol)
                         _pip_value_en = 8.33 if 'JPY' in symbol.upper() else 10.0
 
-                        # ── V37.2: SL/TP — recalc structural LIVE (SL min 30p pe 4H) ─────────────
+                        # ── V40.8: SL/TP — REGULA FIXA: SL=1H/4H structural mic, TP=D1 structural ──
                         def _float_price(val):
                             try:
                                 return float(val) if val not in (None, 0, '0', '') else None
@@ -1421,52 +1421,16 @@ class SetupExecutorMonitor:
                         _sl = None
                         _tp = None
 
-                        if _df_4h_en is not None and not _df_4h_en.empty:
-                            _sl = self._calc_structural_sl_4h(
-                                symbol, _en_direction, _en_entry, _df_4h_en, _pip_size_en, MIN_SL_PIPS
-                            )
-                            if _sl:
-                                logger.info(
-                                    f"📐 [V37.2 SL LIVE 4H] {symbol}: SL={_sl:.5f} "
-                                    f"({sl_pips_between(symbol, _en_entry, _sl):.1f}p)"
-                                )
+                        _sl = self._resolve_execute_now_sl(
+                            setup, symbol, _en_direction, _en_entry, _df_4h_en, _pip_size_en
+                        )
 
-                        if _sl is None:
-                            _sl_json = _float_price(setup.get('h4_sl_price')) or _float_price(setup.get('stop_loss'))
-                            if _sl_json and sl_pips_between(symbol, _en_entry, _sl_json) >= MIN_SL_PIPS:
-                                _sl = _sl_json
-                                logger.info(f"📐 [V37.2 SL JSON OK] {symbol}: SL={_sl:.5f} (>= {MIN_SL_PIPS}p)")
-                            elif _sl_json:
-                                logger.warning(
-                                    f"[V37.2 SL JSON REJECT] {symbol}: "
-                                    f"{sl_pips_between(symbol, _en_entry, _sl_json):.1f}p < min {MIN_SL_PIPS}p"
-                                )
+                        _tp = self._resolve_execute_now_tp(
+                            setup, symbol, _en_direction, _en_entry,
+                            _df_4h_en, _df_d1_en, _pip_size_en, _sl,
+                        )
 
-                        if _df_d1_en is not None and not _df_d1_en.empty:
-                            _tp = self._calc_structural_tp_d1(
-                                _en_direction, _en_entry, _df_4h_en, _df_d1_en, _pip_size_en,
-                                symbol=symbol, stop_loss=_sl,
-                            )
-                            if _tp:
-                                logger.info(
-                                    f"📐 [V37.2 TP LIVE D1] {symbol}: TP={_tp:.5f} "
-                                    f"({sl_pips_between(symbol, _en_entry, _tp):.1f}p)"
-                                )
-
-                        if _tp is None:
-                            _tp_json = _float_price(
-                                setup.get('daily_tp_price') or setup.get('daily_target_price')
-                            )
-                            if _tp_json:
-                                if _en_direction == 'buy' and _tp_json > _en_entry:
-                                    _tp = _tp_json
-                                elif _en_direction == 'sell' and _tp_json < _en_entry:
-                                    _tp = _tp_json
-
-                        if _tp is None:
-                            _tp = _float_price(setup.get('take_profit')) or 0
-
-                        # Validare direcție: SL sub entry pentru BUY, deasupra pentru SELL
+                        # Validare direcție SL/TP
                         if _en_direction == 'buy' and _sl and _sl >= _en_entry:
                             _sl = None
                             logger.warning(f"[V19.8 DIR GUARD] {symbol} BUY: SL deasupra entry — invalid")
@@ -1474,37 +1438,34 @@ class SetupExecutorMonitor:
                             _sl = None
                             logger.warning(f"[V19.8 DIR GUARD] {symbol} SELL: SL sub entry — invalid")
                         if _en_direction == 'buy' and _tp and _tp <= _en_entry:
-                            _tp = setup.get('take_profit') or 0
-                            logger.warning(f"[V19.8 DIR GUARD] {symbol} BUY: TP sub entry — revert")
+                            _tp = None
+                            logger.warning(f"[V19.8 DIR GUARD] {symbol} BUY: TP sub entry — invalid")
                         if _en_direction == 'sell' and _tp and _tp >= _en_entry:
-                            _tp = setup.get('take_profit') or 0
-                            logger.warning(f"[V19.8 DIR GUARD] {symbol} SELL: TP deasupra entry — revert")
+                            _tp = None
+                            logger.warning(f"[V19.8 DIR GUARD] {symbol} SELL: TP deasupra entry — invalid")
 
-                        # V37.2: respinge micro-stop — SL structural 4H trebuie >= 30 pips
                         _sl_pips_en = sl_pips_between(symbol, _en_entry, _sl) if _sl else 0.0
                         if not _sl or _sl_pips_en < MIN_SL_PIPS:
-                            logger.critical(
-                                f"🚨 [V37.2 MIN SL] {symbol}: {_sl_pips_en:.1f}p < {MIN_SL_PIPS}p — "
-                                f"execuție anulată (structură 4H insuficientă, așteptăm setup valid)"
+                            _blk = (
+                                f'V40.8: SL 1H/4H indisponibil sau {_sl_pips_en:.1f}p < min {MIN_SL_PIPS}p'
                             )
-                            self._track_rejection(f"V37.2 min SL {symbol}: {_sl_pips_en:.1f}p")
+                            logger.critical(f"🚨 [V40.8 MIN SL] {symbol}: {_blk}")
+                            self._track_rejection(f"V40.8 min SL {symbol}: {_sl_pips_en:.1f}p")
                             setups[i].pop('EXECUTE_NOW', None)
-                            setups[i]['last_rejection_reason'] = (
-                                f'V37.2: SL {_sl_pips_en:.1f}p < min {MIN_SL_PIPS}p structural 4H'
-                            )
+                            setups[i]['last_rejection_reason'] = _blk
+                            self._notify_execute_now_blocked(symbol, _en_direction, _blk)
                             updated = True
                             continue
 
-                        # V30.5: Guard None/0 TP — ATR fallback
-                        if not _tp or _tp == 0:
-                            _atr_fb = float(setup.get('atr_daily', 0) or 0)
-                            if _atr_fb > 0:
-                                _tp = (_en_entry - _atr_fb * 3.0) if _en_direction == 'sell' else (_en_entry + _atr_fb * 3.0)
-                                logger.warning(f"[V30.5 TP FALLBACK] {symbol}: TP=null in JSON, calculat din ATR (3x): {_tp:.5f}")
-                            else:
-                                _sl_dist = abs(_en_entry - _sl)
-                                _tp = (_en_entry - _sl_dist * 2.0) if _en_direction == 'sell' else (_en_entry + _sl_dist * 2.0)
-                                logger.warning(f"[V30.5 TP FALLBACK] {symbol}: TP=null, calculat 2xSL: {_tp:.5f}")
+                        if not _tp:
+                            _blk = 'V40.8: TP D1 structural indisponibil (fara fallback ATR/2xSL)'
+                            logger.critical(f"🚨 [V40.8 NO TP D1] {symbol}: {_blk}")
+                            self._track_rejection(f"V40.8 no D1 TP {symbol}")
+                            setups[i].pop('EXECUTE_NOW', None)
+                            setups[i]['last_rejection_reason'] = _blk
+                            self._notify_execute_now_blocked(symbol, _en_direction, _blk)
+                            updated = True
+                            continue
 
                         # ── STEP 5: Calcul dinamic loturi — 5% risc din balanță live ────────────────
                         _sl_pips_en = abs(_en_entry - _sl) / _pip_size_en if _sl and _en_entry else 0.0
@@ -1550,9 +1511,11 @@ class SetupExecutorMonitor:
                         else:
                             # SL lipsă complet — nu executa, nu are sens
                             logger.critical(f"🚨 [V19.8 NO SL] {symbol}: SL=0, execuție anulată — retry la ciclul următor")
+                            _blk = 'V40.7: SL structural indisponibil (Radar/FVG/TF mic)'
                             self._track_rejection(f"EXECUTE_NOW no SL available for {symbol}")
-                            setups[i].pop('EXECUTE_NOW', None)  # V22.2: pop (nu False) → radar re-triggereaza
-                            setups[i]['last_rejection_reason'] = 'V19.8: SL structural indisponibil'
+                            setups[i].pop('EXECUTE_NOW', None)
+                            setups[i]['last_rejection_reason'] = _blk
+                            self._notify_execute_now_blocked(symbol, _en_direction, _blk)
                             updated = True
                             continue
 
@@ -1578,12 +1541,7 @@ class SetupExecutorMonitor:
                             self._track_rejection(f"EXECUTE_NOW sentinel rejected: {_sentinel_reason_en[:60]}")
                             setups[i].pop('EXECUTE_NOW', None)  # V22.2: pop (nu False) → radar re-triggereaza
                             setups[i]['last_rejection_reason'] = f'Sentinel: {_sentinel_reason_en}'
-                            try:
-                                self.telegram.send_execute_now_blocked_alert(
-                                    symbol, _en_direction, _sentinel_reason_en
-                                )
-                            except Exception as _tg_blk:
-                                logger.warning(f"[V40.6] blocked alert failed: {_tg_blk}")
+                            self._notify_execute_now_blocked(symbol, _en_direction, _sentinel_reason_en)
                             updated = True
                             continue
 
@@ -1632,12 +1590,7 @@ class SetupExecutorMonitor:
                             setups[i].pop('EXECUTE_NOW', None)
                             setups[i]['last_rejection_time'] = datetime.now(timezone.utc).isoformat()
                             setups[i]['last_rejection_reason'] = _block_reason
-                            try:
-                                self.telegram.send_execute_now_blocked_alert(
-                                    symbol, _en_direction, _block_reason
-                                )
-                            except Exception as _tg_rm:
-                                logger.warning(f"[V40.6] risk block alert failed: {_tg_rm}")
+                            self._notify_execute_now_blocked(symbol, _en_direction, _block_reason)
                             updated = True
                             try:
                                 _rm = getattr(self.executor, 'risk_manager', None)
@@ -2084,10 +2037,11 @@ class SetupExecutorMonitor:
         df_4h,
         pip_size: float,
         min_sl_pips: float = MIN_SL_PIPS,
+        nearest: bool = True,
     ):
         """
-        SL = ultimul swing 4H valid cu distanta >= min_sl_pips (default 30p) fata de entry.
-        Evita micro-stop-ul de 3-5p (AUDJPY bug) care umfla lotul la 5% risc.
+        SL structural pe TF (4H sau 1H) — ultimul swing valid, cat mai APROPIAT de entry.
+        V40.8: nearest=True → punct structural mic (sniper), nu swing 4H indepartat.
         """
         if df_4h is None or df_4h.empty or not entry:
             return None
@@ -2108,11 +2062,18 @@ class SetupExecutorMonitor:
                 and (entry - float(df_4h['low'].iloc[s.index])) >= min_dist
             ]
             if candidates:
-                best = sorted(candidates, key=lambda s: s.index, reverse=True)[0]
+                if nearest:
+                    best = min(
+                        candidates,
+                        key=lambda s: entry - float(df_4h['low'].iloc[s.index]),
+                    )
+                else:
+                    best = sorted(candidates, key=lambda s: s.index, reverse=True)[0]
                 return float(df_4h['low'].iloc[best.index]) - sl_buffer
-            window_low = float(df_4h['low'].iloc[-40:].min())
-            if entry - window_low >= min_dist:
-                return window_low - sl_buffer
+            if not nearest:
+                window_low = float(df_4h['low'].iloc[-40:].min())
+                if entry - window_low >= min_dist:
+                    return window_low - sl_buffer
         else:
             swings = self.smc_detector.detect_swing_highs(df_4h)
             candidates = [
@@ -2121,12 +2082,139 @@ class SetupExecutorMonitor:
                 and (float(df_4h['high'].iloc[s.index]) - entry) >= min_dist
             ]
             if candidates:
-                best = sorted(candidates, key=lambda s: s.index, reverse=True)[0]
+                if nearest:
+                    best = min(
+                        candidates,
+                        key=lambda s: float(df_4h['high'].iloc[s.index]) - entry,
+                    )
+                else:
+                    best = sorted(candidates, key=lambda s: s.index, reverse=True)[0]
                 return float(df_4h['high'].iloc[best.index]) + sl_buffer
-            window_high = float(df_4h['high'].iloc[-40:].max())
-            if window_high - entry >= min_dist:
-                return window_high + sl_buffer
+            if not nearest:
+                window_high = float(df_4h['high'].iloc[-40:].max())
+                if window_high - entry >= min_dist:
+                    return window_high + sl_buffer
         return None
+
+    def _sl_valid_for_execute(
+        self,
+        symbol: str,
+        direction: str,
+        entry: float,
+        stop_loss: float,
+    ) -> bool:
+        """V40.7: SL valid pentru EXECUTE_NOW (directie + min/max pips)."""
+        if not entry or not stop_loss:
+            return False
+        d = str(direction).lower()
+        if d == 'buy' and stop_loss >= entry:
+            return False
+        if d == 'sell' and stop_loss <= entry:
+            return False
+        sl_p = sl_pips_between(symbol, entry, stop_loss)
+        return MIN_SL_PIPS <= sl_p <= get_max_sl_pips(symbol)
+
+    def _resolve_execute_now_sl(
+        self,
+        setup: dict,
+        symbol: str,
+        direction: str,
+        entry: float,
+        df_4h,
+        pip_size: float,
+    ):
+        """
+        V40.8 REGULA SL: ultimul punct structural pe 1H + 4H — alegem cel MAI MIC (sniper).
+        Radar h4_sl_price intra in competitie daca e valid.
+        """
+        def _f(v):
+            try:
+                return float(v) if v not in (None, 0, '0', '') else None
+            except (TypeError, ValueError):
+                return None
+
+        sl_candidates = []
+
+        radar_sl = _f(setup.get('h4_sl_price')) or _f(setup.get('stop_loss'))
+        if self._sl_valid_for_execute(symbol, direction, entry, radar_sl):
+            sl_candidates.append(
+                (radar_sl, 'RADAR', sl_pips_between(symbol, entry, radar_sl))
+            )
+
+        df_1h = self._get_cached_data(symbol, '1H', 225)
+        for tf_label, df in (('1H', df_1h), ('4H', df_4h)):
+            if df is None or df.empty:
+                continue
+            sl = self._calc_structural_sl_4h(
+                symbol, direction, entry, df, pip_size, MIN_SL_PIPS, nearest=True
+            )
+            if self._sl_valid_for_execute(symbol, direction, entry, sl):
+                sl_candidates.append(
+                    (sl, tf_label, sl_pips_between(symbol, entry, sl))
+                )
+
+        if not sl_candidates:
+            return None
+
+        best_sl, best_tf, best_pips = min(sl_candidates, key=lambda x: x[2])
+        logger.info(
+            f"📐 [V40.8 SL {best_tf}] {symbol}: SL={best_sl:.5f} ({best_pips:.1f}p) "
+            f"— tightest of {[f'{t}:{p:.0f}p' for _, t, p in sl_candidates]}"
+        )
+        return best_sl
+
+    def _resolve_execute_now_tp(
+        self,
+        setup: dict,
+        symbol: str,
+        direction: str,
+        entry: float,
+        df_4h,
+        df_d1,
+        pip_size: float,
+        stop_loss: float,
+    ):
+        """
+        V40.8 REGULA TP: DOAR structura D1 — fara ATR / 2xSL inventat.
+        1) daily_tp_price din scan (D1 structural)
+        2) recalc live _calc_structural_tp_d1
+        """
+        def _f(v):
+            try:
+                return float(v) if v not in (None, 0, '0', '') else None
+            except (TypeError, ValueError):
+                return None
+
+        d = str(direction).lower()
+        tp_json = _f(setup.get('daily_tp_price') or setup.get('daily_target_price'))
+        if tp_json:
+            if d == 'buy' and tp_json > entry:
+                logger.info(f"📐 [V40.8 TP D1 SCAN] {symbol}: TP={tp_json:.5f}")
+                return tp_json
+            if d == 'sell' and tp_json < entry:
+                logger.info(f"📐 [V40.8 TP D1 SCAN] {symbol}: TP={tp_json:.5f}")
+                return tp_json
+
+        if df_d1 is not None and not df_d1.empty:
+            tp_live = self._calc_structural_tp_d1(
+                direction, entry, df_4h, df_d1, pip_size,
+                symbol=symbol, stop_loss=stop_loss,
+            )
+            if tp_live:
+                if d == 'buy' and tp_live > entry:
+                    logger.info(f"📐 [V40.8 TP D1 LIVE] {symbol}: TP={tp_live:.5f}")
+                    return tp_live
+                if d == 'sell' and tp_live < entry:
+                    logger.info(f"📐 [V40.8 TP D1 LIVE] {symbol}: TP={tp_live:.5f}")
+                    return tp_live
+
+        return None
+
+    def _notify_execute_now_blocked(self, symbol: str, direction: str, reason: str) -> None:
+        try:
+            self.telegram.send_execute_now_blocked_alert(symbol, direction, reason)
+        except Exception as exc:
+            logger.warning(f"[V40.7] blocked alert failed: {exc}")
 
     def _calc_structural_tp_d1(
         self,
@@ -2249,9 +2337,14 @@ class SetupExecutorMonitor:
         except Exception as _bal_err:
             logger.warning(f"[V37.0] Guard#3 balance read failed — using env fallback: {_bal_err}")
 
-        # pip_value_per_lot: USD profit per pip, per standard lot (100k units)
-        # JPY pairs ≈ $8.33/pip, non-JPY ≈ $10/pip (USD-quoted)
-        pip_value_per_lot = 8.33 if 'JPY' in symbol.upper() else 10.0
+        # pip_value_per_lot — aliniat cu unified_risk_manager (BTC=1.0, JPY=8.33, FX=10)
+        sym_up = symbol.upper()
+        if any(x in sym_up for x in ['BTC', 'ETH', 'LTC', 'XRP', 'ADA', 'DOGE']):
+            pip_value_per_lot = 1.0
+        elif 'JPY' in sym_up:
+            pip_value_per_lot = 8.33
+        else:
+            pip_value_per_lot = 10.0
         risk_budget = balance * 0.05
         lots = risk_budget / (sl_pips * pip_value_per_lot) if sl_pips > 0 else 0
         estimated_loss = lots * sl_pips * pip_value_per_lot
