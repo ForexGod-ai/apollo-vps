@@ -299,6 +299,9 @@ class SetupExecutorMonitor:
         self._liquidity_sniper_be_applied: set = set()
         self._liquidity_sniper_be_file = Path("data/liquidity_sniper_be_applied.json")
         self._load_liquidity_sniper_be_state()
+
+        # V40.9: o singura alerta Telegram per motiv de blocare EXECUTE_NOW (Radar re-armeaza la 30s)
+        self._execute_now_block_alert_keys: set = set()
         
         # V9.3 DAILY REJECTION COUNTER (for /status dashboard)
         self.daily_rejections = 0
@@ -1453,7 +1456,10 @@ class SetupExecutorMonitor:
                             self._track_rejection(f"V40.8 min SL {symbol}: {_sl_pips_en:.1f}p")
                             setups[i].pop('EXECUTE_NOW', None)
                             setups[i]['last_rejection_reason'] = _blk
-                            self._notify_execute_now_blocked(symbol, _en_direction, _blk)
+                            setups[i]['execute_now_blocked_at'] = datetime.now(timezone.utc).isoformat()
+                            self._notify_execute_now_blocked(
+                                symbol, _en_direction, _blk, setup=setups[i],
+                            )
                             updated = True
                             continue
 
@@ -1463,7 +1469,10 @@ class SetupExecutorMonitor:
                             self._track_rejection(f"V40.8 no D1 TP {symbol}")
                             setups[i].pop('EXECUTE_NOW', None)
                             setups[i]['last_rejection_reason'] = _blk
-                            self._notify_execute_now_blocked(symbol, _en_direction, _blk)
+                            setups[i]['execute_now_blocked_at'] = datetime.now(timezone.utc).isoformat()
+                            self._notify_execute_now_blocked(
+                                symbol, _en_direction, _blk, setup=setups[i],
+                            )
                             updated = True
                             continue
 
@@ -1515,7 +1524,9 @@ class SetupExecutorMonitor:
                             self._track_rejection(f"EXECUTE_NOW no SL available for {symbol}")
                             setups[i].pop('EXECUTE_NOW', None)
                             setups[i]['last_rejection_reason'] = _blk
-                            self._notify_execute_now_blocked(symbol, _en_direction, _blk)
+                            self._notify_execute_now_blocked(
+                                symbol, _en_direction, _blk, setup=setups[i],
+                            )
                             updated = True
                             continue
 
@@ -1541,7 +1552,10 @@ class SetupExecutorMonitor:
                             self._track_rejection(f"EXECUTE_NOW sentinel rejected: {_sentinel_reason_en[:60]}")
                             setups[i].pop('EXECUTE_NOW', None)  # V22.2: pop (nu False) → radar re-triggereaza
                             setups[i]['last_rejection_reason'] = f'Sentinel: {_sentinel_reason_en}'
-                            self._notify_execute_now_blocked(symbol, _en_direction, _sentinel_reason_en)
+                            setups[i]['execute_now_blocked_at'] = datetime.now(timezone.utc).isoformat()
+                            self._notify_execute_now_blocked(
+                                symbol, _en_direction, _sentinel_reason_en, setup=setups[i],
+                            )
                             updated = True
                             continue
 
@@ -1590,7 +1604,10 @@ class SetupExecutorMonitor:
                             setups[i].pop('EXECUTE_NOW', None)
                             setups[i]['last_rejection_time'] = datetime.now(timezone.utc).isoformat()
                             setups[i]['last_rejection_reason'] = _block_reason
-                            self._notify_execute_now_blocked(symbol, _en_direction, _block_reason)
+                            setups[i]['execute_now_blocked_at'] = datetime.now(timezone.utc).isoformat()
+                            self._notify_execute_now_blocked(
+                                symbol, _en_direction, _block_reason, setup=setups[i],
+                            )
                             updated = True
                             try:
                                 _rm = getattr(self.executor, 'risk_manager', None)
@@ -2195,10 +2212,21 @@ class SetupExecutorMonitor:
                 logger.info(f"📐 [V40.8 TP D1 SCAN] {symbol}: TP={tp_json:.5f}")
                 return tp_json
 
+        # V40.9: pivot structural D1 din scanner (Gate1)
+        swing_key = 'daily_swing_low' if d == 'sell' else 'daily_swing_high'
+        tp_swing = _f(setup.get(swing_key))
+        if tp_swing:
+            if d == 'buy' and tp_swing > entry:
+                logger.info(f"📐 [V40.9 TP D1 SWING] {symbol}: TP={tp_swing:.5f} ({swing_key})")
+                return tp_swing
+            if d == 'sell' and tp_swing < entry:
+                logger.info(f"📐 [V40.9 TP D1 SWING] {symbol}: TP={tp_swing:.5f} ({swing_key})")
+                return tp_swing
+
         if df_d1 is not None and not df_d1.empty:
             tp_live = self._calc_structural_tp_d1(
                 direction, entry, df_4h, df_d1, pip_size,
-                symbol=symbol, stop_loss=stop_loss,
+                symbol=symbol, stop_loss=stop_loss, execute_now=True,
             )
             if tp_live:
                 if d == 'buy' and tp_live > entry:
@@ -2208,9 +2236,81 @@ class SetupExecutorMonitor:
                     logger.info(f"📐 [V40.8 TP D1 LIVE] {symbol}: TP={tp_live:.5f}")
                     return tp_live
 
+            tp_last = self._calc_last_d1_structure_tp(
+                direction, entry, df_d1, pip_size, stop_loss=stop_loss, symbol=symbol,
+            )
+            if tp_last:
+                if d == 'buy' and tp_last > entry:
+                    logger.info(f"📐 [V40.9 TP D1 LAST] {symbol}: TP={tp_last:.5f}")
+                    return tp_last
+                if d == 'sell' and tp_last < entry:
+                    logger.info(f"📐 [V40.9 TP D1 LAST] {symbol}: TP={tp_last:.5f}")
+                    return tp_last
+
         return None
 
-    def _notify_execute_now_blocked(self, symbol: str, direction: str, reason: str) -> None:
+    def _calc_last_d1_structure_tp(
+        self,
+        direction: str,
+        entry: float,
+        df_d1,
+        pip_size: float,
+        stop_loss: float = None,
+        symbol: str = '',
+    ):
+        """
+        V40.9: Ultimul punct structural D1 — regula utilizator.
+        Fara floor 1x ATR (BTC: TP valid la ~1500p chiar daca ATR D1 > distanta).
+        """
+        if df_d1 is None or df_d1.empty or not entry:
+            return None
+        try:
+            entry_f = float(entry)
+            d = str(direction).lower()
+            if stop_loss:
+                min_dist = abs(entry_f - float(stop_loss)) * 2.0
+            else:
+                min_dist = MIN_SL_PIPS * pip_size
+
+            if d == 'buy':
+                swings = self.smc_detector.detect_swing_highs(df_d1)
+                targets = [
+                    s for s in swings
+                    if s.price > entry_f and (s.price - entry_f) >= min_dist
+                ]
+                if targets:
+                    nearest = min(targets, key=lambda s: s.price)
+                    return float(df_d1['high'].iloc[nearest.index])
+            else:
+                swings = self.smc_detector.detect_swing_lows(df_d1)
+                targets = [
+                    s for s in swings
+                    if s.price < entry_f and (entry_f - s.price) >= min_dist
+                ]
+                if targets:
+                    nearest = max(targets, key=lambda s: s.price)
+                    return float(df_d1['low'].iloc[nearest.index])
+        except Exception as exc:
+            logger.warning(f"[V40.9] last D1 structure TP failed ({symbol}): {exc}")
+        return None
+
+    def _notify_execute_now_blocked(
+        self,
+        symbol: str,
+        direction: str,
+        reason: str,
+        setup: dict = None,
+    ) -> None:
+        alert_key = f"{symbol.upper()}|{direction.lower()}|{reason[:100]}"
+        if alert_key in self._execute_now_block_alert_keys:
+            logger.debug(f"[V40.9] blocked alert dedup: {alert_key}")
+            return
+        if setup and setup.get('execute_now_block_alert_key') == alert_key:
+            logger.debug(f"[V40.9] blocked alert dedup (JSON): {alert_key}")
+            return
+        self._execute_now_block_alert_keys.add(alert_key)
+        if setup is not None:
+            setup['execute_now_block_alert_key'] = alert_key
         try:
             self.telegram.send_execute_now_blocked_alert(symbol, direction, reason)
         except Exception as exc:
@@ -2225,10 +2325,12 @@ class SetupExecutorMonitor:
         pip_size: float,
         symbol: str = '',
         stop_loss: float = None,
+        execute_now: bool = False,
     ):
         """
         TP = primul swing D1 lichiditate NEATINS recent in directia trade-ului.
         V37.7: exclude swing-uri deja sweep-uite (ex. BTC low luat → pullback sus).
+        V40.9 execute_now: min dist = 2x SL (RR), fara floor 1x ATR care exclude TP BTC valid.
         """
         if df_d1 is None or df_d1.empty or not entry:
             return None
@@ -2242,14 +2344,19 @@ class SetupExecutorMonitor:
                 .combine((df_d1['low'] - df_d1['close'].shift(1)).abs(), max)
             )
             _atr_d1 = float(_tr.rolling(14).mean().iloc[-1])
-            _min_tp_dist = _atr_d1 * 1.0
-            _max_tp_dist = _atr_d1 * 8.0
             _sweep_tol = pip_size * 10 if pip_size else 0.0
             _sweep_lookback = 25 if any(x in symbol.upper() for x in ['BTC', 'ETH']) else 15
 
-            if stop_loss:
-                _sl_dist = abs(entry - float(stop_loss))
-                _min_tp_dist = max(_min_tp_dist, _sl_dist * 2.0)
+            if execute_now:
+                _sl_dist = abs(entry - float(stop_loss)) if stop_loss else (MIN_SL_PIPS * pip_size)
+                _min_tp_dist = max(_sl_dist * 2.0, MIN_SL_PIPS * pip_size)
+                _max_tp_dist = _atr_d1 * 50.0 if _atr_d1 > 0 else float('inf')
+            else:
+                _min_tp_dist = _atr_d1 * 1.0
+                _max_tp_dist = _atr_d1 * 8.0
+                if stop_loss:
+                    _sl_dist = abs(entry - float(stop_loss))
+                    _min_tp_dist = max(_min_tp_dist, _sl_dist * 2.0)
 
             direction = direction.lower()
             if direction == 'buy':

@@ -49,7 +49,7 @@ _RADAR_DIR = _Path(__file__).parent.resolve()
 _MONITORING_FILE = str(_RADAR_DIR / 'monitoring_setups.json')
 _MONITORING_TMP  = str(_RADAR_DIR / 'monitoring_setups.json.tmp')
 import argparse
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
 from enum import Enum
@@ -1487,6 +1487,20 @@ class MultiTFRadar:
     def _arm_execute_now(self, setup: dict, result: 'MultiTFResult', exec_tf: str,
                          source: str = 'trigger') -> None:
         """V37.5/6: Seteaza EXECUTE_NOW, flush instant JSON, Telegram o singura data per setup."""
+        # V40.9: nu re-arma daca executorul a respins recent (Radar latch = spam Telegram)
+        _blocked_at = setup.get('execute_now_blocked_at')
+        if _blocked_at:
+            try:
+                _bt = datetime.fromisoformat(str(_blocked_at).replace('Z', '+00:00'))
+                if datetime.now(timezone.utc) - _bt < timedelta(minutes=10):
+                    logger.debug(
+                        f"[V40.9] {setup.get('symbol', '?')}: skip EXECUTE_NOW re-arm — "
+                        f"executor block cooldown ({setup.get('last_rejection_reason', '')[:60]})"
+                    )
+                    return
+            except Exception:
+                pass
+
         was_already = setup.get('EXECUTE_NOW') is True
         setup['EXECUTE_NOW'] = True
         setup['execute_now_trigger_tf'] = exec_tf
