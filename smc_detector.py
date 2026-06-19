@@ -1919,23 +1919,8 @@ class SMCDetector:
             locked_bias = 'bearish'
         elif macro_range_low < close < macro_range_high:
             locked = True
-            # V42: INSIDE range — bias from latest D1 signal, not forced bearish (Forex GBPNZD fix)
-            chochs, bos_list = self.detect_choch_and_bos(df)
-            latest_choch = chochs[-1] if chochs else None
-            latest_bos = bos_list[-1] if bos_list else None
-            latest_signal = None
-            if latest_choch and latest_bos:
-                latest_signal = (
-                    latest_choch if latest_choch.index >= latest_bos.index else latest_bos
-                )
-            elif latest_choch:
-                latest_signal = latest_choch
-            elif latest_bos:
-                latest_signal = latest_bos
-            if latest_signal:
-                locked_bias = latest_signal.direction
-            else:
-                locked_bias = 'bearish'
+            # V42.5: inside range — default bearish lock; GBPNZD reversal passes via body-close filter
+            locked_bias = 'bearish'
         else:
             locked = False
 
@@ -1968,10 +1953,8 @@ class SMCDetector:
     ) -> bool:
         if not range_state.locked or signal.direction != 'bullish':
             return False
-        # V42: Bullish CHoCH reversal after bearish leg — never ignorable sub-structure
+        # V42.5: structural reversal inside range — body close clears macro high (GBPNZD)
         if isinstance(signal, CHoCH):
-            if signal.previous_trend == 'bearish':
-                return False
             if self._bar_body_close_above(
                 df, signal.index, range_state.macro_range_high
             ):
@@ -1990,6 +1973,95 @@ class SMCDetector:
         ):
             return True
         return False
+
+    def _leg_choch_still_valid(
+        self,
+        df: pd.DataFrame,
+        leg_choch: CHoCH,
+        bos_list: List,
+    ) -> bool:
+        """V42.5: leg CHoCH active until price reclaims the leg break level."""
+        if df is None or len(df) == 0:
+            return False
+        close = float(df['close'].iloc[-1])
+        # Anchor on leg CHoCH break only — post-leg BOS pullbacks may trade above
+        # intermediate BOS levels without invalidating the leg (BTC continuation).
+        if leg_choch.direction == 'bearish':
+            return close < leg_choch.break_price
+        return close > leg_choch.break_price
+
+    def _find_leg_choch(
+        self,
+        df: pd.DataFrame,
+        chochs: List[CHoCH],
+        bos_list: List,
+    ) -> Optional[CHoCH]:
+        """V42.5: authoritative leg CHoCH — ignore opposite micro-CHoCH pullback noise."""
+        if not chochs:
+            return None
+        if len(chochs) == 1:
+            return chochs[0]
+        last = chochs[-1]
+        for i in range(len(chochs) - 2, -1, -1):
+            candidate = chochs[i]
+            if candidate.direction != last.direction:
+                if self._leg_choch_still_valid(df, candidate, bos_list):
+                    return candidate
+        return last
+
+    def _resolve_d1_leg(
+        self,
+        df: pd.DataFrame,
+        chochs: List[CHoCH],
+        bos_list: List,
+        debug: bool = False,
+    ) -> Tuple[Optional[object], str, str, Optional[CHoCH]]:
+        """
+        V42.5 Leg Authority — CHoCH once per leg, then BOS continuation.
+
+        Returns: (latest_signal, strategy_type, current_trend, leg_choch)
+        """
+        leg_choch = self._find_leg_choch(df, chochs, bos_list)
+
+        if leg_choch is None:
+            if not bos_list:
+                return None, 'continuation', 'neutral', None
+            latest_bos = bos_list[-1]
+            return latest_bos, 'continuation', latest_bos.direction, None
+
+        opposite_after_leg = [
+            c for c in chochs
+            if c.index > leg_choch.index and c.direction != leg_choch.direction
+        ]
+        ignored_opposite = [
+            c for c in opposite_after_leg
+            if self._leg_choch_still_valid(df, leg_choch, bos_list)
+        ]
+        same_dir_bos = [
+            b for b in bos_list
+            if b.index > leg_choch.index and b.direction == leg_choch.direction
+        ]
+
+        # BTC: post-CHoCH BOS chain + opposite pullback CHoCH ignored → continuation
+        if len(ignored_opposite) >= 1 and len(same_dir_bos) >= 2:
+            latest_signal = same_dir_bos[-1]
+            strategy_type = 'continuation'
+            current_trend = leg_choch.direction
+            if debug:
+                print(
+                    f"   📐 [V42.5 LEG] continuation — leg CHoCH {leg_choch.direction.upper()} "
+                    f"@bar{leg_choch.index}, BOS @bar{latest_signal.index}, "
+                    f"ignored {len(ignored_opposite)} opposite pullback CHoCH"
+                )
+            return latest_signal, strategy_type, current_trend, leg_choch
+
+        # GBPJPY / GBPNZD: reversal leg — anchor on leg CHoCH, wait pullback AOI + LTF
+        if debug:
+            print(
+                f"   📐 [V42.5 LEG] reversal — leg CHoCH {leg_choch.direction.upper()} "
+                f"@bar{leg_choch.index} → WAITING_D1_PULLBACK"
+            )
+        return leg_choch, 'reversal', leg_choch.direction, leg_choch
 
     def filter_internal_range_signals(
         self,
@@ -2129,35 +2201,30 @@ class SMCDetector:
             )
             if _v39_rs and _v39_rs.locked and debug:
                 print(
-                    f"   🔒 [V42] determine_daily_trend range INSIDE/LOCK "
-                    f"→ bias from filtered D1 signals (lock hint {_v39_rs.locked_bias.upper()})"
+                    f"   🔒 [V42.5] determine_daily_trend range INSIDE/LOCK "
+                    f"→ leg authority (lock hint {_v39_rs.locked_bias.upper()})"
                 )
         
-        latest_signal = None
-        latest_index = -1
-        signal_type = None
-        
-        # Check CHoCH signals
-        if daily_chochs:
-            last_choch = daily_chochs[-1]
-            if last_choch.index > latest_index:
-                latest_signal = last_choch
-                latest_index = last_choch.index
-                signal_type = 'CHoCH'
-        
-        # Check BOS signals
-        if daily_bos_list:
-            last_bos = daily_bos_list[-1]
-            if last_bos.index > latest_index:
-                latest_signal = last_bos
-                latest_index = last_bos.index
-                signal_type = 'BOS'
+        _d1_signal, _d1_strategy, final_bias, _leg_choch = self._resolve_d1_leg(
+            df, daily_chochs, daily_bos_list, debug=debug
+        )
+        latest_signal = _d1_signal
+        latest_index = latest_signal.index if latest_signal else -1
+        signal_type = (
+            'CHoCH' if isinstance(latest_signal, CHoCH)
+            else 'BOS' if latest_signal else None
+        )
         
         if debug and latest_signal:
-            print(f"\n   🎯 Latest Signal:")
+            print(f"\n   🎯 Latest Signal (V42.5 leg):")
             print(f"      Type: {signal_type}")
+            print(f"      Strategy: {_d1_strategy.upper()}")
             print(f"      Direction: {latest_signal.direction.upper()}")
-            print(f"      Index: {latest_signal.index}/{len(df)}")
+            print(f"      Index: {latest_index}/{len(df)}")
+            if _leg_choch and _leg_choch is not latest_signal:
+                print(
+                    f"      Leg CHoCH: {_leg_choch.direction.upper()} @bar{_leg_choch.index}"
+                )
         
         # 🆕 V7.1 LAYER 3: BOS SEQUENCE DOMINANCE (Before signal analysis)
         # Check if we have 3+ consecutive BOS in same direction (stronger than swings)
@@ -2178,23 +2245,19 @@ class SMCDetector:
         # 🆕 V7.1 LAYER 4: HIERARCHY - BOS Sequence > Swing Pattern > Latest Signal
         # PHILOSOPHY by ФорексГод: "3+ BOS = Army. Swings = Structure. Signal = Noise."
         
-        # V22 DAILY MATRIX PURITY: ultimul BOS/CHoCH confirmat prin body-close = bias PRIMAR
-        # «Dacă ultimul breakout confirmat prin Body Close pe Daily a fost în JOS → BEARISH obligatoriu»
-        # Swing structure (HH+HL vs LH+LL) devine confirmare secundară, nu driver principal.
-        # Motivare: swingurile pot arăta structură bullish veche (3-4 luni) în timp ce ultimul
-        # BOS body-close a rupt în jos — structura recentă trebuie să primeze.
-        if latest_signal:
-            final_bias = latest_signal.direction
-            if macro_trend_swings == latest_signal.direction:
-                confidence = f"VERY HIGH (Body-close {signal_type} + swing structure aligned: {final_bias.upper()})"
+        # V22 DAILY MATRIX PURITY + V42.5 leg authority
+        if latest_signal and final_bias != 'neutral':
+            if macro_trend_swings == final_bias:
+                confidence = f"VERY HIGH (V42.5 {_d1_strategy} {signal_type} + swing aligned: {final_bias.upper()})"
             elif macro_trend_swings != 'neutral':
-                confidence = f"HIGH (Body-close {signal_type} {final_bias.upper()} — overrides swing pattern {macro_trend_swings.upper()})"
+                confidence = f"HIGH (V42.5 {signal_type} {final_bias.upper()} — swing {macro_trend_swings.upper()})"
             else:
-                confidence = f"MEDIUM (Body-close {signal_type} {final_bias.upper()}, swing structure neutral)"
+                confidence = f"MEDIUM (V42.5 {signal_type} {final_bias.upper()}, swing neutral)"
 
             if debug:
-                print(f"\n   🎯 V22 BODY-CLOSE PRIMARY BIAS:")
+                print(f"\n   🎯 V42.5 BODY-CLOSE LEG BIAS:")
                 print(f"      Latest {signal_type}: {final_bias.upper()} (index {latest_index})")
+                print(f"      Strategy: {_d1_strategy.upper()}")
                 print(f"      Swing structure: {macro_trend_swings.upper()}")
                 print(f"      Confidence: {confidence}")
 
@@ -2730,10 +2793,9 @@ class SMCDetector:
             return min_distance
         
         elif asset_class == 'metals':
-            # Gold: 50 pips (0.10 pip_size)
-            return 50 * pip_size
+            # V42.6: XAU sniper 30p max — era 50p floor (forța SL prea larg)
+            return 30 * pip_size
         elif asset_class == 'energy':
-            # Oil: 30 pips
             return 30 * pip_size
         elif asset_class == 'jpy_pairs':
             # JPY: 30 pips (0.01 pip_size) = 0.30
@@ -2890,22 +2952,12 @@ class SMCDetector:
                 print(f"   🛡️ [V14.1 SL STRUCTURAL LONG] Ultimul swing Low 4H pre-CHoCH valid: "
                       f"idx={chosen_sl_obj.index} wick_low={df_4h['low'].iloc[chosen_sl_obj.index]:.5f} "
                       f"→ SL={stop_loss:.5f} (distanță={sl_distance_pips:.1f} pips, ATR={atr_14/pip_size:.1f}p)")
-                # V26.0: SL cap per instrument (V19.7: 50→100 non-JPY; XAU/BTC: cap separat)
-                if 'JPY' in symbol:
-                    _max_sl_pips = 150
-                elif any(x in symbol.upper() for x in ['XAU', 'XAG', 'GOLD']):
-                    _max_sl_pips = 1000  # XAU: max $100 SL @ $0.10/pip = 1000 pips
-                elif any(x in symbol.upper() for x in ['BTC', 'ETH']):
-                    _max_sl_pips = 5000  # BTC: max $5000 SL @ $1/pip = 5000 pips
-                else:
-                    _max_sl_pips = 100   # V26.0: 50→100 pips non-JPY (ATR Daily ~80-120p)
+                # V42.6: cap unic din pip_utils (XTI=50p, forex=100p, JPY=150p, etc.)
+                from pip_utils import get_max_sl_pips
+                _max_sl_pips = get_max_sl_pips(symbol)
                 if sl_distance_pips > _max_sl_pips:
-                    # V34 FIX V06: Scanner NU mai anuleaza pe baza distantei SL.
-                    # SL-ul structural 4H poate fi mai larg la scanare (pullback incomplet).
-                    # Executorul recalculeaza SL live la EXECUTE_NOW si aplica guard 5-300p.
-                    print(f"   ⚠️ [V34 SL INFO] {symbol} LONG: SL {sl_distance_pips:.1f}p > {_max_sl_pips}p — "
-                          f"acceptat de Scanner, Executor va recalcula SL live la EXECUTE_NOW")
-                    # V36.1: SL structural pastrat intact — Executor recalculeaza la EXECUTE_NOW
+                    print(f"   ⚠️ [V42.6 SL INFO] {symbol} LONG: SL {sl_distance_pips:.1f}p > {_max_sl_pips}p — "
+                          f"Executor/Radar vor folosi sniper SL ≤ {_max_sl_pips:.0f}p la EXECUTE_NOW")
 
             # Validare: SL trebuie să fie sub entry pentru LONG (V36.1: body_lows_4h pre-calculat sus)
             if stop_loss is not None and stop_loss >= entry:
@@ -3024,21 +3076,11 @@ class SMCDetector:
                       f"idx={chosen_sh_obj.index} wick_high={df_4h['high'].iloc[chosen_sh_obj.index]:.5f} "
                       f"→ SL={stop_loss:.5f} (distanță={sl_distance_pips:.1f} pips, ATR={atr_14/pip_size:.1f}p)")
                 # V26.0: SL cap per instrument (V19.7: 50→100 non-JPY; XAU/BTC: cap separat)
-                if 'JPY' in symbol:
-                    _max_sl_pips = 150
-                elif any(x in symbol.upper() for x in ['XAU', 'XAG', 'GOLD']):
-                    _max_sl_pips = 1000  # XAU: max $100 SL @ $0.10/pip = 1000 pips
-                elif any(x in symbol.upper() for x in ['BTC', 'ETH']):
-                    _max_sl_pips = 5000  # BTC: max $5000 SL @ $1/pip = 5000 pips
-                else:
-                    _max_sl_pips = 100   # V26.0: 50→100 pips non-JPY (ATR Daily ~80-120p)
+                from pip_utils import get_max_sl_pips
+                _max_sl_pips = get_max_sl_pips(symbol)
                 if sl_distance_pips > _max_sl_pips:
-                    # V34 FIX V06: Scanner NU mai anuleaza pe baza distantei SL.
-                    # SL-ul structural 4H poate fi mai larg la scanare (pullback incomplet).
-                    # Executorul recalculeaza SL live la EXECUTE_NOW si aplica guard 5-300p.
-                    print(f"   ⚠️ [V34 SL INFO] {symbol} SHORT: SL {sl_distance_pips:.1f}p > {_max_sl_pips}p — "
-                          f"acceptat de Scanner, Executor va recalcula SL live la EXECUTE_NOW")
-                    # V36.1: SL structural pastrat intact — Executor recalculeaza la EXECUTE_NOW
+                    print(f"   ⚠️ [V42.6 SL INFO] {symbol} SHORT: SL {sl_distance_pips:.1f}p > {_max_sl_pips}p — "
+                          f"Executor/Radar vor folosi sniper SL ≤ {_max_sl_pips:.0f}p la EXECUTE_NOW")
 
             # Validare: SL trebuie să fie deasupra entry pentru SHORT (V36.1: body_highs_4h pre-calculat sus)
             if stop_loss is not None and stop_loss <= entry:
@@ -3242,24 +3284,13 @@ class SMCDetector:
         chochs, bos_list, rs = self.filter_internal_range_signals(
             symbol or '', df_daily, chochs, bos_list, rs
         )
-        latest_choch = chochs[-1] if chochs else None
-        latest_bos = bos_list[-1] if bos_list else None
-        latest_signal = None
-        signal_label = 'BOS'
-        if latest_choch and latest_bos:
-            if latest_choch.index >= latest_bos.index:
-                latest_signal = latest_choch
-            else:
-                latest_signal = latest_bos
-        elif latest_choch:
-            latest_signal = latest_choch
-        elif latest_bos:
-            latest_signal = latest_bos
-        # V42: trust latest filtered signal — no forced realignment to locked_bias
+        latest_signal, strategy, current_trend, _leg = self._resolve_d1_leg(
+            df_daily, chochs, bos_list
+        )
         if latest_signal:
             signal_label = 'CHoCH' if isinstance(latest_signal, CHoCH) else 'BOS'
-            strategy = 'reversal' if signal_label == 'CHoCH' else 'continuation'
         else:
+            signal_label = 'BOS'
             strategy = 'continuation'
         return strategy, signal_label
 
@@ -3437,36 +3468,43 @@ class SMCDetector:
             symbol, df_daily, daily_chochs, daily_bos_list, _range_state
         )
 
-        # 🆕 V7.1 LOGIC: BOS HIERARCHY - 3+ consecutive BOS = DOMINANT TREND
-        # PHILOSOPHY by ФорексГод: "One CHoCH cannot overturn 3+ BOS army."
+        latest_signal, strategy_type, current_trend, leg_choch = self._resolve_d1_leg(
+            df_daily, daily_chochs, daily_bos_list, debug=debug
+        )
+        if latest_signal is None:
+            if debug:
+                print(f"❌ REJECTED: No Daily CHoCH or BOS found")
+            return None
+
+        latest_choch = leg_choch if leg_choch else (daily_chochs[-1] if daily_chochs else None)
+        _signal_label = 'CHoCH' if isinstance(latest_signal, CHoCH) else 'BOS'
+
+        if debug:
+            print(
+                f"\n✅ [V42.5 LEG] {symbol}: D1 {_signal_label} {current_trend.upper()} "
+                f"@bar{latest_signal.index} price={latest_signal.break_price:.5f} "
+                f"→ {strategy_type.upper()} / WAITING_D1_PULLBACK"
+            )
+
+        print(
+            f"✅ [V42.5 LEG] {symbol}: {current_trend.upper()} | {_signal_label} "
+            f"@bar{latest_signal.index} → {strategy_type.upper()} / WAITING_D1_PULLBACK"
+        )
+        current_price = df_daily['close'].iloc[-1]
+
         
-        latest_choch = daily_chochs[-1] if daily_chochs else None
-        latest_bos = daily_bos_list[-1] if daily_bos_list else None
+        # Step 2: Find FVG after signal (CHoCH or BOS) - closest to current price
+        fvg = self.detect_fvg(df_daily, latest_signal, current_price)
 
-        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        # V23: Blocul V13.0 "Generalul" ELIMINAT DEFINITIV
-        # Genera CHoCH-uri sintetice folosind max(open,close) — standard dublu față de
-        # detect_choch_and_bos() care cere close > wick_absolut.
-        # Cauza principală a bias-ului LONG fals pe GBPUSD/EURUSD (bearish).
-        # CHoCH-uri valide vin EXCLUSIV din detect_choch_and_bos() de mai sus.
-        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-        # 🔥 CHECK BOS SEQUENCE: Count consecutive BOS in same direction
+        # V42.5: BOS sequence — post-leg same-direction BOS for momentum continuation
         consecutive_bos_count = 0
         dominant_bos_direction = None
-        
-        if len(daily_bos_list) >= 3:
-            # ━━━ V11.9 FIX: Excludem BOS-urile formate DUPĂ ultimul CHoCH ━━━
-            # BOS-urile post-CHoCH sunt din pullback — nu reprezintă trend dominant.
-            # Numărăm NUMAI BOS-uri ANTERIOARE ultimului CHoCH (pre-CHoCH trend).
-            # Exemplu: CHoCH bearish (idx 50) → BOS bullish (idx 55,58,61) din pullback
-            # → consecutive_bos_count rămâne 0, nu triggerăm CONTINUATION bullish.
-            choch_cutoff_idx = latest_choch.index if latest_choch else float('inf')
-            pre_choch_bos = [b for b in daily_bos_list if b.index < choch_cutoff_idx]
-            # Check last 5 pre-CHoCH BOS (or all if less than 5)
-            recent_bos = pre_choch_bos[-5:] if pre_choch_bos else []
-            
-            # Count consecutive same-direction BOS from end
+        if len(daily_bos_list) >= 3 and leg_choch:
+            post_leg_bos = [
+                b for b in daily_bos_list
+                if b.index > leg_choch.index and b.direction == leg_choch.direction
+            ]
+            recent_bos = post_leg_bos[-5:] if post_leg_bos else []
             for bos in reversed(recent_bos):
                 if dominant_bos_direction is None:
                     dominant_bos_direction = bos.direction
@@ -3474,49 +3512,7 @@ class SMCDetector:
                 elif bos.direction == dominant_bos_direction:
                     consecutive_bos_count += 1
                 else:
-                    break  # Stop at first different direction
-        
-        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        # V25.0 UNIVERSAL BIAS — MECANIC UNIFICAT "GLITCH IN MATRIX"
-        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        # REGULA SUPREMĂ (o singură ramură, fără discriminare tip break):
-        #
-        #   D1 Break (CHoCH sau BOS, cu Body Close confirmat) → Bias LONG/SHORT
-        #   Cel mai recent break structural = ancora biasului.
-        #   CHoCH și BOS sunt ECHIVALENTE ca declanșatori de bias.
-        #   Ambele duc la: status = WAITING_D1_PULLBACK.
-        #   Distincția reversal/continuation păstrată NUMAI intern (calcul equilibrium).
-        #
-        #   ELIMINAT: regula cronologică V23 care forța CONTINUATION când BOS > CHoCH.
-        #   Aceasta ucidea toate REVERSAL-urile în piețe trending (85% din cazuri).
-        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        if latest_choch and latest_bos:
-            if latest_choch.index >= latest_bos.index:
-                latest_signal = latest_choch
-            else:
-                latest_signal = latest_bos
-        elif latest_choch:
-            latest_signal = latest_choch
-        elif latest_bos:
-            latest_signal = latest_bos
-        else:
-            if debug:
-                print(f"❌ REJECTED: No Daily CHoCH or BOS found")
-            return None
-
-        current_trend = latest_signal.direction
-        _signal_label = 'CHoCH' if isinstance(latest_signal, CHoCH) else 'BOS'
-        strategy_type = 'reversal' if _signal_label == 'CHoCH' else 'continuation'
-
-        if debug:
-            print(f"\n✅ [V25.0 UNIVERSAL] {symbol}: D1 BREAK {_signal_label} {current_trend.upper()} @bar{latest_signal.index} price={latest_signal.break_price:.5f} → WAITING_D1_PULLBACK")
-
-        print(f"✅ [V25.0 UNIVERSAL] {symbol}: {current_trend.upper()} | {_signal_label} @bar{latest_signal.index} → WAITING_D1_PULLBACK (echilibru: {strategy_type})")
-        current_price = df_daily['close'].iloc[-1]
-
-        
-        # Step 2: Find FVG after signal (CHoCH or BOS) - closest to current price
-        fvg = self.detect_fvg(df_daily, latest_signal, current_price)
+                    break
         
         # 🔥 V8.2: MOMENTUM_CONTINUATION - If 3+ consecutive BOS, prioritize MOMENTUM entry (even if FVG exists)
         # EURJPY case: 4 BEARISH BOS = strong trend, generate setup regardless of FVG

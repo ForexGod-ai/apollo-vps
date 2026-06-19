@@ -55,7 +55,7 @@ from dataclasses import dataclass
 from enum import Enum
 from loguru import logger
 
-from pip_utils import get_pip_size
+from pip_utils import get_pip_size, get_max_sl_pips
 
 try:
     from ctrader_cbot_client import CTraderCBotClient
@@ -772,39 +772,39 @@ class MultiTFRadar:
                 _sl_pip = self._get_pip_size(symbol)
                 _sl_buffer = _sl_pip * 2  # V31.0: 2 pip spread buffer
                 _min_sl_dist = _sl_pip * 30  # V37.2: acelasi floor ca executorul
+                _max_sl_dist = get_max_sl_pips(symbol) * _sl_pip  # V42.6: XAU=30p, FX=40p
                 _ref_px = float(current_price) if current_price else float(choch_break_price)
-                _sb_price = float(latest_choch.swing_broken.price)
                 if choch_direction == 'bullish':
                     _all_lows_sl = smc_detector.detect_swing_lows(df)
-                    _struct_lows = [s for s in _all_lows_sl
-                                    if s.price < _sb_price and s.index < choch_index]
-                    if _struct_lows:
-                        _struct_base = max(_struct_lows, key=lambda s: s.index)
-                        h4_sl_price = float(_struct_base.price) - _sl_buffer
-                    if h4_sl_price is None or (_ref_px - h4_sl_price) < _min_sl_dist:
-                        _wide = [s for s in _all_lows_sl
-                                 if s.price < _ref_px and (_ref_px - s.price) >= _min_sl_dist]
-                        if _wide:
-                            _pick = max(_wide, key=lambda s: s.index)
-                            h4_sl_price = float(_pick.price) - _sl_buffer
+                    _in_range = [
+                        s for s in _all_lows_sl
+                        if s.price < _ref_px
+                        and (_ref_px - s.price) >= _min_sl_dist
+                        and (_ref_px - s.price) <= _max_sl_dist
+                    ]
+                    if _in_range:
+                        _pick = max(_in_range, key=lambda s: s.index)  # ultimul pivot 4H
+                        h4_sl_price = float(_pick.price) - _sl_buffer
                 else:
                     _all_highs_sl = smc_detector.detect_swing_highs(df)
-                    _struct_highs = [s for s in _all_highs_sl
-                                     if s.price > _sb_price and s.index < choch_index]
-                    if _struct_highs:
-                        _struct_ceiling = max(_struct_highs, key=lambda s: s.index)
-                        h4_sl_price = float(_struct_ceiling.price) + _sl_buffer
-                    if h4_sl_price is None or (h4_sl_price - _ref_px) < _min_sl_dist:
-                        _wide = [s for s in _all_highs_sl
-                                 if s.price > _ref_px and (s.price - _ref_px) >= _min_sl_dist]
-                        if _wide:
-                            _pick = max(_wide, key=lambda s: s.index)
-                            h4_sl_price = float(_pick.price) + _sl_buffer
+                    _in_range = [
+                        s for s in _all_highs_sl
+                        if s.price > _ref_px
+                        and (s.price - _ref_px) >= _min_sl_dist
+                        and (s.price - _ref_px) <= _max_sl_dist
+                    ]
+                    if _in_range:
+                        _pick = max(_in_range, key=lambda s: s.index)  # ultimul pivot 4H
+                        h4_sl_price = float(_pick.price) + _sl_buffer
                 if h4_sl_price is not None:
                     _sl_dist_pips = abs(_ref_px - h4_sl_price) / _sl_pip
                     if _sl_dist_pips < 30:
                         print(f"  ⚠️  [V37.2 MIN SL] {timeframe_display} {symbol}: "
                               f"SL {_sl_dist_pips:.1f}p < 30p — nu scriem h4_sl in JSON")
+                        h4_sl_price = None
+                    elif _sl_dist_pips > get_max_sl_pips(symbol):
+                        print(f"  ⚠️  [V42.6 MAX SL] {timeframe_display} {symbol}: "
+                              f"SL {_sl_dist_pips:.1f}p > {get_max_sl_pips(symbol):.0f}p — skip h4_sl")
                         h4_sl_price = None
                 if h4_sl_price:
                     _sl_pips_log = abs(choch_break_price - h4_sl_price) / _sl_pip

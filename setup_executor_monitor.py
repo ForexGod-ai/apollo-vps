@@ -2000,21 +2000,25 @@ class SetupExecutorMonitor:
         df_4h,
         pip_size: float,
         min_sl_pips: float = MIN_SL_PIPS,
-        nearest: bool = True,
+        nearest: bool = False,
     ):
         """
-        SL structural pe TF (4H sau 1H) — ultimul swing valid, cat mai APROPIAT de entry.
-        V40.8: nearest=True → punct structural mic (sniper), nu swing 4H indepartat.
+        SL structural pe TF (4H sau 1H) — ultimul pivot valid in interval sniper.
+        V42.6: nearest=False (default) = ultimul swing 4H/1H in [30p, max_pips].
+        nearest=True = cel mai apropiat de entry (legacy sniper strict).
         """
         if df_4h is None or df_4h.empty or not entry:
             return None
         sl_buffer = pip_size * 2
         min_dist = min_sl_pips * pip_size
+        max_dist = get_max_sl_pips(symbol) * pip_size
+        min_dist = min(min_sl_pips * pip_size, max_dist * 0.95)
         try:
             _atr_4h = float((df_4h['high'] - df_4h['low']).rolling(14).mean().iloc[-1])
-            min_dist = max(min_dist, _atr_4h * 0.3)
+            min_dist = max(min_dist, min(_atr_4h * 0.3, max_dist * 0.85))
         except Exception:
             pass
+        min_dist = min(min_dist, max_dist * 0.95)
 
         direction = direction.lower()
         if direction == 'buy':
@@ -2022,7 +2026,7 @@ class SetupExecutorMonitor:
             candidates = [
                 s for s in swings
                 if float(df_4h['low'].iloc[s.index]) < entry
-                and (entry - float(df_4h['low'].iloc[s.index])) >= min_dist
+                and min_dist <= (entry - float(df_4h['low'].iloc[s.index])) <= max_dist
             ]
             if candidates:
                 if nearest:
@@ -2042,7 +2046,7 @@ class SetupExecutorMonitor:
             candidates = [
                 s for s in swings
                 if float(df_4h['high'].iloc[s.index]) > entry
-                and (float(df_4h['high'].iloc[s.index]) - entry) >= min_dist
+                and min_dist <= (float(df_4h['high'].iloc[s.index]) - entry) <= max_dist
             ]
             if candidates:
                 if nearest:
@@ -2087,7 +2091,7 @@ class SetupExecutorMonitor:
         pip_size: float,
     ):
         """
-        V40.8 REGULA SL: ultimul punct structural pe 1H + 4H — alegem cel MAI MIC (sniper).
+        V40.8 REGULA SL: ultimul punct structural pe 1H + 4H (in cap sniper) — tightest valid.
         Radar h4_sl_price intra in competitie daca e valid.
         """
         def _f(v):
@@ -2109,7 +2113,7 @@ class SetupExecutorMonitor:
             if df is None or df.empty:
                 continue
             sl = self._calc_structural_sl_4h(
-                symbol, direction, entry, df, pip_size, MIN_SL_PIPS, nearest=True
+                symbol, direction, entry, df, pip_size, MIN_SL_PIPS, nearest=False
             )
             if self._sl_valid_for_execute(symbol, direction, entry, sl):
                 sl_candidates.append(

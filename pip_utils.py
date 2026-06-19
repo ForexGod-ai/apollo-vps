@@ -1,24 +1,27 @@
 """Shared pip size utilities — V37.0 single source for RR/guard calculations."""
 
-# V37.2: SL structural minim pe 4H — sub 30p = micro-stop (ex. AUDJPY 3.5p + lot 0.61)
+# V37.2: SL structural minim pe 4H — sub 30p = micro-stop
 MIN_SL_PIPS = 30
-MAX_SL_PIPS = 100  # sniper cap — forex default (executor sentinel Guard#2)
+# V42.6: cap sniper forex — entry SL tipic 30–40p (ultimul pivot 4H)
+MAX_SL_PIPS = 40
+MAX_SL_PIPS_XAU = 30  # aur: max 30p structural sniper
+MAX_SL_PIPS_ENERGY = 40
 
 
 def get_max_sl_pips(symbol: str) -> float:
     """
-    V40.6: SL maxim permis per instrument — aliniat cu Radar structural + Fix #7.
-    BTC/XAU au SL mult peste 100p; cap-ul forex-only bloca EXECUTE_NOW valide.
+    V42.6: SL maxim per instrument — sniper 4H structural (30–40p FX/XTI, 30p XAU).
+    TP = pivot D1 (executor V40.8). BTC = excepție structurală largă.
     """
     s = symbol.upper()
     if any(x in s for x in ['BTC', 'ETH', 'LTC', 'XRP', 'ADA', 'DOGE']):
         return 2000.0
     if any(x in s for x in ['XAU', 'XAG', 'GOLD', 'SILVER']):
-        return 500.0
+        return float(MAX_SL_PIPS_XAU)
     if any(x in s for x in ['XTI', 'WTI', 'OIL', 'BRENT', 'USOIL']):
-        return 300.0
+        return float(MAX_SL_PIPS_ENERGY)
     if 'JPY' in s:
-        return 150.0
+        return float(MAX_SL_PIPS)
     return float(MAX_SL_PIPS)
 
 
