@@ -22,7 +22,7 @@ from typing import List, Optional, Dict
 from dotenv import load_dotenv
 from loguru import logger
 
-from smc_detector import SMCDetector, TradeSetup
+from smc_detector import SMCDetector, TradeSetup, CHoCH
 from telegram_notifier import TelegramNotifier
 from ctrader_cbot_client import CTraderCBotClient
 from strategy_optimizer import StrategyOptimizer
@@ -958,8 +958,8 @@ class DailyScanner:
 
 
 def _norm_strategy_type(val) -> str:
-    """Normalize continuation vs reversal for SMART MERGE comparisons."""
-    s = (val or 'continuation').lower()
+    """Normalize continuation vs reversal for SMART MERGE comparisons (TradeSetup default: reversal)."""
+    s = (val or 'reversal').lower()
     return 'reversal' if s.startswith('reversal') else 'continuation'
 
 
@@ -989,22 +989,57 @@ def _price_in_daily_poi(price: float, stored: dict) -> bool:
     return lo <= float(price) <= hi
 
 
-def _level_differs(old_val, new_val, rel_tol: float = 1e-6) -> bool:
-    if old_val is None and new_val is None:
-        return False
-    if old_val is None or new_val is None:
-        return True
-    return abs(float(old_val) - float(new_val)) > max(abs(float(old_val)), abs(float(new_val)), 1.0) * rel_tol
+_EXECUTOR_PRESERVE_KEYS = (
+    'entry1_filled', 'entry1_price', 'entry1_time', 'entry1_order_id',
+    'entry1_volume', 'entry1_trigger_tf', 'entry2_filled', 'entry2_price',
+    'entry2_time', 'entry2_trigger_tf', 'entries_filled_tfs', 'multi_entry_pending',
+    'multi_entry_plan', 'last_rejection_reason', 'last_rejection_time',
+    'last_executor_block_reason', 'last_executor_block_time',
+)
 
 
-def _structural_rehydrate_needed(old: dict, new: dict) -> bool:
-    """V40.3: strategy flip sau niveluri structurale diferite → re-hidratare."""
-    if _norm_strategy_type(old.get('strategy_type')) != _norm_strategy_type(new.get('strategy_type')):
+_RADAR_RESET_KEYS = (
+    'EXECUTE_NOW', 'execute_now_trigger_tf', 'execute_now_alert_sent',
+    'execute_now_alert_key', 'radar_execution_ready', 'radar_verdict',
+    'h4_structure_locked', 'h4_sl_price',
+)
+
+
+def _macro_overwrite_blocked(stored: dict, open_position_dir_map: dict) -> bool:
+    """V42: active trade — do not change direction/POI from live D1 scan."""
+    if stored.get('entry1_filled'):
         return True
-    for key in ('poi_top', 'poi_bottom', 'daily_swing_low', 'daily_swing_high', 'daily_target_price'):
-        if _level_differs(old.get(key), new.get(key)):
-            return True
-    return False
+    if stored.get('status') in ('TRADE_OPEN', 'PARTIAL_OPEN'):
+        return True
+    sym = stored.get('symbol')
+    return bool(sym and sym in open_position_dir_map)
+
+
+def _apply_v42_macro_override(old: dict, new_macro: dict) -> dict:
+    """V42: live D1 macro replaces stale JSON; preserve executor state; reset LTF on flip."""
+    merged = dict(new_macro)
+    for key in _EXECUTOR_PRESERVE_KEYS:
+        if key in old and old.get(key) is not None:
+            merged[key] = old[key]
+
+    if old.get('status') in ('TRADE_OPEN', 'PARTIAL_OPEN') or old.get('entry1_filled'):
+        merged['status'] = old.get('status', merged.get('status'))
+
+    old_dir = (old.get('direction') or '').lower()
+    new_dir = (merged.get('direction') or '').lower()
+    old_st = _norm_strategy_type(old.get('strategy_type'))
+    new_st = _norm_strategy_type(merged.get('strategy_type'))
+    macro_flipped = bool(old_dir and new_dir and old_dir != new_dir) or old_st != new_st
+
+    if macro_flipped and merged.get('status') != 'TRADE_OPEN' and not merged.get('entry1_filled'):
+        for key in list(merged.keys()):
+            if key.startswith('radar_'):
+                merged.pop(key, None)
+        for key in _RADAR_RESET_KEYS:
+            merged.pop(key, None)
+        merged['status'] = 'WAITING_4H_CHOCH'
+
+    return merged
 
 
 def _setup_time_to_iso(setup_time) -> str:
@@ -1025,6 +1060,8 @@ def _trade_setup_to_monitoring_dict(setup: TradeSetup, setup_time_str: str) -> d
     scan_status = getattr(setup, 'status', 'WAITING_D1_PULLBACK')
     if scan_status not in ('MONITORING', 'READY', 'WAITING_D1_PULLBACK', 'WAITING_4H_CHOCH', 'WAITING_1H_CHOCH'):
         scan_status = 'WAITING_D1_PULLBACK'
+    _d1_sig = setup.daily_choch
+    _d1_signal_type = 'CHoCH' if isinstance(_d1_sig, CHoCH) else 'BOS'
     return {
         "symbol": setup.symbol,
         "direction": direction,
@@ -1049,6 +1086,10 @@ def _trade_setup_to_monitoring_dict(setup: TradeSetup, setup_time_str: str) -> d
         "swap_triple_day": getattr(setup, 'swap_triple_day', None),
         "daily_swing_low": getattr(setup, 'daily_swing_low', None),
         "daily_swing_high": getattr(setup, 'daily_swing_high', None),
+        "d1_signal_type": _d1_signal_type,
+        "d1_signal_bar": getattr(_d1_sig, 'index', None),
+        "d1_signal_price": getattr(_d1_sig, 'break_price', None),
+        "d1_scan_date": datetime.now().isoformat(),
     }
 
 
@@ -1066,7 +1107,7 @@ def save_monitoring_setups(
     Logica:
       1. Citim JSON existent.
       2. Pastram INTACTE paritati cu status: WAITING_D1_PULLBACK, MONITORING, READY,
-         WAITING_4H_CHOCH, WAITING_1H_CHOCH, TRADE_OPEN.
+         WAITING_4H_CHOCH, WAITING_1H_CHOCH, PARTIAL_OPEN, TRADE_OPEN.
       3. Setup-uri noi din scan: adaugam NUMAI daca paritatea NU exista deja activa in JSON.
       4. Bias fallback: la fel (nu suprascrie activ).
       5. Paritati cu status terminal (INVALIDATED, EXPIRED_TIMEOUT, COMPLETED_WITHOUT_ENTRY,
@@ -1086,7 +1127,7 @@ def save_monitoring_setups(
     # Status-uri active — PASTRATE INTACTE de la o zi la alta
     _ACTIVE_STATUSES = {
         'WAITING_D1_PULLBACK', 'MONITORING', 'READY',
-        'WAITING_4H_CHOCH', 'WAITING_1H_CHOCH', 'TRADE_OPEN'
+        'WAITING_4H_CHOCH', 'WAITING_1H_CHOCH', 'PARTIAL_OPEN', 'TRADE_OPEN'
     }
     # Status-uri terminale — nu se mai includ in output
     _DEAD_STATUSES = {
@@ -1156,6 +1197,10 @@ def save_monitoring_setups(
         # V40: Invalidează setup-uri stale când D1 bias contradictă direcția salvată
         _invalidated = []
         for sym, stored in list(existing_active.items()):
+            st = stored.get('status', '')
+            # V42.2: open trades — doar broker confirmă închiderea
+            if st in ('PARTIAL_OPEN', 'TRADE_OPEN'):
+                continue
             bias = daily_bias_map.get(sym)
             stored_dir = (stored.get('direction') or '').lower()
             if not stored_dir:
@@ -1188,11 +1233,6 @@ def save_monitoring_setups(
 
             direction = "buy" if setup.daily_choch.direction == "bullish" else "sell"
 
-            _d1b = daily_bias_map.get(setup.symbol)
-            if direction == 'buy' and _d1b == 'bearish':
-                print(f"  ⛔ [V40 SAVE GUARD] {setup.symbol}: BUY blocat — D1 LOCK BEARISH")
-                continue
-
             # Conflict guard
             open_dir = open_position_dir_map.get(setup.symbol)
             if open_dir and open_dir != direction:
@@ -1204,41 +1244,25 @@ def save_monitoring_setups(
 
             if setup.symbol in preserved_symbols:
                 _old = existing_active.get(setup.symbol, {})
-                _old_dir = (_old.get('direction') or '').lower()
-                if _old_dir and _old_dir != direction:
-                    monitoring_setups = [s for s in monitoring_setups if s.get('symbol') != setup.symbol]
-                    preserved_symbols.discard(setup.symbol)
-                    existing_active.pop(setup.symbol, None)
+                if _macro_overwrite_blocked(_old, open_position_dir_map):
                     print(
-                        f"  🔄 [V40 BIAS FLIP] {setup.symbol}: {_old_dir.upper()} → {direction.upper()} "
-                        f"— setup vechi eliminat (INVALIDATED_BIAS_FLIP)"
+                        f"  ⚠️ [V42 CONFLICT] Skipping macro overwrite for {setup.symbol} "
+                        f"due to active TRADE_OPEN/PARTIAL_OPEN"
                     )
-                else:
-                    monitoring_setup = _trade_setup_to_monitoring_dict(setup, setup_time_str)
-                    if _structural_rehydrate_needed(_old, monitoring_setup):
-                        strategy_flipped = (
-                            _norm_strategy_type(_old.get('strategy_type'))
-                            != _norm_strategy_type(monitoring_setup.get('strategy_type'))
-                        )
-                        if not strategy_flipped:
-                            monitoring_setup['setup_time'] = _old.get('setup_time', setup_time_str)
-                        monitoring_setups = [
-                            s for s in monitoring_setups if s.get('symbol') != setup.symbol
-                        ]
-                        monitoring_setups.append(monitoring_setup)
-                        existing_active[setup.symbol] = monitoring_setup
-                        _chg = 'strategy flip' if strategy_flipped else 'niveluri structurale'
-                        print(
-                            f"  🔄 [V40.3 RE-HYDRATE] {setup.symbol}: {_chg} "
-                            f"({_norm_strategy_type(_old.get('strategy_type'))} → "
-                            f"{_norm_strategy_type(monitoring_setup.get('strategy_type'))}) — JSON actualizat"
-                        )
-                    else:
-                        print(
-                            f"  ✅ [V40.3 MERGE] {setup.symbol}: structură neschimbată "
-                            f"({existing_active.get(setup.symbol, {}).get('status')}) — păstrat"
-                        )
                     continue
+
+                monitoring_setup = _trade_setup_to_monitoring_dict(setup, setup_time_str)
+                merged = _apply_v42_macro_override(_old, monitoring_setup)
+                monitoring_setups = [
+                    s for s in monitoring_setups if s.get('symbol') != setup.symbol
+                ]
+                monitoring_setups.append(merged)
+                existing_active[setup.symbol] = merged
+                print(
+                    f"  🏛️ [V42 LIVE AUTHORITY] {setup.symbol}: Macro re-hydrated from live D1 scan "
+                    f"(Strategy: {merged.get('strategy_type')}, Direction: {merged.get('direction')})"
+                )
+                continue
 
             monitoring_setup = _trade_setup_to_monitoring_dict(setup, setup_time_str)
             monitoring_setups.append(monitoring_setup)
@@ -1260,18 +1284,20 @@ def save_monitoring_setups(
                     )
                 else:
                     _new_fb = dict(entry)
-                    _old_st = _norm_strategy_type(_old.get('strategy_type'))
-                    _new_st = _norm_strategy_type(_new_fb.get('strategy_type'))
-                    if _old_st != _new_st or _structural_rehydrate_needed(_old, _new_fb):
-                        monitoring_setups = [s for s in monitoring_setups if s.get('symbol') != sym]
-                        _new_fb['setup_time'] = _old.get('setup_time', _new_fb.get('setup_time'))
-                        if _old_st != _new_st:
-                            _new_fb['setup_time'] = entry.get('setup_time', datetime.now().isoformat())
-                        monitoring_setups.append(_new_fb)
-                        existing_active[sym] = _new_fb
-                        print(f"  🔄 [V40.3 RE-HYDRATE] {sym}: bias fallback actualizat")
-                    else:
-                        print(f"  ✅ [V40.3 MERGE] {sym}: bias fallback neschimbat — păstrat")
+                    if _macro_overwrite_blocked(_old, open_position_dir_map):
+                        print(
+                            f"  ⚠️ [V42 CONFLICT] Skipping macro overwrite for {sym} fallback "
+                            f"due to active TRADE_OPEN/PARTIAL_OPEN"
+                        )
+                        continue
+                    merged_fb = _apply_v42_macro_override(_old, _new_fb)
+                    monitoring_setups = [s for s in monitoring_setups if s.get('symbol') != sym]
+                    monitoring_setups.append(merged_fb)
+                    existing_active[sym] = merged_fb
+                    print(
+                        f"  🏛️ [V42 LIVE AUTHORITY] {sym}: bias fallback re-hydrated "
+                        f"(Strategy: {merged_fb.get('strategy_type')}, Direction: {merged_fb.get('direction')})"
+                    )
                     continue
             open_dir = open_position_dir_map.get(sym)
             if open_dir and open_dir != direction:
@@ -1294,7 +1320,7 @@ def save_monitoring_setups(
         _ms_os.replace(_ms_tmp, 'monitoring_setups.json')
 
         new_count = max(0, len(monitoring_setups) - len(existing_active))
-        print(f"\n💾 [V40.3 SMART MERGE] {len(monitoring_setups)} total — "
+        print(f"\n💾 [V42 LIVE AUTHORITY] {len(monitoring_setups)} total — "
               f"{len(existing_active)} pastrate/rehidratate + {new_count} noi din scan de azi")
 
     except Exception as e:
@@ -1325,6 +1351,9 @@ def main():
         print("⚠️  AUDIT MODE: Ignoring open positions check - scanning ALL pairs\n")
     
     scanner = DailyScanner()
+    logger.success(
+        "[V42.4 CLEANUP] Successfully purged legacy branches and unified core system data defaults."
+    )
     
     # Test Telegram connection first
     print("🧪 Testing Telegram connection...")

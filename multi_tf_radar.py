@@ -749,7 +749,7 @@ class MultiTFRadar:
             # Blocul vechi de reject nu mai e necesar
             
             # ── V16.2: Calcul Equilibrium (50% EQ) din impulsul CHoCH ─────────
-            # Utilizat în P/D Array validation în _check_radar_entry().
+            # Utilizat în P/D Array validation la analiza setup-ului.
             # Stocat în setup ca radar_1h_eq / radar_4h_eq.
             choch_equilibrium = None
             try:
@@ -1321,16 +1321,33 @@ class MultiTFRadar:
         Daca pretul e IN FVG si CHoCH/BOS e confirmat pe TF, executorul trebuie sa
         execute chiar daca trigger-ul live (<=3 bare) a expirat.
         Returns: '1H' | '4H' | None
+
+        V42.2: PARTIAL_OPEN — latch permis doar pentru TF-uri din multi_entry_pending.
         """
-        if setup.get('entry1_filled'):
+        if setup.get('status') == 'TRADE_OPEN':
             return None
+        pending = None
+        if setup.get('entry1_filled'):
+            pending = setup.get('multi_entry_pending')
+            if pending is None:
+                plan = setup.get('multi_entry_plan') or ['1H', '4H']
+                filled = [x.upper() for x in (setup.get('entries_filled_tfs') or [])]
+                if not filled:
+                    filled = [(setup.get('entry1_trigger_tf') or '1H').upper()]
+                pending = [p for p in plan if p.upper() not in filled]
+            else:
+                pending = [p.upper() for p in pending]
+            if not pending:
+                return None
         if not result.pd_guard_passed:
             return None
 
-        setup_type = setup.get('setup_type', setup.get('strategy_type', '')).upper()
+        setup_type = setup.get('setup_type', setup.get('strategy_type', 'reversal')).upper()
         is_reversal = 'REVERSAL' in setup_type
 
         for tf_name, tf_data in (('1H', result.tf_1h), ('4H', result.tf_4h)):
+            if pending is not None and tf_name.upper() not in pending:
+                continue
             if not tf_data.in_fvg or not tf_data.fvg_detected:
                 continue
             if is_reversal:
@@ -1404,10 +1421,48 @@ class MultiTFRadar:
     def _clear_execute_now_only(self, setup: dict, reason: str = '') -> None:
         """V37.9: Dezarmeaza EXECUTE_NOW — pastreaza execute_now_alert_sent (fara spam Telegram)."""
         sym = setup.get('symbol', '?')
-        setup.pop('EXECUTE_NOW', None)
+        setup['EXECUTE_NOW'] = False
         setup.pop('execute_now_trigger_tf', None)
         if reason:
             logger.info(f"[V37.9] {sym}: EXECUTE_NOW dezarmat — {reason} (alerta Telegram pastrata)")
+
+    def _v423_macro_bias(self, setup: dict, result: 'MultiTFResult') -> str:
+        d = (setup.get('direction') or '').lower()
+        if d in ('buy', 'long', 'bullish'):
+            return 'bullish'
+        if d in ('sell', 'short', 'bearish'):
+            return 'bearish'
+        return 'bullish' if result.direction == 'LONG' else 'bearish'
+
+    def _v423_ltf_misalignment(self, setup: dict, result: 'MultiTFResult') -> tuple:
+        """Returnează (macro_bias, listă de (tf, dir_choch) nealiniate)."""
+        macro = self._v423_macro_bias(setup, result)
+        issues = []
+        if result.tf_4h.choch_detected and result.tf_4h.choch_direction != macro:
+            issues.append(('4H', result.tf_4h.choch_direction))
+        if result.tf_1h.choch_detected and result.tf_1h.choch_direction != macro:
+            issues.append(('1H', result.tf_1h.choch_direction))
+        return macro, issues
+
+    def _v423_force_disarm_execute_now(
+        self, setup: dict, result: 'MultiTFResult', reason_detail: str = '',
+    ) -> None:
+        """V42.3: Dezarmare instantanee EXECUTE_NOW în JSON când LTF ≠ D1 (atomic flush)."""
+        if setup.get('status') == 'TRADE_OPEN':
+            return
+        sym = setup.get('symbol', '?')
+        had_signal = setup.get('EXECUTE_NOW') is True
+        setup['EXECUTE_NOW'] = False
+        setup.pop('execute_now_trigger_tf', None)
+        setup['radar_execution_ready'] = False
+        h4_dir = setup.get('radar_4h_choch_direction') or result.tf_4h.choch_direction
+        logger.warning(
+            f"[⚠️ V42.3 ALINIERE] Execuție blocată pentru {sym}. "
+            f"Lipsă sincron (D1: {setup.get('direction')} vs LTF: {h4_dir})"
+            + (f" — {reason_detail}" if reason_detail else '')
+        )
+        if had_signal or reason_detail:
+            self._flush_execute_now_to_json(setup)
 
     def _clear_execute_now_signal(self, setup: dict, reason: str = '') -> None:
         """V37.9: Curata complet semnalul — doar dupa fill sau setup nou/expirat."""
@@ -1487,6 +1542,14 @@ class MultiTFRadar:
     def _arm_execute_now(self, setup: dict, result: 'MultiTFResult', exec_tf: str,
                          source: str = 'trigger') -> None:
         """V37.5/6: Seteaza EXECUTE_NOW, flush instant JSON, Telegram o singura data per setup."""
+        if setup.get('status') != 'TRADE_OPEN':
+            _macro, _issues = self._v423_ltf_misalignment(setup, result)
+            if _issues:
+                _detail = '/'.join(f"{tf}={d}" for tf, d in _issues)
+                self._v423_force_disarm_execute_now(
+                    setup, result, f"arm blocked — {_detail} vs D1 {_macro}",
+                )
+                return
         # V40.9: nu re-arma daca executorul a respins recent (Radar latch = spam Telegram)
         _blocked_at = setup.get('execute_now_blocked_at')
         if _blocked_at:
@@ -1731,6 +1794,10 @@ class MultiTFRadar:
                 f"CHoCH 4H dir={result.tf_4h.choch_direction} != setup={_setup_direction_lower} "
                 f"— h4_structure_locked NESETAT (CHoCH contrar = zgomot structural)"
             )
+            setup['h4_structure_locked'] = False
+            self._v423_force_disarm_execute_now(
+                setup, result, 'H4 DIRECTION MISMATCH vs Daily bias',
+            )
         elif result.tf_4h.choch_detected and result.tf_4h.choch_bars_ago > _4H_STRUCT_MAX_BARS \
                 and not _4h_bos_is_fresh_and_aligned:
             # CHoCH vechi ȘI fără BOS recent aliniat — structura poate fi stale
@@ -1739,7 +1806,25 @@ class MultiTFRadar:
                 f"(>{_4H_STRUCT_MAX_BARS} max) + NICIUN BOS recent aliniat "
                 f"— h4_structure_locked NESETAT (structură neconfirmată)"
             )
+            setup['h4_structure_locked'] = False
+            self._v423_force_disarm_execute_now(
+                setup, result, 'H4 stale — pierdere aliniere structurală',
+            )
         # else: nicio structură → rămâne cum era (nu atingem flagul)
+
+        # V42.3: 1H CHoCH contrar bias-ului Daily → dezarmare EXECUTE_NOW
+        if (
+            result.tf_1h.choch_detected
+            and result.tf_1h.choch_direction is not None
+            and result.tf_1h.choch_direction != _setup_direction_lower
+        ):
+            logger.warning(
+                f"🚫 [V42.3 H1 DIRECTION MISMATCH] {result.symbol}: "
+                f"CHoCH 1H dir={result.tf_1h.choch_direction} != setup={_setup_direction_lower}"
+            )
+            self._v423_force_disarm_execute_now(
+                setup, result, 'H1 DIRECTION MISMATCH vs Daily bias',
+            )
 
         # 🏆 PRIORITY & EXECUTION STATUS
         setup['radar_priority_timeframe'] = result.priority_timeframe
@@ -1754,12 +1839,19 @@ class MultiTFRadar:
         # Radarul NU are voie să șteargă EXECUTE_NOW — doar executorul poate face asta
         # (după ce execută sau respinge). Altfel: radarul scrie False în ciclu T+30s,
         # înainte ca executorul să apuce să citească True-ul din T+00s → semnal pierdut.
-        # Excepție: dacă entry1_filled=True, semnalul a fost deja consumat → safe to clear.
-        if result.execution_ready:
+        # Excepție V42.2: TRADE_OPEN = toate intrările complete; PARTIAL_OPEN = radar poate re-arma 4H.
+        # V42.3: nu arma EXECUTE_NOW dacă LTF CHoCH ≠ Daily bias.
+        _v423_macro, _v423_issues = self._v423_ltf_misalignment(setup, result)
+        if _v423_issues and setup.get('status') != 'TRADE_OPEN':
+            _detail = '/'.join(f"{tf}={d}" for tf, d in _v423_issues)
+            self._v423_force_disarm_execute_now(
+                setup, result, f"LTF misalignment ({_detail} vs D1 {_v423_macro})",
+            )
+        elif result.execution_ready:
             # V31.0 REVERSAL vs CONTINUATION TRIGGER GUARD
             # REVERSAL: accepta NUMAI CHoCH ca trigger (BOS = continuarea trendului anterior — invalid pt reversal)
             # CONTINUATION: accepta si BOS (trend in desfasurare, BOS = confirmare continuare)
-            _setup_type_v31 = setup.get('setup_type', setup.get('strategy_type', '')).upper()
+            _setup_type_v31 = setup.get('setup_type', setup.get('strategy_type', 'reversal')).upper()
             _is_reversal_v31 = 'REVERSAL' in _setup_type_v31
             _exec_tf_v31 = result.priority_timeframe or '?'
             _exec_tf_data_v31 = result.tf_1h if _exec_tf_v31 == '1H' else result.tf_4h
@@ -1790,8 +1882,18 @@ class MultiTFRadar:
                         result.priority_timeframe or '1H',
                         source='trigger',
                     )
-        elif setup.get('entry1_filled', False):
+        elif setup.get('status') == 'TRADE_OPEN':
+            self._clear_execute_now_signal(setup, 'trade_open')
+        elif setup.get('entry1_filled') and setup.get('status') != 'PARTIAL_OPEN':
             self._clear_execute_now_signal(setup, 'entry1_filled')
+        elif setup.get('EXECUTE_NOW') and setup.get('status') == 'PARTIAL_OPEN':
+            still_in_fvg = result.tf_1h.in_fvg or result.tf_4h.in_fvg
+            if still_in_fvg:
+                setup['radar_execution_ready'] = True
+                _ltf = setup.get('execute_now_trigger_tf') or '4H'
+                setup['radar_verdict'] = (
+                    f"🔥 EXECUTE NOW ({_ltf} LAYER-2 — asteptam executor scale-in)"
+                )
         elif setup.get('EXECUTE_NOW') and not setup.get('entry1_filled'):
             # V37.5: Reset DOAR cand pretul paraseste FVG — NU cand CHoCH trece de 3 bare.
             # Bug V31: `not execution_ready` stergea semnalul desi pretul era inca in FVG.
@@ -1847,6 +1949,7 @@ class MultiTFRadar:
             'INVALIDATED', 'COMPLETED_WITHOUT_ENTRY', 'EXPIRED_TIMEOUT',
             'EXPIRED', 'CLOSED', 'FAILED', 'CANCELLED', 'TRADE_OPEN'
         }
+        # V42.2: PARTIAL_OPEN — Poarta 1/2 inca active (structura macro poate invalida)
 
         changed = False
         for s in setups:
@@ -2013,9 +2116,19 @@ class MultiTFRadar:
             }
             if isinstance(fresh_data, dict):
                 _before = len(fresh_data.get('setups', []))
-                fresh_data['setups'] = [s for s in fresh_data['setups']
-                                        if s.get('status', '') not in _DEAD]
-                _removed = _before - len(fresh_data['setups'])
+                _survivors = []
+                for s in fresh_data.get('setups', []):
+                    st = s.get('status', '')
+                    if st in _DEAD:
+                        if st == 'CLOSED':
+                            logger.info(
+                                f"[V42.2 EVICTION] Purged {s.get('symbol', '?')} from JSON "
+                                f"due to CLOSED status"
+                            )
+                    else:
+                        _survivors.append(s)
+                fresh_data['setups'] = _survivors
+                _removed = _before - len(_survivors)
                 if _removed:
                     logger.info(f"[V33 CLEANUP] {_removed} paritate(i) terminale eliminate din JSON")
 
@@ -2225,6 +2338,7 @@ class MultiTFRadar:
         setups = self._apply_lifecycle_gates(setups)
 
         # Filtram: TRADE_OPEN (incetarea focului) si statusuri terminale nu intra in analiza
+        # V42.2: PARTIAL_OPEN — radar continua scanarea pentru layer 4H (NU in _SKIP_STATUSES)
         _SKIP_STATUSES = {
             'TRADE_OPEN',           # Executorul are control — Radarul nu mai cauta trigaci
             'INVALIDATED',          # Poarta 1: structura macro incalcata
@@ -2392,6 +2506,9 @@ def main():
     args = parser.parse_args()
     
     radar = MultiTFRadar()
+    logger.success(
+        "[V42.4 CLEANUP] Successfully purged legacy branches and unified core system data defaults."
+    )
     
     if args.watch:
         radar.watch_mode(

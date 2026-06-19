@@ -1919,7 +1919,23 @@ class SMCDetector:
             locked_bias = 'bearish'
         elif macro_range_low < close < macro_range_high:
             locked = True
-            locked_bias = 'bearish'
+            # V42: INSIDE range — bias from latest D1 signal, not forced bearish (Forex GBPNZD fix)
+            chochs, bos_list = self.detect_choch_and_bos(df)
+            latest_choch = chochs[-1] if chochs else None
+            latest_bos = bos_list[-1] if bos_list else None
+            latest_signal = None
+            if latest_choch and latest_bos:
+                latest_signal = (
+                    latest_choch if latest_choch.index >= latest_bos.index else latest_bos
+                )
+            elif latest_choch:
+                latest_signal = latest_choch
+            elif latest_bos:
+                latest_signal = latest_bos
+            if latest_signal:
+                locked_bias = latest_signal.direction
+            else:
+                locked_bias = 'bearish'
         else:
             locked = False
 
@@ -1935,6 +1951,15 @@ class SMCDetector:
     def _range_signal_level(self, df: pd.DataFrame, signal) -> float:
         return float(signal.break_price)
 
+    def _bar_body_close_above(self, df: pd.DataFrame, bar_index: int, level: float) -> bool:
+        """V42: True if bar body close (or body high) clears structural level."""
+        if bar_index < 0 or bar_index >= len(df):
+            return False
+        _close = float(df['close'].iloc[bar_index])
+        _open = float(df['open'].iloc[bar_index])
+        _body_high = max(_open, _close)
+        return _close > level or _body_high > level
+
     def _is_internal_range_signal(
         self,
         df: pd.DataFrame,
@@ -1943,6 +1968,14 @@ class SMCDetector:
     ) -> bool:
         if not range_state.locked or signal.direction != 'bullish':
             return False
+        # V42: Bullish CHoCH reversal after bearish leg — never ignorable sub-structure
+        if isinstance(signal, CHoCH):
+            if signal.previous_trend == 'bearish':
+                return False
+            if self._bar_body_close_above(
+                df, signal.index, range_state.macro_range_high
+            ):
+                return False
         if range_state.locked_bias == 'bullish':
             return signal.direction == 'bearish' and signal.index >= range_state.macro_range_high_bar
         level = self._range_signal_level(df, signal)
@@ -2083,18 +2116,22 @@ class SMCDetector:
                 print(f"      Last 3 Lows:  HL={hl_count}, LL={ll_count}")
                 print(f"      Swing Pattern: {macro_trend_swings.upper()}")
         
-        # V40 range lock (bias guard before V22 latest-signal rule)
+        # LAYER 2: CHoCH/BOS analysis (latest signal direction)
+        daily_chochs, daily_bos_list = self.detect_choch_and_bos(df)
+
+        # V42: filter internal bounces, then use latest body-close signal (not blind range lock)
         if symbol:
             _v39_sh = self.detect_swing_highs(df)
             _v39_sl = self.detect_swing_lows(df)
             _v39_rs = self.compute_structural_range(df, _v39_sh, _v39_sl, symbol=symbol)
-            if _v39_rs and _v39_rs.locked:
-                if debug:
-                    print(f"   🔒 [V40] determine_daily_trend → {_v39_rs.locked_bias.upper()} (range locked)")
-                return _v39_rs.locked_bias
-
-        # LAYER 2: CHoCH/BOS analysis (latest signal direction)
-        daily_chochs, daily_bos_list = self.detect_choch_and_bos(df)
+            daily_chochs, daily_bos_list, _v39_rs = self.filter_internal_range_signals(
+                symbol, df, daily_chochs, daily_bos_list, _v39_rs
+            )
+            if _v39_rs and _v39_rs.locked and debug:
+                print(
+                    f"   🔒 [V42] determine_daily_trend range INSIDE/LOCK "
+                    f"→ bias from filtered D1 signals (lock hint {_v39_rs.locked_bias.upper()})"
+                )
         
         latest_signal = None
         latest_index = -1
@@ -3218,10 +3255,7 @@ class SMCDetector:
             latest_signal = latest_choch
         elif latest_bos:
             latest_signal = latest_bos
-        if rs and rs.locked:
-            aligned = [s for s in (chochs + bos_list) if s.direction == rs.locked_bias]
-            if aligned:
-                latest_signal = max(aligned, key=lambda s: s.index)
+        # V42: trust latest filtered signal — no forced realignment to locked_bias
         if latest_signal:
             signal_label = 'CHoCH' if isinstance(latest_signal, CHoCH) else 'BOS'
             strategy = 'reversal' if signal_label == 'CHoCH' else 'continuation'
@@ -3459,16 +3493,12 @@ class SMCDetector:
         if latest_choch and latest_bos:
             if latest_choch.index >= latest_bos.index:
                 latest_signal = latest_choch
-                strategy_type = 'reversal'   # intern — pentru calcul equilibrium
             else:
                 latest_signal = latest_bos
-                strategy_type = 'continuation'  # intern — pentru calcul equilibrium
         elif latest_choch:
             latest_signal = latest_choch
-            strategy_type = 'reversal'
         elif latest_bos:
             latest_signal = latest_bos
-            strategy_type = 'continuation'
         else:
             if debug:
                 print(f"❌ REJECTED: No Daily CHoCH or BOS found")
@@ -3476,25 +3506,7 @@ class SMCDetector:
 
         current_trend = latest_signal.direction
         _signal_label = 'CHoCH' if isinstance(latest_signal, CHoCH) else 'BOS'
-
-        if _range_state and _range_state.locked:
-            current_trend = _range_state.locked_bias
-            _aligned = [
-                s for s in (daily_chochs + daily_bos_list)
-                if s.direction == _range_state.locked_bias
-            ]
-            if _aligned:
-                latest_signal = max(_aligned, key=lambda s: s.index)
-                _signal_label = 'CHoCH' if isinstance(latest_signal, CHoCH) else 'BOS'
-            # V37.15: strategy din semnalul real (CHoCH→reversal, BOS→continuation) — nu kill switch static
-            if latest_signal:
-                strategy_type = 'reversal' if _signal_label == 'CHoCH' else 'continuation'
-            else:
-                strategy_type = 'continuation'
-            if current_trend == 'bearish' and _unconfirmed_bullish_choch:
-                print(
-                    f"   ⛔ [V40 GUARD] {symbol}: blocat bias LONG — bounce intern in range bearish locked"
-                )
+        strategy_type = 'reversal' if _signal_label == 'CHoCH' else 'continuation'
 
         if debug:
             print(f"\n✅ [V25.0 UNIVERSAL] {symbol}: D1 BREAK {_signal_label} {current_trend.upper()} @bar{latest_signal.index} price={latest_signal.break_price:.5f} → WAITING_D1_PULLBACK")
@@ -4122,21 +4134,7 @@ class SMCDetector:
             if debug:
                 print(f"\n✅ [V25.0 CONTINUITY] BOS vârstă: {bos_age} bare — acceptat fără limită (WAITING_D1_PULLBACK)")
         
-        # V28.0: GBP 2-TF FILTER ELIMINAT DIN DAILY SCAN
-        # Confirmare 1H va fi verificată EXCLUSIV de multi_tf_radar când prețul atinge zona.
-        # Scanner Daily = bias macro (D1 CHoCH/BOS). Radar 4H/1H = aliniere executare.
-        # Motivul eliminării: 1H CHoCH dintr-un pullback Daily de 2-3 săptămâni
-        # apare ULTERIOR scanului de dimineață — era respins în 100% din cazuri.
-        gbp_confirmed = True  # V28.0: întotdeauna True — radar verifică 1H la execuție
-        if debug and 'GBP' in symbol:
-            print(f"\n✅ [V28.0 GBP] Filtru 1H eliminat din Daily scan — multi_tf_radar verifică 1H când prețul ajunge la FVG")
-        
-        # ─── V28.0: gbp_confirmed = True întotdeauna (GBP filter mutat în radar) ──────
-        # continuity_validated = True întotdeauna (V25.0) — orice D1 break e valid
-        # (blocul de mai jos păstrat ca guard de siguranță — nu se mai execută niciodată)
-        if not gbp_confirmed:
-            return None  # guard de siguranță — V28.0: nu se mai trigger-uieşte
-        # ──────────────────────────────────────────────────────────────────────────
+        # V28.0: GBP 2-TF FILTER ELIMINAT DIN DAILY SCAN — multi_tf_radar verifică 1H la execuție
 
         # STATUS LOGIC: V2.1 vs V3.0
         # 🔥 V8.0: MOMENTUM entries always READY (breakout strategy, no pullback confirmation needed)
@@ -4726,17 +4724,6 @@ class SMCDetector:
             return None
         
 
-        # V40 — nu permite READY pe bias opus range-ului locked
-        if _range_state and _range_state.locked:
-            if current_trend != _range_state.locked_bias:
-                current_trend = _range_state.locked_bias
-                # V37.15: păstrăm tipul din semnalul structural real, nu forțăm continuation
-                if latest_signal:
-                    strategy_type = 'reversal' if _signal_label == 'CHoCH' else 'continuation'
-            if status == 'READY' and current_trend == 'bearish' and _unconfirmed_bullish_choch:
-                status = 'MONITORING'
-                print(f"⏳ [V40] {symbol}: READY LONG blocat — range bearish locked, asteptam 4H CHoCH bearish")
-
         # Return setup (MONITORING or READY)
         # Convert pandas Timestamp to Python datetime properly
         # Get the actual timestamp value (not the index position!)
@@ -5223,7 +5210,7 @@ def calculate_choch_fibonacci(
     direction: str,
     df_4h: Optional[pd.DataFrame] = None,
     df_daily: Optional[pd.DataFrame] = None,
-    strategy_type: str = 'continuation',
+    strategy_type: str = 'reversal',
     fibo_timeframe: Optional[str] = None,
     symbol: str = ''
 ) -> dict:

@@ -7,7 +7,6 @@ Arhitectura 3 straturi (Apollo / Glitch in Matrix):
 3. setup_executor_monitor.py (acest script) → signals.json → cTrader VPS port 8010
 
 V31.0+ EXECUTOR BLIND:
-- NU face analiză SMC proprie (_check_radar_entry / _check_pullback_entry = stub)
 - Singurul trigger de execuție Entry 1: EXECUTE_NOW=True setat de Radar
 - V37.2: SL live 4H obligatoriu la EXECUTE_NOW (min 30p); JSON nu mai poate impune micro-stop
 - V37.0: Entry 2 scale-in dezactivat (validate_choch_confirmation_scale_in)
@@ -224,6 +223,122 @@ class SetupExecutorMonitor:
         'execute_now_alert_key', 'radar_execution_ready', 'radar_verdict', 'h4_structure_locked',
     )
 
+    # V42.2: status terminal din JSON fresh — Radar/position_monitor au autoritate absolută
+    _FRESH_TERMINAL_STATUSES = frozenset({
+        'INVALIDATED', 'CLOSED', 'COMPLETED_WITHOUT_ENTRY',
+    })
+
+    _DEFAULT_MULTI_ENTRY_PLAN = ('1H', '4H')
+
+    @classmethod
+    def _multi_entry_plan(cls, setup: dict) -> list:
+        return list(setup.get('multi_entry_plan') or cls._DEFAULT_MULTI_ENTRY_PLAN)
+
+    @classmethod
+    def _apply_multi_entry_post_fill(cls, setup: dict, trigger_tf: str) -> None:
+        """V42.2: first fill → PARTIAL_OPEN; all planned TFs filled → TRADE_OPEN."""
+        symbol = setup.get('symbol', '?')
+        plan = cls._multi_entry_plan(setup)
+        tf = (trigger_tf or setup.get('execute_now_trigger_tf') or '1H').upper()
+        filled = [x.upper() for x in (setup.get('entries_filled_tfs') or [])]
+        if tf not in filled:
+            filled.append(tf)
+        setup['entries_filled_tfs'] = filled
+        setup.setdefault('multi_entry_plan', plan)
+
+        if not setup.get('entry1_filled'):
+            setup['entry1_filled'] = True
+            setup['entry1_trigger_tf'] = tf
+        elif tf != (setup.get('entry1_trigger_tf') or '').upper():
+            setup['entry2_filled'] = True
+            setup['entry2_trigger_tf'] = tf
+
+        pending = [p for p in plan if p.upper() not in filled]
+        setup['multi_entry_pending'] = pending
+
+        if not pending:
+            setup['status'] = 'TRADE_OPEN'
+            logger.success(
+                f"[V42.2 MULTI-ENTRY] {symbol}: all planned entries filled → TRADE_OPEN"
+            )
+        else:
+            setup['status'] = 'PARTIAL_OPEN'
+            logger.success(
+                f"[V42.2 MULTI-ENTRY] {symbol} moved to PARTIAL_OPEN "
+                f"(filled={filled}, pending={pending})"
+            )
+
+    @classmethod
+    def _infer_multi_entry_pending(cls, setup: dict) -> list:
+        pending = setup.get('multi_entry_pending')
+        if pending is not None:
+            return list(pending)
+        plan = cls._multi_entry_plan(setup)
+        filled = [x.upper() for x in (setup.get('entries_filled_tfs') or [])]
+        if setup.get('entry1_filled') and not filled:
+            filled = [(setup.get('entry1_trigger_tf') or '1H').upper()]
+        return [p for p in plan if p.upper() not in filled]
+
+    @classmethod
+    def _executor_can_consume_execute_now(cls, processed: dict) -> bool:
+        """Whether executor RAM state still accepts a fresh EXECUTE_NOW from radar."""
+        if not processed.get('entry1_filled'):
+            return True
+        if processed.get('status') != 'PARTIAL_OPEN':
+            return False
+        return bool(cls._infer_multi_entry_pending(processed))
+
+    @classmethod
+    def _can_execute_execute_now(cls, setup: dict) -> bool:
+        if setup.get('EXECUTE_NOW') is not True:
+            return False
+        return cls._executor_can_consume_execute_now(setup) and (
+            not setup.get('entry1_filled')
+            or (
+                (setup.get('execute_now_trigger_tf') or '4H').upper()
+                not in [x.upper() for x in (setup.get('entries_filled_tfs') or [])]
+            )
+        )
+
+    @staticmethod
+    def _v423_norm_daily_bias(direction: str):
+        """V42.3: buy/sell → bullish/bearish pentru comparatie cu radar_*_choch_direction."""
+        d = (direction or '').lower()
+        if d in ('buy', 'long', 'bullish'):
+            return 'bullish'
+        if d in ('sell', 'short', 'bearish'):
+            return 'bearish'
+        return None
+
+    @classmethod
+    def _v423_structural_sync_ok(cls, setup: dict) -> tuple:
+        """
+        V42.3: Scut absolut D1 = LTF — EXECUTE_NOW doar cu CHoCH 4H/1H aliniat cu Daily.
+        TRADE_OPEN: nu blocăm (poziție deja deschisă).
+        """
+        if setup.get('status') == 'TRADE_OPEN':
+            return True, ''
+        macro = cls._v423_norm_daily_bias(setup.get('direction', ''))
+        if not macro:
+            return False, 'invalid D1 direction'
+
+        h4_dir = setup.get('radar_4h_choch_direction')
+        h1_dir = setup.get('radar_1h_choch_direction')
+        trigger = (setup.get('execute_now_trigger_tf') or '1H').upper()
+
+        if setup.get('radar_4h_choch_detected') and h4_dir and h4_dir != macro:
+            return False, h4_dir
+        if setup.get('radar_1h_choch_detected') and h1_dir and h1_dir != macro:
+            return False, h1_dir
+
+        if trigger == '4H':
+            if not (setup.get('radar_4h_choch_detected') and h4_dir == macro):
+                return False, h4_dir or 'missing'
+        elif not (setup.get('radar_1h_choch_detected') and h1_dir == macro):
+            return False, h1_dir or 'missing'
+
+        return True, ''
+
     @staticmethod
     def _setup_merge_key(setup: dict) -> tuple:
         sym = (setup.get('symbol') or '').upper()
@@ -239,9 +354,22 @@ class SetupExecutorMonitor:
         """
         V37.13: Radar flush poate scrie EXECUTE_NOW intre read-ul executorului (T+0)
         si save (T+12). Versiunea processed din memorie NU trebuie sa stearga semnalul fresh.
+
+        V42.2: Daca fresh are status terminal structural (INVALIDATED/CLOSED/CWE),
+        fresh castiga disputa — executorul nu re-salveaza setup-uri invalidate live.
         """
+        fresh_status = fresh.get('status', '')
+        if fresh_status in cls._FRESH_TERMINAL_STATUSES:
+            merged = {**processed, **fresh}
+            sym = fresh.get('symbol', '?')
+            logger.info(
+                f"[V42.2 MERGE] {sym}: fresh terminal status {fresh_status} "
+                f"wins over executor RAM"
+            )
+            return merged
+
         merged = {**fresh, **processed}
-        if fresh.get('EXECUTE_NOW') is True and not processed.get('entry1_filled'):
+        if fresh.get('EXECUTE_NOW') is True and cls._executor_can_consume_execute_now(processed):
             for key in cls._RADAR_EXECUTE_NOW_KEYS:
                 if key in fresh:
                     merged[key] = fresh[key]
@@ -1106,25 +1234,6 @@ class SetupExecutorMonitor:
             logger.error(f"Error checking price for {symbol}: {e}")
             return False, 0
     
-    def _check_radar_entry(self, setup: dict, df_h1, symbol: str) -> dict:
-        """[LEGACY — Dezactivat permanent din V31.0]
-        V3.3 SNIPER ENTRY a fost înlocuit de arhitectura Radar-only (multi_tf_radar.py).
-        Singurul trigger valid de execuție este EXECUTE_NOW=True setat de Radar.
-        Executorul NU mai face analiză SMC proprie (FVG / P/D / CHoCH independent).
-        """
-        logger.debug(f"[V31.0 LEGACY] _check_radar_entry: {symbol} → KEEP_MONITORING")
-        return {'action': 'KEEP_MONITORING', 'reason': '[V31.0 LEGACY] Radar-only mode — doar EXECUTE_NOW=True declanseaza executia'}
-
-    def _check_pullback_entry(self, setup: dict, df_h1, symbol: str) -> dict:
-        """V31.0 STUB: DEZACTIVAT.
-        Executorul NU mai face analiza SMC proprie.
-        Singurul trigger valid este EXECUTE_NOW=True setat de Radar (multi_tf_radar.py).
-        Functia returneaza imediat KEEP_MONITORING pentru orice apel rezidual.
-        """
-        # V31.0: Dezactivat complet — Radar-only mode.
-        logger.debug(f"[V31.0] _check_pullback_entry stub: {symbol} → KEEP_MONITORING")
-        return {'action': 'KEEP_MONITORING', 'reason': '[V31.0] Executor fara SMC propriu — asteptam EXECUTE_NOW live de la Radar'}
-
     def _symbol_already_at_broker(self, symbol: str) -> bool:
         """
         🛡️ V7.1 DUPLICATE GUARD + V9.1 FRESHNESS CHECK (ФорексГод)
@@ -1193,7 +1302,7 @@ class SetupExecutorMonitor:
              (scris de executor DUPĂ execuție sau de Daily Scanner la invalidare manuală)
           2. Vârstă cronologică > 14 zile (crescut de la 7→30→14 zile: echilibru macro)
              Setup-urile Daily au nevoie de timp pentru pullback — 14 zile = 2 săptămâni.
-          3. Câmpuri obligatorii lipsă: symbol / direction / entry_price
+          3. Câmpuri obligatorii lipsă: symbol / direction
              (setup corupt, inutilizabil de executor)
 
         GARANTAT PĂSTRAT:
@@ -1226,8 +1335,18 @@ class SetupExecutorMonitor:
                 # ── Condiția 1: Status mort explicit ────────────────────────────────────
                 # Scris de executor după execuție finalizată sau de scanner la invalidare
                 dead_statuses = {'EXPIRED', 'CLOSED', 'CANCELLED', 'FAILED'}
-                if s.get('status', '') in dead_statuses:
-                    reason_remove = f"status mort={s.get('status')}"
+                st = s.get('status', '')
+                if st in dead_statuses:
+                    reason_remove = f"status mort={st}"
+                    if st == 'CLOSED':
+                        logger.info(
+                            f"[V42.2 EVICTION] Purged {symbol} from JSON due to CLOSED status"
+                        )
+
+                # V42.2: PARTIAL_OPEN / TRADE_OPEN — doar broker confirmă închiderea (→ CLOSED)
+                if not reason_remove and st in ('PARTIAL_OPEN', 'TRADE_OPEN'):
+                    active_setups.append(s)
+                    continue
 
                 # ── Condiția 2: Vârstă cronologică > 14 zile ────────────────────────────
                 # V19.20: 14 zile = 2 săptămâni complete pentru pullback macro
@@ -1316,17 +1435,15 @@ class SetupExecutorMonitor:
     
     def _process_monitoring_setups(self):
         """
-        Process all setups in monitoring_setups.json using V3.2 PULLBACK + SCALE_IN.
-        
+        Process all setups in monitoring_setups.json — V31+ Radar-only execution.
+
         V9.3 DEEP SLEEP: If active, skip ALL processing (zero HTTP calls).
-        
-        V3.2 PULLBACK FLOW:
+
+        V42.4 ACTIVE FLOW:
         1. Load setup from monitoring_setups.json
-        2. Fetch current market data (Daily, 4H, 1H)
-        3. Check if 1H CHoCH detected → calculate Fibonacci 50%
-        4. Check if pullback to Fibo 50% reached → EXECUTE ENTRY1
-        5. If timeout (24h) → force entry or skip based on config
-        6. After Entry1 filled → wait for 4H CHoCH for Entry2 (same as V3.1)
+        2. EXECUTE_NOW=True → execuție structurală live (bloc V19.8)
+        3. status=READY → execuție forțată Entry 1 (legacy owner flag)
+        4. Altfel → așteptare pasivă (Radar setează EXECUTE_NOW)
         """
         # ━━━ V9.3 DEEP SLEEP CHECK (MUST be first — zero cost) ━━━
         # V19.9: Verifică marker-ul system_resumed.json la fiecare ciclu
@@ -1369,7 +1486,8 @@ class SetupExecutorMonitor:
                 # V31.0: WAITING_D1_PULLBACK si WAITING_4H_CHOCH sunt statusuri noi din Scanner V31.0
                 _active_statuses_v31 = [
                     'MONITORING', 'READY', 'WAITING_POSITION_CLOSE',
-                    'WAITING_D1_PULLBACK', 'WAITING_4H_CHOCH', 'WAITING_1H_CHOCH'
+                    'WAITING_D1_PULLBACK', 'WAITING_4H_CHOCH', 'WAITING_1H_CHOCH',
+                    'PARTIAL_OPEN',  # V42.2: second layer (4H) while 1H position open
                 ]
                 if status not in _active_statuses_v31:
                     if not setup.get('EXECUTE_NOW', False):
@@ -1386,7 +1504,12 @@ class SetupExecutorMonitor:
                             _active = _json.load(_f)
                         direction = setup.get('direction', '')
                         _existing = [p for p in _active if p.get('symbol', '').upper() == symbol.upper() and p.get('direction', '').lower() == direction.lower()]
-                        if _existing:
+                        _scale_in_ok = (
+                            setup.get('status') == 'PARTIAL_OPEN'
+                            and setup.get('multi_entry_pending')
+                            and setup.get('EXECUTE_NOW') is True
+                        )
+                        if _existing and not _scale_in_ok:
                             if status != 'WAITING_POSITION_CLOSE':
                                 logger.warning(f"⏸️  V10.9 POSITION GUARD: {symbol} {direction.upper()} already open at broker — pausing setup until position closes")
                                 setups[i]['status'] = 'WAITING_POSITION_CLOSE'
@@ -1425,7 +1548,25 @@ class SetupExecutorMonitor:
                     #   3. Recalculează TP structural pe D1 (primul swing point dincolo de preț)
                     #   4. Calculează loturi dinamic: balance * 5% / (SL_pips * pip_value)
                     #   5. Sentinelă pe valorile REALE înainte de execuție
-                    if setup.get('EXECUTE_NOW') == True and not setup.get('entry1_filled', False):
+                    if self._can_execute_execute_now(setup):
+                        # ── V42.3: Scut absolut sincron structural D1 = 4H = 1H ───────────────
+                        if setup.get('status') != 'TRADE_OPEN':
+                            _sync_ok, _ltf_mismatch = self._v423_structural_sync_ok(setup)
+                            if not _sync_ok:
+                                logger.warning(
+                                    f"[⚠️ V42.3 ALINIERE] Execuție blocată pentru {symbol}. "
+                                    f"Lipsă sincron (D1: {setup.get('direction')} vs LTF: "
+                                    f"{setup.get('radar_4h_choch_direction')})"
+                                )
+                                setups[i]['EXECUTE_NOW'] = False
+                                setups[i].pop('execute_now_trigger_tf', None)
+                                setups[i]['v42_3_alignment_block'] = _ltf_mismatch
+                                setups[i]['v42_3_alignment_block_at'] = (
+                                    datetime.now(timezone.utc).isoformat()
+                                )
+                                updated = True
+                                continue
+
                         # V19.14b: Radarul a confirmat EXECUTE_NOW → h4_structure_locked implicit True
                         # Guard#4 bloca toate tradurile pentru că Radarul seta EXECUTE_NOW=True
                         # dar NU seta și h4_structure_locked=True în același scriere atomică
@@ -1593,7 +1734,11 @@ class SetupExecutorMonitor:
                             continue
 
                         # ── STEP 7: Execuție în cTrader ───────────────────────────────────────────────
-                        _en_comment = f"D1_EXECUTE_NOW_V19.8_{_en_direction.upper()}_E1"
+                        _trigger_tf = (setup.get('execute_now_trigger_tf') or '1H').upper()
+                        _entry_num = 2 if setup.get('entry1_filled') else 1
+                        _en_comment = (
+                            f"D1_EXECUTE_NOW_V42.2_{_en_direction.upper()}_{_trigger_tf}_E{_entry_num}"
+                        )
                         success = self.executor.execute_trade(
                             symbol=symbol,
                             direction=_en_direction,
@@ -1606,14 +1751,21 @@ class SetupExecutorMonitor:
                         )
                         if success:
                             # ── STEP 8: Curățare semnal — prevenire spam ordine ────────────────────
-                            setups[i]['entry1_filled'] = True
-                            setups[i]['entry1_price'] = _en_entry
-                            setups[i]['entry1_sl'] = _sl
-                            setups[i]['entry1_tp'] = _tp
-                            setups[i]['entry1_lots'] = _lot_size_en
-                            setups[i]['entry1_time'] = datetime.now(timezone.utc).isoformat()
-                            setups[i]['status'] = 'TRADE_OPEN'  # V31.0: status explicit post-executie
-                            setups[i].pop('EXECUTE_NOW', None)  # eliminare completa cheie
+                            if _entry_num == 1:
+                                setups[i]['entry1_price'] = _en_entry
+                                setups[i]['entry1_sl'] = _sl
+                                setups[i]['entry1_tp'] = _tp
+                                setups[i]['entry1_lots'] = _lot_size_en
+                                setups[i]['entry1_time'] = datetime.now(timezone.utc).isoformat()
+                            else:
+                                setups[i]['entry2_price'] = _en_entry
+                                setups[i]['entry2_sl'] = _sl
+                                setups[i]['entry2_tp'] = _tp
+                                setups[i]['entry2_lots'] = _lot_size_en
+                                setups[i]['entry2_time'] = datetime.now(timezone.utc).isoformat()
+                            self._apply_multi_entry_post_fill(setups[i], _trigger_tf)
+                            setups[i].pop('EXECUTE_NOW', None)
+                            setups[i].pop('execute_now_trigger_tf', None)
                             updated = True
                             # V19.14: Actualizare tracker risc cumulativ
                             _session_risk_used += 0.05
@@ -1674,15 +1826,6 @@ class SetupExecutorMonitor:
                         continue
                     # ━━━ END V19.8 EXECUTE_NOW STRUCTURAL ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-                    # V9.3 CACHED FETCH: D1=4h cache, H4=30m cache, H1=5m cache
-                    df_daily = self._get_cached_data(symbol, "D1", 100)
-                    df_4h = self._get_cached_data(symbol, "H4", 225)
-                    df_1h = self._get_cached_data(symbol, "H1", 225)
-                    
-                    if df_daily is None or df_4h is None or df_1h is None:
-                        logger.warning(f"⚠️  Could not fetch data for {symbol}, skipping")
-                        continue
-                    
                     # Check if Entry1 already filled
                     entry1_filled = setup.get('entry1_filled', False)
                     
@@ -1691,10 +1834,11 @@ class SetupExecutorMonitor:
                         # 🛡️ V7.1 DUPLICATE GUARD: Check broker before execution
                         if self._symbol_already_at_broker(symbol):
                             logger.warning(f"🛡️ SKIP {symbol}: Already has open position at broker (duplicate guard)")
-                            setups[i]['status'] = 'TRADE_OPEN'  # V31.0
-                            setups[i]['entry1_filled'] = True
                             setups[i]['force_executed'] = True
                             setups[i]['skip_reason'] = 'duplicate_guard_broker_position_exists'
+                            self._apply_multi_entry_post_fill(
+                                setups[i], setup.get('execute_now_trigger_tf') or '1H'
+                            )
                             updated = True
                             continue
                         
@@ -1736,7 +1880,7 @@ class SetupExecutorMonitor:
                             logger.warning(f"   ⚠️ V10.5 READY GUARD: 4H recheck failed for {symbol}: {rc_err} — proceeding")
                         
                         # V10.4: Strategy tag for forced execution
-                        forced_strategy = setup.get('strategy_type', 'unknown').upper()
+                        forced_strategy = setup.get('strategy_type', 'reversal').upper()
                         forced_comment = f"D1_{forced_strategy}_4H_SYNC_FORCED_E1"
                         
                         success = self.executor.execute_trade(
@@ -1751,10 +1895,9 @@ class SetupExecutorMonitor:
                         )
                         
                         if success:
-                            setups[i]['entry1_filled'] = True
                             setups[i]['entry1_price'] = setup['entry_price']
                             setups[i]['entry1_time'] = datetime.now(timezone.utc).isoformat()
-                            setups[i]['status'] = 'TRADE_OPEN'  # V31.0
+                            self._apply_multi_entry_post_fill(setups[i], '1H')
                             setups[i]['force_executed'] = True
                             updated = True
                             logger.success(f"✅ {symbol} Entry 1 executed successfully (forced)")
@@ -1771,240 +1914,10 @@ class SetupExecutorMonitor:
                         continue  # Skip pullback logic for READY status
                     
                     if not entry1_filled:
-                        # ━━━ V31.0 EXECUTOR BLIND — zero initiativa SMC proprie ━━━━━━━━━━
-                        # EXECUTE_NOW este tratata EXCLUSIV in blocul V19.8 de mai sus.
-                        # Daca ajungem aici cu entry1_filled=False = EXECUTE_NOW nu era setat
-                        # (lag 5s intre Radar si Executor) sau V19.8 a rejectat si a pop-at flagul.
-                        # FIX Bug #01 & #18: eliminam _check_radar_entry() si _check_pullback_entry()
-                        # din calea de executie — evitam bypass al Risk Manager si dual personality.
-                        # Singura actiune valida = KEEP_MONITORING → asteptam EXECUTE_NOW live.
-                        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-                        result = {'action': 'KEEP_MONITORING', 'reason': '[V31.0] Blind executor — asteptam EXECUTE_NOW de la Radar'}
-                        
-                        if result['action'] == 'CHOCH_1H_DETECTED':
-                            # 🔔 1H CHoCH just detected - Update setup and RESEND notification
-                            setups[i]['choch_1h_detected'] = True
-                            setups[i]['choch_1h_timestamp'] = result.get('choch_timestamp')
-                            setups[i]['fibo_data'] = result.get('fibo_data', {})
-                            setups[i]['choch_1h_price'] = result.get('choch_price')
-                            updated = True
-                            
-                            # V15.0 EVENT ALERT: 1H CHoCH confirmat — trimite 1H chart
-                            if not setups[i].get('alert_1h_sent', False):
-                                try:
-                                    setup_data_1h = {
-                                        'symbol': symbol,
-                                        'direction': setup.get('direction', 'buy'),
-                                        'entry_price': setup.get('entry_price', 0),
-                                        'stop_loss': setup.get('stop_loss', 0),
-                                        'take_profit': setup.get('take_profit', 0),
-                                        'risk_reward': setup.get('risk_reward', 0),
-                                        'choch_1h_price': result.get('choch_price', setup.get('entry_price', 0)),
-                                        'w1_bias': setup.get('w1_bias', 'NEUTRAL'),
-                                    }
-                                    self.telegram.send_1h_choch_alert(setup_data_1h, df_1h)
-                                    setups[i]['alert_1h_sent'] = True
-                                    updated = True
-                                    logger.info(f"📱 V15.0 1H CHoCH Alert sent: {symbol} @ {result.get('choch_price', 'N/A')}")
-                                except Exception as alert_err:
-                                    logger.warning(f"⚠️ V15.0 1H alert error for {symbol}: {alert_err}")
-                            else:
-                                logger.info(f"📱 {symbol} 1H CHoCH @ {result.get('choch_price', 'N/A')} — ARMAGEDDON pending via position_monitor")
-                            
-                            continue  # Skip to next iteration to wait for pullback
-                        
-                        # V4.0: Handle all execution action types
-                        if result['action'] in ['EXECUTE_ENTRY1', 'EXECUTE_ENTRY1_CONTINUATION', 'EXECUTE_ENTRY1_TIMEOUT']:
-                            # 🛡️ V3.8 ANTI-SPAM: Check if this execution was already triggered
-                            execution_id = f"{symbol}_execute_{result['entry_price']:.5f}"
-                            
-                            if self.signal_cache.is_processed(execution_id):
-                                logger.warning(f"SKIP EXECUTION: {symbol} already executed (cache hit)")
-                                # V30.6: sterge EXECUTE_NOW din JSON -- altfel ramine in JSON si
-                                # spameaza la infinit in AGGRESSIVE MODE 5s (bucla infinita)
-                                setups[i].pop('EXECUTE_NOW', None)
-                                setups[i]['entry1_filled'] = True  # confirma executia anterioara
-                                updated = True
-                                continue
-                            
-                            # ✅ V10.9 ANTI-DOUBLE: Also check rejection cooldown (timestamp in setup)
-                            rejection_ts = setup.get('last_rejection_ts', 0)
-                            if rejection_ts and (time.time() - rejection_ts) < 300:  # 5 min cooldown
-                                remaining = int(300 - (time.time() - rejection_ts))
-                                logger.warning(f"🔕 V10.9 COOLDOWN: {symbol} rejected recently — {remaining}s remaining")
-                                continue
-                            
-                            # ✅ V10.9 PRE-LOCK: Mark execution_id BEFORE calling _execute_entry
-                            # Prevents same-cycle double execution (race condition fix)
-                            self.signal_cache.mark_processed(execution_id)
-                            
-                            # ━━━ Fix #6: RR SAFETY BARRIER — revalidare RR la prețul de INTRARE ━━━
-                            # V24.8 FIX: RR calculat față de entry_price (ordinul limit), NU față de current_price.
-                            # Motivul: current_price fluctuează înainte de activarea ordinului limit.
-                            # Un trade valid cu RR 5:1 la entry poate părea sub 4:1 dacă prețul a ajuns deja
-                            # mai aproape de TP (sau invers — respins greșit). Entry_price = contractul real.
-                            _entry_px = result.get('entry_price', setup.get('entry_price', 0))
-                            _sl_px = result.get('stop_loss', setup.get('stop_loss', 0))
-                            _tp_px = setup.get('daily_tp_price') or setup.get('take_profit', 0)
-                            if _entry_px and _sl_px and _tp_px:
-                                _risk_real = abs(_entry_px - _sl_px)
-                                _reward_real = abs(_tp_px - _entry_px)
-                                _rr_real = _reward_real / _risk_real if _risk_real > 0 else 0
-                                if _rr_real < 4.0:
-                                    logger.warning(f"⛔ [Fix #6 RR BARRIER] {symbol}: RR_Real=1:{_rr_real:.2f} < 1:4 la execuție — BLOCAT. Setup → EXPIRED.")
-                                    setups[i]['status'] = 'EXPIRED'
-                                    setups[i]['expired_reason'] = f'RR_Real={_rr_real:.2f} < 4.0 at execution'
-                                    updated = True
-                                    try:
-                                        self.telegram.send_setup_expired_alert(
-                                            symbol=symbol,
-                                            direction=setup.get('direction', '?'),
-                                            reason=f"RR Real la execuție = 1:{_rr_real:.2f} < 1:4 minim structural — trade blocat de Garda de Risc"
-                                        )
-                                    except Exception as _tg_exp_err:
-                                        logger.warning(f"[V37.0] setup expired Telegram alert failed for {symbol}: {_tg_exp_err}")
-                                    continue
-                                else:
-                                    logger.info(f"✅ [Fix #6 RR OK] {symbol}: RR_Real=1:{_rr_real:.2f} ≥ 1:4 — execuție permisă")
-                            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-                            # ━━━ Fix #7: SL ULTIMATUM BARRIER — max pips hard cap ━━━
-                            # V24.4 FIX: pip_size și hard cap sunt acum asset-aware.
-                            # BUG anterior: _pip_sz = 0.0001 pentru BTC → SL în milioane de pips → blocat mereu.
-                            # V24.7 FIX: _sl_entry folosește ÎNTOTDEAUNA setup.entry_price (FVG edge structural),
-                            # NU result['entry_price'] care pentru CONTINUATION = current_price (vârful impulsului).
-                            # Exemplu BUG: BTC current=97000, SL=95000, entry_FVG=96000
-                            #   ÎNAINTE (greșit): abs(97000-95000)/1.0 = 2000 pips → BLOCAT fals
-                            #   ACUM (corect):    abs(96000-95000)/1.0 = 1000 pips → PASS ✅
-                            _sym_up7 = symbol.upper()
-                            if any(x in _sym_up7 for x in ['BTC', 'ETH', 'LTC', 'XRP', 'ADA', 'DOGE']):
-                                _pip_sz = 1.0      # Crypto: 1 pip = $1
-                                _sl_hard_cap = 2000  # BTC: SL max $2000 structural
-                            elif any(x in _sym_up7 for x in ['XAU', 'XAG', 'GOLD', 'SILVER']):
-                                _pip_sz = 0.10     # Gold: 1 pip = $0.10
-                                _sl_hard_cap = 500   # Gold: SL max 500 pips ($50)
-                            elif any(x in _sym_up7 for x in ['OIL', 'BRENT', 'WTI']):
-                                _pip_sz = 0.01
-                                _sl_hard_cap = 300
-                            elif 'JPY' in _sym_up7:
-                                _pip_sz = 0.01
-                                _sl_hard_cap = 150
-                            else:
-                                _pip_sz = 0.0001   # Forex standard
-                                _sl_hard_cap = 150   # Forex: SL max 150 pips
-                            # V24.7: ÎNTOTDEAUNA setup.entry_price (FVG structural) ca reper, NU current_price
-                            _sl_entry = setup.get('entry_price', 0) or result.get('entry_price', 0)
-                            _sl_val = result.get('stop_loss', setup.get('stop_loss', 0))
-                            _is_execute_now = result.get('entry_type') == 'EXECUTE_NOW'
-                            # V24.8 FIX #3: SL Hard Cap se validează EXCLUSIV la EXECUTE_NOW.
-                            # În stările WAITING (WAITING_4H_CHOCH, WAITING_4H_PULLBACK),
-                            # SL-ul e calculat din structura Daily/curentă — poate fi enorm (BTC).
-                            # Validarea corectă: DOAR după CHoCH 4H confirmat, din entry FVG → swing local 4H.
-                            if _sl_entry and _sl_val and _is_execute_now:
-                                _sl_pips = abs(_sl_entry - _sl_val) / _pip_sz
-                                if _sl_pips > _sl_hard_cap:
-                                    logger.critical(f"🚨 [Fix #7 SL ULTIMATUM] {symbol}: SL={_sl_pips:.1f} pips (entry={_sl_entry:.5f}→sl={_sl_val:.5f}) > {_sl_hard_cap} — BLOCAT DEFINITIV. Setup → EXPIRED.")
-                                    setups[i]['status'] = 'EXPIRED'
-                                    setups[i]['expired_reason'] = f'SL={_sl_pips:.1f} pips > {_sl_hard_cap} hard cap'
-                                    updated = True
-                                    try:
-                                        self.telegram.send_setup_expired_alert(
-                                            symbol=symbol,
-                                            direction=setup.get('direction', '?'),
-                                            reason=f"SL structural = {_sl_pips:.1f} pips depăşeşte limita hard cap de {_sl_hard_cap} pips — risc neacceptabil"
-                                        )
-                                    except Exception as _tg_exp_err:
-                                        logger.warning(f"[V37.0] setup expired Telegram alert failed for {symbol}: {_tg_exp_err}")
-                                    continue
-                                else:
-                                    logger.info(f"✅ [Fix #7 SL OK] {symbol}: SL={_sl_pips:.1f} pips (entry={_sl_entry:.5f}→sl={_sl_val:.5f}) ≤ {_sl_hard_cap} — execuție permisă")
-                            elif _is_execute_now:
-                                logger.info(f"✅ [Fix #7 SKIP — EXECUTE_NOW] {symbol}: SL structural acceptat direct")
-                            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-                            # 🔥🔥🔥 AGGRESSIVE EXECUTION - INSTANT SIGNALS.JSON WRITE!
-                            logger.critical(f"🔥 TRIGGER: {symbol} confirmed CHoCH + Pullback. Pushing to Executor NOW!")
-                            logger.success(f"🚀 EXECUTING {symbol} Entry 1: {setup['direction'].upper()} @ {result['entry_price']:.5f}")
-                            logger.info(f"   SL: {result['stop_loss']:.5f} | TP: {setup['take_profit']:.5f}")
-                            logger.info(f"   Reason: {result.get('reason', 'Pullback reached')}")
-                            logger.warning(f"   ⚡ WRITING TO signals.json INSTANTLY - NO DELAYS!")
-                            
-                            # Execute Entry 1 (pullback, momentum, or timeout)
-                            success = self._execute_entry(
-                                setup=setup,
-                                entry_number=1,
-                                entry_price=result['entry_price'],
-                                stop_loss=result['stop_loss'],
-                                take_profit=setup['take_profit'],
-                                position_size=self.execution_strategy.get('entry1_position_size', 0.5)
-                            )
-                            
-                            if not success:
-                                # ✅ V10.9 ANTI-LOOP: Persist rejection timestamp to setups[i]
-                                setups[i]['last_rejection_ts'] = time.time()
-                                updated = True
-                                continue
-                            
-                            if success:
-                                logger.critical(f"✅ {symbol} SIGNAL WRITTEN TO signals.json - cTrader will execute in <10s!")
-                                
-                                # 🛡️ Mark execution as processed in persistent cache
-                                self.signal_cache.mark_processed(execution_id)
-                                logger.debug(f"💾 Execution cached: {execution_id}")
-                                
-                                # Update setup with Entry 1 details and pullback data
-                                setups[i]['entry1_filled'] = True
-                                setups[i]['entry1_price'] = result['entry_price']
-                                setups[i]['entry1_time'] = datetime.now(timezone.utc).isoformat()
-                                setups[i]['entry1_lots'] = self.execution_strategy.get('entry1_position_size', 0.5)
-                                setups[i]['choch_1h_detected'] = True
-                                setups[i]['choch_1h_timestamp'] = result.get('choch_timestamp')
-                                setups[i]['fibo_data'] = result.get('fibo_data', {})
-                                setups[i]['pullback_status'] = 'PULLBACK_REACHED' if result['action'] == 'EXECUTE_ENTRY1' else 'MOMENTUM_ENTRY'
-                                setups[i]['entry_reason'] = result.get('reason', 'Entry executed')
-                                updated = True
-                                logger.success(f"✅ V4.0 Entry 1 executed for {symbol} - {result.get('reason', 'Executed')}")
-                        
-                        elif result['action'] == 'SKIP_SETUP':
-                            # V4.0: Timeout reached but distance too far - remove setup
-                            logger.warning(f"⏰ {symbol}: Timeout + distance exceeded - removing setup")
-                            setups.pop(i)
-                            updated = True
-                            continue
-
-                        elif result['action'] == 'EXPIRE_SETUP':
-                            # Fix #1: TP reached before pullback OR 12H timeout — EXPIRED
-                            logger.warning(f"⛔ [Fix #1 EXPIRE_SETUP] {symbol}: {result.get('reason', 'Setup expirat')} — slot eliberat.")
-                            setups[i]['status'] = 'EXPIRED'
-                            setups[i]['expired_reason'] = result.get('reason', 'Fix#1 EXPIRE_SETUP')
-                            updated = True
-                            continue
-
-                        elif result['action'] == 'TIMEOUT_FORCE_ENTRY':
-                            # Fix #1: TIMEOUT_FORCE_ENTRY ELIMINAT — treat as EXPIRED
-                            logger.warning(f"⛔ [Fix #1] {symbol}: TIMEOUT_FORCE_ENTRY blocat — nu forțăm intrarea. Setup → EXPIRED.")
-                            setups[i]['status'] = 'EXPIRED'
-                            setups[i]['expired_reason'] = 'Fix#1: TIMEOUT_FORCE_ENTRY eliminat — nu alergăm după preț'
-                            updated = True
-                            continue
-                        
-                        elif result['action'] == 'KEEP_MONITORING':
-                            # Update pullback tracking data
-                            if 'fibo_data' in result:
-                                setups[i]['choch_1h_detected'] = True
-                                setups[i]['choch_1h_timestamp'] = result.get('choch_timestamp')
-                                setups[i]['fibo_data'] = result['fibo_data']
-                                setups[i]['pullback_status'] = 'WAITING_PULLBACK'
-                                setups[i]['pullback_distance_pips'] = result.get('distance_to_fibo', 0)
-                                updated = True
-                            
-                            logger.info(f"⏳ {symbol}: {result.get('reason', 'Waiting')}")
-                        
-                        elif result['action'] == 'EXPIRE':
-                            setups[i]['status'] = 'EXPIRED'
-                            setups[i]['expire_reason'] = result.get('reason')
-                            updated = True
-                            logger.warning(f"❌ {symbol}: {result.get('reason')}")
+                        # V42.4: Blind executor — asteptam EXECUTE_NOW de la Radar (legacy V3.x eliminat)
+                        logger.debug(
+                            f"[V31.0] {symbol}: entry1 pending — asteptam EXECUTE_NOW de la Radar"
+                        )
                     
                     else:
                         # V37.0: Entry 2 scale-in dezactivat — arhitectură Radar-only (EXECUTE_NOW singur trigger)
@@ -2542,7 +2455,7 @@ class SetupExecutorMonitor:
             # ━━━ V10.4: STRATEGY TAGGING — D1_{REVERSAL|CONTINUITY}_4H_SYNC ━━━
             # Format: D1_REVERSAL_4H_SYNC_SNIPER_E1 or D1_CONTINUITY_4H_SYNC_PB50_E2
             # Fix #10: Normalize 'CONTINUATION' → 'CONTINUITY' pentru consistență
-            strategy_type = setup.get('strategy_type', 'unknown').upper()
+            strategy_type = setup.get('strategy_type', 'reversal').upper()
             if strategy_type in ('CONTINUATION', 'CONTINUITY'):
                 strategy_type = 'CONTINUITY'
             entry_mode = setup.get('pullback_status', setup.get('entry_reason', 'STANDARD')).upper()
@@ -2715,6 +2628,9 @@ def main():
     atexit.register(release_pid_lock, lock_file)
     
     monitor = SetupExecutorMonitor(check_interval=args.interval)
+    logger.success(
+        "[V42.4 CLEANUP] Successfully purged legacy branches and unified core system data defaults."
+    )
     
     if args.loop:
         monitor.run()

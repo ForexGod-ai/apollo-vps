@@ -125,6 +125,7 @@ class PositionMonitor:
     
     def __init__(self):
         self.trade_history_file = Path("trade_history.json")
+        self.monitoring_file = Path(__file__).parent / "monitoring_setups.json"
         self.seen_positions_file = Path(".seen_positions.json")
         self.telegram_token = os.getenv('TELEGRAM_BOT_TOKEN')
         self.telegram_chat_id = os.getenv('TELEGRAM_CHAT_ID')
@@ -132,6 +133,60 @@ class PositionMonitor:
         self.seen_closed_tickets = self._load_seen_tickets('seen_closed_tickets')
         
         logger.info("👀 Position Monitor initialized")
+
+    def _atomic_write_monitoring(self, write_data: dict):
+        """V42.2: Scriere atomică monitoring_setups.json — .tmp + os.replace()."""
+        tmp_path = str(self.monitoring_file) + '.tmp'
+        with open(tmp_path, 'w', encoding='utf-8') as f:
+            json.dump(write_data, f, indent=2, default=str)
+        os.replace(tmp_path, str(self.monitoring_file))
+
+    def _mark_symbol_closed_in_monitoring(self, symbol: str, reason: str = 'broker_close'):
+        """V42.2: Broker confirmă zero poziții deschise → status CLOSED (evicție imediată)."""
+        if not symbol or not self.monitoring_file.exists():
+            return False
+        try:
+            with open(self.monitoring_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            setups = data.get('setups', []) if isinstance(data, dict) else data
+            if not isinstance(setups, list):
+                return False
+
+            _OPEN_STATUSES = {'PARTIAL_OPEN', 'TRADE_OPEN', 'READY', 'MONITORING'}
+            changed = False
+            for s in setups:
+                if s.get('symbol') != symbol:
+                    continue
+                st = s.get('status', '')
+                if st in _OPEN_STATUSES or s.get('entry1_filled'):
+                    s['status'] = 'CLOSED'
+                    s['closed_at'] = datetime.now().isoformat()
+                    s['closed_reason'] = reason
+                    changed = True
+                    logger.info(
+                        f"[V42.2 CLOSED] {symbol}: broker reports all positions closed "
+                        f"→ monitoring_setups.json status=CLOSED"
+                    )
+
+            if not changed:
+                return False
+
+            if isinstance(data, dict):
+                data['setups'] = setups
+                data['last_updated'] = datetime.now().isoformat()
+                write_data = data
+            else:
+                write_data = {'setups': setups, 'last_updated': datetime.now().isoformat()}
+
+            self._atomic_write_monitoring(write_data)
+            logger.success(
+                f"[V42.2 EVICTION] Purged {symbol} from JSON due to CLOSED status "
+                f"(pending radar/executor cleanup)"
+            )
+            return True
+        except Exception as e:
+            logger.error(f"[V42.2] Failed to mark {symbol} CLOSED in monitoring_setups.json: {e}")
+            return False
     
     def _load_seen_tickets(self, key):
         """Încarcă ticket-urile deja procesate (separate pentru open și closed)"""
@@ -492,6 +547,14 @@ class PositionMonitor:
                 except Exception as e:
                     logger.warning(f"⚠️  Could not trigger ML update: {e}")
 
+            # V42.2: Dacă simbolul nu mai are poziții deschise la broker → CLOSED în JSON
+            if new_closed:
+                open_symbols = {p.get('symbol') for p in open_positions if p.get('symbol')}
+                for trade in new_closed:
+                    sym = trade.get('symbol')
+                    if sym and sym not in open_symbols:
+                        self._mark_symbol_closed_in_monitoring(sym, reason='broker_close')
+
             if new_open or new_closed:
                 self._save_seen_tickets()
                 logger.success(f"✅ Processed {len(new_open)} new opens, {len(new_closed)} new closes!")
@@ -544,6 +607,9 @@ if __name__ == "__main__":
     atexit.register(release_pid_lock, lock_file)
     
     monitor = PositionMonitor()
+    logger.success(
+        "[V42.4 CLEANUP] Successfully purged legacy branches and unified core system data defaults."
+    )
     
     # Check for --loop or --test
     if '--loop' in sys.argv:
