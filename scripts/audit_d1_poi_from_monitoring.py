@@ -2,19 +2,28 @@
 """
 Audit POI Daily — citește monitoring_setups.json și reconciliază POI cu FVG-uri D1 live.
 
-Usage:
+Usage (Linux/macOS):
     python scripts/audit_d1_poi_from_monitoring.py
-    python scripts/audit_d1_poi_from_monitoring.py --symbol GBPNZD
-    python scripts/audit_d1_poi_from_monitoring.py --json-only
-    python scripts/audit_d1_poi_from_monitoring.py --symbols GBPNZD,BTCUSD --no-json
+    python scripts/audit_d1_poi_from_monitoring.py | tee audit_poi_$(date +%F).log
+
+Usage (Windows PowerShell):
+    python scripts/audit_d1_poi_from_monitoring.py --log-file audit_poi_2026-06-22.log
+    python scripts/audit_d1_poi_from_monitoring.py *> audit_poi_$(Get-Date -Format 'yyyy-MM-dd').log
 """
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+
+# Windows VPS (cp1252): emoji din smc_detector crăpau la print — aliniat cu daily_scanner.py
+if sys.stdout.encoding is None or sys.stdout.encoding.lower() != "utf-8":
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+if sys.stderr.encoding is None or sys.stderr.encoding.lower() != "utf-8":
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
 import pandas as pd
 
@@ -410,7 +419,34 @@ def main() -> int:
         default=MONITORING_FILE,
         help="Path to monitoring_setups.json",
     )
+    parser.add_argument(
+        "--log-file",
+        type=Path,
+        default=None,
+        help="Write full report to file (recommended on Windows PowerShell)",
+    )
     args = parser.parse_args()
+
+    log_fp = None
+    if args.log_file:
+        args.log_file.parent.mkdir(parents=True, exist_ok=True)
+        log_fp = open(args.log_file, "w", encoding="utf-8")
+
+    class _Tee:
+        def __init__(self, *streams):
+            self._streams = streams
+
+        def write(self, data):
+            for s in self._streams:
+                s.write(data)
+                s.flush()
+
+        def flush(self):
+            for s in self._streams:
+                s.flush()
+
+    if log_fp:
+        sys.stdout = _Tee(sys.stdout, log_fp)
 
     setups: List[dict] = []
     if not args.no_json:
@@ -438,6 +474,9 @@ def main() -> int:
     detector = SMCDetector()
     results = [audit_setup(s, detector, json_only=args.json_only) for s in setups]
     print_audit_report(results)
+    if log_fp:
+        log_fp.close()
+        print(f"\nLog saved: {args.log_file}")
     return 0
 
 
