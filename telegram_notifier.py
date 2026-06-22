@@ -32,10 +32,10 @@ UNIVERSAL_SEPARATOR = "────────────────"  # 16 c
 _MONITORING_JSON = Path(__file__).resolve().parent / 'monitoring_setups.json'
 
 _RADAR_LIVE_KEYS = (
-    'h4_structure_locked', 'h4_locked',
+    'h4_structure_locked', 'h4_locked', 'h4_structure_locked_at',
     'radar_4h_choch_detected', 'radar_4h_choch_direction', 'radar_4h_choch_price',
     'radar_4h_status', 'radar_1h_choch_detected', 'radar_1h_choch_direction',
-    'radar_1h_choch_price', 'radar_1h_status', 'EXECUTE_NOW',
+    'radar_1h_choch_price', 'radar_1h_status', 'radar_1h_choch_stale', 'EXECUTE_NOW',
 )
 
 
@@ -119,6 +119,8 @@ def _ltf_choch_confirmed(
 
     h1_choch = _setup_attr(setup, 'h1_choch', None)
     choch_1h_flag = bool(_setup_attr(setup, 'choch_1h_detected', False))
+    if bool(_radar_field(setup, snap, 'radar_1h_choch_stale', False)):
+        return False
     return bool(
         (detected and aligned)
         or h1_choch is not None
@@ -175,6 +177,34 @@ def _format_radar_exec_lines(
         h1_line = "🔭 1H: ⏳ Waiting pullback + FVG"
 
     return h4_line, h1_line
+
+
+def _trade_levels_valid(entry, sl) -> bool:
+    """True dacă entry și SL sunt non-zero și floatabile."""
+    try:
+        ef = float(entry)
+        sf = float(sl)
+        return abs(ef) > 1e-12 and abs(sf) > 1e-12
+    except (TypeError, ValueError):
+        return False
+
+
+def _choch_trade_block(symbol: str, entry, sl, tp, rr) -> str:
+    """Bloc Entry/SL/TP pentru alerte CHoCH — omit dacă prețuri lipsă (MONITORING)."""
+    if not _trade_levels_valid(entry, sl):
+        return ""
+    sep = UNIVERSAL_SEPARATOR
+    try:
+        rr_f = float(rr) if rr else 0.0
+    except (TypeError, ValueError):
+        rr_f = 0.0
+    return (
+        f"{sep}\n"
+        f"🔹 Entry  <code>{format_telegram_price(symbol, entry)}</code>\n"
+        f"🔸 SL     <code>{format_telegram_price(symbol, sl)}</code>\n"
+        f"🎯 TP     <code>{format_telegram_price(symbol, tp)}</code>\n"
+        f"⚖️ RR     1:{rr_f:.2f}\n"
+    )
 SEPARATOR_LENGTH = 24  # Enforced rule: Name-aligned width
 # ════════════════════════════════════════
 
@@ -405,6 +435,7 @@ class TelegramNotifier:
                         "✅" if w1_bias == 'BEARISH' and direction == 'SELL' else \
                         "⚠️ COUNTER" if w1_bias != 'NEUTRAL' else "⏳ NEUTRAL"
             sep = "────────────────"
+            trade_block = _choch_trade_block(symbol, entry, sl, tp, rr)
 
             msg = (
                 f"🚨 <b>4H CHoCH CONFIRMAT!</b> — Pregătire Entry\n"
@@ -412,11 +443,7 @@ class TelegramNotifier:
                 f"{dir_emoji} <b>{symbol}</b> {direction}\n"
                 f"🎯 Strategy: <code>{strategy}</code>\n"
                 f"📅 W1 Bias: <b>{w1_bias}</b> {w1_emoji}\n"
-                f"{sep}\n"
-                f"🔹 Entry  <code>{format_telegram_price(symbol, entry)}</code>\n"
-                f"🔸 SL     <code>{format_telegram_price(symbol, sl)}</code>\n"
-                f"🎯 TP     <code>{format_telegram_price(symbol, tp)}</code>\n"
-                f"⚖️ RR     1:{rr:.2f}\n"
+                f"{trade_block}"
                 f"{sep}\n"
                 f"⏳ Așteptăm pullback în FVG 4H pentru entry final..."
             )
@@ -465,27 +492,38 @@ class TelegramNotifier:
         """
         try:
             symbol   = setup_data.get('symbol', 'UNKNOWN')
+            if setup_data.get('radar_1h_choch_stale'):
+                print(f"[BLOCK] 1H CHoCH STALE — skip Telegram for {symbol}")
+                return False
+
             direction = setup_data.get('direction', 'buy').upper()
             entry    = setup_data.get('entry_price', 0)
             sl       = setup_data.get('stop_loss', 0)
             tp       = setup_data.get('take_profit', 0)
             rr       = setup_data.get('risk_reward', 0)
-            choch_1h_price = setup_data.get('choch_1h_price', entry)
+            choch_1h_price = (
+                setup_data.get('choch_1h_price')
+                or setup_data.get('radar_1h_choch_price')
+                or entry
+            )
             dir_emoji = "🟢" if direction == 'BUY' else "🔴"
             sep = "────────────────"
+            trade_block = _choch_trade_block(symbol, entry, sl, tp, rr)
+            has_levels = bool(trade_block)
+            footer = (
+                f"⚡ EXECUTE în curs... așteptăm pullback final în FVG 1H."
+                if has_levels
+                else f"⏳ Așteptăm pullback în FVG 1H — Entry/SL/TP la semnal EXECUTE NOW."
+            )
 
             msg = (
                 f"🎯 <b>SNIPER ENTRY READY!</b> — CHoCH 1H Confirmat\n"
                 f"{sep}\n"
                 f"{dir_emoji} <b>{symbol}</b> {direction}\n"
                 f"📍 1H CHoCH @ <code>{format_telegram_price(symbol, choch_1h_price)}</code>\n"
+                f"{trade_block}"
                 f"{sep}\n"
-                f"🔹 Entry  <code>{format_telegram_price(symbol, entry)}</code>\n"
-                f"🔸 SL     <code>{format_telegram_price(symbol, sl)}</code>\n"
-                f"🎯 TP     <code>{format_telegram_price(symbol, tp)}</code>\n"
-                f"⚖️ RR     1:{rr:.2f}\n"
-                f"{sep}\n"
-                f"⚡ EXECUTE în curs... așteptăm pullback final în FVG 1H."
+                f"{footer}"
             )
             self.send_message(msg)
             time.sleep(2)
@@ -643,6 +681,13 @@ class TelegramNotifier:
             )
             sl = setup_data.get('h4_sl_price') or setup_data.get('stop_loss')
             tp = setup_data.get('daily_tp_price') or setup_data.get('daily_target_price') or setup_data.get('take_profit')
+
+            if not _trade_levels_valid(entry, sl):
+                print(
+                    f"[BLOCK EXECUTE NOW] {symbol}: entry/sl invalid "
+                    f"(entry={entry!r}, sl={sl!r}) — skip Telegram"
+                )
+                return False
 
             strategy = str(setup_data.get('strategy_type', 'unknown')).upper()
             if strategy.startswith('CONTINUATION'):

@@ -220,6 +220,69 @@ def _empty_tf_waiting(timeframe: str) -> 'TimeframeAnalysis':
     )
 
 
+def _parse_radar_dt(ts) -> Optional[datetime]:
+    """Parse ISO choch_time from TimeframeAnalysis or JSON."""
+    if ts is None:
+        return None
+    try:
+        s = str(ts).replace('Z', '+00:00')
+        dt = datetime.fromisoformat(s)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+    except Exception:
+        return None
+
+
+def _resolve_h4_anchor_time(setup_data: dict, tf_4h: 'TimeframeAnalysis') -> Optional[datetime]:
+    """Cea mai recentă ancoră structurală 4H — 1H CHoCH trebuie să fie strict după ea."""
+    candidates = []
+    for src in (
+        setup_data.get('h4_structure_locked_at'),
+        tf_4h.choch_time if tf_4h.choch_detected else None,
+        setup_data.get('radar_4h_choch_time'),
+        setup_data.get('last_in_fvg_time'),
+    ):
+        dt = _parse_radar_dt(src)
+        if dt is not None:
+            candidates.append(dt)
+    return max(candidates) if candidates else None
+
+
+def _apply_h1_chronology_guard(
+    symbol: str,
+    setup_data: dict,
+    tf_4h: 'TimeframeAnalysis',
+    tf_1h: 'TimeframeAnalysis',
+) -> Tuple['TimeframeAnalysis', bool]:
+    """
+    V43.7: Respinge CHoCH 1H din istoric anterior ancorii 4H (ghost trigger GBPJPY).
+    Returns (tf_1h, h1_stale).
+    """
+    if not tf_1h.choch_detected:
+        return tf_1h, False
+
+    anchor = _resolve_h4_anchor_time(setup_data, tf_4h)
+    h1_time = _parse_radar_dt(tf_1h.choch_time)
+
+    if anchor is None or h1_time is None:
+        return tf_1h, False
+
+    if h1_time > anchor:
+        return tf_1h, False
+
+    print(
+        f"  🛑 [V43.7 H1 STALE] {symbol}: 1H CHoCH @ {h1_time.isoformat()} "
+        f"<= H4 anchor {anchor.isoformat()} — INVALID (pre-H4 lock)"
+    )
+    sys.stdout.flush()
+    logger.warning(
+        f"[V43.7 H1 STALE] {symbol}: 1H CHoCH stale vs H4 anchor "
+        f"({h1_time.isoformat()} <= {anchor.isoformat()})"
+    )
+    return _empty_tf_waiting("H1"), True
+
+
 # Log fisier ASCII (V37.1) — alternativa la multi_tf_radar_stdout.log cu emoji
 _RADAR_LOG_DIR = _RADAR_DIR / "logs"
 _RADAR_LOG_DIR.mkdir(exist_ok=True)
@@ -318,6 +381,8 @@ class MultiTFResult:
     # V36.5: P/D Guard — scan H4/H1 always-on; P/D blochează doar execuția
     pd_guard_passed: bool = True
     pd_guard_reason: str = ""
+    # V43.7: 1H CHoCH respins — anterior ancorii 4H (ghost trigger)
+    h1_choch_stale: bool = False
 
 
 class MultiTFRadar:
@@ -1450,9 +1515,14 @@ class MultiTFRadar:
                 allow_bos_trigger=_allow_bos_4h  # V30.1
             )
             self._log_scan_done(symbol, tf_4h, _h4_bars)
+
+            tf_1h, _h1_stale = _apply_h1_chronology_guard(
+                symbol, setup_data, tf_4h, tf_1h,
+            )
         else:
             tf_1h = _empty_tf_waiting("H1")
             tf_4h = _empty_tf_waiting("H4")
+            _h1_stale = False
 
         # V43.2: P/D guard aliniat la validarea ADR (înlocuiește D1 midpoint când ADR disponibil)
         if _v43_zone.get('equilibrium') is not None:
@@ -1556,6 +1626,7 @@ class MultiTFRadar:
             priority_timeframe=priority_timeframe,
             pd_guard_passed=_pd_guard_passed,
             pd_guard_reason=_pd_guard_reason,
+            h1_choch_stale=_h1_stale,
         )
         
         # 🔥 V8.3 SYNC: Write radar results to monitoring_setups.json
@@ -1656,7 +1727,10 @@ class MultiTFRadar:
         'EXECUTE_NOW', 'execute_now_trigger_tf', 'execute_now_alert_sent',
         'execute_now_alert_key', 'radar_execution_ready', 'radar_verdict', 'h4_structure_locked',
     )
-    _CHOCH_ALERT_FLUSH_KEYS = ('h4_choch_alert_sent', 'h1_choch_alert_sent', 'choch_1h_price')
+    _CHOCH_ALERT_FLUSH_KEYS = (
+        'h4_choch_alert_sent', 'h1_choch_alert_sent', 'choch_1h_price',
+        'h4_structure_locked_at', 'radar_1h_choch_stale',
+    )
 
     @staticmethod
     def _execute_now_alert_key(setup: dict) -> str:
@@ -1892,6 +1966,9 @@ class MultiTFRadar:
         if (
             now_1h and not prev_1h_choch and dir_1h_ok
             and not setup.get('h1_choch_alert_sent')
+            and not setup.get('radar_1h_choch_stale')
+            and not getattr(result, 'h1_choch_stale', False)
+            and result.tf_1h.choch_detected
         ):
             setup['h1_choch_alert_sent'] = True
             if result.tf_1h.choch_price is not None:
@@ -2022,13 +2099,17 @@ class MultiTFRadar:
         _prev_1h_choch = bool(setup.get('radar_1h_choch_detected'))
 
         # 🎯 1H RADAR DATA
+        setup['radar_1h_choch_stale'] = bool(getattr(result, 'h1_choch_stale', False))
         if result.tf_1h.choch_detected:
             setup['radar_1h_choch_detected'] = True
             setup['radar_1h_choch_direction'] = result.tf_1h.choch_direction
             setup['radar_1h_choch_time'] = result.tf_1h.choch_time
             setup['radar_1h_choch_price'] = result.tf_1h.choch_price
+            setup['radar_1h_choch_stale'] = False
         else:
             setup['radar_1h_choch_detected'] = False
+            if getattr(result, 'h1_choch_stale', False):
+                setup['radar_1h_choch_stale'] = True
 
         if result.tf_1h.scan_error:
             setup['radar_1h_scan_error'] = True
@@ -2134,6 +2215,7 @@ class MultiTFRadar:
         # V25.2: 30→72 bare — pullback pe Daily poate dura 4-14 zile, aliniat cu V25.0 din smc_detector
         _4H_STRUCT_MAX_BARS = 72   # 72 × 4H = 288h = 12 zile — fereastra extinsă (V25.2)
         _setup_direction_lower = 'bullish' if result.direction == 'LONG' else 'bearish'
+        _prev_h4_locked = bool(setup.get('h4_structure_locked'))
 
         # — Condiția A: CHoCH proaspăt + aliniat ——————————————————————————————
         _4h_choch_direction_ok = (
@@ -2161,6 +2243,13 @@ class MultiTFRadar:
         if _4h_choch_is_fresh_and_aligned or _4h_bos_is_fresh_and_aligned:
             setup['h4_locked'] = True
             setup['h4_structure_locked'] = True
+            if not _prev_h4_locked:
+                _lock_ts = (
+                    result.tf_4h.choch_time
+                    if result.tf_4h.choch_detected and result.tf_4h.choch_time
+                    else datetime.now(timezone.utc).isoformat()
+                )
+                setup['h4_structure_locked_at'] = _lock_ts
             if _4h_choch_is_fresh_and_aligned:
                 _lock_trigger = (
                     f"CHoCH 4H PROASPĂT (la -{result.tf_4h.choch_bars_ago} bare = "
@@ -2481,6 +2570,7 @@ class MultiTFRadar:
                         for _ek in (
                             'execute_now_alert_sent', 'execute_now_alert_key',
                             'h4_choch_alert_sent', 'h1_choch_alert_sent', 'choch_1h_price',
+                            'h4_structure_locked_at', 'radar_1h_choch_stale',
                         ):
                             if _original_setup.get(_ek) is not None:
                                 setups[i][_ek] = _original_setup[_ek]
