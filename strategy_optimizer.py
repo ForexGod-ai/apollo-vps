@@ -19,8 +19,34 @@ import json
 from pathlib import Path
 from datetime import datetime, timedelta
 from collections import defaultdict
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 import statistics
+
+
+def normalize_ml_pattern(pattern: Optional[str]) -> str:
+    """Map scanner strategy labels to learned_rules pattern keys."""
+    p = (pattern or 'UNKNOWN').upper().replace('CONTINUITY', 'CONTINUATION')
+    if p.startswith('REVERSAL'):
+        return 'REVERSAL'
+    return p
+
+
+def normalize_ml_timeframe(timeframe: Optional[str]) -> str:
+    """Normalize timeframe for learned_rules lookup (4H/H4, 1H/H1)."""
+    tf = (timeframe or 'UNKNOWN').upper()
+    if tf == 'H4':
+        return '4H'
+    if tf == 'H1':
+        return '1H'
+    return tf
+
+
+def resolve_learned_lookup_key(key: str, pool: dict, *fallbacks: str) -> str:
+    """First matching key in pool, else original key."""
+    for candidate in (key, *fallbacks):
+        if candidate and candidate in pool:
+            return candidate
+    return key
 
 
 class StrategyOptimizer:
@@ -516,6 +542,22 @@ class StrategyOptimizer:
                   f"Win Rate: {win_rate:5.1f}% | Avg Win: ${avg_profit:6.2f}")
         
         return results
+
+    @staticmethod
+    def _apply_ml_lookup_aliases(profit_by_tf: Dict, patterns: Dict) -> Tuple[Dict, Dict]:
+        """Ensure CONTINUATION/REVERSAL and 4H/1H keys exist for daily_scanner lookups."""
+        profit_by_tf = dict(profit_by_tf)
+        patterns = dict(patterns)
+        fallback_tf = profit_by_tf.get('UNKNOWN') or next(iter(profit_by_tf.values()), None)
+        for alias in ('4H', '1H'):
+            if alias not in profit_by_tf and fallback_tf is not None:
+                profit_by_tf[alias] = fallback_tf
+        fallback_pat = patterns.get('UNKNOWN')
+        if fallback_pat:
+            for alias in ('CONTINUATION', 'REVERSAL'):
+                if alias not in patterns:
+                    patterns[alias] = fallback_pat
+        return profit_by_tf, patterns
     
     def generate_learned_rules(self, trades: List[Dict]) -> Dict:
         """
@@ -531,7 +573,10 @@ class StrategyOptimizer:
         blackout_periods = self.detect_blackout_periods(trades)
         optimal_sl_tp = self.optimize_sl_tp(trades)
         pattern_success = self.calculate_pattern_success_rate(trades)
-        
+        profit_by_timeframe, pattern_success = self._apply_ml_lookup_aliases(
+            profit_by_timeframe, pattern_success
+        )
+
         # Calculate overall statistics
         total_profit = sum(t['net_profit'] for t in trades if t['net_profit'] > 0)
         total_loss = abs(sum(t['net_profit'] for t in trades if t['net_profit'] < 0))
@@ -641,7 +686,11 @@ class StrategyOptimizer:
                 factors['pair_quality'] = f"Poor (PF: {pf:.2f})"
         
         # 2. Check timeframe (+/- 15 points)
-        timeframe = setup.get('timeframe', '')
+        timeframe = resolve_learned_lookup_key(
+            normalize_ml_timeframe(setup.get('timeframe', '')),
+            self.learned_rules['profit_factor_by_timeframe'],
+            '4H', '1H', 'UNKNOWN',
+        )
         if timeframe in self.learned_rules['profit_factor_by_timeframe']:
             tf_data = self.learned_rules['profit_factor_by_timeframe'][timeframe]
             pf = tf_data['profit_factor']
@@ -666,7 +715,11 @@ class StrategyOptimizer:
             factors['timing'] = f"Good timing ({hour}:00)"
         
         # 4. Check pattern success rate (+/- 15 points)
-        pattern = setup.get('pattern', 'UNKNOWN')
+        pattern = resolve_learned_lookup_key(
+            normalize_ml_pattern(setup.get('pattern', 'UNKNOWN')),
+            self.learned_rules['pattern_success_rate'],
+            'CONTINUATION', 'REVERSAL', 'UNKNOWN',
+        )
         if pattern in self.learned_rules['pattern_success_rate']:
             pattern_data = self.learned_rules['pattern_success_rate'][pattern]
             win_rate = pattern_data['win_rate']

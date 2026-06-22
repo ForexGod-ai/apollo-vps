@@ -632,32 +632,30 @@ class DailyScanner:
                     print(f"      • RR: {rr_str}")
                     
                     # V10.2: RAPORTARE FORȜATĂ MONITORING
-                    # V15.1 DEDUP FIX: Trimite alert DOAR pentru setup-uri NOI sau READY.
-                    # Setup-urile re-evaluate (deja in monitoring) NU primesc alert repetat
-                    # la fiecare scan — evitam spam Mon/Wed/Fri pentru aceeasi pereche.
+                    # V15.1 DEDUP: alertă Telegram doar setup NOU sau READY (nu re-evaluate MONITORING)
                     if self.scanner_settings.get('telegram_alerts', True):
                         is_reevaluation = symbol in monitoring_symbols
+                        send_telegram_card = (not is_reevaluation) or setup_status == 'READY'
                         if setup_status == 'READY':
                             tg_prefix = "🔥 READY TO EXECUTE"
                         else:
                             tg_prefix = "👁️ MONITORING (PÂNDĂ)"
 
-                        # V15.2: Trimite chart pentru TOATE setup-urile valide (inclusiv re-evaluate)
-                        # Re-evaluate primesc prefix diferit pt claritate in Telegram
-                        if is_reevaluation and setup_status == 'MONITORING':
-                            tg_prefix = "🔄 RE-EVALUAT (PÂNDĂ)"
-                        print(f"   📸 {tg_prefix} — Generez chart pentru {symbol}...")
-                        try:
-                            self.telegram.send_setup_alert(
-                                setup=setup,
-                                df_daily=df_daily,
-                                df_4h=df_4h,
-                                df_1h=df_1h,
-                                charts_mode='daily_only'  # V15.0: Silent Scan — doar Daily chart la scanare
-                            )
-                            print(f"   ✅ Chart trimis pe Telegram: {symbol} [{tg_prefix}] [DAILY ONLY]")
-                        except Exception as e:
-                            print(f"   ⚠️ Failed to send charts: {e}")
+                        if send_telegram_card:
+                            print(f"   📸 {tg_prefix} — Generez chart pentru {symbol}...")
+                            try:
+                                self.telegram.send_setup_alert(
+                                    setup=setup,
+                                    df_daily=df_daily,
+                                    df_4h=df_4h,
+                                    df_1h=df_1h,
+                                    charts_mode='daily_only'  # V15.0: Silent Scan — doar Daily chart la scanare
+                                )
+                                print(f"   ✅ Chart trimis pe Telegram: {symbol} [{tg_prefix}] [DAILY ONLY]")
+                            except Exception as e:
+                                print(f"   ⚠️ Failed to send charts: {e}")
+                        elif is_reevaluation:
+                            print(f"   ⏭️ [V15.1 DEDUP] {symbol}: re-evaluat MONITORING — skip card Telegram (radar LTF activ)")
                     
                     print(f"✓ {symbol} adăugat în raportul de dimineață [{setup_status}]")
                 else:

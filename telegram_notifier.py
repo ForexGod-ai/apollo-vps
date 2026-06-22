@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from dotenv import load_dotenv
 from smc_detector import TradeSetup, CHoCH, FVG
 from chart_generator import ChartGenerator
+from pip_utils import format_telegram_price, format_telegram_fvg_range, format_swap_line
 
 load_dotenv()
 
@@ -263,9 +264,9 @@ class TelegramNotifier:
                 f"🎯 Strategy: <code>{strategy}</code>\n"
                 f"📅 W1 Bias: <b>{w1_bias}</b> {w1_emoji}\n"
                 f"{sep}\n"
-                f"🔹 Entry  <code>{entry:.5f}</code>\n"
-                f"🔸 SL     <code>{sl:.5f}</code>\n"
-                f"🎯 TP     <code>{tp:.5f}</code>\n"
+                f"🔹 Entry  <code>{format_telegram_price(symbol, entry)}</code>\n"
+                f"🔸 SL     <code>{format_telegram_price(symbol, sl)}</code>\n"
+                f"🎯 TP     <code>{format_telegram_price(symbol, tp)}</code>\n"
                 f"⚖️ RR     1:{rr:.2f}\n"
                 f"{sep}\n"
                 f"⏳ Așteptăm pullback în FVG 4H pentru entry final..."
@@ -328,11 +329,11 @@ class TelegramNotifier:
                 f"🎯 <b>SNIPER ENTRY READY!</b> — CHoCH 1H Confirmat\n"
                 f"{sep}\n"
                 f"{dir_emoji} <b>{symbol}</b> {direction}\n"
-                f"📍 1H CHoCH @ <code>{choch_1h_price:.5f}</code>\n"
+                f"📍 1H CHoCH @ <code>{format_telegram_price(symbol, choch_1h_price)}</code>\n"
                 f"{sep}\n"
-                f"🔹 Entry  <code>{entry:.5f}</code>\n"
-                f"🔸 SL     <code>{sl:.5f}</code>\n"
-                f"🎯 TP     <code>{tp:.5f}</code>\n"
+                f"🔹 Entry  <code>{format_telegram_price(symbol, entry)}</code>\n"
+                f"🔸 SL     <code>{format_telegram_price(symbol, sl)}</code>\n"
+                f"🎯 TP     <code>{format_telegram_price(symbol, tp)}</code>\n"
                 f"⚖️ RR     1:{rr:.2f}\n"
                 f"{sep}\n"
                 f"⚡ EXECUTE în curs... așteptăm pullback final în FVG 1H."
@@ -360,22 +361,19 @@ class TelegramNotifier:
             return False
     
     def format_setup_alert(self, setup) -> str:
-        """Format scan card — V37.3: bias/strategy/FVG only; Entry/SL/TP la EXECUTE_NOW."""
-        SEP = "───────────"
+        """Format scan card — V43.6: 3-block premium layout + asset-class price precision."""
+        sep = UNIVERSAL_SEPARATOR
+        symbol = setup.symbol
 
-        # Direction from Daily CHoCH
-        raw_dir = setup.daily_choch.direction  # 'bullish' or 'bearish'
+        raw_dir = setup.daily_choch.direction
         direction = "🟢 LONG" if raw_dir == 'bullish' else "🔴 SHORT"
         emoji = "📈" if raw_dir == 'bullish' else "📉"
 
-        # Load pair stats
-        pair_stats = self._load_pair_statistics(setup.symbol)
+        pair_stats = self._load_pair_statistics(symbol)
 
-        # V37.3: scan = setup detectat, nu execuție
         status_emoji = "✅" if setup.status == 'READY' else "📋"
         status = "READY" if setup.status == 'READY' else "SCAN OK"
 
-        # Strategy type — V15.0: startswith suport pentru reversal_counter_w1 etc.
         strategy_type = getattr(setup, 'strategy_type', 'reversal').upper()
         if strategy_type.startswith('REVERSAL'):
             strategy_emoji = "🔄"
@@ -386,126 +384,105 @@ class TelegramNotifier:
             strategy_label = "CONTINUITY (BOS)"
             wait_hint = "Waiting 4H BOS / Pullback"
 
-        # --- HEADER ---
-        header = f"{strategy_emoji} <b>{setup.symbol}</b> {direction} {emoji}\n"
-        header += f"{status_emoji} <b>{status}</b>\n"
-        header += f"🎯 <b>Strategy: {strategy_label}</b>"
+        # ── BLOC 1: Identitate & Strategie ──
+        block1 = (
+            f"{strategy_emoji} <b>{symbol}</b> {direction} {emoji}\n"
+            f"{status_emoji} <b>{status}</b>\n"
+            f"🎯 <b>Strategy: {strategy_label}</b>"
+        )
 
-        # V40.3: W1 counter-trend — avertisment vizual (informativ, nu blocant)
         _confidence = getattr(setup, 'confidence', 'NORMAL')
         w1_bias_val_hdr = getattr(setup, 'w1_bias', None)
-        raw_dir_hdr = setup.daily_choch.direction
         _w1_counter = (
             _confidence == 'LOW_W1_COUNTER_TREND'
             or (
                 w1_bias_val_hdr and w1_bias_val_hdr != 'NEUTRAL'
                 and (
-                    (w1_bias_val_hdr == 'BEARISH' and raw_dir_hdr == 'bullish')
-                    or (w1_bias_val_hdr == 'BULLISH' and raw_dir_hdr == 'bearish')
+                    (w1_bias_val_hdr == 'BEARISH' and raw_dir == 'bullish')
+                    or (w1_bias_val_hdr == 'BULLISH' and raw_dir == 'bearish')
                 )
             )
         )
         if _w1_counter:
-            header += f"\n⚠️ <b>[COUNTER-TREND W1]</b> — D1 vs W1 macro nealiniat"
+            block1 += f"\n⚠️ <b>[COUNTER-TREND W1]</b> — D1 vs W1 macro nealiniat"
 
-        # --- SWAP ROW (V11.7) ---
-        swap_line = ""
         swap_val = getattr(setup, 'swap_long', None) if raw_dir == 'bullish' \
                    else getattr(setup, 'swap_short', None)
         swap_triple = getattr(setup, 'swap_triple_day', 'Wed')
-        if swap_val is not None:
-            swap_status = "✅ CREDIT" if swap_val >= 0 else "⚠️ DEBIT"
-            swap_line = f"\n💱 SWAP: {swap_status} | {swap_val:+.2f} pips/day (3x {swap_triple})"
+        block1 += format_swap_line(swap_val, triple_day=swap_triple)
 
-        # --- AI FUSION: Single compact line ---
-        ai_fusion = ""
+        # ── BLOC 2: Context macro live ──
+        block2_parts = []
+
         if hasattr(setup, 'ml_score') and setup.ml_score is not None and \
            hasattr(setup, 'ai_probability_score') and setup.ai_probability_score is not None:
-
             ml_score = setup.ml_score
             ai_prob = setup.ai_probability_score * 10
             fused_score = int((ml_score * 0.6) + (ai_prob * 0.4))
             confidence = "HIGH" if fused_score >= 75 else "MED" if fused_score >= 60 else "LOW"
-
             rec = getattr(setup, 'ml_recommendation', 'REVIEW')
             rec_badge = "EXECUTE" if rec == 'TAKE' else "REVIEW" if rec == 'REVIEW' else "SKIP"
+            block2_parts.append(
+                f"🧠 <b>AI: {fused_score}% ({confidence})</b> | {rec_badge} "
+                f"<i>— informativ, nu blochează execuția</i>"
+            )
 
-            ai_fusion = f"\n{SEP}\n🧠 <b>AI: {fused_score}% ({confidence})</b> | {rec_badge}"
-
-        # --- QUALITY BADGE (compact inline) ---
-        quality_line = ""
         if pair_stats:
             wr = pair_stats.get('win_rate', 0)
             trades = pair_stats.get('total_trades', 0)
             quality = "Exc" if wr >= 60 else "Good" if wr >= 45 else "Avg"
-            quality_line = f"\n✨ {quality} | 📊 {trades} trades"
+            block2_parts.append(f"✨ {quality} | 📊 {trades} trades")
 
-        # --- TIMEFRAME STATUS (V37.3: la scan = așteptare, nu READY) ---
+        daily_structure_label = "CHoCH" if strategy_type.startswith('REVERSAL') else "BOS"
+        block2_parts.append(
+            f"📊 <b>DAILY:</b> {setup.daily_choch.direction.upper()} {daily_structure_label}"
+        )
+        block2_parts.append(
+            f"🎯 FVG: <code>{format_telegram_fvg_range(symbol, setup.fvg.bottom, setup.fvg.top)}</code>"
+        )
+
+        if hasattr(setup, 'liquidity_sweep') and setup.liquidity_sweep:
+            sweep = setup.liquidity_sweep
+            conf_boost = getattr(setup, 'confidence_boost', 0)
+            block2_parts.append(f"💧 {sweep['sweep_type']} +{conf_boost}")
+
+        w1_bias_val = getattr(setup, 'w1_bias', None)
+        if w1_bias_val and w1_bias_val != 'NEUTRAL':
+            is_aligned = (w1_bias_val == 'BULLISH' and raw_dir == 'bullish') or \
+                         (w1_bias_val == 'BEARISH' and raw_dir == 'bearish')
+            w1_align_emoji = "✅" if is_aligned else "⚠️ [COUNTER-TREND W1]"
+            block2_parts.append(f"📅 W1: <b>{w1_bias_val}</b> {w1_align_emoji}")
+        else:
+            block2_parts.append("📅 W1: NEUTRAL ⏳")
+
+        block2 = f"\n{sep}\n" + "\n".join(block2_parts)
+
+        # ── BLOC 3: Radar & Execuție ──
         if setup.status == 'READY':
             h1_choch = getattr(setup, 'h1_choch', None)
             choch_1h_detected = getattr(setup, 'choch_1h_detected', False)
             if h1_choch or choch_1h_detected:
                 price_1h = h1_choch.break_price if h1_choch else getattr(setup, 'choch_1h_price', 0)
-                h1_line = f"🔭 ✅ 1H: <code>{price_1h:.5f}</code>"
+                h1_line = f"🔭 ✅ 1H: <code>{format_telegram_price(symbol, price_1h)}</code>"
             else:
                 h1_line = "🔭 1H: ⏳ Waiting..."
             if setup.h4_choch:
-                h4_line = f"📡 ✅ 4H: <code>{setup.h4_choch.break_price:.5f}</code>"
+                h4_line = f"📡 ✅ 4H: <code>{format_telegram_price(symbol, setup.h4_choch.break_price)}</code>"
             else:
                 h4_line = "📡 4H: ⏳ Waiting..."
         else:
             h4_line = f"📡 4H: ⏳ {wait_hint}"
             h1_line = "🔭 1H: ⏳ Waiting pullback + FVG"
 
-        # Liquidity (compact)
-        liquidity_line = ""
-        if hasattr(setup, 'liquidity_sweep') and setup.liquidity_sweep:
-            sweep = setup.liquidity_sweep
-            sweep_type = sweep['sweep_type']
-            conf_boost = getattr(setup, 'confidence_boost', 0)
-            liquidity_line = f"\n💧 {sweep_type} +{conf_boost}"
-
-        daily_structure_label = "CHoCH" if strategy_type.startswith('REVERSAL') else "BOS"
-
-        # V15.0 W1 BIAS LINE
-        w1_bias_val = getattr(setup, 'w1_bias', None)
-        if w1_bias_val and w1_bias_val != 'NEUTRAL':
-            raw_dir = setup.daily_choch.direction
-            is_aligned = (w1_bias_val == 'BULLISH' and raw_dir == 'bullish') or \
-                         (w1_bias_val == 'BEARISH' and raw_dir == 'bearish')
-            w1_align_emoji = "✅" if is_aligned else "⚠️ [COUNTER-TREND W1]"
-            w1_line = f"\n📅 W1: <b>{w1_bias_val}</b> {w1_align_emoji}"
-        else:
-            w1_line = "\n📅 W1: NEUTRAL ⏳"
-
-        daily_section = (
-            f"\n{SEP}\n"
-            f"📊 <b>DAILY:</b> {setup.daily_choch.direction.upper()} {daily_structure_label}\n"
-            f"🎯 FVG: <code>{setup.fvg.bottom:.5f}</code> – <code>{setup.fvg.top:.5f}</code>"
-            f"{liquidity_line}\n"
-            f"{w1_line}\n"
+        block3 = (
+            f"\n{sep}\n"
             f"{h4_line}\n"
-            f"{h1_line}"
-        )
-
-        # V37.3: fără Entry/SL/TP la scan — vin la alerta EXECUTE_NOW
-        footer_section = (
-            f"\n{SEP}\n"
+            f"{h1_line}\n"
             f"⏳ <b>Entry / SL / TP</b> — la semnal <b>EXECUTE NOW</b>\n"
             f"⚡ Radar monitorizează 4H + 1H live"
         )
 
-        # --- ASSEMBLE: Scan Card V37.3 ---
-        message = (
-            f"{header}"
-            f"{swap_line}"
-            f"{ai_fusion}"
-            f"{quality_line}"
-            f"{daily_section}"
-            f"{footer_section}"
-        )
-
-        return message.strip()
+        return f"{block1}{block2}{block3}".strip()
 
     def send_execute_now_alert(self, setup_data: dict, exec_tf: str = '?') -> bool:
         """
@@ -513,8 +490,10 @@ class TelegramNotifier:
         Conține Entry / SL / TP structural (4H SL + D1 TP) — singura sursă de prețuri de trade.
         """
         try:
-            from pip_utils import get_pip_size, sl_pips_between, MIN_SL_PIPS
-            from pip_utils import prices_direction_valid, sl_entry_magnitude_sane
+            from pip_utils import (
+                get_pip_size, sl_pips_between, MIN_SL_PIPS,
+                prices_direction_valid, sl_entry_magnitude_sane,
+            )
 
             symbol = setup_data.get('symbol', 'UNKNOWN')
             direction_raw = str(setup_data.get('direction', 'buy')).lower()
@@ -539,10 +518,7 @@ class TelegramNotifier:
             fvg_top = setup_data.get('radar_4h_fvg_top') or setup_data.get('fvg_top') or setup_data.get('poi_top')
 
             swap_val = setup_data.get('swap_long') if direction == 'BUY' else setup_data.get('swap_short')
-            swap_line = ""
-            if swap_val is not None:
-                swap_status = "✅ CREDIT" if float(swap_val) >= 0 else "⚠️ DEBIT"
-                swap_line = f"\n💱 SWAP: {swap_status} | {float(swap_val):+.2f} pips/day"
+            swap_line = format_swap_line(swap_val, triple_day=None)
 
             w1_bias = setup_data.get('w1_bias', setup_data.get('daily_bias', ''))
             w1_line = f"\n📅 W1: <b>{w1_bias}</b>" if w1_bias else ""
@@ -587,9 +563,9 @@ class TelegramNotifier:
 
                         trade_block = (
                             f"{sep}\n"
-                            f"🔹 Entry  <code>{entry_f:.5f}</code>\n"
-                            f"🔸 SL     <code>{sl_f:.5f}</code>  <i>({sl_p:.0f}p)</i>\n"
-                            f"🎯 TP     <code>{tp_f:.5f}</code>  <i>({tp_p:.0f}p)</i>\n"
+                            f"🔹 Entry  <code>{format_telegram_price(symbol, entry_f)}</code>\n"
+                            f"🔸 SL     <code>{format_telegram_price(symbol, sl_f)}</code>  <i>({sl_p:.0f}p)</i>\n"
+                            f"🎯 TP     <code>{format_telegram_price(symbol, tp_f)}</code>  <i>({tp_p:.0f}p)</i>\n"
                             f"⚖️ R:R    {rr_str}\n"
                             f"💵 ~${risk_usd:.0f} risk (5%) | 📦 ~{lots_est:.2f} lots"
                         )
@@ -605,7 +581,10 @@ class TelegramNotifier:
 
             fvg_line = ""
             if fvg_bot is not None and fvg_top is not None:
-                fvg_line = f"\n🎯 FVG {exec_tf}: <code>{float(fvg_bot):.5f}</code> – <code>{float(fvg_top):.5f}</code>"
+                fvg_line = (
+                    f"\n🎯 FVG {exec_tf}: <code>"
+                    f"{format_telegram_fvg_range(symbol, fvg_bot, fvg_top)}</code>"
+                )
 
             msg = (
                 f"🔥 <b>EXECUTE NOW</b> — semnal activ\n"
@@ -901,7 +880,8 @@ class TelegramNotifier:
                     continue
                 profit_emoji = "💚" if profit > 0 else ("❤️" if profit < 0 else "💛")
                 dot = "🔴" if dir_raw == 'sell' else "🟢"
-                message += f"{dot} {symbol} {profit_emoji} Entry: {entry:.5f} | RR: 1:{rr:.1f} | P/L: ${profit:.2f}\n"
+                entry_fmt = format_telegram_price(symbol, entry)
+                message += f"{dot} {symbol} {profit_emoji} Entry: {entry_fmt} | RR: 1:{rr:.1f} | P/L: ${profit:.2f}\n"
 
         return self.send_message(message.strip(), parse_mode="HTML")
     
@@ -1006,33 +986,37 @@ class TelegramNotifier:
                                     momentum_score: float = 0, hours_elapsed: float = 0,
                                     swap_info: dict = None) -> bool:
         """Send execution confirmation when trade is placed"""
+        from pip_utils import get_pip_size, get_asset_class
+
         direction = "🟢 LONG" if setup.direction == 'buy' else "🔴 SHORT"
         direction_emoji = "📈" if setup.direction == 'buy' else "📉"
+        symbol = setup.symbol
 
-        # ✅ TELEGRAM UPDATES by ФорексГод: SL description with protection type
-        # Detect asset class for SL description
-        symbol_upper = setup.symbol.upper()
-        if any(x in symbol_upper for x in ['BTC', 'ETH', 'XRP', 'LTC', 'ADA']):
-            # Crypto: Show percentage
+        symbol_upper = symbol.upper()
+        if get_asset_class(symbol) == 'crypto':
             sl_pct = abs(setup.stop_loss - setup.entry_price) / setup.entry_price * 100
-            sl_description = f"🛡️ SL: <code>{setup.stop_loss:.2f}</code> ({sl_pct:.1f}% Crypto Safety) ✅"
+            sl_description = (
+                f"🛡️ SL: <code>{format_telegram_price(symbol, setup.stop_loss)}</code> "
+                f"({sl_pct:.1f}% Crypto Safety) ✅"
+            )
         else:
-            # Forex: Show pips with Min Protected indicator
-            pip_size = 0.01 if 'JPY' in symbol_upper else 0.0001
+            pip_size = get_pip_size(symbol)
             sl_pips = abs(setup.stop_loss - setup.entry_price) / pip_size
-            if sl_pips <= 35:  # Close to 30 pip minimum
-                sl_description = f"🛡️ SL: <code>{setup.stop_loss:.5f}</code> ({sl_pips:.0f} pips - Min Protected) ✅"
+            sl_fmt = format_telegram_price(symbol, setup.stop_loss)
+            if sl_pips <= 35:
+                sl_description = f"🛡️ SL: <code>{sl_fmt}</code> ({sl_pips:.0f} pips - Min Protected) ✅"
             else:
-                sl_description = f"🛡️ SL: <code>{setup.stop_loss:.5f}</code> ({sl_pips:.0f} pips)"
+                sl_description = f"🛡️ SL: <code>{sl_fmt}</code> ({sl_pips:.0f} pips)"
 
-        # V12.0: Build compact swap transparency line
         sep = "────────────────"
+        swap_line = ""
         if swap_info and swap_info.get('value') is not None:
-            _sv = swap_info['value']
-            _sl = swap_info['label']
+            _sv = float(swap_info['value'])
+            if abs(_sv) < 1e-9:
+                _sl = '⚪ NEUTRAL'
+            else:
+                _sl = swap_info.get('label') or ('✅ CREDIT' if _sv > 0 else '⚠️ DEBIT')
             swap_line = f"\n{sep}\n💱 EXECUTION SWAP: {_sl} | <code>{_sv:+.2f}</code> pips/zi"
-        else:
-            swap_line = ""
 
         if entry_type == 'pullback':
             message = f"""
@@ -1042,9 +1026,9 @@ class TelegramNotifier:
 {sep}
 
 ✅ Pullback reached Fibo 50%
-📍 Entry: <code>{setup.entry_price:.5f}</code>
+📍 Entry: <code>{format_telegram_price(symbol, setup.entry_price)}</code>
 {sl_description}
-🎯 Take Profit: <code>{setup.take_profit:.5f}</code>
+🎯 Take Profit: <code>{format_telegram_price(symbol, setup.take_profit)}</code>
 📊 RR: <code>1:{setup.risk_reward:.1f}</code>
 
 ⏰ Time to entry: <code>{hours_elapsed:.1f}h</code>
@@ -1059,9 +1043,9 @@ class TelegramNotifier:
 
 ✅ Strong continuation detected!
 📊 Momentum Score: <code>{momentum_score:.0f}/100</code> 🔥
-📍 Entry: <code>{setup.entry_price:.5f}</code> (market)
+📍 Entry: <code>{format_telegram_price(symbol, setup.entry_price)}</code> (market)
 {sl_description}
-🎯 Take Profit: <code>{setup.take_profit:.5f}</code>
+🎯 Take Profit: <code>{format_telegram_price(symbol, setup.take_profit)}</code>
 📊 RR: <code>1:{setup.risk_reward:.1f}</code>
 
 ⏰ Time to entry: <code>{hours_elapsed:.1f}h</code> (after 6h wait)

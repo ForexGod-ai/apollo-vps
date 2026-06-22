@@ -16,6 +16,12 @@ from pathlib import Path
 from datetime import datetime
 from typing import Dict, Optional
 
+from strategy_optimizer import (
+    normalize_ml_pattern,
+    normalize_ml_timeframe,
+    resolve_learned_lookup_key,
+)
+
 
 class AIProbabilityAnalyzer:
     """Analyzes trade probability based on learned rules"""
@@ -125,8 +131,13 @@ class AIProbabilityAnalyzer:
             factors['symbol_quality'] = "Unknown - no historical data for this pair"
         
         # 2. Timeframe Quality (+/- 1.5 points)
-        if timeframe in self.learned_rules.get('profit_factor_by_timeframe', {}):
-            tf_data = self.learned_rules['profit_factor_by_timeframe'][timeframe]
+        tf_key = resolve_learned_lookup_key(
+            normalize_ml_timeframe(timeframe),
+            self.learned_rules.get('profit_factor_by_timeframe', {}),
+            '4H', '1H', 'UNKNOWN',
+        )
+        if tf_key in self.learned_rules.get('profit_factor_by_timeframe', {}):
+            tf_data = self.learned_rules['profit_factor_by_timeframe'][tf_key]
             pf = tf_data['profit_factor']
             
             if pf >= 1.5:
@@ -158,20 +169,26 @@ class AIProbabilityAnalyzer:
             factors['timing'] = f"✅ Good timing ({hour}:00 - {session} session)"
         
         # 4. Pattern Quality (+/- 1 point) - if provided
-        if pattern and pattern in self.learned_rules.get('pattern_success_rate', {}):
-            pattern_data = self.learned_rules['pattern_success_rate'][pattern]
+        pat_key = resolve_learned_lookup_key(
+            normalize_ml_pattern(pattern or 'UNKNOWN'),
+            self.learned_rules.get('pattern_success_rate', {}),
+            'CONTINUATION', 'REVERSAL', 'UNKNOWN',
+        )
+        if pat_key in self.learned_rules.get('pattern_success_rate', {}):
+            pattern_data = self.learned_rules['pattern_success_rate'][pat_key]
             win_rate = pattern_data['win_rate']
             total = pattern_data['total_trades']
+            pat_label = pat_key
             
             if win_rate >= 60:
                 score += 1
-                factors['pattern_quality'] = f"Reliable ({pattern}: {win_rate:.0f}% success, {total} trades)"
+                factors['pattern_quality'] = f"Reliable ({pat_label}: {win_rate:.0f}% success, {total} trades)"
             elif win_rate >= 50:
                 score += 0.5
-                factors['pattern_quality'] = f"Decent ({pattern}: {win_rate:.0f}% success)"
+                factors['pattern_quality'] = f"Decent ({pat_label}: {win_rate:.0f}% success)"
             else:
                 score -= 1
-                factors['pattern_quality'] = f"Risky ({pattern}: {win_rate:.0f}% success, {total} trades)"
+                factors['pattern_quality'] = f"Risky ({pat_label}: {win_rate:.0f}% success, {total} trades)"
         
         # Cap score between 1-10
         score = max(1, min(10, score))

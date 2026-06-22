@@ -1,5 +1,7 @@
 """Shared pip size utilities — V37.0 single source for RR/guard calculations."""
 
+from typing import Optional, Union
+
 # V37.2: SL structural minim pe 4H — sub 30p = micro-stop
 MIN_SL_PIPS = 30
 # V42.6: cap sniper forex — entry SL tipic 30–40p (ultimul pivot 4H)
@@ -37,6 +39,81 @@ def get_pip_size(symbol: str) -> float:
     if 'JPY' in s:
         return 0.01
     return 0.0001
+
+
+def get_asset_class(symbol: str) -> str:
+    """Asset class for Telegram price formatting — aligned with smc_detector._get_asset_class."""
+    s = (symbol or '').upper()
+    if any(x in s for x in ['BTC', 'ETH', 'XRP', 'LTC', 'ADA', 'DOGE']):
+        return 'crypto'
+    if any(x in s for x in ['XAU', 'XAG', 'GOLD', 'SILVER']):
+        return 'metals'
+    if any(x in s for x in ['XTI', 'WTI', 'OIL', 'BRENT', 'USOIL']):
+        return 'energy'
+    if 'JPY' in s:
+        return 'jpy_pairs'
+    return 'forex'
+
+
+def format_telegram_price(symbol: str, price: Union[float, int, str, None]) -> str:
+    """
+    V43.6 — Telegram display precision per asset class.
+    crypto: int | metals: 1dp | energy: 2dp | jpy_pairs: 3dp | forex: 5dp
+    """
+    if price is None:
+        return 'N/A'
+    try:
+        p = float(price)
+    except (TypeError, ValueError):
+        return str(price)
+
+    cls = get_asset_class(symbol)
+    if cls == 'crypto':
+        return str(int(round(p)))
+    if cls == 'forex':
+        return f"{p:.5f}"
+    if cls == 'jpy_pairs':
+        return f"{p:.3f}"
+    if cls == 'metals':
+        return f"{p:.1f}"
+    if cls == 'energy':
+        return f"{p:.2f}"
+    return f"{p:.5f}"
+
+
+def format_telegram_fvg_range(
+    symbol: str,
+    bottom: Union[float, int, None],
+    top: Union[float, int, None],
+) -> str:
+    """Formatted FVG/POI range for Telegram HTML."""
+    return (
+        f"{format_telegram_price(symbol, bottom)} – "
+        f"{format_telegram_price(symbol, top)}"
+    )
+
+
+def format_swap_line(
+    swap_val: Optional[Union[float, int]],
+    *,
+    triple_day: Optional[str] = 'Wed',
+    prefix: str = '\n',
+) -> str:
+    """
+    V43.6 — Swap row for Telegram alerts.
+    Zero swap → neutral; non-zero → CREDIT/DEBIT.
+    """
+    if swap_val is None:
+        return ''
+    try:
+        sv = float(swap_val)
+    except (TypeError, ValueError):
+        return ''
+    triple_suffix = f" (3x {triple_day})" if triple_day else ''
+    if abs(sv) < 1e-9:
+        return f"{prefix}💱 SWAP: ⚪ NEUTRAL | 0.00 pips/day{triple_suffix}"
+    swap_status = '✅ CREDIT' if sv > 0 else '⚠️ DEBIT'
+    return f"{prefix}💱 SWAP: {swap_status} | {sv:+.2f} pips/day{triple_suffix}"
 
 
 def sl_pips_between(symbol: str, entry: float, stop_loss: float) -> float:

@@ -1656,6 +1656,7 @@ class MultiTFRadar:
         'EXECUTE_NOW', 'execute_now_trigger_tf', 'execute_now_alert_sent',
         'execute_now_alert_key', 'radar_execution_ready', 'radar_verdict', 'h4_structure_locked',
     )
+    _CHOCH_ALERT_FLUSH_KEYS = ('h4_choch_alert_sent', 'h1_choch_alert_sent', 'choch_1h_price')
 
     @staticmethod
     def _execute_now_alert_key(setup: dict) -> str:
@@ -1796,6 +1797,115 @@ class MultiTFRadar:
         except Exception as _flush_err:
             logger.warning(f"[V37.6 FLUSH] {setup.get('symbol', '?')}: flush esuat ({_flush_err})")
 
+    def _flush_choch_alerts_to_json(self, setup: dict) -> None:
+        """Persist CHoCH alert dedup keys instantly — survives restart without re-alert."""
+        import os as _flush_os
+        try:
+            import numpy as _np
+
+            def _json_safe(obj):
+                if isinstance(obj, (_np.bool_,)):
+                    return bool(obj)
+                if isinstance(obj, (_np.integer,)):
+                    return int(obj)
+                if isinstance(obj, (_np.floating,)):
+                    return float(obj)
+                if isinstance(obj, (_np.ndarray,)):
+                    return obj.tolist()
+                raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
+
+            with open(_MONITORING_FILE, 'r', encoding='utf-8') as _f:
+                data = json.load(_f)
+            setups = data.get('setups', data) if isinstance(data, dict) else data
+
+            sym = setup.get('symbol')
+            setup_dir = setup.get('direction', '').upper()
+            matched = False
+            for i, s in enumerate(setups):
+                s_dir = s.get('direction', '').upper()
+                dir_ok = (
+                    s.get('symbol') == sym
+                    and (
+                        setup_dir == s_dir
+                        or (setup_dir in ('SELL', 'SHORT') and s_dir in ('SELL', 'SHORT'))
+                        or (setup_dir in ('BUY', 'LONG') and s_dir in ('BUY', 'LONG'))
+                    )
+                )
+                if not dir_ok:
+                    continue
+                for key in self._CHOCH_ALERT_FLUSH_KEYS:
+                    if key in setup:
+                        setups[i][key] = setup[key]
+                matched = True
+                break
+
+            if not matched:
+                return
+
+            if isinstance(data, dict):
+                data['setups'] = setups
+                data['last_updated'] = datetime.now().isoformat()
+            else:
+                data = setups
+
+            tmp_path = _MONITORING_TMP
+            with open(tmp_path, 'w', encoding='utf-8') as _wf:
+                json.dump(data, _wf, indent=2, default=_json_safe)
+            _flush_os.replace(tmp_path, _MONITORING_FILE)
+            logger.debug(f"[V15.0 CHoCH FLUSH] {sym}: alert dedup scris in JSON")
+        except Exception as _flush_err:
+            logger.warning(f"[V15.0 CHoCH FLUSH] {setup.get('symbol', '?')}: flush esuat ({_flush_err})")
+
+    def _maybe_send_choch_alerts(
+        self,
+        setup: dict,
+        result: 'MultiTFResult',
+        prev_4h_choch: bool,
+        prev_1h_choch: bool,
+        macro_dir: str,
+    ) -> None:
+        """V15.0: Telegram la rising edge CHoCH 4H/1H aliniat — o singură alertă per setup."""
+        if setup.get('status') == 'TRADE_OPEN':
+            return
+
+        sym = result.symbol
+        now_4h = bool(setup.get('radar_4h_choch_detected'))
+        dir_4h_ok = setup.get('radar_4h_choch_direction') == macro_dir
+        if (
+            now_4h and not prev_4h_choch and dir_4h_ok
+            and not setup.get('h4_choch_alert_sent')
+        ):
+            setup['h4_choch_alert_sent'] = True
+            self._flush_choch_alerts_to_json(setup)
+            try:
+                from telegram_notifier import TelegramNotifier
+                tn = TelegramNotifier()
+                df_4h = self.get_historical_data(sym, 'H4', 300)
+                df_w1 = self.get_historical_data(sym, 'W1', 52)
+                tn.send_4h_choch_alert(setup, df_4h, df_w1)
+                logger.success(f"[V15.0] 4H CHoCH alert trimis: {sym}")
+            except Exception as e:
+                logger.warning(f"[V15.0] 4H CHoCH Telegram alert failed for {sym}: {e}")
+
+        now_1h = bool(setup.get('radar_1h_choch_detected'))
+        dir_1h_ok = setup.get('radar_1h_choch_direction') == macro_dir
+        if (
+            now_1h and not prev_1h_choch and dir_1h_ok
+            and not setup.get('h1_choch_alert_sent')
+        ):
+            setup['h1_choch_alert_sent'] = True
+            if result.tf_1h.choch_price is not None:
+                setup['choch_1h_price'] = result.tf_1h.choch_price
+            self._flush_choch_alerts_to_json(setup)
+            try:
+                from telegram_notifier import TelegramNotifier
+                tn = TelegramNotifier()
+                df_1h = self.get_historical_data(sym, 'H1', 400)
+                tn.send_1h_choch_alert(setup, df_1h)
+                logger.success(f"[V15.0] 1H CHoCH alert trimis: {sym}")
+            except Exception as e:
+                logger.warning(f"[V15.0] 1H CHoCH Telegram alert failed for {sym}: {e}")
+
     def _arm_execute_now(self, setup: dict, result: 'MultiTFResult', exec_tf: str,
                          source: str = 'trigger') -> None:
         """V37.5/6: Seteaza EXECUTE_NOW, flush instant JSON, Telegram o singura data per setup."""
@@ -1907,6 +2017,10 @@ class MultiTFRadar:
         FIX #3: scan_error guard — nu suprascrie FVG valid cu None dacă analiza a crapat.
         FIX #5: Direction matching non-case-sensitive.
         """
+        _macro_dir = 'bullish' if result.direction == 'LONG' else 'bearish'
+        _prev_4h_choch = bool(setup.get('radar_4h_choch_detected'))
+        _prev_1h_choch = bool(setup.get('radar_1h_choch_detected'))
+
         # 🎯 1H RADAR DATA
         if result.tf_1h.choch_detected:
             setup['radar_1h_choch_detected'] = True
@@ -2204,6 +2318,8 @@ class MultiTFRadar:
         if setup.get('daily_target_price') and not setup.get('daily_tp_price'):
             setup['daily_tp_price'] = setup['daily_target_price']
 
+        self._maybe_send_choch_alerts(setup, result, _prev_4h_choch, _prev_1h_choch, _macro_dir)
+
     def _apply_lifecycle_gates(self, setups: list) -> list:
         """V33: Cele 3 Porti de Invalidare — singura responsabilitate a Radarului
         de a marca paritati ca 'moarte' inainte de analiza structurala.
@@ -2362,7 +2478,10 @@ class MultiTFRadar:
                     if setup.get('symbol') == result.symbol and (matches_sell or matches_buy or matches_direct):
                         # V37.9: pastreaza dedup alerta din ciclul analyze (in-memory)
                         # inainte de re-run _update_setup_with_radar pe fresh JSON
-                        for _ek in ('execute_now_alert_sent', 'execute_now_alert_key'):
+                        for _ek in (
+                            'execute_now_alert_sent', 'execute_now_alert_key',
+                            'h4_choch_alert_sent', 'h1_choch_alert_sent', 'choch_1h_price',
+                        ):
                             if _original_setup.get(_ek) is not None:
                                 setups[i][_ek] = _original_setup[_ek]
                         # ── Merge parțial: _update_setup_with_radar scrie DOAR cheile Radarului ──
