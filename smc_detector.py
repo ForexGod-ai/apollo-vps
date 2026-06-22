@@ -2182,6 +2182,9 @@ class SMCDetector:
             return False
         if stored_poi_top is None or stored_poi_bottom is None:
             return False
+        # V43.4: flip bearish — nu păstra POI bullish vechi din JSON
+        if (direction or '').lower() == 'bearish' and float(current_price) < float(stored_poi_bottom):
+            return False
         if not adr.price_inside:
             return False
         price = float(current_price)
@@ -2561,6 +2564,60 @@ class SMCDetector:
             b for b in bos_list
             if b.index > leg_choch.index and b.direction == leg_choch.direction
         ]
+
+        # V43.4: distribuție agresivă — nu menține leg bullish când structura a flipat
+        if leg_choch.direction == 'bullish':
+            close = float(df['close'].iloc[-1])
+            recent_high = None
+            if range_state is not None and range_state.macro_range_high:
+                recent_high = float(range_state.macro_range_high)
+            elif len(df) >= 5:
+                start = max(0, len(df) - 150)
+                recent_high = max(
+                    self._swing_body_high(df, i) for i in range(start, len(df))
+                )
+            drop_pct = 0.0
+            if recent_high and recent_high > 0:
+                drop_pct = (recent_high - close) / recent_high * 100.0
+            bearish_after_leg = [
+                c for c in chochs
+                if c.index > leg_choch.index and c.direction == 'bearish'
+            ]
+            aggressive_distribution = False
+            if (
+                range_state is not None
+                and range_state.locked
+                and range_state.locked_bias == 'bearish'
+            ):
+                aggressive_distribution = (
+                    drop_pct >= 5.0
+                    or len(bearish_after_leg) > 2
+                )
+            elif drop_pct >= 10.0 and len(bearish_after_leg) > 2:
+                aggressive_distribution = True
+            if aggressive_distribution:
+                bearish_chochs = [c for c in chochs if c.direction == 'bearish']
+                bearish_bos = [b for b in bos_list if b.direction == 'bearish']
+                if bearish_chochs:
+                    new_leg = bearish_chochs[-1]
+                    post_bos = [b for b in bearish_bos if b.index > new_leg.index]
+                    if post_bos:
+                        latest_signal = post_bos[-1]
+                        strategy_type = 'continuation'
+                    else:
+                        latest_signal = new_leg
+                        strategy_type = 'reversal'
+                    _ignored_n = len(ignored_opposite)
+                    print(
+                        f"   📉 [V43.4 DIST] drop {drop_pct:.1f}% from high {recent_high:.2f}, "
+                        f"{len(bearish_after_leg)} bearish CHoCH post-leg — "
+                        f"flip BEARISH @bar{latest_signal.index}"
+                        + (
+                            f" (was ignoring {_ignored_n} opposite pullback CHoCH)"
+                            if _ignored_n else ""
+                        )
+                    )
+                    return latest_signal, strategy_type, 'bearish', new_leg
 
         # BTC: post-CHoCH BOS chain + opposite pullback CHoCH ignored → continuation
         if len(ignored_opposite) >= 1 and len(same_dir_bos) >= 2:
