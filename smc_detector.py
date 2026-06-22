@@ -79,6 +79,35 @@ class StructuralRangeState:
 
 
 @dataclass
+class ActiveDealingRange:
+    """V43.0 — live dealing range post-leg (stateless; JSON persistence is Etapa 2)."""
+    container_low: float
+    container_high: float
+    current_swing_high: float   # LH (bearish) / HH (bullish)
+    current_swing_low: float    # LL (bearish) / HL (bullish)
+    last_lh: float
+    last_hl: float
+    last_ll: float
+    current_swing_high_bar: int
+    current_swing_low_bar: int
+    leg_anchor_index: int
+    price_inside: bool
+
+
+@dataclass
+class POIResolution:
+    """V43.0 — passive POI outcome for scanner/radar (no JSON writes here)."""
+    fvg: Optional['FVG']
+    adr: Optional[ActiveDealingRange]
+    preserve_stored_poi: bool = False
+    poi_source: str = 'detect_fvg'
+    poi_zombie: bool = False
+    adr_rescan: bool = False
+    rejected_poi_top: Optional[float] = None
+    rejected_poi_bottom: Optional[float] = None
+
+
+@dataclass
 class TradeSetup:
     symbol: str
     daily_choch: CHoCH
@@ -104,6 +133,12 @@ class TradeSetup:
     daily_bias_active: bool = False
     confidence: str = 'NORMAL'  # V40.3: LOW_W1_COUNTER_TREND when D1 vs W1 macro conflict
     w1_bias: Optional[str] = None
+    structural_breach: bool = False  # V43.0 E1-T7 — close broke LH (SHORT) or LL (LONG); passive signal
+    adr_lh: Optional[float] = None
+    adr_ll: Optional[float] = None
+    adr_hl: Optional[float] = None
+    poi_v43_source: Optional[str] = None
+    preserve_stored_poi: bool = False
 
 # ------------------- SMCDetector -------------------
 
@@ -895,6 +930,9 @@ class SMCDetector:
         choch,
         current_price,
         audit_out: Optional[dict] = None,
+        strategy_type: Optional[str] = None,
+        dealing_range: Optional[ActiveDealingRange] = None,
+        force_in_range_rescan: bool = False,
     ) -> Optional[FVG]:
         """🎯 GLITCH IN MATRIX - FVG DETECTION (V8.1 - ORDERFLOW ALIGNED)
         
@@ -944,6 +982,15 @@ class SMCDetector:
         
         # 🔥 V8.1: ORDERFLOW DIRECTION - Only search for FVGs aligned with CHoCH/BOS direction
         orderflow_direction = choch.direction  # 'bullish' or 'bearish'
+        _v43_continuation = (
+            (strategy_type or '').lower() == 'continuation'
+            and dealing_range is not None
+        )
+
+        def _v43_adr_allows(fvg: FVG) -> bool:
+            if not _v43_continuation:
+                return True
+            return self._fvg_within_adr(fvg, dealing_range, orderflow_direction)
         
         # METHOD 1: Strict 3-candle gap (classic FVG)
         # 🔥 V8.0: BODY CLOSURE ONLY for FVG detection (ignore wicks completely)
@@ -977,7 +1024,8 @@ class SMCDetector:
                             is_filled=False,
                             associated_choch=choch
                         )
-                        all_fvgs.append(fvg)
+                        if _v43_adr_allows(fvg):
+                            all_fvgs.append(fvg)
             
             elif orderflow_direction == 'bearish':
                 # BEARISH ORDERFLOW: Search ONLY for BEARISH FVGs (supply zones above price)
@@ -999,7 +1047,8 @@ class SMCDetector:
                             is_filled=False,
                             associated_choch=choch
                         )
-                        all_fvgs.append(fvg)
+                        if _v43_adr_allows(fvg):
+                            all_fvgs.append(fvg)
 
         body_fvgs = list(all_fvgs)
 
@@ -1026,7 +1075,8 @@ class SMCDetector:
                                 is_filled=False,
                                 associated_choch=choch
                             )
-                            all_fvgs.append(fvg)
+                            if _v43_adr_allows(fvg):
+                                all_fvgs.append(fvg)
                 elif orderflow_direction == 'bearish':
                     # WICK-BASED: low[i-1] > high[i+1]
                     if df['low'].iloc[i - 1] > df['high'].iloc[i + 1]:
@@ -1044,7 +1094,8 @@ class SMCDetector:
                                 is_filled=False,
                                 associated_choch=choch
                             )
-                            all_fvgs.append(fvg)
+                            if _v43_adr_allows(fvg):
+                                all_fvgs.append(fvg)
 
         all_found_fvgs = list(all_fvgs)
 
@@ -1096,10 +1147,24 @@ class SMCDetector:
             equilibrium_val: Optional[float],
             pd_valid: list,
             post_choch: list,
+            v43_extra: Optional[dict] = None,
         ) -> None:
             if audit_out is None:
                 return
             audit_out.clear()
+            v43_block = {
+                "adr_enforced": _v43_continuation,
+                "force_in_range_rescan": force_in_range_rescan,
+            }
+            if dealing_range is not None:
+                v43_block.update({
+                    "container_low": round(dealing_range.container_low, 5),
+                    "container_high": round(dealing_range.container_high, 5),
+                    "current_swing_high": round(dealing_range.current_swing_high, 5),
+                    "current_swing_low": round(dealing_range.current_swing_low, 5),
+                })
+            if v43_extra:
+                v43_block.update(v43_extra)
             audit_out.update({
                 "body_fvgs": [self.fvg_audit_entry(f) for f in body_fvgs],
                 "all_fvgs": [self.fvg_audit_entry(f) for f in all_found_fvgs],
@@ -1111,6 +1176,7 @@ class SMCDetector:
                 "selection_reason": selection_reason,
                 "orderflow_direction": orderflow_direction,
                 "signal_index": choch.index if hasattr(choch, "index") else None,
+                "v43": v43_block,
             })
 
         # ═══════════════════════════════════════════════════════════════════
@@ -1172,15 +1238,52 @@ class SMCDetector:
             post_choch = [f for f in pd_valid_fvgs if f.index >= choch_idx]
             candidates = post_choch if post_choch else pd_valid_fvgs
 
+            if _v43_continuation:
+                in_adr = [f for f in candidates if _v43_adr_allows(f)]
+                if in_adr:
+                    candidates = in_adr
+                else:
+                    _fill_audit(
+                        None,
+                        "V43 no in-range P/D FVG inside ADR",
+                        equilibrium,
+                        pd_valid_fvgs,
+                        post_choch,
+                        v43_extra={"adr_scan_empty": True},
+                    )
+                    return None
+
             # Criteriu 1: cel mai PROASPĂT (index maxim = format cel mai recent)
             # Criteriu 2: la egalitate de index → cel mai MARE (gap maxim)
             candidates.sort(key=lambda f: (f.index, f.top - f.bottom), reverse=True)
             selected = candidates[0]
 
+            if _v43_continuation and self.poi_conflicts_with_continuation(
+                selected.top, selected.bottom, orderflow_direction, dealing_range,
+            ):
+                _fill_audit(
+                    None,
+                    "V43 POI ZOMBIE — above LH / below HL",
+                    equilibrium,
+                    pd_valid_fvgs,
+                    post_choch,
+                    v43_extra={
+                        "poi_zombie": True,
+                        "rejected": self.fvg_audit_entry(selected),
+                    },
+                )
+                return None
+
+            _reason = "V16.1 freshest+largest"
+            if _v43_continuation:
+                _reason = "V43 ADR in-range + V16.1 freshest+largest"
+            if force_in_range_rescan:
+                _reason = "V43 in-range rescan after zombie reject"
+
             print(f"  ✅ [V16.1 P/D FVG] {'Discount' if orderflow_direction == 'bullish' else 'Premium'} "
                   f"FVG @ {selected.bottom:.5f}-{selected.top:.5f} "
                   f"| EQ={equilibrium:.5f} | Index={selected.index}")
-            _fill_audit(selected, "V16.1 freshest+largest", equilibrium, pd_valid_fvgs, post_choch)
+            _fill_audit(selected, _reason, equilibrium, pd_valid_fvgs, post_choch)
             return selected
 
         # ── FALLBACK → None (activează Fibo 50% Fallback din analyze_timeframe) ──
@@ -1893,6 +1996,291 @@ class SMCDetector:
     @staticmethod
     def _swing_body_low(df: pd.DataFrame, idx: int) -> float:
         return min(float(df['open'].iloc[idx]), float(df['close'].iloc[idx]))
+
+    def build_active_dealing_range(
+        self,
+        df: pd.DataFrame,
+        swing_highs: List[SwingPoint],
+        swing_lows: List[SwingPoint],
+        leg_anchor_index: int,
+        current_trend: str,
+        range_state: Optional[StructuralRangeState] = None,
+        symbol: Optional[str] = None,
+    ) -> Optional[ActiveDealingRange]:
+        """V43.0 ADR — dynamic impulse bounds after latest valid D1 BOS/CHoCH."""
+        if df is None or len(df) < 5:
+            return None
+
+        anchor = max(0, int(leg_anchor_index))
+        post_highs = [h for h in swing_highs if h.index >= anchor]
+        post_lows = [l for l in swing_lows if l.index >= anchor]
+
+        if not post_highs and swing_highs:
+            post_highs = swing_highs[-3:]
+        if not post_lows and swing_lows:
+            post_lows = swing_lows[-3:]
+
+        close = float(df['close'].iloc[-1])
+        trend = (current_trend or 'neutral').lower()
+
+        last_ll = last_lh = last_hl = None
+        last_ll_bar = last_lh_bar = last_hl_bar = anchor
+
+        if post_lows:
+            ll_sp = post_lows[-1]
+            last_ll = self._swing_body_low(df, ll_sp.index)
+            last_ll_bar = ll_sp.index
+
+        if len(post_highs) >= 2:
+            for i in range(len(post_highs) - 1, 0, -1):
+                if post_highs[i].price < post_highs[i - 1].price:
+                    last_lh = self._swing_body_high(df, post_highs[i].index)
+                    last_lh_bar = post_highs[i].index
+                    break
+        if last_lh is None and post_highs:
+            h = post_highs[-1]
+            last_lh = self._swing_body_high(df, h.index)
+            last_lh_bar = h.index
+
+        if len(post_lows) >= 2:
+            for i in range(len(post_lows) - 1, 0, -1):
+                if post_lows[i].price > post_lows[i - 1].price:
+                    last_hl = self._swing_body_low(df, post_lows[i].index)
+                    last_hl_bar = post_lows[i].index
+                    break
+        if last_hl is None and post_lows:
+            l = post_lows[-1]
+            last_hl = self._swing_body_low(df, l.index)
+            last_hl_bar = l.index
+
+        if range_state is not None and (
+            last_ll is None or last_lh is None or last_ll >= last_lh
+        ):
+            last_ll = last_ll if last_ll is not None else range_state.macro_range_low
+            last_lh = last_lh if last_lh is not None else range_state.macro_range_high
+            last_ll_bar = range_state.macro_range_low_bar
+            last_lh_bar = range_state.macro_range_high_bar
+            if last_hl is None:
+                last_hl = last_ll
+
+        if last_ll is None or last_lh is None or last_ll >= last_lh:
+            return None
+
+        if trend == 'bullish':
+            c_high = last_lh
+            c_low = last_hl if last_hl is not None else last_ll
+            c_high_bar = last_lh_bar
+            c_low_bar = last_hl_bar if last_hl is not None else last_ll_bar
+        else:
+            c_high = last_lh
+            c_low = last_ll
+            c_high_bar = last_lh_bar
+            c_low_bar = last_ll_bar
+
+        if c_low >= c_high:
+            return None
+
+        price_inside = c_low <= close <= c_high
+        _sym = symbol or ''
+        print(
+            f"   📐 [V43.0 ADR] {_sym}: container [{c_low:.5f} – {c_high:.5f}] "
+            f"| close={close:.5f} {'INSIDE' if price_inside else 'OUTSIDE'} "
+            f"| anchor=bar{anchor}"
+        )
+
+        return ActiveDealingRange(
+            container_low=c_low,
+            container_high=c_high,
+            current_swing_high=c_high,
+            current_swing_low=c_low,
+            last_lh=last_lh,
+            last_hl=last_hl if last_hl is not None else last_ll,
+            last_ll=last_ll,
+            current_swing_high_bar=c_high_bar,
+            current_swing_low_bar=c_low_bar,
+            leg_anchor_index=anchor,
+            price_inside=price_inside,
+        )
+
+    @staticmethod
+    def poi_conflicts_with_continuation(
+        poi_top: float,
+        poi_bottom: float,
+        direction: str,
+        adr: ActiveDealingRange,
+    ) -> bool:
+        """V43.0 anti-zombie: POI invalid for continuation if it breaks protected structure."""
+        d = (direction or '').lower()
+        if d == 'bearish':
+            return float(poi_bottom) > float(adr.current_swing_high)
+        if d == 'bullish':
+            return float(poi_top) < float(adr.current_swing_low)
+        return False
+
+    @staticmethod
+    def should_preserve_stored_poi(
+        stored_poi_top: Optional[float],
+        stored_poi_bottom: Optional[float],
+        direction: str,
+        strategy_type: str,
+        adr: ActiveDealingRange,
+        current_price: float,
+    ) -> bool:
+        """V43.0 — signal only; JSON write is daily_scanner (Etapa 2)."""
+        if (strategy_type or '').lower() != 'continuation':
+            return False
+        if stored_poi_top is None or stored_poi_bottom is None:
+            return False
+        if not adr.price_inside:
+            return False
+        price = float(current_price)
+        if price < adr.container_low or price > adr.container_high:
+            return False
+        return not SMCDetector.poi_conflicts_with_continuation(
+            float(stored_poi_top),
+            float(stored_poi_bottom),
+            direction,
+            adr,
+        )
+
+    @staticmethod
+    def compute_structural_breach(
+        close: float,
+        current_trend: str,
+        adr: Optional[ActiveDealingRange],
+    ) -> bool:
+        """V43.0 E1-T7 — passive breach flag when daily close breaks protected ADR bound."""
+        if adr is None:
+            return False
+        price = float(close)
+        trend = (current_trend or '').lower()
+        if trend == 'bearish' and price > float(adr.current_swing_high):
+            return True
+        if trend == 'bullish' and price < float(adr.current_swing_low):
+            return True
+        return False
+
+    @staticmethod
+    def _fvg_within_adr(fvg: FVG, adr: ActiveDealingRange, orderflow_direction: str) -> bool:
+        """Truncated scan: FVG must overlap ADR container."""
+        d = (orderflow_direction or '').lower()
+        if d == 'bearish':
+            return (
+                float(fvg.bottom) <= float(adr.current_swing_high)
+                and float(fvg.top) >= float(adr.container_low)
+            )
+        if d == 'bullish':
+            return (
+                float(fvg.top) >= float(adr.current_swing_low)
+                and float(fvg.bottom) <= float(adr.container_high)
+            )
+        return True
+
+    def resolve_d1_poi(
+        self,
+        df: pd.DataFrame,
+        latest_signal,
+        current_price: float,
+        current_trend: str,
+        strategy_type: str,
+        adr: Optional[ActiveDealingRange],
+        symbol: str = '',
+        stored_poi_top: Optional[float] = None,
+        stored_poi_bottom: Optional[float] = None,
+        audit_out: Optional[dict] = None,
+    ) -> POIResolution:
+        """V43.0 stateless POI resolver — preserve, detect, rescan, synthetic clip."""
+        meta: dict = {
+            'adr': None,
+            'preserve_stored_poi': False,
+            'poi_source': 'detect_fvg',
+            'poi_zombie': False,
+            'adr_rescan': False,
+        }
+        if audit_out is not None:
+            audit_out['v43'] = meta
+
+        if adr is not None:
+            meta['adr'] = {
+                'container_low': round(adr.container_low, 5),
+                'container_high': round(adr.container_high, 5),
+                'current_swing_high': round(adr.current_swing_high, 5),
+                'current_swing_low': round(adr.current_swing_low, 5),
+                'price_inside': adr.price_inside,
+            }
+
+        if adr is not None and self.should_preserve_stored_poi(
+            stored_poi_top,
+            stored_poi_bottom,
+            current_trend,
+            strategy_type,
+            adr,
+            current_price,
+        ):
+            top = float(stored_poi_top)
+            bottom = float(stored_poi_bottom)
+            preserved = FVG(
+                index=latest_signal.index if hasattr(latest_signal, 'index') else 0,
+                direction=current_trend,
+                top=top,
+                bottom=bottom,
+                middle=(top + bottom) / 2.0,
+                candle_time=getattr(latest_signal, 'candle_time', None),
+                is_filled=False,
+            )
+            preserved._v43_preserved = True
+            meta['preserve_stored_poi'] = True
+            meta['poi_source'] = 'V43 preserved stored POI'
+            print(
+                f"   🔒 [V43.0 ADR] {symbol}: preserve stored POI "
+                f"[{bottom:.5f} – {top:.5f}] — price inside ADR, no LH/LL sweep"
+            )
+            return POIResolution(
+                fvg=preserved,
+                adr=adr,
+                preserve_stored_poi=True,
+                poi_source='V43 preserved stored POI',
+            )
+
+        fvg_audit: dict = {}
+        selected = self.detect_fvg(
+            df,
+            latest_signal,
+            current_price,
+            audit_out=fvg_audit,
+            strategy_type=strategy_type,
+            dealing_range=adr,
+        )
+        if audit_out is not None:
+            audit_out.update(fvg_audit)
+
+        if selected is None and (strategy_type or '').lower() == 'continuation':
+            selected = self._build_v246_synthetic_fvg(
+                df, latest_signal, current_trend, symbol=symbol, dealing_range=adr,
+            )
+            meta['poi_source'] = 'V43 synthetic ADR clip'
+
+        poi_zombie = bool(fvg_audit.get('v43', {}).get('poi_zombie'))
+        rejected = fvg_audit.get('v43', {}).get('rejected')
+        rejected_top = rejected_bottom = None
+        if rejected:
+            rejected_top = rejected.get('top')
+            rejected_bottom = rejected.get('bottom')
+
+        if audit_out is not None:
+            meta['poi_source'] = fvg_audit.get('selection_reason', meta['poi_source'])
+            audit_out['v43'] = {**meta, **fvg_audit.get('v43', {})}
+
+        return POIResolution(
+            fvg=selected,
+            adr=adr,
+            preserve_stored_poi=False,
+            poi_source=meta.get('poi_source', 'detect_fvg'),
+            poi_zombie=poi_zombie,
+            adr_rescan=bool(fvg_audit.get('v43', {}).get('force_in_range_rescan')),
+            rejected_poi_top=rejected_top,
+            rejected_poi_bottom=rejected_bottom,
+        )
 
     def compute_structural_range(
         self,
@@ -3350,6 +3738,7 @@ class SMCDetector:
         latest_signal,
         current_trend: str,
         symbol: str = "",
+        dealing_range: Optional[ActiveDealingRange] = None,
     ) -> FVG:
         """V24.6 / V37.17 — zonă Equilibrium sintetică când FVG organic lipsește sau e degradat."""
         _db_swing_highs = self.detect_swing_highs(df_daily)
@@ -3361,19 +3750,32 @@ class SMCDetector:
             _recent_highs = _db_swing_highs[-5:] if _db_swing_highs else []
         if not _recent_lows:
             _recent_lows = _db_swing_lows[-5:] if _db_swing_lows else []
-        if _recent_highs and _recent_lows:
+        if dealing_range is not None:
+            _eq_h = float(dealing_range.container_high)
+            _eq_l = float(dealing_range.container_low)
+        elif _recent_highs and _recent_lows:
             _eq_h = max(s.price for s in _recent_highs)
             _eq_l = min(s.price for s in _recent_lows)
-            _eq_range = _eq_h - _eq_l
-            _eq_mid = _eq_l + _eq_range * 0.50
-            _eq_top = _eq_l + _eq_range * 0.60
-            _eq_bottom = _eq_l + _eq_range * 0.40
         else:
             _eq_h = float(df_daily['high'].iloc[-20:].max())
             _eq_l = float(df_daily['low'].iloc[-20:].min())
-            _eq_mid = (_eq_h + _eq_l) / 2
-            _eq_top = _eq_l + (_eq_h - _eq_l) * 0.60
-            _eq_bottom = _eq_l + (_eq_h - _eq_l) * 0.40
+        _eq_range = _eq_h - _eq_l
+        if _eq_range <= 0:
+            _eq_range = abs(_eq_h) * 0.001 or 0.0001
+        _eq_mid = _eq_l + _eq_range * 0.50
+        _eq_top = _eq_l + _eq_range * 0.60
+        _eq_bottom = _eq_l + _eq_range * 0.40
+        trend = (current_trend or '').lower()
+        if dealing_range is not None and trend == 'bearish':
+            _eq_top = min(_eq_top, float(dealing_range.current_swing_high))
+            _eq_bottom = max(_eq_bottom, float(dealing_range.container_low))
+        elif dealing_range is not None and trend == 'bullish':
+            _eq_bottom = max(_eq_bottom, float(dealing_range.current_swing_low))
+            _eq_top = min(_eq_top, float(dealing_range.container_high))
+        if _eq_bottom >= _eq_top:
+            _eq_bottom = _eq_l + _eq_range * 0.45
+            _eq_top = _eq_l + _eq_range * 0.55
+            _eq_mid = (_eq_bottom + _eq_top) / 2.0
         fvg = FVG(
             index=latest_signal.index,
             direction=current_trend,
@@ -3386,7 +3788,11 @@ class SMCDetector:
         fvg.quality_score = 75
         fvg._is_daily_bias_zone = True
         _lbl = f" {symbol}" if symbol else ""
-        print(f"   ✅ [V24.6/V37.17]{_lbl} Zonă Equilibrium sintetică: {_eq_bottom:.5f} - {_eq_top:.5f} (mid={_eq_mid:.5f})")
+        _clip = " (V43 ADR clip)" if dealing_range is not None else ""
+        print(
+            f"   ✅ [V24.6/V37.17]{_lbl} Zonă Equilibrium sintetică{_clip}: "
+            f"{_eq_bottom:.5f} - {_eq_top:.5f} (mid={_eq_mid:.5f})"
+        )
         return fvg
 
     def scan_for_setup(
@@ -3398,7 +3804,9 @@ class SMCDetector:
         df_1h: Optional[pd.DataFrame] = None,  # V3.0: For GBP pairs 2-TF confirmation
         require_4h_choch: bool = True,  # V3.0: Strict entry, V2.1: False for original logic
         skip_fvg_quality: bool = False,  # For backtesting: skip quality check to find more trades
-        debug: bool = False  # ✅ V10.4 FIX CRASH: param explicit — era UnboundLocalError!
+        debug: bool = False,  # ✅ V10.4 FIX CRASH: param explicit — era UnboundLocalError!
+        stored_poi_top: Optional[float] = None,  # V43.0: passive preserve signal (JSON in Etapa 2)
+        stored_poi_bottom: Optional[float] = None,
     ) -> Optional[TradeSetup]:
         """
         Main scanner: Check if "Glitch in Matrix" setup exists
@@ -3542,9 +3950,40 @@ class SMCDetector:
         )
         current_price = df_daily['close'].iloc[-1]
 
-        
+        _swing_h = self.detect_swing_highs(df_daily)
+        _swing_l = self.detect_swing_lows(df_daily)
+        _adr = self.build_active_dealing_range(
+            df_daily,
+            _swing_h,
+            _swing_l,
+            latest_signal.index,
+            current_trend,
+            range_state=_range_state,
+            symbol=symbol,
+        )
+        _structural_breach = self.compute_structural_breach(
+            float(current_price), current_trend, _adr,
+        )
+        if _structural_breach:
+            print(
+                f"   🚨 [V43.0 ADR] {symbol}: structural_breach=True — "
+                f"daily close breached protected structure (stateless signal for Etapa 2+)"
+            )
+        _poi_res = self.resolve_d1_poi(
+            df_daily,
+            latest_signal,
+            float(current_price),
+            current_trend,
+            strategy_type,
+            _adr,
+            symbol=symbol,
+            stored_poi_top=stored_poi_top,
+            stored_poi_bottom=stored_poi_bottom,
+        )
+        fvg = _poi_res.fvg
+
         # Step 2: Find FVG after signal (CHoCH or BOS) - closest to current price
-        fvg = self.detect_fvg(df_daily, latest_signal, current_price)
+        # (V43.0: handled by resolve_d1_poi above — ADR gate + anti-zombie)
 
         # V42.5: BOS sequence — post-leg same-direction BOS for momentum continuation
         consecutive_bos_count = 0
@@ -3676,7 +4115,9 @@ class SMCDetector:
         if not fvg:
             # V24.6 PERMISSIVE DAILY FLOW — FVG absent → Equilibrium sintetic (Radar 4H arbitrează)
             print(f"⚠️ [V24.6 DAILY BIAS] {symbol}: FVG corp absent/mituit — construiesc zonă Equilibrium sintetică (Radar 4H va valida)")
-            fvg = self._build_v246_synthetic_fvg(df_daily, latest_signal, current_trend, symbol)
+            fvg = self._build_v246_synthetic_fvg(
+                df_daily, latest_signal, current_trend, symbol, dealing_range=_adr,
+            )
 
         if debug:
             gap_size = fvg.top - fvg.bottom
@@ -4784,6 +5225,12 @@ class SMCDetector:
             h4_sync_fvg_bottom=float(h4_sync_fvg.bottom) if h4_sync_fvg else 0.0,
             # V24.6 PERMISSIVE DAILY FLOW: FVG sintetic din Equilibrium swing-uri Daily
             daily_bias_active=getattr(fvg, '_is_daily_bias_zone', False),
+            structural_breach=_structural_breach,
+            adr_lh=float(_adr.last_lh) if _adr else None,
+            adr_ll=float(_adr.last_ll) if _adr else None,
+            adr_hl=float(_adr.last_hl) if _adr else None,
+            poi_v43_source=_poi_res.poi_source,
+            preserve_stored_poi=_poi_res.preserve_stored_poi,
         )
         
         # 💧 V4.0: Store liquidity sweep info (for Telegram reporting)
@@ -5714,4 +6161,6 @@ def get_4h_body_close_confirmation(
         return False, None, reason
 
 
+# V43.0 ADR Gate — stateless POI container (PERFECTION_ROADMAP Etapa 1)
+V43_ADR_GATE_VERSION = "43.0"
 

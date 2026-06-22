@@ -1,19 +1,18 @@
 """
-Setup Executor Monitor — V31/V36 Radar-only execution layer
+Setup Executor Monitor — V43.3 Radar-only execution layer
 
 Arhitectura 3 straturi (Apollo / Glitch in Matrix):
 1. daily_scanner.py + smc_detector.scan_for_setup() → monitoring_setups.json + Telegram
-2. multi_tf_radar.py V36.5 → scan H4/H1 Always-On, EXECUTE_NOW, h4_structure_locked
+2. multi_tf_radar.py → EXECUTE_NOW, h4_structure_locked, radar_* FVG
 3. setup_executor_monitor.py (acest script) → signals.json → cTrader VPS port 8010
 
-V31.0+ EXECUTOR BLIND:
-- Singurul trigger de execuție Entry 1: EXECUTE_NOW=True setat de Radar
-- V37.2: SL live 4H obligatoriu la EXECUTE_NOW (min 30p); JSON nu mai poate impune micro-stop
-- V37.0: Entry 2 scale-in dezactivat (validate_choch_confirmation_scale_in)
+V43.3 EXECUTOR (Etapa 4):
+- Singura poarta de intrare: EXECUTE_NOW=True (Radar) — calea status=READY eliminata
+- SL live: tightest pivot 1H/4H (trigger TF = nearest pivot)
+- TP macro: adr_lh (SHORT) / adr_ll (LONG) din JSON; fallback V40.8 daca ADR lipseste
+- Sentinela _final_safety_check: RR net >= 1:2, SL cap, capital guard, h4_structure_locked
 
-Sentinela _final_safety_check (Fix #13): RR net ≥ 1:2, SL cap, capital guard, h4_structure_locked
-
-Ciclu: citește monitoring_setups.json la ~5s, merge-safe write-back, anti-duplicate broker guard.
+Ciclu: citeste monitoring_setups.json la ~5s, merge-safe write-back, anti-duplicate broker guard.
 """
 # Windows VPS fix: force UTF-8 stdout to prevent UnicodeEncodeError on emoji
 import sys as _sys, io as _io, re as _re
@@ -215,7 +214,7 @@ EQUILIBRIUM_BUFFER_PIPS = 3
 
 
 class SetupExecutorMonitor:
-    """V3.2 Pullback + Scale-In executor — reads EXECUTE_NOW from radar via JSON."""
+    """V43.3 EXECUTE_NOW-only executor — reads Radar signals via monitoring_setups.json."""
 
     # V37.13: chei scrise de multi_tf_radar — executorul NU le sterge la merge JSON
     _RADAR_EXECUTE_NOW_KEYS = (
@@ -1439,11 +1438,10 @@ class SetupExecutorMonitor:
 
         V9.3 DEEP SLEEP: If active, skip ALL processing (zero HTTP calls).
 
-        V42.4 ACTIVE FLOW:
+        V43.3 ACTIVE FLOW:
         1. Load setup from monitoring_setups.json
-        2. EXECUTE_NOW=True → execuție structurală live (bloc V19.8)
-        3. status=READY → execuție forțată Entry 1 (legacy owner flag)
-        4. Altfel → așteptare pasivă (Radar setează EXECUTE_NOW)
+        2. EXECUTE_NOW=True → recalc SL/TP structural live + execuție (V19.8/V43.3)
+        3. Altfel → așteptare pasivă (Radar setează EXECUTE_NOW)
         """
         # ━━━ V9.3 DEEP SLEEP CHECK (MUST be first — zero cost) ━━━
         # V19.9: Verifică marker-ul system_resumed.json la fiecare ciclu
@@ -1828,99 +1826,12 @@ class SetupExecutorMonitor:
 
                     # Check if Entry1 already filled
                     entry1_filled = setup.get('entry1_filled', False)
-                    
-                    # V4.3 FIX-016: Force execute if status is READY
-                    if status == 'READY' and not entry1_filled:
-                        # 🛡️ V7.1 DUPLICATE GUARD: Check broker before execution
-                        if self._symbol_already_at_broker(symbol):
-                            logger.warning(f"🛡️ SKIP {symbol}: Already has open position at broker (duplicate guard)")
-                            setups[i]['force_executed'] = True
-                            setups[i]['skip_reason'] = 'duplicate_guard_broker_position_exists'
-                            self._apply_multi_entry_post_fill(
-                                setups[i], setup.get('execute_now_trigger_tf') or '1H'
-                            )
-                            updated = True
-                            continue
-                        
-                        logger.success(f"🚀 EXECUTING {symbol} (status: READY, forced by owner)")
-                        
-                        # ✅ V10.5 AUDIT FIX: Re-validate 4H body closure before READY execution
-                        # READY setups loaded from disk may have a stale h4_structure_locked=True
-                        # from a prior scan session. Re-check body closure now to ensure the
-                        # 4H CHoCH that originally triggered READY is still recent and valid.
-                        # V10.8: Extins de la 12 → 48 bare (era prea strict — bloca CHoCH de 35 bare = 5 zile, valide structural)
-                        try:
-                            df_4h_recheck = self._get_cached_data(symbol, "H4", 225)
-                            if df_4h_recheck is not None and not df_4h_recheck.empty:
-                                expected_dir_rc = 'bullish' if setup['direction'] == 'buy' else 'bearish'
-                                h4_chochs_rc, _ = self.smc_detector.detect_choch_and_bos(df_4h_recheck)
-                                h4_still_valid = False
-                                for h4rc in reversed(h4_chochs_rc):
-                                    if (len(df_4h_recheck) - 1 - h4rc.index) > 200:  # V16.4 FIX BUG#4: 48→200 bare
-                                        continue
-                                    if h4rc.direction != expected_dir_rc:
-                                        continue
-                                    o_ = df_4h_recheck['open'].iloc[h4rc.index]
-                                    c_ = df_4h_recheck['close'].iloc[h4rc.index]
-                                    bh = max(o_, c_); bl = min(o_, c_)
-                                    if expected_dir_rc == 'bullish' and bh <= h4rc.break_price:
-                                        continue
-                                    if expected_dir_rc == 'bearish' and bl >= h4rc.break_price:
-                                        continue
-                                    h4_still_valid = True
-                                    break
-                                if not h4_still_valid:
-                                    logger.warning(f"   ⚠️ V10.5 READY GUARD: {symbol} 4H CHoCH no longer valid (stale/wick-only). Reverting to MONITORING.")
-                                    setups[i]['status'] = 'MONITORING'
-                                    setups[i]['h4_structure_locked'] = False
-                                    updated = True
-                                    continue
-                                logger.success(f"   ✅ V10.5 READY GUARD: {symbol} 4H body closure re-confirmed. Executing.")
-                        except Exception as rc_err:
-                            logger.warning(f"   ⚠️ V10.5 READY GUARD: 4H recheck failed for {symbol}: {rc_err} — proceeding")
-                        
-                        # V10.4: Strategy tag for forced execution
-                        forced_strategy = setup.get('strategy_type', 'reversal').upper()
-                        forced_comment = f"D1_{forced_strategy}_4H_SYNC_FORCED_E1"
-                        
-                        success = self.executor.execute_trade(
-                            symbol=symbol,
-                            direction=setup['direction'],
-                            entry_price=setup['entry_price'],
-                            stop_loss=setup['stop_loss'],
-                            take_profit=setup['take_profit'],
-                            lot_size=0.01,  # Will be recalculated by Risk Manager
-                            comment=forced_comment,
-                            status='READY'  # Force bypass status check in executor
-                        )
-                        
-                        if success:
-                            setups[i]['entry1_price'] = setup['entry_price']
-                            setups[i]['entry1_time'] = datetime.now(timezone.utc).isoformat()
-                            self._apply_multi_entry_post_fill(setups[i], '1H')
-                            setups[i]['force_executed'] = True
-                            updated = True
-                            logger.success(f"✅ {symbol} Entry 1 executed successfully (forced)")
-                        else:
-                            logger.error(f"❌ {symbol} Entry 1 execution failed (rejected by Risk Manager)")
-                            # V10.2 FIX: Do NOT enter Deep Sleep on rejection
-                            self._track_rejection(f"READY execution rejected for {symbol}")
-                            setups[i]['status'] = 'MONITORING'  # V31.0: revenim la MONITORING (nu ACTIVE)
-                            setups[i]['last_rejection_time'] = datetime.now(timezone.utc).isoformat()
-                            setups[i]['last_rejection_reason'] = 'Risk Manager: daily loss limit'
-                            updated = True
-                            logger.warning(f"⚠️ {symbol}: READY → MONITORING (rejected, will retry when risk allows)")
-                        
-                        continue  # Skip pullback logic for READY status
-                    
+
                     if not entry1_filled:
-                        # V42.4: Blind executor — asteptam EXECUTE_NOW de la Radar (legacy V3.x eliminat)
                         logger.debug(
-                            f"[V31.0] {symbol}: entry1 pending — asteptam EXECUTE_NOW de la Radar"
+                            f"[V43.3] {symbol}: entry1 pending — asteptam EXECUTE_NOW de la Radar"
                         )
-                    
                     else:
-                        # V37.0: Entry 2 scale-in dezactivat — arhitectură Radar-only (EXECUTE_NOW singur trigger)
                         logger.debug(
                             f"[V37.0] {symbol}: Entry 2 scale-in dezactivat "
                             f"(entry1_filled=True) — skip validate_choch_confirmation_scale_in"
@@ -2091,8 +2002,8 @@ class SetupExecutorMonitor:
         pip_size: float,
     ):
         """
-        V40.8 REGULA SL: ultimul punct structural pe 1H + 4H (in cap sniper) — tightest valid.
-        Radar h4_sl_price intra in competitie daca e valid.
+        V43.3 SL: tightest valid pivot 1H/4H in cap sniper.
+        Trigger TF (execute_now_trigger_tf) uses nearest pivot; other TF uses last swing.
         """
         def _f(v):
             try:
@@ -2100,6 +2011,7 @@ class SetupExecutorMonitor:
             except (TypeError, ValueError):
                 return None
 
+        trigger_tf = (setup.get('execute_now_trigger_tf') or '1H').upper()
         sl_candidates = []
 
         radar_sl = _f(setup.get('h4_sl_price')) or _f(setup.get('stop_loss'))
@@ -2112,8 +2024,10 @@ class SetupExecutorMonitor:
         for tf_label, df in (('1H', df_1h), ('4H', df_4h)):
             if df is None or df.empty:
                 continue
+            use_nearest = tf_label == trigger_tf
             sl = self._calc_structural_sl_4h(
-                symbol, direction, entry, df, pip_size, MIN_SL_PIPS, nearest=False
+                symbol, direction, entry, df, pip_size, MIN_SL_PIPS,
+                nearest=use_nearest,
             )
             if self._sl_valid_for_execute(symbol, direction, entry, sl):
                 sl_candidates.append(
@@ -2125,8 +2039,9 @@ class SetupExecutorMonitor:
 
         best_sl, best_tf, best_pips = min(sl_candidates, key=lambda x: x[2])
         logger.info(
-            f"📐 [V40.8 SL {best_tf}] {symbol}: SL={best_sl:.5f} ({best_pips:.1f}p) "
-            f"— tightest of {[f'{t}:{p:.0f}p' for _, t, p in sl_candidates]}"
+            f"[V43.3 EXEC SL] {symbol}: SL={best_sl:.5f} ({best_pips:.1f}p) via {best_tf} "
+            f"(trigger={trigger_tf}) — tightest of "
+            f"{[f'{t}:{p:.0f}p' for _, t, p in sl_candidates]}"
         )
         return best_sl
 
@@ -2142,9 +2057,8 @@ class SetupExecutorMonitor:
         stop_loss: float,
     ):
         """
-        V40.8 REGULA TP: DOAR structura D1 — fara ATR / 2xSL inventat.
-        1) daily_tp_price din scan (D1 structural)
-        2) recalc live _calc_structural_tp_d1
+        V43.3 TP: extremitate ADR din JSON (adr_lh SHORT / adr_ll LONG).
+        Fallback V40.8: daily_tp → swing D1 → recalc live.
         """
         def _f(v):
             try:
@@ -2153,6 +2067,27 @@ class SetupExecutorMonitor:
                 return None
 
         d = str(direction).lower()
+
+        # V43.3: TP macro Active Dealing Range din JSON (Etapa 1/2)
+        if d == 'sell':
+            tp_adr = _f(setup.get('adr_lh'))
+            if tp_adr is not None and tp_adr < entry:
+                logger.info(
+                    f"[V43.3 EXEC TP] {symbol}: ADR SHORT target adr_lh={tp_adr:.5f}"
+                )
+                return tp_adr
+        elif d == 'buy':
+            tp_adr = _f(setup.get('adr_ll'))
+            if tp_adr is not None and tp_adr > entry:
+                logger.info(
+                    f"[V43.3 EXEC TP] {symbol}: ADR LONG target adr_ll={tp_adr:.5f}"
+                )
+                return tp_adr
+
+        logger.debug(
+            f"[V43.3 EXEC TP] {symbol}: ADR TP indisponibil — fallback V40.8"
+        )
+
         tp_json = _f(setup.get('daily_tp_price') or setup.get('daily_target_price'))
         if tp_json:
             if d == 'buy' and tp_json > entry:
@@ -2418,162 +2353,6 @@ class SetupExecutorMonitor:
         return True, "TOATE 4 GĂRZI TRECUTE — execuție autorizată"
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-    def _execute_entry(self, setup: dict, entry_number: int, entry_price: float, 
-                       stop_loss: float, take_profit: float, position_size: float,
-                       risk_override_percent: float = None) -> bool:
-        """
-        Execute Entry 1 or Entry 2 via cTrader.
-        
-        Args:
-            setup: Setup dict from monitoring_setups.json
-            entry_number: 1 or 2
-            entry_price: Entry price
-            stop_loss: SL price
-            take_profit: TP price
-            position_size: Lot size (overridden by risk manager dynamic calc)
-            risk_override_percent: V14.1 — optional risk % override for scale-in Entry 2.
-                                   None = use SUPER_CONFIG default (5%).
-                                   Entry 2 passes 7.5% for slightly larger lot.
-        
-        Returns:
-            bool: True if successful
-        """
-        try:
-            symbol = setup['symbol']
-            direction = setup['direction']
-            
-            # ━━━ Fix #13: SENTINELA FINALĂ — validare obligatorie la execuție ━━━
-            _sentinel_ok, _sentinel_reason = self._final_safety_check(
-                symbol=symbol, direction=direction,
-                entry_price=entry_price, stop_loss=stop_loss,
-                take_profit=take_profit, setup=setup
-            )
-            if not _sentinel_ok:
-                logger.warning(f"⚠️ [Fix #13 SENTINELĂ] {symbol} E{entry_number} SKIP (nu șters): {_sentinel_reason}")
-                # V19.10: NU mai ștergem setup-ul din monitoring — skip silențios, retry la ciclul următor.
-                # Setup-ul rămâne activ; radarul va recalcula la 30s; condițiile se pot schimba.
-                return False
-            logger.success(f"✅ [Fix #13 SENTINELĂ] {symbol}: {_sentinel_reason}")
-            # ━━━ END SENTINELĂ ━━━
-
-            # ━━━ V10.4: STRATEGY TAGGING — D1_{REVERSAL|CONTINUITY}_4H_SYNC ━━━
-            # Format: D1_REVERSAL_4H_SYNC_SNIPER_E1 or D1_CONTINUITY_4H_SYNC_PB50_E2
-            # Fix #10: Normalize 'CONTINUATION' → 'CONTINUITY' pentru consistență
-            strategy_type = setup.get('strategy_type', 'reversal').upper()
-            if strategy_type in ('CONTINUATION', 'CONTINUITY'):
-                strategy_type = 'CONTINUITY'
-            entry_mode = setup.get('pullback_status', setup.get('entry_reason', 'STANDARD')).upper()
-            
-            # Simplify entry_mode tag
-            if 'SNIPER' in entry_mode or '1H' in entry_mode:
-                mode_tag = 'SNIPER'
-            elif 'HIGH_CONF' in entry_mode or '4H' in entry_mode:
-                mode_tag = 'HC4H'
-            elif 'MOMENTUM' in entry_mode:
-                mode_tag = 'MOM'
-            elif 'PULLBACK' in entry_mode or 'FIBO' in entry_mode:
-                mode_tag = 'PB50'
-            elif 'IMMEDIATE' in entry_mode:
-                mode_tag = 'IMM'
-            elif 'TIMEOUT' in entry_mode:
-                mode_tag = 'TMO'
-            else:
-                mode_tag = 'STD'
-            
-            strategy_comment = f"D1_{strategy_type}_4H_SYNC_{mode_tag}_E{entry_number}"
-            # ✅ V10.5: Validate strategy_type is a known tag — prevent empty/unknown
-            if strategy_type not in ('REVERSAL', 'CONTINUITY', 'UNKNOWN'):
-                logger.warning(f"   ⚠️ V10.5 STRATEGY TAG: Unexpected type '{strategy_type}' — check setup['strategy_type']")
-            logger.info(f"   🏷️ V10.5 STRATEGY TAG: {strategy_comment}")
-            logger.info(f"   📌 D1 Bias: {strategy_type} | 4H Sync: CONFIRMED | Entry: E{entry_number} | Mode: {mode_tag}")
-            # ━━━ END V10.4 TAGGING ━━━
-            
-            # ━━━ V11.2: SPREAD GUARD (Block Execution if spread > max) ━━━
-            spread_block = self._check_spread_guard(symbol)
-            if spread_block:
-                logger.warning(f"   🛡️ V11.2 SPREAD GUARD: {spread_block}")
-                logger.warning(f"   ⏸️ Execuție BLOCATĂ pentru {symbol} — retry la următorul ciclu")
-                setup['last_rejection_ts'] = time.time()
-                return False
-            # ━━━ END SPREAD GUARD ━━━
-
-            # ━━━ V39.5: LIQUIDITY SNIPER — block NEW entries 15 min pre-news ━━━
-            news_block = self._check_news_guard(symbol)
-            if news_block:
-                logger.warning(f"   ⏸️ V39.5 LIQUIDITY SNIPER: {news_block}")
-                setup['last_rejection_ts'] = time.time()
-                return False
-            # ━━━ END LIQUIDITY SNIPER ENTRY GUARD ━━━
-
-            # ━━━ V12.0: LIVE SWAP FETCH — Transparență financiară la execuție ━━━
-            swap_info = {}
-            try:
-                swap_raw = self.ctrader_client.get_swap_info(symbol)
-                if swap_raw.get('success'):
-                    swap_val = swap_raw['swap_short'] if direction == 'sell' else swap_raw['swap_long']
-                    swap_label = "✅ CREDIT" if swap_val > 0 else "⚠️ DEBIT"
-                    swap_info = {
-                        'value': swap_val,
-                        'label': swap_label,
-                        'triple_day': swap_raw.get('swap_triple_day', '?'),
-                    }
-                    logger.info(f"   💱 SWAP {symbol} ({'SHORT' if direction == 'sell' else 'LONG'}): {swap_label} {swap_val:+.2f} pips/day")
-                else:
-                    logger.debug(f"   💱 Swap data unavailable for {symbol}: {swap_raw.get('error')}")
-            except Exception as sw_err:
-                logger.debug(f"   💱 Swap fetch skipped: {sw_err}")
-            # ━━━ END LIVE SWAP FETCH ━━━
-
-            logger.info(f"\n🚀 EXECUTING ENTRY {entry_number}: {symbol} {direction.upper()}")
-            logger.info(f"   Entry: {entry_price}")
-            logger.info(f"   SL: {stop_loss}")
-            logger.info(f"   TP: {take_profit}")
-            logger.info(f"   Lot Size: {position_size}")
-            logger.info(f"   🏷️ Tag: {strategy_comment}")
-            
-            # Execute via cTrader executor
-            success = self.executor.execute_trade(
-                symbol=symbol,
-                direction=direction.upper(),
-                entry_price=entry_price,
-                stop_loss=stop_loss,
-                take_profit=take_profit,
-                lot_size=position_size,
-                comment=strategy_comment,
-                status='READY',  # Always READY when executing
-                risk_override_percent=risk_override_percent  # V14.1: None for E1, 7.5% for E2
-            )
-            
-            if not success:
-                # V10.2 FIX: Do NOT enter Deep Sleep on rejection
-                # Rejections mean no trade was placed → no reason to pause system
-                # Deep Sleep should only activate from ACTUAL realized losses
-                if hasattr(self.executor, 'risk_manager') and self.executor.risk_manager:
-                    self._track_rejection(f"Entry {entry_number} rejected for {symbol}")
-                    logger.warning(f"⚠️ {symbol} Entry {entry_number} rejected by Risk Manager — continuing monitoring")
-                
-                logger.error(f"❌ Failed to write signal for Entry {entry_number}")
-                # ✅ V10.9 ANTI-LOOP FIX: Store rejection timestamp so we don't spam-retry every 5s
-                # Caller (_process_monitoring_setups) will use setup['last_rejection_ts'] to enforce cooldown
-                setup['last_rejection_ts'] = time.time()
-                logger.warning(f"   🔕 V10.9: {symbol} rejection timestamped — 5 min cooldown active")
-                return False
-            
-            if success:
-                logger.success(f"✅ Entry {entry_number} signal written to signals.json!")
-                logger.info(f"   cBot will execute automatically")
-                
-                # 🔕 Telegram notification intentionally disabled here — ARMAGEDDON from
-                # position_monitor.py handles the notification when trade appears in cTrader.
-                # Avoids duplicate messages on Telegram.
-                logger.success(f"📱 Trade written to signals.json — ARMAGEDDON via position_monitor")
-                
-                return True
-        
-        except Exception as e:
-            logger.error(f"❌ Error executing Entry {entry_number}: {e}")
-            return False
-    
     def run(self):
         """Main monitoring loop"""
         logger.info("\n" + "="*60)

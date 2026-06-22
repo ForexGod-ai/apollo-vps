@@ -121,6 +121,105 @@ def _fmt_price(val: Optional[float], digits: int = 5) -> str:
     return f"{val:.{digits}f}"
 
 
+def _price_in_poi_box(
+    price: float,
+    poi_bottom: Optional[float],
+    poi_top: Optional[float],
+) -> bool:
+    """V43.2: preț live strict în caseta POI Daily [poi_bottom, poi_top]."""
+    if poi_bottom is None or poi_top is None:
+        return False
+    lo = min(float(poi_bottom), float(poi_top))
+    hi = max(float(poi_bottom), float(poi_top))
+    return lo <= float(price) <= hi
+
+
+def _evaluate_v43_daily_zone(
+    setup_data: dict,
+    direction: str,
+    current_price: float,
+    poi_bottom: float,
+    poi_top: float,
+) -> dict:
+    """
+    V43.2 E3-T1/T3: POI box + Premium/Discount ADR din JSON.
+    LONG = Discount (sub EQ 50% adr_hl–adr_ll); SHORT = Premium (peste EQ adr_ll–adr_lh).
+    """
+    sym = setup_data.get('symbol', '?')
+    in_poi = _price_in_poi_box(current_price, poi_bottom, poi_top)
+    adr_lh = setup_data.get('adr_lh')
+    adr_ll = setup_data.get('adr_ll')
+    adr_hl = setup_data.get('adr_hl')
+
+    pd_passed = False
+    pd_reason = ''
+    eq = None
+
+    if direction == 'LONG':
+        if adr_hl is not None and adr_ll is not None:
+            eq = (float(adr_hl) + float(adr_ll)) / 2.0
+            pd_passed = float(current_price) <= eq
+            pd_reason = (
+                f"Discount OK ({current_price:.5f} <= EQ {eq:.5f})"
+                if pd_passed
+                else f"LONG in Premium/neutral ({current_price:.5f} > EQ {eq:.5f})"
+            )
+        else:
+            pd_reason = 'ADR adr_hl/adr_ll lipsă din JSON'
+    elif direction == 'SHORT':
+        if adr_ll is not None and adr_lh is not None:
+            eq = (float(adr_ll) + float(adr_lh)) / 2.0
+            pd_passed = float(current_price) >= eq
+            pd_reason = (
+                f"Premium OK ({current_price:.5f} >= EQ {eq:.5f})"
+                if pd_passed
+                else f"SHORT in Discount/neutral ({current_price:.5f} < EQ {eq:.5f})"
+            )
+        else:
+            pd_reason = 'ADR adr_ll/adr_lh lipsă din JSON'
+    else:
+        pd_reason = f'direcție invalidă: {direction}'
+
+    validated = in_poi and pd_passed
+    if not in_poi:
+        gate_reason = (
+            f"preț {current_price:.5f} în afara POI "
+            f"[{min(poi_bottom, poi_top):.5f}–{max(poi_bottom, poi_top):.5f}]"
+        )
+    elif not pd_passed:
+        gate_reason = pd_reason
+    else:
+        gate_reason = pd_reason
+
+    return {
+        'validated': validated,
+        'in_poi': in_poi,
+        'pd_passed': pd_passed,
+        'equilibrium': eq,
+        'reason': gate_reason,
+        'symbol': sym,
+    }
+
+
+def _empty_tf_waiting(timeframe: str) -> 'TimeframeAnalysis':
+    """V43.2: TF placeholder când POI Daily nu e validat — fără CHoCH în aer."""
+    is_h1 = timeframe.upper() in ('H1', '1H')
+    return TimeframeAnalysis(
+        timeframe="1H" if is_h1 else "4H",
+        choch_detected=False,
+        choch_direction=None,
+        choch_time=None,
+        choch_price=None,
+        fvg_detected=False,
+        fvg_top=None,
+        fvg_bottom=None,
+        fvg_entry=None,
+        in_fvg=False,
+        distance_to_fvg_pips=0.0,
+        status=PullbackStatus.WAITING_1H_CHOCH if is_h1 else PullbackStatus.WAITING_4H_CHOCH,
+    )
+
+
 # Log fisier ASCII (V37.1) — alternativa la multi_tf_radar_stdout.log cu emoji
 _RADAR_LOG_DIR = _RADAR_DIR / "logs"
 _RADAR_LOG_DIR.mkdir(exist_ok=True)
@@ -424,6 +523,79 @@ class MultiTFRadar:
             sys.stdout.flush()
         return _result
     
+    def _write_monitoring_setups(self, setups: list) -> None:
+        """Atomic write monitoring_setups.json (V43.2 purge path)."""
+        import os as _wos
+        import numpy as _np
+
+        def _json_safe(obj):
+            if isinstance(obj, (_np.bool_,)):
+                return bool(obj)
+            if isinstance(obj, (_np.integer,)):
+                return int(obj)
+            if isinstance(obj, (_np.floating,)):
+                return float(obj)
+            if isinstance(obj, (_np.ndarray,)):
+                return obj.tolist()
+            raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
+
+        payload = {
+            'setups': setups,
+            'last_updated': datetime.now().isoformat(),
+        }
+        with open(_MONITORING_TMP, 'w', encoding='utf-8') as _wf:
+            json.dump(payload, _wf, indent=2, default=_json_safe)
+        _wos.replace(_MONITORING_TMP, _MONITORING_FILE)
+
+    def _purge_structural_breaches(self, setups: list) -> list:
+        """V43.2 E3-T2: elimină definitiv setup-uri cu structural_breach din JSON."""
+        survivors = []
+        purged_symbols = []
+        for s in setups:
+            if not isinstance(s, dict):
+                continue
+            sym = s.get('symbol', '?')
+            st = s.get('status', '')
+            if (
+                s.get('structural_breach')
+                and not s.get('entry1_filled')
+                and st not in ('TRADE_OPEN', 'PARTIAL_OPEN')
+            ):
+                purged_symbols.append(sym)
+                _radar_out(
+                    f"[🛰️ RADAR PURGE] Setup invalidat structural eliminat definitiv din JSON."
+                )
+                _radar_out(
+                    f"  [🛰️ RADAR PURGE] {sym}: structural_breach=True — "
+                    f"continuitate MORTĂ (LH/LL spart)"
+                )
+                continue
+            survivors.append(s)
+        if purged_symbols:
+            try:
+                self._write_monitoring_setups(survivors)
+                logger.warning(
+                    f"[V43.2 PURGE] Eliminate {len(purged_symbols)} setup(uri): "
+                    f"{', '.join(purged_symbols)}"
+                )
+            except Exception as _pe:
+                logger.error(f"[V43.2 PURGE] Salvare JSON eșuată: {_pe}")
+                return setups
+        return survivors
+
+    @staticmethod
+    def _is_4h_aligned_for_1h_entry(
+        tf_4h: 'TimeframeAnalysis',
+        required_direction: str,
+        allow_bos: bool,
+    ) -> bool:
+        """V43.2 E3-T4: Entry 1H permis doar dacă 4H e deja aliniat în POI validat."""
+        if tf_4h.choch_detected and tf_4h.choch_direction == required_direction:
+            return True
+        if allow_bos and tf_4h.bos_detected and tf_4h.bos_direction == required_direction:
+            return True
+        return False
+
     def _send_radar_telegram_alert(self, message: str) -> None:
         """V25.2: Trimite alertă critică pe Telegram din Radar (port 8010 offline etc.)"""
         if not self._telegram_token or not self._telegram_chat_id:
@@ -1129,6 +1301,38 @@ class MultiTFRadar:
         """
         symbol = setup_data.get('symbol', 'UNKNOWN')
         self._last_skip_reason = None
+
+        # V43.2 E3-T2: structural_breach → purge imediat, fără scan LTF
+        if (
+            setup_data.get('structural_breach')
+            and not setup_data.get('entry1_filled')
+            and setup_data.get('status') not in ('TRADE_OPEN', 'PARTIAL_OPEN')
+        ):
+            _radar_out(
+                f"[🛰️ RADAR PURGE] Setup invalidat structural eliminat definitiv din JSON."
+            )
+            _radar_out(
+                f"  [🛰️ RADAR PURGE] {symbol}: structural_breach=True — scan LTF oprit"
+            )
+            try:
+                all_setups = self.load_monitoring_setups()
+                survivors = [
+                    s for s in all_setups
+                    if not (
+                        isinstance(s, dict)
+                        and s.get('symbol') == symbol
+                        and not s.get('entry1_filled')
+                        and s.get('status') not in ('TRADE_OPEN', 'PARTIAL_OPEN')
+                        and s.get('structural_breach')
+                    )
+                ]
+                if len(survivors) < len(all_setups):
+                    self._write_monitoring_setups(survivors)
+            except Exception as _purge_err:
+                logger.error(f"[V43.2 PURGE] {symbol}: {_purge_err}")
+            self._last_skip_reason = 'structural_breach — setup eliminat din JSON'
+            return None
+
         # ── V25.0 DIRECTION GUARD: ZERO toleranță pentru direcție lipsă sau ambiguuă ──────────
         # BUG PRE-V25.0: default='SHORT' — dacă câmpul 'direction' lipsea din JSON,
         # Radarul scăna silențios CHoCH Bearish pentru un setup care era BUY.
@@ -1189,61 +1393,75 @@ class MultiTFRadar:
                 f"Preț indisponibil pentru {symbol} — portul 8010 nu răspunde. "
                 f"Verifică MarketDataProvider cBot pe VPS."
             )
-        
-        # V42.7: Poarta Daily POI — LONG doar ≤ POI top, SHORT doar ≥ POI bottom
+
         required_direction = 'bullish' if direction == 'LONG' else 'bearish'
-        if required_direction == 'bullish':
-            daily_zone_validated = current_price <= daily_fvg_top
-        else:
-            daily_zone_validated = current_price >= daily_fvg_bottom
+
+        # V43.2 E3-T1/T3: POI box strict + Premium/Discount ADR din JSON
+        _v43_zone = _evaluate_v43_daily_zone(
+            setup_data, direction, current_price, daily_fvg_bottom, daily_fvg_top,
+        )
+        daily_zone_validated = _v43_zone['validated']
 
         print(f"\n{'='*80}")
-        print(f"🔍 [{symbol}] Bias Daily: {direction} | Scanare structurală 4H+1H (V36.5 Always-On)...")
+        print(f"🔍 [{symbol}] Bias Daily: {direction} | Scanare structurală 4H+1H (V43.2 POI Gate)...")
         if _daily_bias_active:
             print(f"⚠️  [V24.6 DAILY BIAS] {symbol}: FVG sintetic (Equilibrium) — EXECUTE_NOW blocat până la CHoCH 4H real!")
         print(f"{'='*80}")
         print(f"💰 Current Price: {current_price:.5f}")
-        print(f"📊 Daily FVG Referință: [{daily_fvg_bottom:.5f} - {daily_fvg_top:.5f}]")
+        print(f"📊 Daily POI: [{daily_fvg_bottom:.5f} - {daily_fvg_top:.5f}]")
         if daily_zone_validated:
-            print(f"✅ Poartă Daily POI: DESCHISĂ — preț la POI/Discount-Premium corect")
+            _radar_out(
+                f"[🛰️ RADAR ALLOW] Preț în POI (Premium/Discount). Se vânează CHoCH."
+            )
+            _radar_out(
+                f"  [🛰️ RADAR ALLOW] {symbol}: {_v43_zone['reason']}"
+            )
         else:
-            _zone = 'Premium' if required_direction == 'bullish' else 'Discount'
-            print(f"⏳ Poartă Daily POI: ÎNCHISĂ — preț în {_zone}, așteptăm pullback la POI")
+            print(f"⏳ [V43.2 POI GATE] ÎNCHISĂ — {_v43_zone['reason']}")
+            print(f"  LTF CHoCH ignorat până la touch POI + zonă instituțională ADR corectă")
         sys.stdout.flush()
 
-        # Analyze 1H — ALWAYS (V36.5: indiferent de P/D)
-        print("\n🔎 [1H] SNIPER SCAN (ATR 0.8x)...")
-        sys.stdout.flush()
-        _h1_bars = 400
-        tf_1h = self.analyze_timeframe(
-            symbol=symbol,
-            timeframe="H1",
-            required_direction=required_direction,
-            current_price=current_price,
-            smc_detector=self.smc_1h
-        )
-        self._log_scan_done(symbol, tf_1h, _h1_bars)
+        if daily_zone_validated:
+            # Analyze 1H — doar în POI validat
+            print("\n🔎 [1H] SNIPER SCAN (ATR 0.8x)...")
+            sys.stdout.flush()
+            _h1_bars = 400
+            tf_1h = self.analyze_timeframe(
+                symbol=symbol,
+                timeframe="H1",
+                required_direction=required_direction,
+                current_price=current_price,
+                smc_detector=self.smc_1h
+            )
+            self._log_scan_done(symbol, tf_1h, _h1_bars)
 
-        # Analyze 4H — ALWAYS (V36.5: indiferent de P/D)
-        print("\n🔎 [4H] HIGH CONFIDENCE SCAN (ATR 1.0x — V15.4)...")
-        if _allow_bos_4h:
-            print(f"  ⚡ [V30.1 CONTINUATION] {symbol}: allow_bos=True — 4H BOS in directie {required_direction.upper()} = trigger echivalent CHoCH")
-        sys.stdout.flush()
-        _h4_bars = 300
-        tf_4h = self.analyze_timeframe(
-            symbol=symbol,
-            timeframe="H4",
-            required_direction=required_direction,
-            current_price=current_price,
-            smc_detector=self.smc_4h,
-            allow_bos_trigger=_allow_bos_4h  # V30.1
-        )
-        self._log_scan_done(symbol, tf_4h, _h4_bars)
+            # Analyze 4H — doar în POI validat
+            print("\n🔎 [4H] HIGH CONFIDENCE SCAN (ATR 1.0x — V15.4)...")
+            if _allow_bos_4h:
+                print(f"  ⚡ [V30.1 CONTINUATION] {symbol}: allow_bos=True — 4H BOS in directie {required_direction.upper()} = trigger echivalent CHoCH")
+            sys.stdout.flush()
+            _h4_bars = 300
+            tf_4h = self.analyze_timeframe(
+                symbol=symbol,
+                timeframe="H4",
+                required_direction=required_direction,
+                current_price=current_price,
+                smc_detector=self.smc_4h,
+                allow_bos_trigger=_allow_bos_4h  # V30.1
+            )
+            self._log_scan_done(symbol, tf_4h, _h4_bars)
+        else:
+            tf_1h = _empty_tf_waiting("H1")
+            tf_4h = _empty_tf_waiting("H4")
 
-        # ━━━ V36.5 P/D GUARD — DUPĂ scan H4/H1, blochează EXECUTE nu scanarea ━━━
-        _pd = self._evaluate_pd_guard(symbol, required_direction, current_price)
-        _pd_guard_passed = _pd['passed']
-        _pd_guard_reason = _pd['reason']
+        # V43.2: P/D guard aliniat la validarea ADR (înlocuiește D1 midpoint când ADR disponibil)
+        if _v43_zone.get('equilibrium') is not None:
+            _pd_guard_passed = _v43_zone['pd_passed'] and _v43_zone['in_poi']
+            _pd_guard_reason = '' if _pd_guard_passed else _v43_zone['reason']
+        else:
+            _pd = self._evaluate_pd_guard(symbol, required_direction, current_price)
+            _pd_guard_passed = _pd['passed'] and daily_zone_validated
+            _pd_guard_reason = _pd['reason'] if not _pd_guard_passed else ''
 
         # ━━━ V19.5: Determină execution_ready — FĂRĂ nicio poartă Daily ━━━
         # Radarul validează EXCLUSIV alinierea fractală 4H/1H cu biasul Daily.
@@ -1251,15 +1469,26 @@ class MultiTFRadar:
         execution_ready = False
         priority_timeframe = None
         verdict = "👀 MONITORING BOTH TIMEFRAMES"
-        
-        if tf_1h.status == PullbackStatus.EXECUTE_NOW_1H:
-            execution_ready = True
-            priority_timeframe = "1H"
-            verdict = "🔥 EXECUTE NOW (1H SNIPER ENTRY!)"
-        elif tf_4h.status == PullbackStatus.EXECUTE_NOW_4H:
+
+        # V43.2 E3-T4: 4H prioritar; 1H Entry doar dacă 4H deja aliniat în POI validat
+        _4h_aligned = self._is_4h_aligned_for_1h_entry(tf_4h, required_direction, _allow_bos_4h)
+
+        if tf_4h.status == PullbackStatus.EXECUTE_NOW_4H:
             execution_ready = True
             priority_timeframe = "4H"
             verdict = "🔥 EXECUTE NOW (4H HIGH CONFIDENCE!)"
+        elif tf_1h.status == PullbackStatus.EXECUTE_NOW_1H:
+            if _4h_aligned:
+                execution_ready = True
+                priority_timeframe = "1H"
+                verdict = "🔥 EXECUTE NOW (1H SNIPER ENTRY!)"
+            else:
+                verdict = "⏳ WAITING 4H ALIGNMENT — 1H trigger blocat până la CHoCH/BOS 4H"
+                print(
+                    f"  ⏳ [V43.2 H1 GATE] {symbol}: 1H EXECUTE blocat — "
+                    f"4H nealiniat în POI validat"
+                )
+                sys.stdout.flush()
         elif tf_1h.choch_detected and tf_1h.fvg_detected:
             verdict = f"⏳ WAITING FOR 1H PULLBACK ({tf_1h.distance_to_fvg_pips:.1f} pips away)"
         elif tf_4h.choch_detected and tf_4h.fvg_detected:
@@ -1269,18 +1498,24 @@ class MultiTFRadar:
         else:
             verdict = "👀 WAITING FOR 1H/4H CHoCH"
 
-        # V36.5: P/D blochează EXECUTE_NOW — scan H4/H1 deja complet, JSON se actualizează
-        if not _pd_guard_passed and _pd_guard_reason and not _pd.get('skipped'):
+        # V43.2: P/D + POI gate — blocăm EXECUTE dacă zona Daily nu e validată
+        if not _pd_guard_passed and _pd_guard_reason and daily_zone_validated is False:
+            if execution_ready:
+                execution_ready = False
+                priority_timeframe = None
+            verdict = f"⏳ POI/P-D WAIT — {_pd_guard_reason}"
+            print(f"  ⏳ [V43.2 POI BLOCK EXECUTE] {symbol}: {_pd_guard_reason}")
+            sys.stdout.flush()
+        elif not _pd_guard_passed and _pd_guard_reason:
             if execution_ready:
                 execution_ready = False
                 priority_timeframe = None
             _wait_zone = 'Premium' if required_direction == 'bearish' else 'Discount'
             verdict = f"⏳ P/D WAIT — H4/H1 monitorizate, așteptăm {_wait_zone}"
             print(f"  ⏳ [V36.5 P/D BLOCK EXECUTE] {symbol}: {_pd_guard_reason} — "
-                  f"scan H4/H1 OK, EXECUTE blocat")
+                  f"EXECUTE blocat")
             sys.stdout.flush()
 
-        # V42.7: Daily POI gate — blocăm EXECUTE dacă prețul nu e la POI
         if execution_ready and not daily_zone_validated:
             execution_ready = False
             priority_timeframe = None
@@ -1355,11 +1590,19 @@ class MultiTFRadar:
                 return None
         if not result.pd_guard_passed:
             return None
+        if not result.daily_zone_validated:
+            return None
 
         setup_type = setup.get('setup_type', setup.get('strategy_type', 'reversal')).upper()
         is_reversal = 'REVERSAL' in setup_type
+        allow_bos = (str(setup.get('strategy_type', 'reversal')).lower() == 'continuation')
+        macro_dir = 'bullish' if result.direction == 'LONG' else 'bearish'
 
         for tf_name, tf_data in (('1H', result.tf_1h), ('4H', result.tf_4h)):
+            if tf_name == '1H' and not self._is_4h_aligned_for_1h_entry(
+                result.tf_4h, macro_dir, allow_bos,
+            ):
+                continue
             if pending is not None and tf_name.upper() not in pending:
                 continue
             if not tf_data.in_fvg or not tf_data.fvg_detected:
@@ -1556,11 +1799,21 @@ class MultiTFRadar:
     def _arm_execute_now(self, setup: dict, result: 'MultiTFResult', exec_tf: str,
                          source: str = 'trigger') -> None:
         """V37.5/6: Seteaza EXECUTE_NOW, flush instant JSON, Telegram o singura data per setup."""
-        # V42.7: ultimă verificare POI Daily înainte de armare
+        # V42.7 + V43.2: ultimă verificare POI Daily înainte de armare
         if not result.daily_zone_validated:
             logger.info(
-                f"[V42.7 POI GATE] {setup.get('symbol', '?')}: skip EXECUTE_NOW arm — "
-                f"preț {result.current_price:.5f} nu e la POI Daily"
+                f"[V43.2 POI GATE] {setup.get('symbol', '?')}: skip EXECUTE_NOW arm — "
+                f"preț {result.current_price:.5f} nu e în POI Daily + P/D ADR"
+            )
+            return
+        _macro_dir = 'bullish' if result.direction == 'LONG' else 'bearish'
+        _allow_bos = (str(setup.get('strategy_type', 'reversal')).lower() == 'continuation')
+        if exec_tf == '1H' and not self._is_4h_aligned_for_1h_entry(
+            result.tf_4h, _macro_dir, _allow_bos,
+        ):
+            logger.info(
+                f"[V43.2 H1 GATE] {setup.get('symbol', '?')}: skip EXECUTE_NOW 1H — "
+                f"4H nealiniat în POI validat"
             )
             return
         if setup.get('status') != 'TRADE_OPEN':
@@ -1854,6 +2107,7 @@ class MultiTFRadar:
         setup['radar_last_scan'] = datetime.now().isoformat()
         setup['pd_guard_passed'] = result.pd_guard_passed
         setup['pd_guard_reason'] = result.pd_guard_reason or ''
+        setup['daily_zone_validated'] = result.daily_zone_validated
 
         # V22.1: EXECUTE_NOW — cheia supremă de execuție
         # REGULA DE AUR: Radarul SETEAZĂ semnalul, EXECUTORUL îl consumă.
@@ -2335,6 +2589,9 @@ class MultiTFRadar:
         """Run multi-timeframe scan — V19.4: batch JSON (1 citire, 1 scriere per ciclu)"""
         setups = self.load_monitoring_setups()
         self._hydrate_execute_now_dedup(setups)
+
+        # V43.2 E3-T2: purge structural_breach înainte de orice analiză LTF
+        setups = self._purge_structural_breaches(setups)
 
         if not setups:
             print("\n📭 No active setups in monitoring\n")

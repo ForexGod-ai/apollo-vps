@@ -22,7 +22,7 @@ from typing import List, Optional, Dict
 from dotenv import load_dotenv
 from loguru import logger
 
-from smc_detector import SMCDetector, TradeSetup, CHoCH
+from smc_detector import SMCDetector, TradeSetup, CHoCH, BOS
 from telegram_notifier import TelegramNotifier
 from ctrader_cbot_client import CTraderCBotClient
 from strategy_optimizer import StrategyOptimizer
@@ -286,9 +286,11 @@ class DailyScanner:
         daily_bias_map = {}  # V40: D1 bias per symbol pentru invalidare setup-uri stale
         w1_bias_map = {}  # V40.3: W1 macro bias informativ (confidence flag)
         symbol_price_map = {}  # V40.3: preț D1 close per simbol — soft TTL POI
+        symbol_df_daily_map: Dict[str, pd.DataFrame] = {}  # V43.1: post-TP evolution
 
         # V3.0: Load existing monitoring setups to re-evaluate their status
         monitoring_symbols = set()
+        existing_setups_by_symbol: Dict[str, dict] = {}
         try:
             with open('monitoring_setups.json', 'r', encoding='utf-8') as f:
                 data = json.load(f)
@@ -305,12 +307,18 @@ class DailyScanner:
                     existing_setups = []
                 
                 monitoring_symbols = {s['symbol'] for s in existing_setups if isinstance(s, dict) and s.get('status') == 'MONITORING'}
+                existing_setups_by_symbol = {
+                    s['symbol']: s for s in existing_setups
+                    if isinstance(s, dict) and s.get('symbol')
+                }
                 if monitoring_symbols:
                     print(f"\n🔄 Re-evaluating {len(monitoring_symbols)} MONITORING setups: {', '.join(monitoring_symbols)}")
         except FileNotFoundError:
+            existing_setups_by_symbol = {}
             pass
         except json.JSONDecodeError as e:
             print(f"⚠️  ERROR: monitoring_setups.json is corrupted: {e}")
+            existing_setups_by_symbol = {}
             pass
         
         try:
@@ -343,6 +351,7 @@ class DailyScanner:
                     continue
                 
                 symbol_price_map[symbol] = float(df_daily['close'].iloc[-1])
+                symbol_df_daily_map[symbol] = df_daily
 
                 # Download 4H data
                 df_4h = self.data_provider.get_historical_data(
@@ -394,13 +403,16 @@ class DailyScanner:
                 # - ATR Filter: Eliminates micro-swings (not prominent enough)
                 # - Premium/Discount: Rejects shallow retracements (<50%)
                 try:
+                    _stored = existing_setups_by_symbol.get(symbol, {})
                     setup = self.smc_detector.scan_for_setup(
                         symbol=symbol,
                         df_daily=df_daily,
                         df_4h=df_4h,
                         priority=priority,
                         df_1h=df_1h,  # V3.0: Pass 1H data for GBP pairs
-                        debug=True    # ✅ V10.6: verbose reject messages
+                        debug=True,    # ✅ V10.6: verbose reject messages
+                        stored_poi_top=_stored.get('poi_top') if _stored.get('poi_top') is not None else _stored.get('fvg_top'),
+                        stored_poi_bottom=_stored.get('poi_bottom') if _stored.get('poi_bottom') is not None else _stored.get('fvg_bottom'),
                     )
                 except Exception as scan_error:
                     print(f"⚠️  Error scanning {symbol}: {scan_error}")
@@ -674,7 +686,7 @@ class DailyScanner:
                                 f"📡 [V31.0 BIAS FALLBACK] {symbol}: bias={_bias_dir.upper()} "
                                 f"→ {_bf_sig}/{_bf_strategy.upper()} WAITING_D1_PULLBACK"
                             )
-                            bias_fallback_entries.append({
+                            _bf_entry = {
                                 'symbol': symbol,
                                 'direction': _bias_trade_dir,
                                 'd1_bias_direction': _bias_dir,
@@ -693,7 +705,10 @@ class DailyScanner:
                                 'status': 'WAITING_D1_PULLBACK',
                                 'setup_time': datetime.now().isoformat(),
                                 'bias_fallback': True,
-                            })
+                            }
+                            bias_fallback_entries.append(
+                                _hydrate_bias_fallback_poi(self.smc_detector, _bf_entry, df_daily)
+                            )
                             print(f"   ✅ [V31.0] {symbol} {_bias_trade_dir.upper()} → bias_fallback_entries ({len(bias_fallback_entries)} total)")
                         else:
                             print(f"⛔ {symbol} — NO SETUP + BIAS NEUTRAL [V10.2 REJECT: vezi log-ul ↑]")
@@ -783,7 +798,15 @@ class DailyScanner:
         re_evaluated_setups = [s for s in all_active_setups if s.symbol in monitoring_symbols]
 
         # SAVE first, then show final summary — V31.0: WIPE + bias fallback
-        save_monitoring_setups(all_active_setups, bias_fallback_entries, daily_bias_map, w1_bias_map, symbol_price_map)
+        save_monitoring_setups(
+            all_active_setups,
+            bias_fallback_entries,
+            daily_bias_map,
+            w1_bias_map,
+            symbol_price_map,
+            symbol_df_daily_map=symbol_df_daily_map,
+            smc_detector=self.smc_detector,
+        )
 
         # Now reload to get accurate count
         final_monitoring_count = 0
@@ -1005,20 +1028,277 @@ def _price_at_d1_poi_for_direction(price: float, stored: dict) -> bool:
     return lo <= p <= hi
 
 
-def _apply_v427_poi_status_gate(setup_dict: dict, price: float) -> dict:
-    """Downgrade READY → WAITING_D1_PULLBACK dacă prețul nu e la POI Daily."""
-    if setup_dict.get('status') != 'READY' or price is None:
+def _v43_fields_from_setup(setup: TradeSetup) -> dict:
+    """Extract V43 ADR / POI metadata from TradeSetup for JSON persistence."""
+    return {
+        "adr_lh": getattr(setup, 'adr_lh', None),
+        "adr_ll": getattr(setup, 'adr_ll', None),
+        "adr_hl": getattr(setup, 'adr_hl', None),
+        "poi_v43_source": getattr(setup, 'poi_v43_source', None),
+        "structural_breach": bool(getattr(setup, 'structural_breach', False)),
+        "preserve_stored_poi": bool(getattr(setup, 'preserve_stored_poi', False)),
+    }
+
+
+def _adr_shift_detected(old: dict, new: dict, threshold_pct: float = 0.2) -> bool:
+    """True when live ADR LH moved materially vs JSON (rehydrate POI)."""
+    old_lh = old.get('adr_lh')
+    new_lh = new.get('adr_lh')
+    if old_lh is None or new_lh is None:
+        return False
+    try:
+        old_f, new_f = float(old_lh), float(new_lh)
+    except (TypeError, ValueError):
+        return False
+    if old_f <= 0:
+        return old_f != new_f
+    return abs(new_f - old_f) / old_f * 100.0 >= threshold_pct
+
+
+def _apply_v43_poi_persistence(old: dict, new_macro: dict) -> dict:
+    """V43.1 E2-T3: preserve stored POI or rehydrate on ADR shift."""
+    out = dict(new_macro)
+    sym = out.get('symbol', '?')
+    if old.get('preserve_stored_poi') or new_macro.get('preserve_stored_poi'):
+        for key in ('poi_top', 'poi_bottom', 'fvg_top', 'fvg_bottom'):
+            if old.get(key) is not None:
+                out[key] = old[key]
+        out['poi_v43_source'] = 'V43 preserved stored POI'
+        out['preserve_stored_poi'] = True
+        print(f"  [V43.1 LIFECYCLE] {sym}: POI preserved (price inside ADR, anti-noise)")
+        return out
+    if _adr_shift_detected(old, new_macro):
+        out['poi_v43_source'] = new_macro.get('poi_v43_source') or 'V43 ADR shift rehydrate'
+        print(
+            f"  [V43.1 LIFECYCLE] {sym}: ADR shift detected "
+            f"LH {old.get('adr_lh')} → {new_macro.get('adr_lh')} — POI rehydrated from live scan"
+        )
+    return out
+
+
+def _infer_reversal_tp_hit(setup_dict: dict, df_daily: Optional[pd.DataFrame] = None) -> bool:
+    """True if reversal structural TP was reached or explicit flag set."""
+    if setup_dict.get('reversal_tp_hit') or setup_dict.get('tp_hit'):
+        return True
+    if df_daily is None or df_daily.empty:
+        return False
+    tp = setup_dict.get('daily_target_price') or setup_dict.get('take_profit')
+    if tp is None:
+        return False
+    try:
+        tp_f = float(tp)
+    except (TypeError, ValueError):
+        return False
+    direction = (
+        setup_dict.get('d1_bias_direction')
+        or setup_dict.get('daily_bias')
+        or setup_dict.get('direction')
+        or ''
+    ).lower()
+    recent = df_daily.iloc[-30:]
+    if direction in ('buy', 'bullish', 'long'):
+        return float(recent['high'].max()) >= tp_f
+    if direction in ('sell', 'bearish', 'short'):
+        return float(recent['low'].min()) <= tp_f
+    return False
+
+
+def _has_expansion_bos_after_tp(
+    detector: SMCDetector,
+    df_daily: pd.DataFrame,
+    setup_dict: dict,
+    symbol: str,
+) -> bool:
+    """Post-TP: confirm new BOS in trend direction on Daily."""
+    swing_h = detector.detect_swing_highs(df_daily)
+    swing_l = detector.detect_swing_lows(df_daily)
+    chochs, bos_list = detector.detect_choch_and_bos(df_daily)
+    range_state = detector.compute_structural_range(df_daily, swing_h, swing_l, symbol=symbol)
+    chochs, bos_list, _ = detector.filter_internal_range_signals(
+        symbol, df_daily, chochs, bos_list, range_state
+    )
+    if not bos_list:
+        return False
+    last_bos = bos_list[-1]
+    if len(df_daily) - last_bos.index > 35:
+        return False
+    direction = (
+        setup_dict.get('d1_bias_direction')
+        or setup_dict.get('daily_bias')
+        or setup_dict.get('direction')
+        or ''
+    ).lower()
+    if direction in ('buy', 'bullish', 'long'):
+        return last_bos.direction == 'bullish'
+    if direction in ('sell', 'bearish', 'short'):
+        return last_bos.direction == 'bearish'
+    return False
+
+
+def _try_post_tp_evolution(
+    detector: SMCDetector,
+    df_daily: pd.DataFrame,
+    setup_dict: dict,
+    symbol: str,
+) -> dict:
+    """V43.1 E2-T6: reversal → continuation after structural TP + expansion BOS."""
+    if _norm_strategy_type(setup_dict.get('strategy_type')) != 'reversal':
         return setup_dict
-    if _price_at_d1_poi_for_direction(price, setup_dict):
+    if setup_dict.get('entry1_filled') or setup_dict.get('status') in ('TRADE_OPEN', 'PARTIAL_OPEN'):
+        return setup_dict
+    if not _infer_reversal_tp_hit(setup_dict, df_daily):
+        return setup_dict
+    if not _has_expansion_bos_after_tp(detector, df_daily, setup_dict, symbol):
+        return setup_dict
+
+    sym = setup_dict.get('symbol', symbol)
+    swing_h = detector.detect_swing_highs(df_daily)
+    swing_l = detector.detect_swing_lows(df_daily)
+    chochs, bos_list = detector.detect_choch_and_bos(df_daily)
+    range_state = detector.compute_structural_range(df_daily, swing_h, swing_l, symbol=symbol)
+    chochs, bos_list, range_state = detector.filter_internal_range_signals(
+        sym, df_daily, chochs, bos_list, range_state
+    )
+    latest_signal, _strategy, current_trend, _leg = detector._resolve_d1_leg(
+        df_daily, chochs, bos_list, debug=False
+    )
+    if latest_signal is None:
+        return setup_dict
+
+    price = float(df_daily['close'].iloc[-1])
+    adr = detector.build_active_dealing_range(
+        df_daily, swing_h, swing_l, latest_signal.index, current_trend,
+        range_state=range_state, symbol=sym,
+    )
+    out = dict(setup_dict)
+    out['legacy_poi_top'] = out.get('poi_top')
+    out['legacy_poi_bottom'] = out.get('poi_bottom')
+    out['poi_mitigated'] = True
+    out['reversal_tp_hit'] = False
+
+    poi_res = detector.resolve_d1_poi(
+        df_daily, latest_signal, price, current_trend, 'continuation', adr,
+        symbol=sym,
+    )
+    if poi_res.fvg:
+        out['poi_top'] = float(poi_res.fvg.top)
+        out['poi_bottom'] = float(poi_res.fvg.bottom)
+        out['fvg_top'] = float(poi_res.fvg.top)
+        out['fvg_bottom'] = float(poi_res.fvg.bottom)
+    if adr:
+        out['adr_lh'] = float(adr.last_lh)
+        out['adr_ll'] = float(adr.last_ll)
+        out['adr_hl'] = float(adr.last_hl)
+
+    out['strategy_type'] = 'continuation'
+    out['setup_type'] = 'CONTINUATION'
+    out['poi_v43_source'] = poi_res.poi_source or 'V43.1 post-TP evolution'
+    out['status'] = 'WAITING_D1_PULLBACK'
+    out['preserve_stored_poi'] = False
+    for key in _RADAR_RESET_KEYS:
+        out.pop(key, None)
+    for key in list(out.keys()):
+        if key.startswith('radar_'):
+            out.pop(key, None)
+
+    print(
+        f"  [V43.1 LIFECYCLE] {sym}: REVERSAL → CONTINUATION (post-TP + expansion BOS) "
+        f"| new POI [{out.get('poi_bottom')} – {out.get('poi_top')}]"
+    )
+    return out
+
+
+def _hydrate_bias_fallback_poi(
+    detector: SMCDetector,
+    entry: dict,
+    df_daily: pd.DataFrame,
+) -> dict:
+    """V43.1 E2-T4: populate POI for bias-fallback entries missing coordinates."""
+    if entry.get('poi_top') is not None and entry.get('poi_bottom') is not None:
+        return entry
+    sym = entry.get('symbol', '?')
+    try:
+        swing_h = detector.detect_swing_highs(df_daily)
+        swing_l = detector.detect_swing_lows(df_daily)
+        chochs, bos_list = detector.detect_choch_and_bos(df_daily)
+        range_state = detector.compute_structural_range(df_daily, swing_h, swing_l, symbol=sym)
+        chochs, bos_list, range_state = detector.filter_internal_range_signals(
+            sym, df_daily, chochs, bos_list, range_state
+        )
+        latest_signal, strategy_type, current_trend, _ = detector._resolve_d1_leg(
+            df_daily, chochs, bos_list, debug=False
+        )
+        if latest_signal is None:
+            return entry
+        price = float(df_daily['close'].iloc[-1])
+        adr = detector.build_active_dealing_range(
+            df_daily, swing_h, swing_l, latest_signal.index, current_trend,
+            range_state=range_state, symbol=sym,
+        )
+        poi_res = detector.resolve_d1_poi(
+            df_daily, latest_signal, price, current_trend, strategy_type, adr, symbol=sym,
+        )
+        out = dict(entry)
+        if poi_res.fvg:
+            out['poi_top'] = float(poi_res.fvg.top)
+            out['poi_bottom'] = float(poi_res.fvg.bottom)
+            out['fvg_top'] = float(poi_res.fvg.top)
+            out['fvg_bottom'] = float(poi_res.fvg.bottom)
+            out['poi_v43_source'] = poi_res.poi_source or 'V43.1 bias fallback hydrate'
+        if adr:
+            out['adr_lh'] = float(adr.last_lh)
+            out['adr_ll'] = float(adr.last_ll)
+            out['adr_hl'] = float(adr.last_hl)
+        out['structural_breach'] = SMCDetector.compute_structural_breach(
+            price, current_trend, adr,
+        )
+        print(f"  [V43.1 LIFECYCLE] {sym}: bias fallback POI hydrated")
+        return out
+    except Exception as exc:
+        print(f"  ⚠️ [V43.1 LIFECYCLE] {sym}: bias fallback POI hydrate failed: {exc}")
+        return entry
+
+
+def _apply_v431_lifecycle_gates(setup_dict: dict, price: Optional[float]) -> dict:
+    """V43.1 E2-T1/T4: strict state machine POI gates (stateless JSON dict)."""
+    if price is None:
         return setup_dict
     setup_dict = dict(setup_dict)
-    setup_dict['status'] = 'WAITING_D1_PULLBACK'
     sym = setup_dict.get('symbol', '?')
-    print(
-        f"  ⏳ [V42.7 POI GATE] {sym}: READY → WAITING_D1_PULLBACK "
-        f"(preț {price} nu e la POI Daily)"
-    )
+    status = setup_dict.get('status', '')
+    in_poi = _price_in_daily_poi(price, setup_dict)
+
+    if setup_dict.get('structural_breach'):
+        if not setup_dict.get('entry1_filled') and status not in ('TRADE_OPEN', 'PARTIAL_OPEN'):
+            setup_dict['status'] = 'INVALIDATED'
+            setup_dict['invalidation_reason'] = 'V43.1 structural_breach'
+            for key in _RADAR_RESET_KEYS:
+                setup_dict.pop(key, None)
+            print(f"  [V43.1 LIFECYCLE] {sym}: INVALIDATED — structural_breach (protected LH/LL broken)")
+            return setup_dict
+
+    if status == 'WAITING_D1_PULLBACK' and in_poi:
+        setup_dict['status'] = 'MONITORING'
+        print(f"  [V43.1 LIFECYCLE] {sym}: WAITING_D1_PULLBACK → MONITORING (price inside POI)")
+
+    elif status == 'MONITORING' and not in_poi:
+        setup_dict['status'] = 'WAITING_D1_PULLBACK'
+        for key in _RADAR_RESET_KEYS:
+            setup_dict.pop(key, None)
+        print(f"  [V43.1 LIFECYCLE] {sym}: MONITORING → WAITING_D1_PULLBACK (price left POI)")
+
+    elif status == 'READY' and not in_poi:
+        setup_dict['status'] = 'WAITING_D1_PULLBACK'
+        for key in _RADAR_RESET_KEYS:
+            setup_dict.pop(key, None)
+        print(f"  [V43.1 LIFECYCLE] {sym}: READY → WAITING_D1_PULLBACK (price left POI macro zone)")
+
     return setup_dict
+
+
+def _apply_v427_poi_status_gate(setup_dict: dict, price: float) -> dict:
+    """V42.7 + V43.1: lifecycle gates (READY/MONITORING/WAITING strict POI incinta)."""
+    return _apply_v431_lifecycle_gates(setup_dict, price)
 
 
 _EXECUTOR_PRESERVE_KEYS = (
@@ -1094,7 +1374,7 @@ def _trade_setup_to_monitoring_dict(setup: TradeSetup, setup_time_str: str) -> d
         scan_status = 'WAITING_D1_PULLBACK'
     _d1_sig = setup.daily_choch
     _d1_signal_type = 'CHoCH' if isinstance(_d1_sig, CHoCH) else 'BOS'
-    return {
+    out = {
         "symbol": setup.symbol,
         "direction": direction,
         "daily_bias": setup.daily_choch.direction.upper(),
@@ -1123,6 +1403,8 @@ def _trade_setup_to_monitoring_dict(setup: TradeSetup, setup_time_str: str) -> d
         "d1_signal_price": getattr(_d1_sig, 'break_price', None),
         "d1_scan_date": datetime.now().isoformat(),
     }
+    out.update(_v43_fields_from_setup(setup))
+    return out
 
 
 def save_monitoring_setups(
@@ -1131,6 +1413,8 @@ def save_monitoring_setups(
     daily_bias_map: dict = None,
     w1_bias_map: dict = None,
     symbol_price_map: dict = None,
+    symbol_df_daily_map: dict = None,
+    smc_detector: Optional[SMCDetector] = None,
 ):
     """[V33 SMART MERGE] + V40.3 re-hidratare strategică + soft TTL 4 zile fără POI.
     Un pullback pe Daily poate dura zile — stergerea oarba de dimineata este interzisa.
@@ -1153,6 +1437,9 @@ def save_monitoring_setups(
         w1_bias_map = {}
     if symbol_price_map is None:
         symbol_price_map = {}
+    if symbol_df_daily_map is None:
+        symbol_df_daily_map = {}
+    detector = smc_detector or SMCDetector()
 
     _SOFT_TTL_DAYS = 4
 
@@ -1253,6 +1540,18 @@ def save_monitoring_setups(
         for sym in _invalidated:
             existing_active.pop(sym, None)
 
+        # V43.1: lifecycle + post-TP pe setup-uri păstrate (nescanate azi)
+        for sym, stored in list(existing_active.items()):
+            price = symbol_price_map.get(sym)
+            stored = _apply_v431_lifecycle_gates(stored, price)
+            if stored.get('status') in _DEAD_STATUSES:
+                existing_active.pop(sym, None)
+                continue
+            df_d1 = symbol_df_daily_map.get(sym)
+            if df_d1 is not None:
+                stored = _try_post_tp_evolution(detector, df_d1, stored, sym)
+            existing_active[sym] = stored
+
         # Pasul 2: Construim lista finala
         monitoring_setups = list(existing_active.values())  # Incepem cu ce era activ
         preserved_symbols = set(existing_active.keys())
@@ -1287,6 +1586,16 @@ def save_monitoring_setups(
                 _live_price = symbol_price_map.get(setup.symbol) if symbol_price_map else None
                 monitoring_setup = _apply_v427_poi_status_gate(monitoring_setup, _live_price)
                 merged = _apply_v42_macro_override(_old, monitoring_setup)
+                merged = _apply_v43_poi_persistence(_old, merged)
+                df_d1 = symbol_df_daily_map.get(setup.symbol)
+                if df_d1 is not None:
+                    merged = _try_post_tp_evolution(detector, df_d1, merged, setup.symbol)
+                if merged.get('status') in _DEAD_STATUSES:
+                    monitoring_setups = [
+                        s for s in monitoring_setups if s.get('symbol') != setup.symbol
+                    ]
+                    existing_active.pop(setup.symbol, None)
+                    continue
                 monitoring_setups = [
                     s for s in monitoring_setups if s.get('symbol') != setup.symbol
                 ]
@@ -1301,6 +1610,11 @@ def save_monitoring_setups(
             monitoring_setup = _trade_setup_to_monitoring_dict(setup, setup_time_str)
             _live_price = symbol_price_map.get(setup.symbol) if symbol_price_map else None
             monitoring_setup = _apply_v427_poi_status_gate(monitoring_setup, _live_price)
+            df_d1 = symbol_df_daily_map.get(setup.symbol)
+            if df_d1 is not None:
+                monitoring_setup = _try_post_tp_evolution(detector, df_d1, monitoring_setup, setup.symbol)
+            if monitoring_setup.get('status') in _DEAD_STATUSES:
+                continue
             monitoring_setups.append(monitoring_setup)
             preserved_symbols.add(setup.symbol)
 
@@ -1327,6 +1641,17 @@ def save_monitoring_setups(
                         )
                         continue
                     merged_fb = _apply_v42_macro_override(_old, _new_fb)
+                    merged_fb = _apply_v43_poi_persistence(_old, merged_fb)
+                    _live_fb = symbol_price_map.get(sym)
+                    merged_fb = _apply_v431_lifecycle_gates(merged_fb, _live_fb)
+                    df_d1 = symbol_df_daily_map.get(sym)
+                    if df_d1 is not None:
+                        merged_fb = _try_post_tp_evolution(detector, df_d1, merged_fb, sym)
+                    if merged_fb.get('status') in _DEAD_STATUSES:
+                        monitoring_setups = [s for s in monitoring_setups if s.get('symbol') != sym]
+                        existing_active.pop(sym, None)
+                        preserved_symbols.discard(sym)
+                        continue
                     monitoring_setups = [s for s in monitoring_setups if s.get('symbol') != sym]
                     monitoring_setups.append(merged_fb)
                     existing_active[sym] = merged_fb
@@ -1339,6 +1664,10 @@ def save_monitoring_setups(
             if open_dir and open_dir != direction:
                 print(f"⛔ SAVE GUARD: {sym} — NOT saving bias fallback {direction.upper()}, "
                       f"open {open_dir.upper()} position exists")
+                continue
+            _live_fb = symbol_price_map.get(sym)
+            entry = _apply_v431_lifecycle_gates(entry, _live_fb)
+            if entry.get('status') in _DEAD_STATUSES:
                 continue
             monitoring_setups.append(entry)
             if sym:

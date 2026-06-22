@@ -241,22 +241,73 @@ def audit_setup(
         f"price={latest_signal.break_price:.5f}"
     )
 
-    audit_fvg: dict = {}
-    selected_fvg = detector.detect_fvg(df_d1, latest_signal, price, audit_out=audit_fvg)
-    result["fvg_audit"] = audit_fvg
+    adr = detector.build_active_dealing_range(
+        df_d1,
+        swing_highs,
+        swing_lows,
+        latest_signal.index,
+        current_trend,
+        range_state=range_state,
+        symbol=symbol,
+    )
+    structural_breach = SMCDetector.compute_structural_breach(price, current_trend, adr)
+    result["structural_breach"] = structural_breach
+    if adr is not None:
+        result["adr_high"] = round(float(adr.current_swing_high), 5)
+        result["adr_low"] = round(float(adr.current_swing_low), 5)
+        result["adr_price_inside"] = adr.price_inside
+    else:
+        result["adr_high"] = None
+        result["adr_low"] = None
+        result["adr_price_inside"] = None
 
+    audit_fvg: dict = {}
+    poi_res = detector.resolve_d1_poi(
+        df_d1,
+        latest_signal,
+        float(price),
+        current_trend,
+        strategy_type,
+        adr,
+        symbol=symbol,
+        stored_poi_top=json_top,
+        stored_poi_bottom=json_bottom,
+        audit_out=audit_fvg,
+    )
+    result["fvg_audit"] = audit_fvg
+    result["poi_source"] = poi_res.poi_source
+    result["poi_preserve_stored"] = poi_res.preserve_stored_poi
+    result["poi_zombie"] = poi_res.poi_zombie
+
+    selected_fvg = poi_res.fvg
     if selected_fvg is None and direction in ("bullish", "bearish"):
-        synthetic = detector._build_v246_synthetic_fvg(df_d1, latest_signal, current_trend, symbol)
+        synthetic = detector._build_v246_synthetic_fvg(
+            df_d1, latest_signal, current_trend, symbol=symbol, dealing_range=adr,
+        )
         result["recalc_poi_top"] = round(float(synthetic.top), 5)
         result["recalc_poi_bottom"] = round(float(synthetic.bottom), 5)
-        result["recalc_source"] = "V24.6 synthetic Equilibrium"
+        result["recalc_source"] = "V43 synthetic ADR clip"
     elif selected_fvg is not None:
         result["recalc_poi_top"] = round(float(selected_fvg.top), 5)
         result["recalc_poi_bottom"] = round(float(selected_fvg.bottom), 5)
-        result["recalc_source"] = audit_fvg.get("selection_reason", "detect_fvg")
+        result["recalc_source"] = poi_res.poi_source or audit_fvg.get(
+            "selection_reason", "resolve_d1_poi"
+        )
     else:
         result["recalc_poi_top"] = None
         result["recalc_poi_bottom"] = None
+
+    if (
+        adr is not None
+        and json_top is not None
+        and json_bottom is not None
+        and (strategy_type or "").lower() == "continuation"
+        and SMCDetector.poi_conflicts_with_continuation(
+            float(json_top), float(json_bottom), current_trend, adr,
+        )
+    ):
+        result["flags"].append("V43_ADR_CONFLICT")
+        result["v43_adr_conflict"] = True
 
     if json_top is not None and json_bottom is not None:
         sel = audit_fvg.get("selected")
@@ -292,7 +343,9 @@ def audit_setup(
         result["flags"].append("WAIT_4H_CHOCH")
 
     # Verdict
-    if "POI_DRIFT" in result["flags"]:
+    if "V43_ADR_CONFLICT" in result["flags"]:
+        result["verdict"] = "JSON POI violates ADR — V43 rescan required"
+    elif "POI_DRIFT" in result["flags"]:
         result["verdict"] = "POI JSON differs from live V16.1 recalc — review chart"
     elif not result.get("v427_poi_ok", True):
         result["verdict"] = "POI set OK — waiting Daily pullback (V42.7)"
@@ -338,6 +391,28 @@ def print_audit_report(results: List[dict]) -> None:
 
         if r.get("d1_anchor"):
             print(f"  D1 anchor:    {r['d1_anchor']}")
+
+        ah, al = r.get("adr_high"), r.get("adr_low")
+        if ah is not None and al is not None:
+            print(f"  ADR High (LH): {ah:.5f}")
+            print(f"  ADR Low (LL):  {al:.5f}")
+            inside = r.get("adr_price_inside")
+            if inside is not None:
+                print(f"  ADR state:     {'INSIDE range' if inside else 'OUTSIDE range'}")
+        else:
+            print("  ADR:           (not computed — insufficient swings)")
+
+        if r.get("structural_breach"):
+            print(
+                "  *** STRUCTURAL BREACH *** Daily close broke protected LH/LL — "
+                "continuation setup structurally invalid (Etapa 2 will consume signal)"
+            )
+
+        if r.get("v43_adr_conflict") or "V43_ADR_CONFLICT" in (r.get("flags") or []):
+            print(
+                "[⚠️ V43_ADR_CONFLICT] Vechiul POI încalcă granițele ADR. "
+                "Rescanare activată pentru zonă proaspătă."
+            )
 
         fa = r.get("fvg_audit") or {}
         n_all = len(fa.get("all_fvgs") or [])
