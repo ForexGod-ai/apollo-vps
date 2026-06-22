@@ -29,7 +29,6 @@ import sqlite3
 import subprocess
 import sys
 import atexit
-import threading
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
@@ -1403,75 +1402,19 @@ class TelegramCommandCenter:
             logger.error(f"❌ KILLALL error: {e}")
             return f"❌ <b>KILLALL ERROR:</b> {str(e)}"
 
-    def _trigger_post_resume_scan(self, script_dir: Path) -> None:
-        """V39.1: Lanseaza daily_scanner imediat dupa /resume (non-blocking)."""
-        scanner = script_dir / 'daily_scanner.py'
-        if not scanner.exists():
-            logger.warning("⚠️ [V39.1] daily_scanner.py not found — skip post-resume scan")
-            return
-        try:
-            trigger_file = script_dir / 'data' / 'resume_scan_trigger.json'
-            trigger_file.parent.mkdir(parents=True, exist_ok=True)
-            trigger_file.write_text(
-                json.dumps({
-                    'triggered_at': datetime.now(timezone.utc).isoformat(),
-                    'source': 'manual /resume',
-                }, indent=2),
-                encoding='utf-8',
-            )
-        except Exception as _tf_err:
-            logger.warning(f"⚠️ resume_scan_trigger write failed: {_tf_err}")
-
-        try:
-            subprocess.Popen(
-                [sys.executable, str(scanner), '--live'],
-                cwd=str(script_dir),
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-            logger.info("🔱 [V39.1] Post-resume scan launched (daily_scanner.py --live)")
-        except Exception as _scan_err:
-            logger.warning(f"⚠️ [V39.1] Post-resume scan launch failed: {_scan_err}")
-
     def handle_resume_command(self) -> str:
         """
-        V40.4 /resume — State Recovery (broker PNL sync) + deep sleep OFF + scan instant.
+        /resume — Deblocare exclusiv: deep sleep OFF, P&L anchor reset, force_bypass_loss_limit.
+        Fără scanare Daily / bias sync (pivoți falși pe lumânări neînchise).
         """
         try:
             script_dir = Path(__file__).parent.resolve()
             sleep_file = script_dir / 'data' / 'deep_sleep_state.json'
 
-            # V40.4: State Recovery — sync closed deals from 00:00 (calendar day) before resume
-            _recovery_pnl = 'N/A'
-            _recovery_trades = 0
-            try:
-                from trade_manager import TradeManager
-                _today = self._status_ro_today()
-                _recovery = TradeManager(script_dir).recover_state_since_midnight(_today)
-                if _recovery.get('sync_ok'):
-                    _recovery_pnl = f"${_recovery['today_pnl']:+.2f}"
-                    _recovery_trades = _recovery['trade_count']
-                    logger.info(
-                        f"[V40.4] State Recovery: today PNL {_recovery_pnl}, "
-                        f"{_recovery_trades} trades (broker sync)"
-                    )
-            except Exception as _rec_err:
-                logger.warning(f"⚠️ [V40.4] State Recovery failed: {_rec_err}")
-
-            # Ora României pentru afișare
-            try:
-                import pytz as _pytz
-                _ro_tz = _pytz.timezone('Europe/Bucharest')
-                _now_ro = datetime.now(_ro_tz)
-                _time_label = _now_ro.strftime('%H:%M (ora României)')
-            except Exception:
-                _time_label = datetime.now(timezone.utc).strftime('%H:%M UTC')
-
             if sleep_file.exists():
                 sleep_file.unlink()
 
-            # V19.6.8: Marker resume — executor + /status il citesc live
-            _equity_label = 'N/A'
+            # Marker resume — executor + /status îl citesc live
             try:
                 resume_marker = script_dir / 'data' / 'system_resumed.json'
                 resume_marker.parent.mkdir(parents=True, exist_ok=True)
@@ -1483,35 +1426,19 @@ class TelegramCommandCenter:
             except Exception:
                 pass
 
-            # V39.1: Reset ancora P&L + force_bypass_loss_limit in daily_state.json
+            # Reset ancora P&L + force_bypass_loss_limit in daily_state.json
             try:
                 from unified_risk_manager import UnifiedRiskManager
                 _rm = UnifiedRiskManager()
                 _rm.reset_pnl_baseline_after_resume('manual /resume')
-                _eq, _bal = _rm.get_account_balance()
-                _equity_label = f"${(_eq if _eq > 0 else _bal):,.2f}"
             except Exception as _pnl_reset_err:
                 logger.warning(f"⚠️ PnL baseline reset on /resume failed: {_pnl_reset_err}")
 
-            # V39.1: Scan imediat — nu asteptam 00:05 sau watchdog
-            threading.Thread(
-                target=self._trigger_post_resume_scan,
-                args=(script_dir,),
-                daemon=True,
-            ).start()
-
             msg = (
-                f"🔱 <b>SYSTEM AWAKENED — V40.4</b>\n\n"
-                f"✅ Deep sleep cleared\n"
-                f"📡 State Recovery: P/L azi <code>{_recovery_pnl}</code> "
-                f"(<code>{_recovery_trades}</code> tranzacții, cTrader sync)\n"
-                f"📊 P&L anchor reset → {_equity_label} (0% loss pe noul interval)\n"
-                f"🔓 <code>force_bypass_loss_limit</code> activ pana la 00:05\n"
-                f"🔄 <b>BIAS SYNC STARTING...</b> (scan instant lansat)\n"
-                f"⏰ Time: <code>{_time_label}</code>\n\n"
-                f"⚡ Executor + Radar reluate imediat — fara asteptare watchdog."
+                "SYSTEM AWAKENED. Deep sleep cleared. "
+                "Executor și Radar reluate pasiv pe baza setupurilor existente în JSON."
             )
-            logger.info("🔱 /resume V40.4 executed — state recovery, deep sleep cleared, scan triggered")
+            logger.info("🔱 /resume executed — deep sleep cleared, loss limit bypass, no market scan")
             return msg
 
         except Exception as e:
@@ -1760,7 +1687,7 @@ class TelegramCommandCenter:
                         f"<code>/news</code> — 🚨 Next 5 HIGH IMPACT events\n"
                         f"<code>/rates</code> — 🏦 Ratele băncilor centrale\n"
                         f"<code>/killall</code> — 🚨 Închide TOT + 24h lockdown\n"
-                        f"<code>/resume</code> — 🔱 Ieșire deep sleep + restart\n"
+                        f"<code>/resume</code> — 🔱 Ieșire deep sleep (fără scan Daily)\n"
                     )
                 else:
                     # PUBLIC vede doar comenzile disponibile pentru ei
