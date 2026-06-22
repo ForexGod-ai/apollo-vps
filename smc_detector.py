@@ -877,7 +877,25 @@ class SMCDetector:
         chochs, _ = self.detect_choch_and_bos(df)
         return chochs
 
-    def detect_fvg(self, df: pd.DataFrame, choch, current_price) -> Optional[FVG]:
+    @staticmethod
+    def fvg_audit_entry(fvg: FVG) -> dict:
+        """Serialize FVG for POI audit scripts."""
+        return {
+            "index": fvg.index,
+            "direction": fvg.direction,
+            "bottom": round(float(fvg.bottom), 5),
+            "top": round(float(fvg.top), 5),
+            "middle": round(float(fvg.middle), 5),
+            "gap_size": round(float(fvg.top - fvg.bottom), 5),
+        }
+
+    def detect_fvg(
+        self,
+        df: pd.DataFrame,
+        choch,
+        current_price,
+        audit_out: Optional[dict] = None,
+    ) -> Optional[FVG]:
         """🎯 GLITCH IN MATRIX - FVG DETECTION (V8.1 - ORDERFLOW ALIGNED)
         
         CRITICAL V8.1 FIX: FVG selection MUST follow Daily Orderflow direction!
@@ -982,7 +1000,9 @@ class SMCDetector:
                             associated_choch=choch
                         )
                         all_fvgs.append(fvg)
-        
+
+        body_fvgs = list(all_fvgs)
+
         # ✅ V10.7: METHOD 2 FALLBACK — Wick-to-Wick FVG dacă nu există body FVG
         # Logică: dacă body_FVG pur nu există în intervalul complet CHoCH→prezent (100 bare V10.7), încearcă wick overlap
         # Wick FVG = high[i-1] < low[i+1] (BULLISH) sau low[i-1] > high[i+1] (BEARISH)
@@ -1025,7 +1045,9 @@ class SMCDetector:
                                 associated_choch=choch
                             )
                             all_fvgs.append(fvg)
-        
+
+        all_found_fvgs = list(all_fvgs)
+
         # 🔥 V8.1: MITIGATION CHECK - Filter out FVGs that were already filled by BODY closure
         # FVG is mitigated ONLY when price BODY closes through it (wicks don't count)
         if all_fvgs:
@@ -1065,7 +1087,32 @@ class SMCDetector:
                     unfilled_fvgs.append(fvg)
             
             all_fvgs = unfilled_fvgs
-        
+
+        after_mitigation_fvgs = list(all_fvgs)
+
+        def _fill_audit(
+            selected: Optional[FVG],
+            selection_reason: str,
+            equilibrium_val: Optional[float],
+            pd_valid: list,
+            post_choch: list,
+        ) -> None:
+            if audit_out is None:
+                return
+            audit_out.clear()
+            audit_out.update({
+                "body_fvgs": [self.fvg_audit_entry(f) for f in body_fvgs],
+                "all_fvgs": [self.fvg_audit_entry(f) for f in all_found_fvgs],
+                "after_mitigation": [self.fvg_audit_entry(f) for f in after_mitigation_fvgs],
+                "pd_valid": [self.fvg_audit_entry(f) for f in pd_valid],
+                "post_choch": [self.fvg_audit_entry(f) for f in post_choch],
+                "selected": self.fvg_audit_entry(selected) if selected else None,
+                "equilibrium": round(float(equilibrium_val), 5) if equilibrium_val is not None else None,
+                "selection_reason": selection_reason,
+                "orderflow_direction": orderflow_direction,
+                "signal_index": choch.index if hasattr(choch, "index") else None,
+            })
+
         # ═══════════════════════════════════════════════════════════════════
         # 🎯 V16.1 PREMIUM/DISCOUNT FVG SELECTION — Ierarhia Daily Bias
         # ═══════════════════════════════════════════════════════════════════
@@ -1087,6 +1134,7 @@ class SMCDetector:
         # FALLBACK → None: niciun FVG valid în zona P/D → Fibo 50% Fallback activat
         # ═══════════════════════════════════════════════════════════════════
         if not all_fvgs:
+            _fill_audit(None, "no_fvg_found", None, [], [])
             return None
 
         # ── STEP 1: Calculează Equilibrium (50%) din impulsul CHoCH ──────────
@@ -1132,6 +1180,7 @@ class SMCDetector:
             print(f"  ✅ [V16.1 P/D FVG] {'Discount' if orderflow_direction == 'bullish' else 'Premium'} "
                   f"FVG @ {selected.bottom:.5f}-{selected.top:.5f} "
                   f"| EQ={equilibrium:.5f} | Index={selected.index}")
+            _fill_audit(selected, "V16.1 freshest+largest", equilibrium, pd_valid_fvgs, post_choch)
             return selected
 
         # ── FALLBACK → None (activează Fibo 50% Fallback din analyze_timeframe) ──
@@ -1142,6 +1191,7 @@ class SMCDetector:
         print(f"  ⚠️ [V16.1 P/D FVG] Niciun FVG în zona "
               f"{'Discount' if orderflow_direction == 'bullish' else 'Premium'} "
               f"(EQ={_eq_display}) → Fibo 50% Fallback activat")
+        _fill_audit(None, "V16.1 no P/D valid — synthetic fallback", equilibrium, pd_valid_fvgs, [])
         return None
 
     # ─── V9.0: Blocul orfan detect_choch_and_bos (fără def) + duplicatul V6.0 eliminate ───
