@@ -428,6 +428,7 @@ def main() -> int:
     args = parser.parse_args()
 
     log_fp = None
+    _console_out = sys.stdout
     if args.log_file:
         args.log_file.parent.mkdir(parents=True, exist_ok=True)
         log_fp = open(args.log_file, "w", encoding="utf-8")
@@ -438,46 +439,59 @@ def main() -> int:
 
         def write(self, data):
             for s in self._streams:
+                if getattr(s, "closed", False):
+                    continue
                 s.write(data)
-                s.flush()
 
         def flush(self):
             for s in self._streams:
+                if getattr(s, "closed", False):
+                    continue
                 s.flush()
 
+        def isatty(self):
+            return any(getattr(s, "isatty", lambda: False)() for s in self._streams)
+
     if log_fp:
-        sys.stdout = _Tee(sys.stdout, log_fp)
+        sys.stdout = _Tee(_console_out, log_fp)
 
-    setups: List[dict] = []
-    if not args.no_json:
-        setups = load_monitoring_setups(args.monitoring_file)
-        if setups:
-            setups = [s for s in setups if s.get("status") in ACTIVE_STATUSES]
-        elif not args.symbols and not args.symbol:
-            print(f"Note: {args.monitoring_file} not found — use --symbols or run on VPS")
+    try:
+        setups: List[dict] = []
+        if not args.no_json:
+            setups = load_monitoring_setups(args.monitoring_file)
+            if setups:
+                setups = [s for s in setups if s.get("status") in ACTIVE_STATUSES]
+            elif not args.symbols and not args.symbol:
+                print(f"Note: {args.monitoring_file} not found — use --symbols or run on VPS")
 
-    if args.symbol:
-        setups = [s for s in setups if s.get("symbol") == args.symbol.upper()]
+        if args.symbol:
+            setups = [s for s in setups if s.get("symbol") == args.symbol.upper()]
+            if not setups:
+                setups = [{"symbol": args.symbol.upper(), "status": "SYMBOL_AUDIT"}]
+
+        if args.symbols:
+            for sym in args.symbols.split(","):
+                sym = sym.strip().upper()
+                if sym and not any(s.get("symbol") == sym for s in setups):
+                    setups.append({"symbol": sym, "status": "CACHE_AUDIT"})
+
         if not setups:
-            setups = [{"symbol": args.symbol.upper(), "status": "SYMBOL_AUDIT"}]
+            print("No setups to audit. Provide monitoring_setups.json or --symbols GBPNZD,BTCUSD")
+            return 1
 
-    if args.symbols:
-        for sym in args.symbols.split(","):
-            sym = sym.strip().upper()
-            if sym and not any(s.get("symbol") == sym for s in setups):
-                setups.append({"symbol": sym, "status": "CACHE_AUDIT"})
-
-    if not setups:
-        print("No setups to audit. Provide monitoring_setups.json or --symbols GBPNZD,BTCUSD")
-        return 1
-
-    detector = SMCDetector()
-    results = [audit_setup(s, detector, json_only=args.json_only) for s in setups]
-    print_audit_report(results)
-    if log_fp:
-        log_fp.close()
-        print(f"\nLog saved: {args.log_file}")
-    return 0
+        detector = SMCDetector()
+        results = [audit_setup(s, detector, json_only=args.json_only) for s in setups]
+        print_audit_report(results)
+        return 0
+    finally:
+        if log_fp:
+            try:
+                sys.stdout.flush()
+            except Exception:
+                pass
+            sys.stdout = _console_out
+            log_fp.close()
+            print(f"Log saved: {args.log_file}")
 
 
 if __name__ == "__main__":
