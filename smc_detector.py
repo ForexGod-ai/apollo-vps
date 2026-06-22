@@ -2007,7 +2007,11 @@ class SMCDetector:
         range_state: Optional[StructuralRangeState] = None,
         symbol: Optional[str] = None,
     ) -> Optional[ActiveDealingRange]:
-        """V43.0 ADR — dynamic impulse bounds after latest valid D1 BOS/CHoCH."""
+        """V43.0 ADR — dynamic impulse bounds after latest valid D1 BOS/CHoCH.
+
+        V43.4: last_lh / last_ll / last_hl from chronological HH→HL or LH→LL pairs
+        post-anchor (not decoupled old LH + recent LL).
+        """
         if df is None or len(df) < 5:
             return None
 
@@ -2026,32 +2030,79 @@ class SMCDetector:
         last_ll = last_lh = last_hl = None
         last_ll_bar = last_lh_bar = last_hl_bar = anchor
 
-        if post_lows:
-            ll_sp = post_lows[-1]
-            last_ll = self._swing_body_low(df, ll_sp.index)
-            last_ll_bar = ll_sp.index
-
-        if len(post_highs) >= 2:
-            for i in range(len(post_highs) - 1, 0, -1):
+        # V43.4: paired pivots from chronological post-anchor swings (not decoupled LH-old + LL-recent)
+        high_sp = low_sp = None
+        if trend == 'bullish':
+            hh_sp = None
+            for i in range(1, len(post_highs)):
+                if post_highs[i].price > post_highs[i - 1].price:
+                    hh_sp = post_highs[i]
+            if hh_sp is None and post_highs:
+                hh_sp = post_highs[-1]
+            hl_sp = None
+            if hh_sp is not None:
+                lows_after_hh = [l for l in post_lows if l.index > hh_sp.index]
+                for i in range(1, len(lows_after_hh)):
+                    if lows_after_hh[i].price > lows_after_hh[i - 1].price:
+                        hl_sp = lows_after_hh[i]
+                if hl_sp is None and lows_after_hh:
+                    hl_sp = max(
+                        lows_after_hh,
+                        key=lambda l: self._swing_body_low(df, l.index),
+                    )
+                elif hl_sp is None:
+                    prior = [l for l in post_lows if l.index <= hh_sp.index]
+                    if prior and hh_sp.index > prior[-1].index:
+                        if len(prior) >= 2 and prior[-1].price > prior[-2].price:
+                            hl_sp = prior[-1]
+            high_sp, low_sp = hh_sp, hl_sp
+        else:
+            lh_sp = None
+            for i in range(1, len(post_highs)):
                 if post_highs[i].price < post_highs[i - 1].price:
-                    last_lh = self._swing_body_high(df, post_highs[i].index)
-                    last_lh_bar = post_highs[i].index
-                    break
-        if last_lh is None and post_highs:
-            h = post_highs[-1]
-            last_lh = self._swing_body_high(df, h.index)
-            last_lh_bar = h.index
+                    lh_sp = post_highs[i]
+            if lh_sp is None and post_highs:
+                lh_sp = post_highs[-1]
+            ll_sp = None
+            if lh_sp is not None:
+                lows_after_lh = [l for l in post_lows if l.index > lh_sp.index]
+                for i in range(1, len(lows_after_lh)):
+                    if lows_after_lh[i].price < lows_after_lh[i - 1].price:
+                        ll_sp = lows_after_lh[i]
+                if ll_sp is None and lows_after_lh:
+                    ll_sp = min(
+                        lows_after_lh,
+                        key=lambda l: self._swing_body_low(df, l.index),
+                    )
+                elif ll_sp is None:
+                    prior = [l for l in post_lows if l.index <= lh_sp.index]
+                    if prior and lh_sp.index > prior[-1].index:
+                        if len(prior) >= 2 and prior[-1].price < prior[-2].price:
+                            ll_sp = prior[-1]
+            high_sp, low_sp = lh_sp, ll_sp
 
-        if len(post_lows) >= 2:
-            for i in range(len(post_lows) - 1, 0, -1):
-                if post_lows[i].price > post_lows[i - 1].price:
-                    last_hl = self._swing_body_low(df, post_lows[i].index)
-                    last_hl_bar = post_lows[i].index
-                    break
-        if last_hl is None and post_lows:
-            l = post_lows[-1]
-            last_hl = self._swing_body_low(df, l.index)
-            last_hl_bar = l.index
+        if high_sp is not None:
+            last_lh = self._swing_body_high(df, high_sp.index)
+            last_lh_bar = high_sp.index
+        if low_sp is not None:
+            body_low = self._swing_body_low(df, low_sp.index)
+            if trend == 'bullish':
+                last_hl = body_low
+                last_hl_bar = low_sp.index
+            else:
+                last_ll = body_low
+                last_ll_bar = low_sp.index
+        if post_lows:
+            ll_tail = post_lows[-1]
+            if trend == 'bullish' and last_hl is not None:
+                last_ll = last_hl
+                last_ll_bar = last_hl_bar
+            elif last_ll is None:
+                last_ll = self._swing_body_low(df, ll_tail.index)
+                last_ll_bar = ll_tail.index
+            if trend == 'bullish' and last_hl is None:
+                last_hl = self._swing_body_low(df, ll_tail.index)
+                last_hl_bar = ll_tail.index
 
         if range_state is not None and (
             last_ll is None or last_lh is None or last_ll >= last_lh
