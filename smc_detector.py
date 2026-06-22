@@ -3889,27 +3889,18 @@ class SMCDetector:
             if debug and hasattr(fvg, 'is_momentum_entry') and fvg.is_momentum_entry:
                 print(f"\n⚡ MOMENTUM ENTRY: Skipping price proximity check (breakout entry, not pullback wait)")
         else:
-            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-            # V25.0 WAITING_D1_PULLBACK: PROXIMITY CHECK ELIMINAT
-            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-            # V14.1 Stale FVG (limita 10% distanță) este DEZACTIVAT în faza WAITING.
-            # MOTIVUL: setup-ul CHIAR AȘTEAPTĂ pullback-ul adânc spre FVG — asta e mecanica!
-            # Prețul este departe de FVG tocmai pentru că trend-ul continuă, iar FVG-ul
-            # este destinația pullback-ului viitor, nu o zonă pe care prețul trebuie să
-            # o atingă imediat.
-            # Distanța față de FVG va fi logată informativ, dar NU mai blochează setup-ul.
-            # Radarul 4H este cel care validează intrarea când prețul ajunge efectiv la FVG.
-            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-            price_approaching_fvg = True  # V25.0: acceptăm întotdeauna — pullback-ul vine
+            # V42.7: approaching = preț pe partea corectă spre POI (nu Premium pentru LONG)
+            if current_trend == 'bullish':
+                price_approaching_fvg = current_price <= fvg.top
+            else:
+                price_approaching_fvg = current_price >= fvg.bottom
             if debug:
-                if current_trend == 'bullish':
-                    distance_pct = (fvg.bottom - current_price) / fvg.bottom * 100 if current_price < fvg.bottom else 0
-                    if distance_pct > 0:
-                        print(f"   ℹ️  [V25.0 WAITING] BULLISH: preț {distance_pct:.1f}% sub FVG bottom — așteptăm pullback (fără limită distanță)")
-                else:
-                    distance_pct = (current_price - fvg.top) / fvg.top * 100 if current_price > fvg.top else 0
-                    if distance_pct > 0:
-                        print(f"   ℹ️  [V25.0 WAITING] BEARISH: preț {distance_pct:.1f}% deasupra FVG top — așteptăm pullback (fără limită distanță)")
+                if current_trend == 'bullish' and current_price > fvg.top:
+                    print(f"   ⏳ [V42.7 POI] BULLISH: preț {current_price:.5f} în Premium peste POI top {fvg.top:.5f} — așteptăm pullback")
+                elif current_trend == 'bearish' and current_price < fvg.bottom:
+                    print(f"   ⏳ [V42.7 POI] BEARISH: preț {current_price:.5f} în Discount sub POI bottom {fvg.bottom:.5f} — așteptăm pullback")
+                elif not price_in_fvg:
+                    print(f"   ℹ️  [V42.7 POI] Preț pe traseu spre POI [{fvg.bottom:.5f}–{fvg.top:.5f}]")
         
         if debug:
             print(f"   In FVG: {price_in_fvg}")
@@ -4073,35 +4064,41 @@ class SMCDetector:
         d1_poi_validated = False
         d1_poi_reason = ""
         
-        if price_in_fvg:
-            d1_poi_validated = True
-            d1_poi_reason = "Price IN Daily FVG (POI reached)"
-        elif price_approaching_fvg:
-            # Price approaching — check distance threshold
-            if current_trend == 'bullish':
-                distance_to_poi = abs(current_price - fvg.top)
-                poi_size = abs(fvg.top - fvg.bottom) if abs(fvg.top - fvg.bottom) > 0 else 1
-            else:
-                distance_to_poi = abs(fvg.bottom - current_price)
-                poi_size = abs(fvg.top - fvg.bottom) if abs(fvg.top - fvg.bottom) > 0 else 1
-            
-            # ✅ V10.3 BUG#7 FIX: Acceptăm până la 300% din FVG size (era 150%)
-            # 150% era prea strict — prețul abordează D1 FVG de la distanță mai mare
-            if distance_to_poi <= poi_size * 3.0:
+        # V42.7: LONG doar în POI/Discount (≤ POI top); SHORT doar în POI/Premium (≥ POI bottom)
+        if current_trend == 'bullish':
+            if current_price <= fvg.top:
                 d1_poi_validated = True
-                d1_poi_reason = f"Price approaching Daily POI (distance: {(distance_to_poi/poi_size)*100:.0f}% of FVG size)"
+                if price_in_fvg:
+                    d1_poi_reason = "Price IN Daily FVG (POI reached)"
+                elif current_price < fvg.bottom:
+                    d1_poi_reason = "Price in Discount below Daily POI"
+                else:
+                    d1_poi_reason = "Price at Daily POI zone"
             else:
-                d1_poi_reason = f"Price too far from Daily POI ({(distance_to_poi/poi_size)*100:.0f}% of FVG size > 300%)"
+                d1_poi_reason = (
+                    f"Price in Premium above POI top ({current_price:.5f} > {fvg.top:.5f}) — waiting pullback"
+                )
         else:
-            d1_poi_reason = "Price NOT approaching Daily FVG (wrong side)"
+            if current_price >= fvg.bottom:
+                d1_poi_validated = True
+                if price_in_fvg:
+                    d1_poi_reason = "Price IN Daily FVG (POI reached)"
+                elif current_price > fvg.top:
+                    d1_poi_reason = "Price in Premium above Daily POI"
+                else:
+                    d1_poi_reason = "Price at Daily POI zone"
+            else:
+                d1_poi_reason = (
+                    f"Price in Discount below POI bottom ({current_price:.5f} < {fvg.bottom:.5f}) — waiting pullback"
+                )
         
         if debug:
             poi_status = "✅" if d1_poi_validated else "❌"
-            print(f"\n{poi_status} V10.3 D1 POI VALIDATION: {d1_poi_reason}")
+            print(f"\n{poi_status} V42.7 D1 POI VALIDATION: {d1_poi_reason}")
             print(f"   Daily FVG: {fvg.bottom:.5f} - {fvg.top:.5f}")
             print(f"   Current Price: {current_price:.5f}")
             if not d1_poi_validated:
-                print(f"   ⏳ Status forced to MONITORING — waiting for price to reach Daily POI")
+                print(f"   ⏳ Status forced to WAITING_D1_PULLBACK — preț nu e la POI Daily")
         
         # V3.0 STRICT STATUS LOGIC:
         # READY = 4H CHoCH confirmed (same direction as Daily) AND price currently IN FVG
@@ -4174,60 +4171,39 @@ class SMCDetector:
                     print(f"   ✓ Daily CHoCH: {current_trend.upper()}")
                     print(f"   ✗ Price NOT in FVG (current: {current_price:.5f})")
         elif valid_h4_choch:
-            # ━━━ V10.6 ALINIERE DINAMICĂ: Regula 55/45 + 4H Body Close = READY IMEDIAT ━━━
-            # D1 sets bias. 4H CHoCH body close = confirmarea finală.
-            # Nu mai așteptăm D1 POI dacă retracement-ul D1 a depășit 50% (55 Buy / 45 Sell).
-            # TRIGGER READY dacă ORICARE din:
-            #   a) d1_poi_validated = True (comportament existent V10.4 păstrat)
-            #   b) Retracement D1 ≥ 55% pt BUY / ≥ 45% din range pt SELL = pullback matur
-
-            # Calculăm retracement D1 pentru READY imediat (V10.6)
+            # V42.7: READY doar cu POI Daily validat + 4H CHoCH (V10.6 retracement = info, nu trigger)
             _swing_highs_v10 = self.detect_swing_highs(df_daily)
             _swing_lows_v10  = self.detect_swing_lows(df_daily)
             _macro_h_v10 = max(s.price for s in _swing_highs_v10[-5:]) if _swing_highs_v10 else None
             _macro_l_v10 = min(s.price for s in _swing_lows_v10[-5:])  if _swing_lows_v10  else None
 
-            retracement_ready = False
-            retracement_pct   = 0.0
+            retracement_pct = 0.0
             if _macro_h_v10 and _macro_l_v10 and _macro_h_v10 > _macro_l_v10:
                 _range_v10 = _macro_h_v10 - _macro_l_v10
-                _pct_from_low = (current_price - _macro_l_v10) / _range_v10 * 100.0
-                retracement_pct = _pct_from_low
-                if current_trend == 'bullish':
-                    # BUY: prețul ≤ 55% din range = în zona discount confirmată
-                    retracement_ready = _pct_from_low <= 55.0
-                else:
-                    # SELL: prețul ≥ 45% din range = în zona premium confirmată
-                    retracement_ready = _pct_from_low >= 45.0
-
+                retracement_pct = (current_price - _macro_l_v10) / _range_v10 * 100.0
                 if debug:
-                    direction_lbl = "≤55% (discount ok)" if current_trend == 'bullish' else "≥45% (premium ok)"
-                    status_lbl = "✅ READY" if retracement_ready else f"❌ {_pct_from_low:.1f}% — insuficient"
-                    print(f"\n📐 V10.6 RETRACEMENT CHECK: {_pct_from_low:.1f}% from low → {direction_lbl} → {status_lbl}")
+                    direction_lbl = "≤55% (discount ref)" if current_trend == 'bullish' else "≥45% (premium ref)"
+                    print(f"\n📐 V10.6 RETRACEMENT INFO (non-trigger): {retracement_pct:.1f}% from low → {direction_lbl}")
 
-            # Decizie finală: READY dacă oricare condiție e îndeplinită
-            if d1_poi_validated or retracement_ready:
+            if d1_poi_validated:
                 status = 'READY'
                 if debug:
-                    trigger = "D1 POI" if d1_poi_validated else f"RETRACEMENT {retracement_pct:.1f}% (55/45 rule)"
                     sync_fvg_info = ""
                     if h4_sync_fvg:
                         sync_fvg_info = f"\n   ✓ 4H Sync FVG (Entry Zone): {h4_sync_fvg.bottom:.5f} - {h4_sync_fvg.top:.5f}"
-                    print(f"\n✅ STATUS: READY TO EXECUTE (V10.6 ALINIERE DINAMICĂ — trigger: {trigger})")
+                    print(f"\n✅ STATUS: READY TO EXECUTE (V42.7 — D1 POI + 4H CHoCH)")
                     print(f"   ✓ D1 Bias: {strategy_type.upper()} ({current_trend.upper()})")
                     print(f"   ✓ 4H CHoCH Body Close: {valid_h4_choch.direction.upper()} @ {valid_h4_choch.break_price:.5f}")
                     print(f"   ✓ Daily FVG (POI): {fvg.bottom:.5f} - {fvg.top:.5f}{sync_fvg_info}")
                     print(f"   📊 Current Price: {current_price:.5f}")
             else:
-                status = 'MONITORING'
+                status = 'WAITING_D1_PULLBACK'
+                print(f"⏳ [V42.7 POI GATE] {symbol}: 4H CHoCH aliniat, dar preț NU e la POI Daily → WAITING_D1_PULLBACK")
                 if debug:
-                    direction_lbl = "≤55%" if current_trend == 'bullish' else "≥45%"
-                    print(f"\n⏳ STATUS: MONITORING (V10.6 — retracement {retracement_pct:.1f}% insuficient, nevoie {direction_lbl})")
                     print(f"   ✓ D1 Bias: {strategy_type.upper()} ({current_trend.upper()})")
                     print(f"   ✓ 4H Sync CHoCH: {valid_h4_choch.direction.upper()} @ {valid_h4_choch.break_price:.5f}")
                     print(f"   ✗ D1 POI: {d1_poi_reason}")
-                    print(f"   ✗ Retracement D1: {retracement_pct:.1f}% — prețul NU a ajuns la 55/45 nivel")
-                    print(f"   ⏳ Bot tace — waiting for pullback to mature (55/45 rule)")
+                    print(f"   ⏳ Așteptăm pullback la POI Daily înainte de READY")
         else:
             # V28.0: WAITING_D1_PULLBACK — D1 break valid (CHoCH/BOS confirmat cu Body Close)
             # Așteptăm 4H CHoCH aliniat cu bias-ul Daily. Status curat, vizibil în Telegram.

@@ -989,6 +989,38 @@ def _price_in_daily_poi(price: float, stored: dict) -> bool:
     return lo <= float(price) <= hi
 
 
+def _price_at_d1_poi_for_direction(price: float, stored: dict) -> bool:
+    """V42.7: LONG valid ≤ POI top; SHORT valid ≥ POI bottom (POI sau Discount/Premium corect)."""
+    top = stored.get('poi_top') if stored.get('poi_top') is not None else stored.get('fvg_top')
+    bottom = stored.get('poi_bottom') if stored.get('poi_bottom') is not None else stored.get('fvg_bottom')
+    if top is None or bottom is None:
+        return True
+    p = float(price)
+    direction = (stored.get('direction') or stored.get('daily_bias') or '').lower()
+    if direction in ('buy', 'long', 'bullish'):
+        return p <= float(top)
+    if direction in ('sell', 'short', 'bearish'):
+        return p >= float(bottom)
+    lo, hi = min(float(top), float(bottom)), max(float(top), float(bottom))
+    return lo <= p <= hi
+
+
+def _apply_v427_poi_status_gate(setup_dict: dict, price: float) -> dict:
+    """Downgrade READY → WAITING_D1_PULLBACK dacă prețul nu e la POI Daily."""
+    if setup_dict.get('status') != 'READY' or price is None:
+        return setup_dict
+    if _price_at_d1_poi_for_direction(price, setup_dict):
+        return setup_dict
+    setup_dict = dict(setup_dict)
+    setup_dict['status'] = 'WAITING_D1_PULLBACK'
+    sym = setup_dict.get('symbol', '?')
+    print(
+        f"  ⏳ [V42.7 POI GATE] {sym}: READY → WAITING_D1_PULLBACK "
+        f"(preț {price} nu e la POI Daily)"
+    )
+    return setup_dict
+
+
 _EXECUTOR_PRESERVE_KEYS = (
     'entry1_filled', 'entry1_price', 'entry1_time', 'entry1_order_id',
     'entry1_volume', 'entry1_trigger_tf', 'entry2_filled', 'entry2_price',
@@ -1252,6 +1284,8 @@ def save_monitoring_setups(
                     continue
 
                 monitoring_setup = _trade_setup_to_monitoring_dict(setup, setup_time_str)
+                _live_price = symbol_price_map.get(setup.symbol) if symbol_price_map else None
+                monitoring_setup = _apply_v427_poi_status_gate(monitoring_setup, _live_price)
                 merged = _apply_v42_macro_override(_old, monitoring_setup)
                 monitoring_setups = [
                     s for s in monitoring_setups if s.get('symbol') != setup.symbol
@@ -1265,6 +1299,8 @@ def save_monitoring_setups(
                 continue
 
             monitoring_setup = _trade_setup_to_monitoring_dict(setup, setup_time_str)
+            _live_price = symbol_price_map.get(setup.symbol) if symbol_price_map else None
+            monitoring_setup = _apply_v427_poi_status_gate(monitoring_setup, _live_price)
             monitoring_setups.append(monitoring_setup)
             preserved_symbols.add(setup.symbol)
 

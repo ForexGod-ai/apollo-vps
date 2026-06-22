@@ -1190,12 +1190,12 @@ class MultiTFRadar:
                 f"Verifică MarketDataProvider cBot pe VPS."
             )
         
-        # ━━━ V19.5: POARTA DAILY ELIMINATĂ DEFINITIV ━━━
-        # Radarul este EXCLUSIV un Scanner de Aliniere Fractală — Ochii sistemului.
-        # NU are voie să blocheze execuția pe baza SL-ului Daily.
-        # Aceasta este responsabilitatea EXCLUSIVĂ a Executorului (Mâinile).
-        # Radarul citește DOAR direcția Daily ca Bias și descarcă imediat barele 4H/1H.
+        # V42.7: Poarta Daily POI — LONG doar ≤ POI top, SHORT doar ≥ POI bottom
         required_direction = 'bullish' if direction == 'LONG' else 'bearish'
+        if required_direction == 'bullish':
+            daily_zone_validated = current_price <= daily_fvg_top
+        else:
+            daily_zone_validated = current_price >= daily_fvg_bottom
 
         print(f"\n{'='*80}")
         print(f"🔍 [{symbol}] Bias Daily: {direction} | Scanare structurală 4H+1H (V36.5 Always-On)...")
@@ -1204,7 +1204,11 @@ class MultiTFRadar:
         print(f"{'='*80}")
         print(f"💰 Current Price: {current_price:.5f}")
         print(f"📊 Daily FVG Referință: [{daily_fvg_bottom:.5f} - {daily_fvg_top:.5f}]")
-        print(f"✅ Poartă: PERMANENT DESCHISĂ — decizia de invalidare aparține Executorului")
+        if daily_zone_validated:
+            print(f"✅ Poartă Daily POI: DESCHISĂ — preț la POI/Discount-Premium corect")
+        else:
+            _zone = 'Premium' if required_direction == 'bullish' else 'Discount'
+            print(f"⏳ Poartă Daily POI: ÎNCHISĂ — preț în {_zone}, așteptăm pullback la POI")
         sys.stdout.flush()
 
         # Analyze 1H — ALWAYS (V36.5: indiferent de P/D)
@@ -1276,6 +1280,16 @@ class MultiTFRadar:
                   f"scan H4/H1 OK, EXECUTE blocat")
             sys.stdout.flush()
 
+        # V42.7: Daily POI gate — blocăm EXECUTE dacă prețul nu e la POI
+        if execution_ready and not daily_zone_validated:
+            execution_ready = False
+            priority_timeframe = None
+            _wait_zone = 'Premium' if required_direction == 'bullish' else 'Discount'
+            verdict = f"⏳ POI WAIT — preț în {_wait_zone}, așteptăm pullback Daily"
+            print(f"  ⏳ [V42.7 POI BLOCK EXECUTE] {symbol}: {current_price:.5f} vs POI "
+                  f"[{daily_fvg_bottom:.5f}–{daily_fvg_top:.5f}] — EXECUTE blocat")
+            sys.stdout.flush()
+
         # ━━━ V24.6 DAILY BIAS GUARD: Setup cu FVG sintetic ━━━━━━━━━━━━━━━━━━━━━━━━
         # Dacă setup-ul vine din scanarea permisivă (fără FVG corp Daily natural),
         # EXECUTE_NOW este permis NUMAI dacă 4H a detectat un CHoCH real (nu BOS-ca-CHoCH).
@@ -1295,7 +1309,7 @@ class MultiTFRadar:
         result = MultiTFResult(
             symbol=symbol,
             direction=direction,
-            daily_zone_validated=True,  # V19.5: permanent True — Radarul nu invalidează niciodată
+            daily_zone_validated=daily_zone_validated,
             daily_fvg_top=daily_fvg_top,
             daily_fvg_bottom=daily_fvg_bottom,
             daily_entry=daily_entry,
@@ -1542,6 +1556,13 @@ class MultiTFRadar:
     def _arm_execute_now(self, setup: dict, result: 'MultiTFResult', exec_tf: str,
                          source: str = 'trigger') -> None:
         """V37.5/6: Seteaza EXECUTE_NOW, flush instant JSON, Telegram o singura data per setup."""
+        # V42.7: ultimă verificare POI Daily înainte de armare
+        if not result.daily_zone_validated:
+            logger.info(
+                f"[V42.7 POI GATE] {setup.get('symbol', '?')}: skip EXECUTE_NOW arm — "
+                f"preț {result.current_price:.5f} nu e la POI Daily"
+            )
+            return
         if setup.get('status') != 'TRADE_OPEN':
             _macro, _issues = self._v423_ltf_misalignment(setup, result)
             if _issues:
