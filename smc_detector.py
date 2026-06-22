@@ -4917,12 +4917,15 @@ class SMCDetector:
         # prețul ajunge la FVG și CHoCH-ul 4H reface structura.
         # RR-ul se recalculează în setup_executor_monitor.py la tranziția EXECUTE_NOW.
         # ─────────────────────────────────────────────────────────────────────────────
-        _MIN_RR = 4.0  # V10.2: floor structural 1:4 — activ NUMAI la READY
+        _MIN_RR = 4.0  # V10.2: floor structural 1:4 — activ NUMAI la READY / EXECUTE_NOW
         if risk_reward < _MIN_RR and status == 'READY':
-            print(f"⛔ [V25.0 REJECT READY: RR=1:{risk_reward:.2f} < 1:{_MIN_RR}] {symbol} — RR insuficient la momentul execuției")
+            # V43.5: NU aruncăm setup-ul — bias + 4H CHoCH + POI sunt reale.
+            # RR la scan e informativ (SL/TP se recalculează la EXECUTE_NOW când prețul
+            # ajunge în zonă). Fără downgrade, daily_scanner cade în bias_fallback (fără entry/SL/TP).
+            print(f"⏳ [V43.5 RR DEFER] {symbol}: RR=1:{risk_reward:.2f} < 1:{_MIN_RR} la READY → downgrade MONITORING")
             print(f"   Entry={entry:.5f} | SL={sl:.5f} | TP={tp:.5f}")
-            print(f"   Risk={abs(entry-sl):.5f} | Reward={abs(tp-entry):.5f}")
-            return None
+            print(f"   Risk={abs(entry-sl):.5f} | Reward={abs(tp-entry):.5f} — recalculat la EXECUTE_NOW")
+            status = 'MONITORING'
         elif risk_reward < _MIN_RR and debug:
             print(f"   ℹ️  [V25.0 RR INFO] RR=1:{risk_reward:.2f} < 1:{_MIN_RR} dar status=MONITORING — NU respingem (va fi recalculat la EXECUTE_NOW)")
         
