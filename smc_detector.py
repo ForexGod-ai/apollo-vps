@@ -2504,12 +2504,43 @@ class SMCDetector:
         chochs: List[CHoCH],
         bos_list: List,
         debug: bool = False,
+        range_state: Optional[StructuralRangeState] = None,
     ) -> Tuple[Optional[object], str, str, Optional[CHoCH]]:
         """
         V42.5 Leg Authority — CHoCH once per leg, then BOS continuation.
 
         Returns: (latest_signal, strategy_type, current_trend, leg_choch)
         """
+        # V40 breakdown: close sub LL → LOCK BEARISH are prioritate față de leg bullish vechi
+        if (
+            range_state is not None
+            and range_state.locked
+            and range_state.locked_bias == 'bearish'
+        ):
+            close = float(df['close'].iloc[-1])
+            if close <= range_state.macro_range_low:
+                bearish_bos = [b for b in bos_list if b.direction == 'bearish']
+                bearish_chochs = [c for c in chochs if c.direction == 'bearish']
+                if bearish_bos:
+                    latest_signal = bearish_bos[-1]
+                    leg_choch = bearish_chochs[-1] if bearish_chochs else None
+                    msg = (
+                        f"   🔒 [V40→V42.5] breakdown below LL "
+                        f"{range_state.macro_range_low:.2f} — LOCK BEARISH overrides leg "
+                        f"→ BOS @bar{latest_signal.index}"
+                    )
+                    print(msg)
+                    return latest_signal, 'continuation', 'bearish', leg_choch
+                if bearish_chochs:
+                    leg_choch = bearish_chochs[-1]
+                    msg = (
+                        f"   🔒 [V40→V42.5] breakdown below LL "
+                        f"{range_state.macro_range_low:.2f} — LOCK BEARISH overrides leg "
+                        f"→ CHoCH @bar{leg_choch.index}"
+                    )
+                    print(msg)
+                    return leg_choch, 'reversal', 'bearish', leg_choch
+
         leg_choch = self._find_leg_choch(df, chochs, bos_list)
 
         if leg_choch is None:
@@ -2695,7 +2726,7 @@ class SMCDetector:
                 )
         
         _d1_signal, _d1_strategy, final_bias, _leg_choch = self._resolve_d1_leg(
-            df, daily_chochs, daily_bos_list, debug=debug
+            df, daily_chochs, daily_bos_list, debug=debug, range_state=_v39_rs
         )
         latest_signal = _d1_signal
         latest_index = latest_signal.index if latest_signal else -1
@@ -3774,7 +3805,7 @@ class SMCDetector:
             symbol or '', df_daily, chochs, bos_list, rs
         )
         latest_signal, strategy, current_trend, _leg = self._resolve_d1_leg(
-            df_daily, chochs, bos_list
+            df_daily, chochs, bos_list, range_state=rs
         )
         if latest_signal:
             signal_label = 'CHoCH' if isinstance(latest_signal, CHoCH) else 'BOS'
@@ -3978,7 +4009,7 @@ class SMCDetector:
         )
 
         latest_signal, strategy_type, current_trend, leg_choch = self._resolve_d1_leg(
-            df_daily, daily_chochs, daily_bos_list, debug=debug
+            df_daily, daily_chochs, daily_bos_list, debug=debug, range_state=_range_state
         )
         if latest_signal is None:
             if debug:
