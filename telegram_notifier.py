@@ -5,12 +5,14 @@ NOW USES ChartGenerator FOR PROFESSIONAL WHITE CHARTS
 """
 
 import os
+import json
 import time
 import requests
 import io
 import pandas as pd
 import numpy as np
-from typing import Optional
+from pathlib import Path
+from typing import Optional, Any, Dict
 from datetime import datetime, timezone
 from dotenv import load_dotenv
 from smc_detector import TradeSetup, CHoCH, FVG
@@ -26,6 +28,153 @@ load_dotenv()
 # Branding = FOOTER ONLY. Never header. Clean & institutional.
 # ════════════════════════════════════════
 UNIVERSAL_SEPARATOR = "────────────────"  # 16 chars — matches signature width
+
+_MONITORING_JSON = Path(__file__).resolve().parent / 'monitoring_setups.json'
+
+_RADAR_LIVE_KEYS = (
+    'h4_structure_locked', 'h4_locked',
+    'radar_4h_choch_detected', 'radar_4h_choch_direction', 'radar_4h_choch_price',
+    'radar_4h_status', 'radar_1h_choch_detected', 'radar_1h_choch_direction',
+    'radar_1h_choch_price', 'radar_1h_status', 'EXECUTE_NOW',
+)
+
+
+def _setup_attr(setup: Any, key: str, default=None):
+    if isinstance(setup, dict):
+        return setup.get(key, default)
+    return getattr(setup, key, default)
+
+
+def _radar_direction_matches(stored_dir: str, macro_dir: str) -> bool:
+    d = str(stored_dir or '').lower()
+    if macro_dir == 'bullish':
+        return d in ('buy', 'long', 'bullish')
+    return d in ('sell', 'short', 'bearish')
+
+
+def _load_monitoring_radar_snapshot(symbol: str, macro_dir: str) -> Dict:
+    """Live radar flags from monitoring_setups.json — fills gap when TradeSetup is scan-only."""
+    try:
+        if not _MONITORING_JSON.exists():
+            return {}
+        with open(_MONITORING_JSON, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        setups = data.get('setups', data) if isinstance(data, dict) else data
+        if not isinstance(setups, list):
+            return {}
+        matched = None
+        for s in setups:
+            if not isinstance(s, dict) or s.get('symbol') != symbol:
+                continue
+            if _radar_direction_matches(s.get('direction', ''), macro_dir):
+                matched = s
+                break
+        if matched is None:
+            for s in setups:
+                if isinstance(s, dict) and s.get('symbol') == symbol:
+                    matched = s
+                    break
+        if not matched:
+            return {}
+        return {k: matched[k] for k in _RADAR_LIVE_KEYS if k in matched}
+    except Exception:
+        return {}
+
+
+def _radar_field(setup: Any, snap: Dict, key: str, default=None):
+    setup_val = _setup_attr(setup, key, None)
+    if setup_val not in (None, False, ''):
+        return setup_val
+    if snap and key in snap and snap[key] not in (None, ''):
+        return snap[key]
+    return default
+
+
+def _ltf_choch_confirmed(
+    setup: Any,
+    snap: Dict,
+    tf: str,
+    macro_dir: str,
+) -> bool:
+    prefix = 'radar_4h' if tf == '4H' else 'radar_1h'
+    detected = bool(_radar_field(setup, snap, f'{prefix}_choch_detected', False))
+    direction = _radar_field(setup, snap, f'{prefix}_choch_direction')
+    status = str(_radar_field(setup, snap, f'{prefix}_status', '') or '').upper()
+    aligned = direction is None or direction == macro_dir
+
+    if tf == '4H':
+        h4_locked = bool(
+            _radar_field(setup, snap, 'h4_structure_locked', False)
+            or _radar_field(setup, snap, 'h4_locked', False)
+        )
+        h4_choch = _setup_attr(setup, 'h4_choch', None)
+        return bool(
+            h4_locked
+            or (detected and aligned)
+            or h4_choch is not None
+            or 'EXECUTE_NOW_4H' in status
+            or 'WAITING_4H_PULLBACK' in status
+            or ('PULLBACK' in status and detected)
+        )
+
+    h1_choch = _setup_attr(setup, 'h1_choch', None)
+    choch_1h_flag = bool(_setup_attr(setup, 'choch_1h_detected', False))
+    return bool(
+        (detected and aligned)
+        or h1_choch is not None
+        or choch_1h_flag
+        or 'EXECUTE_NOW_1H' in status
+        or 'WAITING_1H_PULLBACK' in status
+        or ('PULLBACK' in status and detected)
+    )
+
+
+def _ltf_choch_price(setup: Any, snap: Dict, tf: str):
+    prefix = 'radar_4h' if tf == '4H' else 'radar_1h'
+    price = _radar_field(setup, snap, f'{prefix}_choch_price')
+    if price is not None:
+        return price
+    obj = _setup_attr(setup, 'h4_choch' if tf == '4H' else 'h1_choch', None)
+    if obj is not None and hasattr(obj, 'break_price'):
+        return obj.break_price
+    if tf == '1H':
+        return _setup_attr(setup, 'choch_1h_price', None)
+    return None
+
+
+def _format_radar_exec_lines(
+    setup: Any,
+    symbol: str,
+    macro_dir: str,
+    wait_hint: str,
+) -> tuple:
+    snap = _load_monitoring_radar_snapshot(symbol, macro_dir)
+
+    if _ltf_choch_confirmed(setup, snap, '4H', macro_dir):
+        price_4h = _ltf_choch_price(setup, snap, '4H')
+        if price_4h is not None:
+            h4_line = (
+                f"📡 ✅ 4H CHoCH Confirmat — "
+                f"<code>{format_telegram_price(symbol, price_4h)}</code>"
+            )
+        else:
+            h4_line = "📡 ✅ 4H CHoCH Confirmat"
+    else:
+        h4_line = f"📡 4H: ⏳ {wait_hint}"
+
+    if _ltf_choch_confirmed(setup, snap, '1H', macro_dir):
+        price_1h = _ltf_choch_price(setup, snap, '1H')
+        if price_1h is not None:
+            h1_line = (
+                f"🔭 ✅ 1H CHoCH Confirmat — "
+                f"<code>{format_telegram_price(symbol, price_1h)}</code>"
+            )
+        else:
+            h1_line = "🔭 ✅ 1H CHoCH Confirmat"
+    else:
+        h1_line = "🔭 1H: ⏳ Waiting pullback + FVG"
+
+    return h4_line, h1_line
 SEPARATOR_LENGTH = 24  # Enforced rule: Name-aligned width
 # ════════════════════════════════════════
 
@@ -457,22 +606,8 @@ class TelegramNotifier:
 
         block2 = f"\n{sep}\n" + "\n".join(block2_parts)
 
-        # ── BLOC 3: Radar & Execuție ──
-        if setup.status == 'READY':
-            h1_choch = getattr(setup, 'h1_choch', None)
-            choch_1h_detected = getattr(setup, 'choch_1h_detected', False)
-            if h1_choch or choch_1h_detected:
-                price_1h = h1_choch.break_price if h1_choch else getattr(setup, 'choch_1h_price', 0)
-                h1_line = f"🔭 ✅ 1H: <code>{format_telegram_price(symbol, price_1h)}</code>"
-            else:
-                h1_line = "🔭 1H: ⏳ Waiting..."
-            if setup.h4_choch:
-                h4_line = f"📡 ✅ 4H: <code>{format_telegram_price(symbol, setup.h4_choch.break_price)}</code>"
-            else:
-                h4_line = "📡 4H: ⏳ Waiting..."
-        else:
-            h4_line = f"📡 4H: ⏳ {wait_hint}"
-            h1_line = "🔭 1H: ⏳ Waiting pullback + FVG"
+        # ── BLOC 3: Radar & Execuție (stare live din JSON radar + setup) ──
+        h4_line, h1_line = _format_radar_exec_lines(setup, symbol, raw_dir, wait_hint)
 
         block3 = (
             f"\n{sep}\n"
