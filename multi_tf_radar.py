@@ -234,19 +234,54 @@ def _parse_radar_dt(ts) -> Optional[datetime]:
         return None
 
 
-def _resolve_h4_anchor_time(setup_data: dict, tf_4h: 'TimeframeAnalysis') -> Optional[datetime]:
-    """Cea mai recentă ancoră structurală 4H — 1H CHoCH trebuie să fie strict după ea."""
+def _resolve_mitigation_touch_anchor(
+    setup_data: dict,
+    tf_4h: 'TimeframeAnalysis' = None,
+) -> Optional[datetime]:
+    """V43.8: Ancoră cronologie 1H = primul touch POI/FVG din pullback curent."""
     candidates = []
-    for src in (
-        setup_data.get('h4_structure_locked_at'),
-        tf_4h.choch_time if tf_4h.choch_detected else None,
-        setup_data.get('radar_4h_choch_time'),
-        setup_data.get('last_in_fvg_time'),
-    ):
-        dt = _parse_radar_dt(src)
+    for key in ('poi_first_touch_time', 'h4_fvg_first_touch_time'):
+        dt = _parse_radar_dt(setup_data.get(key))
         if dt is not None:
             candidates.append(dt)
     return max(candidates) if candidates else None
+
+
+def _track_mitigation_touch(
+    setup_data: dict,
+    v43_zone: dict,
+    tf_4h: 'TimeframeAnalysis' = None,
+) -> None:
+    """V43.8: Rising edge POI+P/D → poi_first_touch_time; reset la ieșire din POI."""
+    now_ts = datetime.now(timezone.utc).isoformat()
+    in_poi = v43_zone.get('in_poi', False)
+    validated = v43_zone.get('validated', False)
+    was_occupied = bool(setup_data.get('_poi_occupied'))
+
+    if not in_poi:
+        setup_data.pop('poi_first_touch_time', None)
+        setup_data.pop('h4_fvg_first_touch_time', None)
+        setup_data['_poi_occupied'] = False
+        setup_data.pop('_h4_fvg_occupied', None)
+        return
+
+    if not was_occupied and validated:
+        setup_data['poi_first_touch_time'] = now_ts
+        setup_data.pop('h4_fvg_first_touch_time', None)
+        setup_data.pop('h1_choch_alert_sent', None)
+        setup_data.pop('choch_1h_price', None)
+    elif validated and not setup_data.get('poi_first_touch_time'):
+        setup_data['poi_first_touch_time'] = now_ts
+
+    setup_data['_poi_occupied'] = validated
+
+    if tf_4h is not None:
+        if tf_4h.in_fvg:
+            if not setup_data.get('_h4_fvg_occupied'):
+                setup_data['h4_fvg_first_touch_time'] = now_ts
+            setup_data['_h4_fvg_occupied'] = True
+        else:
+            setup_data['_h4_fvg_occupied'] = False
 
 
 def _apply_h1_chronology_guard(
@@ -254,30 +289,50 @@ def _apply_h1_chronology_guard(
     setup_data: dict,
     tf_4h: 'TimeframeAnalysis',
     tf_1h: 'TimeframeAnalysis',
+    daily_zone_validated: bool,
 ) -> Tuple['TimeframeAnalysis', bool]:
     """
-    V43.7: Respinge CHoCH 1H din istoric anterior ancorii 4H (ghost trigger GBPJPY).
+    V43.8: Respinge CHoCH 1H anterior primului touch POI/FVG (ghost trigger GBPJPY).
     Returns (tf_1h, h1_stale).
     """
     if not tf_1h.choch_detected:
         return tf_1h, False
 
-    anchor = _resolve_h4_anchor_time(setup_data, tf_4h)
+    if not daily_zone_validated:
+        print(
+            f"  🛑 [V43.8 H1 STALE] {symbol}: 1H CHoCH respins — POI Daily nevalidat"
+        )
+        sys.stdout.flush()
+        logger.warning(f"[V43.8 H1 STALE] {symbol}: 1H CHoCH fără POI validat")
+        return _empty_tf_waiting("H1"), True
+
+    anchor = _resolve_mitigation_touch_anchor(setup_data, tf_4h)
     h1_time = _parse_radar_dt(tf_1h.choch_time)
 
-    if anchor is None or h1_time is None:
+    if anchor is None:
+        print(
+            f"  🛑 [V43.8 H1 STALE] {symbol}: 1H CHoCH respins — "
+            f"lipsă ancoră mitigation_touch"
+        )
+        sys.stdout.flush()
+        logger.warning(
+            f"[V43.8 H1 STALE] {symbol}: 1H CHoCH fără poi_first_touch_time"
+        )
+        return _empty_tf_waiting("H1"), True
+
+    if h1_time is None:
         return tf_1h, False
 
     if h1_time > anchor:
         return tf_1h, False
 
     print(
-        f"  🛑 [V43.7 H1 STALE] {symbol}: 1H CHoCH @ {h1_time.isoformat()} "
-        f"<= H4 anchor {anchor.isoformat()} — INVALID (pre-H4 lock)"
+        f"  🛑 [V43.8 H1 STALE] {symbol}: 1H CHoCH @ {h1_time.isoformat()} "
+        f"<= mitigation_touch {anchor.isoformat()} — INVALID (pre-POI touch)"
     )
     sys.stdout.flush()
     logger.warning(
-        f"[V43.7 H1 STALE] {symbol}: 1H CHoCH stale vs H4 anchor "
+        f"[V43.8 H1 STALE] {symbol}: 1H CHoCH stale vs mitigation touch "
         f"({h1_time.isoformat()} <= {anchor.isoformat()})"
     )
     return _empty_tf_waiting("H1"), True
@@ -1466,6 +1521,7 @@ class MultiTFRadar:
             setup_data, direction, current_price, daily_fvg_bottom, daily_fvg_top,
         )
         daily_zone_validated = _v43_zone['validated']
+        _track_mitigation_touch(setup_data, _v43_zone)
 
         print(f"\n{'='*80}")
         print(f"🔍 [{symbol}] Bias Daily: {direction} | Scanare structurală 4H+1H (V43.2 POI Gate)...")
@@ -1516,8 +1572,9 @@ class MultiTFRadar:
             )
             self._log_scan_done(symbol, tf_4h, _h4_bars)
 
+            _track_mitigation_touch(setup_data, _v43_zone, tf_4h)
             tf_1h, _h1_stale = _apply_h1_chronology_guard(
-                symbol, setup_data, tf_4h, tf_1h,
+                symbol, setup_data, tf_4h, tf_1h, daily_zone_validated,
             )
         else:
             tf_1h = _empty_tf_waiting("H1")
@@ -1730,6 +1787,7 @@ class MultiTFRadar:
     _CHOCH_ALERT_FLUSH_KEYS = (
         'h4_choch_alert_sent', 'h1_choch_alert_sent', 'choch_1h_price',
         'h4_structure_locked_at', 'radar_1h_choch_stale',
+        'poi_first_touch_time', 'h4_fvg_first_touch_time',
     )
 
     @staticmethod
@@ -1969,6 +2027,8 @@ class MultiTFRadar:
             and not setup.get('radar_1h_choch_stale')
             and not getattr(result, 'h1_choch_stale', False)
             and result.tf_1h.choch_detected
+            and result.daily_zone_validated
+            and setup.get('poi_first_touch_time')
         ):
             setup['h1_choch_alert_sent'] = True
             if result.tf_1h.choch_price is not None:
@@ -2571,6 +2631,8 @@ class MultiTFRadar:
                             'execute_now_alert_sent', 'execute_now_alert_key',
                             'h4_choch_alert_sent', 'h1_choch_alert_sent', 'choch_1h_price',
                             'h4_structure_locked_at', 'radar_1h_choch_stale',
+                            'poi_first_touch_time', 'h4_fvg_first_touch_time',
+                            '_poi_occupied', '_h4_fvg_occupied',
                         ):
                             if _original_setup.get(_ek) is not None:
                                 setups[i][_ek] = _original_setup[_ek]
@@ -2663,6 +2725,16 @@ class MultiTFRadar:
                 matches_direct = (result_direction == setup_direction)
 
                 if setup.get('symbol') == result.symbol and (matches_sell or matches_buy or matches_direct):
+                    for _ek in (
+                        'poi_first_touch_time', 'h4_fvg_first_touch_time',
+                        '_poi_occupied', '_h4_fvg_occupied',
+                        'h4_choch_alert_sent', 'h1_choch_alert_sent', 'choch_1h_price',
+                        'h4_structure_locked_at', 'radar_1h_choch_stale',
+                    ):
+                        if original_setup.get(_ek) is not None:
+                            setup[_ek] = original_setup[_ek]
+                        elif _ek in ('poi_first_touch_time', 'h4_fvg_first_touch_time'):
+                            setup.pop(_ek, None)
                     # V19.4: logica de update delegată la helper partajat cu batch sync
                     self._update_setup_with_radar(setup, result)
                     setups[i] = setup

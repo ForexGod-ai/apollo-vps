@@ -36,6 +36,7 @@ _RADAR_LIVE_KEYS = (
     'radar_4h_choch_detected', 'radar_4h_choch_direction', 'radar_4h_choch_price',
     'radar_4h_status', 'radar_1h_choch_detected', 'radar_1h_choch_direction',
     'radar_1h_choch_price', 'radar_1h_status', 'radar_1h_choch_stale', 'EXECUTE_NOW',
+    'poi_first_touch_time', 'h4_fvg_first_touch_time',
 )
 
 
