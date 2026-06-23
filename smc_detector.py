@@ -2263,13 +2263,23 @@ class SMCDetector:
                 'price_inside': adr.price_inside,
             }
 
-        if adr is not None and self.should_preserve_stored_poi(
+        # V44.1: expansion BOS anchor — never preserve stale POI from pre-range JSON
+        _force_rescan = (
+            isinstance(latest_signal, BOS)
+            and (strategy_type or '').lower() == 'continuation'
+        )
+
+        if (
+            adr is not None
+            and not _force_rescan
+            and self.should_preserve_stored_poi(
             stored_poi_top,
             stored_poi_bottom,
             current_trend,
             strategy_type,
             adr,
             current_price,
+        )
         ):
             top = float(stored_poi_top)
             bottom = float(stored_poi_bottom)
@@ -2295,6 +2305,13 @@ class SMCDetector:
                 preserve_stored_poi=True,
                 poi_source='V43 preserved stored POI',
             )
+
+        if _force_rescan and stored_poi_top is not None:
+            print(
+                f"   🔄 [V44.1 NEW RANGE] {symbol}: expansion BOS — force POI rescan "
+                f"(archiving stored [{float(stored_poi_bottom):.5f} – {float(stored_poi_top):.5f}])"
+            )
+            meta['poi_source'] = 'V44.1 BOS new range rescan'
 
         fvg_audit: dict = {}
         selected = self.detect_fvg(
@@ -2501,6 +2518,56 @@ class SMCDetector:
                     return candidate
         return last
 
+    def _expansion_bos_confirms_new_range(
+        self,
+        df: pd.DataFrame,
+        leg_choch: CHoCH,
+        latest_bos: BOS,
+    ) -> bool:
+        """V44.1 — single expansion BOS after leg CHoCH confirms new HL→HH / LH→LL range."""
+        if leg_choch is None or latest_bos is None:
+            return False
+        if latest_bos.index <= leg_choch.index:
+            return False
+        if latest_bos.direction != leg_choch.direction:
+            return False
+
+        swing_highs = self.detect_swing_highs(df)
+        swing_lows = self.detect_swing_lows(df)
+        post_lows = [
+            l for l in swing_lows
+            if leg_choch.index < l.index < latest_bos.index
+        ]
+        post_highs = [
+            h for h in swing_highs
+            if leg_choch.index < h.index < latest_bos.index
+        ]
+
+        if leg_choch.direction == 'bullish':
+            if hasattr(latest_bos, 'swing_broken') and latest_bos.swing_broken is not None:
+                if float(latest_bos.break_price) <= float(latest_bos.swing_broken.price):
+                    return False
+            elif not post_highs:
+                pre_highs = [h for h in swing_highs if h.index < latest_bos.index]
+                if not pre_highs or float(latest_bos.break_price) <= float(pre_highs[-1].price):
+                    return False
+            if not post_lows:
+                return False
+            hl = max(post_lows, key=lambda l: self._swing_body_low(df, l.index))
+            return float(hl.price) < float(latest_bos.break_price)
+
+        if hasattr(latest_bos, 'swing_broken') and latest_bos.swing_broken is not None:
+            if float(latest_bos.break_price) >= float(latest_bos.swing_broken.price):
+                return False
+        elif not post_lows:
+            pre_lows = [l for l in swing_lows if l.index < latest_bos.index]
+            if not pre_lows or float(latest_bos.break_price) >= float(pre_lows[-1].price):
+                return False
+        if not post_highs:
+            return False
+        lh = min(post_highs, key=lambda h: self._swing_body_high(df, h.index))
+        return float(lh.price) > float(latest_bos.break_price)
+
     def _resolve_d1_leg(
         self,
         df: pd.DataFrame,
@@ -2631,6 +2698,17 @@ class SMCDetector:
                     f"ignored {len(ignored_opposite)} opposite pullback CHoCH"
                 )
             return latest_signal, strategy_type, current_trend, leg_choch
+
+        # V44.1 NEW RANGE — single expansion BOS confirms HL→HH / LH→LL dealing range
+        if same_dir_bos:
+            latest_bos = same_dir_bos[-1]
+            if self._expansion_bos_confirms_new_range(df, leg_choch, latest_bos):
+                print(
+                    f"   📐 [V44.1 NEW RANGE] continuation — leg CHoCH {leg_choch.direction.upper()} "
+                    f"@bar{leg_choch.index}, expansion BOS @bar{latest_bos.index} "
+                    f"→ new dealing range confirmed"
+                )
+                return latest_bos, 'continuation', leg_choch.direction, leg_choch
 
         # GBPJPY / GBPNZD: reversal leg — anchor on leg CHoCH, wait pullback AOI + LTF
         if debug:

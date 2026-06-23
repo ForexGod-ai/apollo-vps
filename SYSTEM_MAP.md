@@ -2,7 +2,7 @@
 
 **Project:** Glitch in Matrix — trading-ai-agent apollo  
 **Owner:** ФорексГод  
-**Last updated:** 2026-06-23 (V44.0)  
+**Last updated:** 2026-06-23 (V44.1)  
 **Purpose:** Single reference for autonomous pipeline topology, recent critical patches, and anti-regression rules. Read this before modifying radar, executor, cBot, or Telegram flows.
 
 ---
@@ -218,6 +218,26 @@ ExecuteSignal order:
 
 ---
 
+### V44.1 — BOS New Range Sync (Universal ADR + POI)
+
+**Problem:** After CHoCH → HL pullback → expansion BOS on Daily, radar/JSON stayed on pre-range FVG (e.g. GBPNZD old zone below new HL) because: (1) `_resolve_d1_leg` required ≥2 BOS for continuation; (2) post-TP evolution was the only new-range path; (3) SMART MERGE `preserve_stored_poi` blocked live POI rehydrate on ADR HL shift.
+
+**Fix — stateless per-scan recalc (all pairs):**
+
+| Layer | Change |
+|-------|--------|
+| `smc_detector._expansion_bos_confirms_new_range()` | Single post-CHoCH expansion BOS + valid HL/LH pullback confirms new dealing range |
+| `smc_detector._resolve_d1_leg()` | V44.1 path: 1 expansion BOS → `continuation`, anchor BOS bar |
+| `smc_detector.resolve_d1_poi()` | Skip `preserve_stored_poi` on BOS continuation; force in-range rescan |
+| `daily_scanner._adr_container_shift_detected()` | Shift on `adr_lh`, `adr_hl`, **and** `adr_ll` (not LH only) |
+| `daily_scanner._bos_new_range_detected()` | BOS expansion overrides preserve; archives `legacy_poi_*` |
+| `daily_scanner._try_bos_new_range_evolution()` | Reversal/stale POI → continuation without TP requirement |
+| SMART MERGE | BOS evolution before post-TP on preserved + merged setups |
+
+**Lifecycle:** Each daily scan rebuilds ADR from fresh D1 data. POI preserved only when ADR unchanged and price inside valid zone; BOS new range / ADR shift / POI zombie always wins over preserve.
+
+---
+
 ## 3. Strict Safety Rules (Anti-Regression for Composer / Agents)
 
 ### Temporal / Cross-TF Logic
@@ -266,6 +286,8 @@ ExecuteSignal order:
 | `_liquidity_sniper_be_protect_open_positions()` | setup_executor_monitor.py | BE only after MODIFIED |
 | `send_setup_alert()` | telegram_notifier.py | Text + Daily chart; no buttons |
 | `send_4h_choch_alert()` | telegram_notifier.py | 4H photo + HTML caption; text fallback |
+| `_expansion_bos_confirms_new_range()` | smc_detector.py | Single BOS confirms HL→HH / LH→LL range |
+| `_try_bos_new_range_evolution()` | daily_scanner.py | BOS new range POI rehydrate (no TP gate) |
 | `ExecuteSignal()` | PythonSignalExecutor.cs | MODIFY_SL → CLOSE → guard → order |
 
 ---
@@ -278,6 +300,7 @@ V43.7  H4 anchor guard (superseded by V43.8)
 V43.8  POI touch anchor — ghost 1H fix
 V43.9  BE handshake + cBot max-2 scale-in + Telegram button purge
 V44.0  4H CHoCH alert — mandatory 4H chart as photo+caption (no W1)
+V44.1  BOS new range sync — universal ADR/POI rehydrate after expansion BOS
 ```
 
 ---

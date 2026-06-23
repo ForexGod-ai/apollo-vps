@@ -1038,14 +1038,16 @@ def _v43_fields_from_setup(setup: TradeSetup) -> dict:
     }
 
 
-def _adr_shift_detected(old: dict, new: dict, threshold_pct: float = 0.2) -> bool:
-    """True when live ADR LH moved materially vs JSON (rehydrate POI)."""
-    old_lh = old.get('adr_lh')
-    new_lh = new.get('adr_lh')
-    if old_lh is None or new_lh is None:
+def _adr_level_shift(
+    old_val,
+    new_val,
+    threshold_pct: float = 0.2,
+) -> bool:
+    """True when a single ADR bound moved materially."""
+    if old_val is None or new_val is None:
         return False
     try:
-        old_f, new_f = float(old_lh), float(new_lh)
+        old_f, new_f = float(old_val), float(new_val)
     except (TypeError, ValueError):
         return False
     if old_f <= 0:
@@ -1053,10 +1055,81 @@ def _adr_shift_detected(old: dict, new: dict, threshold_pct: float = 0.2) -> boo
     return abs(new_f - old_f) / old_f * 100.0 >= threshold_pct
 
 
+def _adr_container_shift_detected(
+    old: dict,
+    new: dict,
+    threshold_pct: float = 0.2,
+) -> bool:
+    """True when live ADR LH/HL/LL moved materially vs JSON (rehydrate POI)."""
+    for key in ('adr_lh', 'adr_hl', 'adr_ll'):
+        if _adr_level_shift(old.get(key), new.get(key), threshold_pct):
+            return True
+    return False
+
+
+def _adr_shift_detected(old: dict, new: dict, threshold_pct: float = 0.2) -> bool:
+    """Backward-compatible alias — checks full ADR container, not LH only."""
+    return _adr_container_shift_detected(old, new, threshold_pct)
+
+
+def _bos_new_range_detected(old: dict, new_macro: dict, threshold_pct: float = 0.2) -> bool:
+    """V44.1 — BOS expansion new range overrides POI preserve."""
+    if new_macro.get('d1_signal_type') == 'BOS' and old.get('d1_signal_type') != 'BOS':
+        return True
+    if new_macro.get('d1_signal_type') == 'BOS' and _adr_container_shift_detected(old, new_macro, threshold_pct):
+        return True
+
+    direction = (
+        new_macro.get('d1_bias_direction')
+        or new_macro.get('daily_bias')
+        or new_macro.get('direction')
+        or old.get('direction')
+        or ''
+    ).lower()
+    old_top = old.get('poi_top') if old.get('poi_top') is not None else old.get('fvg_top')
+    old_bottom = old.get('poi_bottom') if old.get('poi_bottom') is not None else old.get('fvg_bottom')
+    adr_hl = new_macro.get('adr_hl')
+    adr_lh = new_macro.get('adr_lh')
+
+    if old_top is not None and old_bottom is not None:
+        if direction in ('buy', 'long', 'bullish') and adr_hl is not None:
+            if float(old_top) < float(adr_hl):
+                return True
+        if direction in ('sell', 'short', 'bearish') and adr_lh is not None:
+            if float(old_bottom) > float(adr_lh):
+                return True
+
+    if not new_macro.get('preserve_stored_poi'):
+        new_top = new_macro.get('poi_top')
+        new_bottom = new_macro.get('poi_bottom')
+        if (
+            old_top is not None and old_bottom is not None
+            and new_top is not None and new_bottom is not None
+            and (abs(float(new_top) - float(old_top)) > 1e-9
+                 or abs(float(new_bottom) - float(old_bottom)) > 1e-9)
+            and new_macro.get('d1_signal_type') == 'BOS'
+        ):
+            return True
+    return False
+
+
 def _apply_v43_poi_persistence(old: dict, new_macro: dict) -> dict:
     """V43.1 E2-T3: preserve stored POI or rehydrate on ADR shift."""
     out = dict(new_macro)
     sym = out.get('symbol', '?')
+
+    if _bos_new_range_detected(old, new_macro):
+        out['preserve_stored_poi'] = False
+        if old.get('poi_top') is not None:
+            out.setdefault('legacy_poi_top', old.get('poi_top'))
+            out.setdefault('legacy_poi_bottom', old.get('poi_bottom'))
+        out['poi_v43_source'] = new_macro.get('poi_v43_source') or 'V44.1 BOS new range rehydrate'
+        print(
+            f"  [V44.1 NEW RANGE] {sym}: BOS expansion — archived old POI, rehydrated live "
+            f"[{out.get('poi_bottom')} – {out.get('poi_top')}]"
+        )
+        return out
+
     if old.get('preserve_stored_poi') or new_macro.get('preserve_stored_poi'):
         for key in ('poi_top', 'poi_bottom', 'fvg_top', 'fvg_bottom'):
             if old.get(key) is not None:
@@ -1065,11 +1138,13 @@ def _apply_v43_poi_persistence(old: dict, new_macro: dict) -> dict:
         out['preserve_stored_poi'] = True
         print(f"  [V43.1 LIFECYCLE] {sym}: POI preserved (price inside ADR, anti-noise)")
         return out
-    if _adr_shift_detected(old, new_macro):
+    if _adr_container_shift_detected(old, new_macro):
         out['poi_v43_source'] = new_macro.get('poi_v43_source') or 'V43 ADR shift rehydrate'
         print(
             f"  [V43.1 LIFECYCLE] {sym}: ADR shift detected "
-            f"LH {old.get('adr_lh')} → {new_macro.get('adr_lh')} — POI rehydrated from live scan"
+            f"LH {old.get('adr_lh')}→{new_macro.get('adr_lh')} "
+            f"HL {old.get('adr_hl')}→{new_macro.get('adr_hl')} "
+            f"LL {old.get('adr_ll')}→{new_macro.get('adr_ll')} — POI rehydrated from live scan"
         )
     return out
 
@@ -1133,6 +1208,152 @@ def _has_expansion_bos_after_tp(
     return False
 
 
+def _rehydrate_poi_from_bos_range(
+    detector: SMCDetector,
+    df_daily: pd.DataFrame,
+    setup_dict: dict,
+    symbol: str,
+    poi_source_label: str = 'V44.1 BOS new range',
+) -> dict:
+    """V44.1 — rebuild ADR + POI from live BOS anchor (no stored POI)."""
+    sym = setup_dict.get('symbol', symbol)
+    swing_h = detector.detect_swing_highs(df_daily)
+    swing_l = detector.detect_swing_lows(df_daily)
+    chochs, bos_list = detector.detect_choch_and_bos(df_daily)
+    range_state = detector.compute_structural_range(df_daily, swing_h, swing_l, symbol=sym)
+    chochs, bos_list, range_state = detector.filter_internal_range_signals(
+        sym, df_daily, chochs, bos_list, range_state
+    )
+    latest_signal, _strategy, current_trend, _leg = detector._resolve_d1_leg(
+        df_daily, chochs, bos_list, debug=False
+    )
+    if latest_signal is None:
+        return setup_dict
+
+    price = float(df_daily['close'].iloc[-1])
+    adr = detector.build_active_dealing_range(
+        df_daily, swing_h, swing_l, latest_signal.index, current_trend,
+        range_state=range_state, symbol=sym,
+    )
+    out = dict(setup_dict)
+    if out.get('poi_top') is not None and out.get('legacy_poi_top') is None:
+        out['legacy_poi_top'] = out.get('poi_top')
+        out['legacy_poi_bottom'] = out.get('poi_bottom')
+
+    poi_res = detector.resolve_d1_poi(
+        df_daily, latest_signal, price, current_trend, 'continuation', adr,
+        symbol=sym,
+        stored_poi_top=None,
+        stored_poi_bottom=None,
+    )
+    if poi_res.fvg:
+        out['poi_top'] = float(poi_res.fvg.top)
+        out['poi_bottom'] = float(poi_res.fvg.bottom)
+        out['fvg_top'] = float(poi_res.fvg.top)
+        out['fvg_bottom'] = float(poi_res.fvg.bottom)
+    if adr:
+        out['adr_lh'] = float(adr.last_lh)
+        out['adr_ll'] = float(adr.last_ll)
+        out['adr_hl'] = float(adr.last_hl)
+
+    out['strategy_type'] = 'continuation'
+    out['setup_type'] = 'CONTINUATION'
+    out['poi_v43_source'] = poi_res.poi_source or poi_source_label
+    out['preserve_stored_poi'] = False
+    out['d1_signal_type'] = 'BOS' if isinstance(latest_signal, BOS) else 'CHoCH'
+    out['d1_signal_bar'] = getattr(latest_signal, 'index', None)
+    out['d1_signal_price'] = getattr(latest_signal, 'break_price', None)
+    out['d1_bias_direction'] = current_trend
+    out['daily_bias'] = current_trend.upper()
+    out['direction'] = 'buy' if current_trend == 'bullish' else 'sell'
+    if out.get('status') not in ('TRADE_OPEN', 'PARTIAL_OPEN'):
+        out['status'] = 'WAITING_D1_PULLBACK'
+    for key in _RADAR_RESET_KEYS:
+        out.pop(key, None)
+    for key in list(out.keys()):
+        if key.startswith('radar_'):
+            out.pop(key, None)
+    return out
+
+
+def _try_bos_new_range_evolution(
+    detector: SMCDetector,
+    df_daily: pd.DataFrame,
+    setup_dict: dict,
+    symbol: str,
+) -> dict:
+    """V44.1 — reversal/stale POI → continuation after expansion BOS (no TP required)."""
+    if setup_dict.get('entry1_filled') or setup_dict.get('status') in ('TRADE_OPEN', 'PARTIAL_OPEN'):
+        return setup_dict
+    if not _has_expansion_bos_after_tp(detector, df_daily, setup_dict, symbol):
+        return setup_dict
+
+    sym = setup_dict.get('symbol', symbol)
+    swing_h = detector.detect_swing_highs(df_daily)
+    swing_l = detector.detect_swing_lows(df_daily)
+    chochs, bos_list = detector.detect_choch_and_bos(df_daily)
+    range_state = detector.compute_structural_range(df_daily, swing_h, swing_l, symbol=sym)
+    chochs, bos_list, range_state = detector.filter_internal_range_signals(
+        sym, df_daily, chochs, bos_list, range_state
+    )
+    latest_signal, strategy_type, current_trend, leg_choch = detector._resolve_d1_leg(
+        df_daily, chochs, bos_list, debug=False
+    )
+    if latest_signal is None or leg_choch is None:
+        return setup_dict
+    if not isinstance(latest_signal, BOS):
+        return setup_dict
+    if not detector._expansion_bos_confirms_new_range(df_daily, leg_choch, latest_signal):
+        return setup_dict
+
+    price = float(df_daily['close'].iloc[-1])
+    adr = detector.build_active_dealing_range(
+        df_daily, swing_h, swing_l, latest_signal.index, current_trend,
+        range_state=range_state, symbol=sym,
+    )
+    if adr is None:
+        return setup_dict
+
+    stored_top = setup_dict.get('poi_top') if setup_dict.get('poi_top') is not None else setup_dict.get('fvg_top')
+    stored_bottom = setup_dict.get('poi_bottom') if setup_dict.get('poi_bottom') is not None else setup_dict.get('fvg_bottom')
+    direction = (
+        setup_dict.get('d1_bias_direction')
+        or setup_dict.get('daily_bias')
+        or setup_dict.get('direction')
+        or ''
+    ).lower()
+
+    poi_conflict = False
+    if stored_top is not None and stored_bottom is not None:
+        poi_conflict = SMCDetector.poi_conflicts_with_continuation(
+            float(stored_top), float(stored_bottom), direction, adr,
+        )
+
+    live_adr = {
+        'adr_lh': float(adr.last_lh),
+        'adr_hl': float(adr.last_hl),
+        'adr_ll': float(adr.last_ll),
+    }
+    adr_shift = _adr_container_shift_detected(setup_dict, live_adr)
+    stale_signal = setup_dict.get('d1_signal_type') != 'BOS'
+    is_reversal = _norm_strategy_type(setup_dict.get('strategy_type')) == 'reversal'
+
+    if not (is_reversal or poi_conflict or stale_signal or adr_shift or setup_dict.get('preserve_stored_poi')):
+        return setup_dict
+
+    out = _rehydrate_poi_from_bos_range(
+        detector, df_daily, setup_dict, sym,
+        poi_source_label='V44.1 BOS new range evolution',
+    )
+    print(
+        f"  [V44.1 NEW RANGE] {sym}: BOS expansion — POI archived "
+        f"[{out.get('legacy_poi_bottom')} – {out.get('legacy_poi_top')}] → "
+        f"new [{out.get('poi_bottom')} – {out.get('poi_top')}] | "
+        f"ADR HL={out.get('adr_hl')} LH={out.get('adr_lh')}"
+    )
+    return out
+
+
 def _try_post_tp_evolution(
     detector: SMCDetector,
     df_daily: pd.DataFrame,
@@ -1150,54 +1371,12 @@ def _try_post_tp_evolution(
         return setup_dict
 
     sym = setup_dict.get('symbol', symbol)
-    swing_h = detector.detect_swing_highs(df_daily)
-    swing_l = detector.detect_swing_lows(df_daily)
-    chochs, bos_list = detector.detect_choch_and_bos(df_daily)
-    range_state = detector.compute_structural_range(df_daily, swing_h, swing_l, symbol=symbol)
-    chochs, bos_list, range_state = detector.filter_internal_range_signals(
-        sym, df_daily, chochs, bos_list, range_state
+    out = _rehydrate_poi_from_bos_range(
+        detector, df_daily, setup_dict, sym,
+        poi_source_label='V43.1 post-TP evolution',
     )
-    latest_signal, _strategy, current_trend, _leg = detector._resolve_d1_leg(
-        df_daily, chochs, bos_list, debug=False
-    )
-    if latest_signal is None:
-        return setup_dict
-
-    price = float(df_daily['close'].iloc[-1])
-    adr = detector.build_active_dealing_range(
-        df_daily, swing_h, swing_l, latest_signal.index, current_trend,
-        range_state=range_state, symbol=sym,
-    )
-    out = dict(setup_dict)
-    out['legacy_poi_top'] = out.get('poi_top')
-    out['legacy_poi_bottom'] = out.get('poi_bottom')
     out['poi_mitigated'] = True
     out['reversal_tp_hit'] = False
-
-    poi_res = detector.resolve_d1_poi(
-        df_daily, latest_signal, price, current_trend, 'continuation', adr,
-        symbol=sym,
-    )
-    if poi_res.fvg:
-        out['poi_top'] = float(poi_res.fvg.top)
-        out['poi_bottom'] = float(poi_res.fvg.bottom)
-        out['fvg_top'] = float(poi_res.fvg.top)
-        out['fvg_bottom'] = float(poi_res.fvg.bottom)
-    if adr:
-        out['adr_lh'] = float(adr.last_lh)
-        out['adr_ll'] = float(adr.last_ll)
-        out['adr_hl'] = float(adr.last_hl)
-
-    out['strategy_type'] = 'continuation'
-    out['setup_type'] = 'CONTINUATION'
-    out['poi_v43_source'] = poi_res.poi_source or 'V43.1 post-TP evolution'
-    out['status'] = 'WAITING_D1_PULLBACK'
-    out['preserve_stored_poi'] = False
-    for key in _RADAR_RESET_KEYS:
-        out.pop(key, None)
-    for key in list(out.keys()):
-        if key.startswith('radar_'):
-            out.pop(key, None)
 
     print(
         f"  [V43.1 LIFECYCLE] {sym}: REVERSAL → CONTINUATION (post-TP + expansion BOS) "
@@ -1538,7 +1717,7 @@ def save_monitoring_setups(
         for sym in _invalidated:
             existing_active.pop(sym, None)
 
-        # V43.1: lifecycle + post-TP pe setup-uri păstrate (nescanate azi)
+        # V43.1 + V44.1: lifecycle + BOS new range + post-TP pe setup-uri păstrate
         for sym, stored in list(existing_active.items()):
             price = symbol_price_map.get(sym)
             stored = _apply_v431_lifecycle_gates(stored, price)
@@ -1547,6 +1726,7 @@ def save_monitoring_setups(
                 continue
             df_d1 = symbol_df_daily_map.get(sym)
             if df_d1 is not None:
+                stored = _try_bos_new_range_evolution(detector, df_d1, stored, sym)
                 stored = _try_post_tp_evolution(detector, df_d1, stored, sym)
             existing_active[sym] = stored
 
@@ -1587,6 +1767,7 @@ def save_monitoring_setups(
                 merged = _apply_v43_poi_persistence(_old, merged)
                 df_d1 = symbol_df_daily_map.get(setup.symbol)
                 if df_d1 is not None:
+                    merged = _try_bos_new_range_evolution(detector, df_d1, merged, setup.symbol)
                     merged = _try_post_tp_evolution(detector, df_d1, merged, setup.symbol)
                 if merged.get('status') in _DEAD_STATUSES:
                     monitoring_setups = [
@@ -1610,6 +1791,7 @@ def save_monitoring_setups(
             monitoring_setup = _apply_v427_poi_status_gate(monitoring_setup, _live_price)
             df_d1 = symbol_df_daily_map.get(setup.symbol)
             if df_d1 is not None:
+                monitoring_setup = _try_bos_new_range_evolution(detector, df_d1, monitoring_setup, setup.symbol)
                 monitoring_setup = _try_post_tp_evolution(detector, df_d1, monitoring_setup, setup.symbol)
             if monitoring_setup.get('status') in _DEAD_STATUSES:
                 continue
@@ -1644,6 +1826,7 @@ def save_monitoring_setups(
                     merged_fb = _apply_v431_lifecycle_gates(merged_fb, _live_fb)
                     df_d1 = symbol_df_daily_map.get(sym)
                     if df_d1 is not None:
+                        merged_fb = _try_bos_new_range_evolution(detector, df_d1, merged_fb, sym)
                         merged_fb = _try_post_tp_evolution(detector, df_d1, merged_fb, sym)
                     if merged_fb.get('status') in _DEAD_STATUSES:
                         monitoring_setups = [s for s in monitoring_setups if s.get('symbol') != sym]
