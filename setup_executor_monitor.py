@@ -1150,27 +1150,58 @@ class SetupExecutorMonitor:
                     f"LIQUIDITY_SNIPER_BE|{event['currency']} {event['event']} "
                     f"T-{mins:.1f}min"
                 )
-                ok = self.executor.modify_stop_loss(
+                result = self.executor.modify_stop_loss_confirmed(
                     symbol=symbol,
                     direction=direction.upper(),
                     new_stop_loss=new_sl,
                     reason=reason,
                 )
-                if ok:
+                sep = "────────────────"
+                if result.get('ok'):
                     self._liquidity_sniper_be_applied.add(dedup_key)
                     self._save_liquidity_sniper_be_state()
                     logger.success(
-                        f"🔒 V39.5 LIQUIDITY SNIPER BE: {symbol} {direction.upper()} "
-                        f"SL→{new_sl:.5f} ({reason})"
+                        f"🔒 V43.9 LIQUIDITY SNIPER BE: {symbol} {direction.upper()} "
+                        f"SL→{new_sl:.5f} confirmed ({reason})"
                     )
                     try:
-                        sep = "────────────────"
                         msg = (
                             f"🔒 <b>LIQUIDITY SNIPER — BE PROTECT</b>\n\n"
                             f"<b>{symbol}</b> {direction.upper()} ITM\n"
                             f"SL moved to BE+commission: <code>{new_sl:.5f}</code>\n"
                             f"News: {event['currency']} {event['event']} in {mins:.0f}min\n\n"
                             f"ℹ️ <i>Position kept open — riding liquidity to TP</i>\n\n"
+                            f"  {sep}\n"
+                            f"  🔱 AUTHORED BY <b>ФорексГод</b> 🔱\n"
+                            f"  {sep}\n"
+                            f"  🏛 <b>ГЛИТЧ ИН МАТРИКС</b> 🏛"
+                        )
+                        url = f"https://api.telegram.org/bot{self._telegram_token}/sendMessage"
+                        requests.post(
+                            url,
+                            json={
+                                "chat_id": self._telegram_chat_id,
+                                "text": msg,
+                                "parse_mode": "HTML",
+                            },
+                            timeout=10,
+                        )
+                    except Exception:
+                        pass
+                else:
+                    fail_reason = result.get('reason') or result.get('status') or 'unknown'
+                    logger.warning(
+                        f"⚠️ V43.9 BE protect failed: {symbol} {direction.upper()} "
+                        f"SL→{new_sl:.5f} — {fail_reason}"
+                    )
+                    try:
+                        msg = (
+                            f"⚠️ <b>BE Modification Failed!</b>\n\n"
+                            f"<b>{symbol}</b> {direction.upper()} ITM\n"
+                            f"Target SL: <code>{new_sl:.5f}</code>\n"
+                            f"News: {event['currency']} {event['event']} in {mins:.0f}min\n"
+                            f"Status: <code>{result.get('status', 'UNKNOWN')}</code>\n"
+                            f"Reason: {fail_reason}\n\n"
                             f"  {sep}\n"
                             f"  🔱 AUTHORED BY <b>ФорексГод</b> 🔱\n"
                             f"  {sep}\n"

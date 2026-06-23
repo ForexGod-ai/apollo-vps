@@ -24,6 +24,9 @@ namespace cAlgo.Robots
         [Parameter("Move SL to Breakeven at (pips)", DefaultValue = 50.0)]
         public double BreakevenTriggerPips { get; set; }
 
+        [Parameter("Max Positions Per Symbol", DefaultValue = 2)]
+        public int MaxPositionsPerSymbol { get; set; }
+
         private DateTime _lastFileCheck = DateTime.MinValue;
         private HashSet<string> _sessionProcessedSignals = new HashSet<string>();
 
@@ -404,43 +407,40 @@ namespace cAlgo.Robots
             }
         }
 
+        private bool IsBotPosition(Position pos)
+        {
+            return pos.Label != null &&
+                (pos.Label.StartsWith("Glitch Matrix") || pos.Label.StartsWith("BTC_NUCLEAR"));
+        }
+
+        private int CountBotPositions(string mappedSymbol)
+        {
+            int count = 0;
+            foreach (var pos in Positions)
+            {
+                if (pos.SymbolName == mappedSymbol && IsBotPosition(pos))
+                    count++;
+            }
+            return count;
+        }
+
+        private string ExtractTriggerTf(string tagOrLabel)
+        {
+            if (string.IsNullOrEmpty(tagOrLabel))
+                return null;
+            var upper = tagOrLabel.ToUpper();
+            if (upper.Contains("_1H_") || upper.Contains("_1H_E"))
+                return "1H";
+            if (upper.Contains("_4H_") || upper.Contains("_4H_E"))
+                return "4H";
+            return null;
+        }
+
         private void ExecuteSignal(TradeSignal signal)
         {
             // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-            // 🛡️ V7.1 DUPLICATE POSITION GUARD — LAST LINE OF DEFENSE
-            // Prevents opening multiple positions on the same symbol
-            // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-            var guardSymbol = signal.Symbol.Replace("/", "").Replace(" ", "");
-            var guardMapped = MapSymbolName(guardSymbol);
-            if (string.IsNullOrEmpty(guardMapped)) guardMapped = guardSymbol;
-            
-            bool alreadyHasPosition = false;
-            foreach (var pos in Positions)
-            {
-                if (pos.SymbolName == guardMapped && pos.Label != null &&
-                    (pos.Label.StartsWith("Glitch Matrix") || pos.Label.StartsWith("BTC_NUCLEAR")))
-                {
-                    alreadyHasPosition = true;
-                    Print($"🛡️ DUPLICATE GUARD: Found existing {pos.TradeType} {pos.SymbolName} @ {pos.EntryPrice} (Label: {pos.Label})");
-                    break;
-                }
-            }
-            
-            if (alreadyHasPosition)
-            {
-                // Allow CLOSE signals through even if position exists (that's the point!)
-                if (string.IsNullOrEmpty(signal.Action) || signal.Action.ToUpper() != "CLOSE")
-                {
-                    Print($"⚠️ SKIP: Already have Glitch Matrix position on {guardMapped} — signal {signal.SignalId} rejected");
-                    WriteExecutionConfirmation(signal, null, "REJECTED", $"Duplicate position guard: already have position on {guardMapped}");
-                    return;
-                }
-            }
-            // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-            
-            // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
             // 🔒 V39.5 MODIFY SL HANDLER — Liquidity Sniper BE protection
-            // Python sends Action="MODIFY_SL" → update SL on matching open position
+            // Must run BEFORE max-positions guard (position must exist to modify SL)
             // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
             if (!string.IsNullOrEmpty(signal.Action) && signal.Action.ToUpper() == "MODIFY_SL")
             {
@@ -467,7 +467,7 @@ namespace cAlgo.Robots
                 {
                     if (pos.SymbolName != modMapped)
                         continue;
-                    if (pos.Label == null || (!pos.Label.StartsWith("Glitch Matrix") && !pos.Label.StartsWith("BTC_NUCLEAR")))
+                    if (!IsBotPosition(pos))
                         continue;
                     if (modTradeType.HasValue && pos.TradeType != modTradeType.Value)
                         continue;
@@ -526,10 +526,9 @@ namespace cAlgo.Robots
                 {
                     if (pos.SymbolName != closeMapped)
                         continue;
-                    if (pos.Label == null || (!pos.Label.StartsWith("Glitch Matrix") && !pos.Label.StartsWith("BTC_NUCLEAR")))
+                    if (!IsBotPosition(pos))
                         continue;
                     
-                    // If direction specified, match it; otherwise close ALL positions on symbol
                     if (closeTradeType.HasValue && pos.TradeType != closeTradeType.Value)
                         continue;
                     
@@ -552,8 +551,46 @@ namespace cAlgo.Robots
                 WriteExecutionConfirmation(signal, null, closedCount > 0 ? "CLOSED" : "NO_POSITION",
                     closedCount > 0 ? $"Closed {closedCount} position(s) for {closeMapped}" : $"No matching position found for {closeMapped}");
                 
-                return; // EXIT — don't process as new order!
+                return;
             }
+
+            // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            // 🛡️ V43.9 MAX POSITIONS PER SYMBOL — multi-entry scale-in (1H + 4H)
+            // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            var guardSymbol = signal.Symbol.Replace("/", "").Replace(" ", "");
+            var guardMapped = MapSymbolName(guardSymbol);
+            if (string.IsNullOrEmpty(guardMapped)) guardMapped = guardSymbol;
+
+            int existingCount = CountBotPositions(guardMapped);
+            if (existingCount >= MaxPositionsPerSymbol)
+            {
+                Print($"⚠️ SKIP: {guardMapped} has {existingCount} bot position(s) (max {MaxPositionsPerSymbol}) — signal {signal.SignalId} rejected");
+                WriteExecutionConfirmation(signal, null, "REJECTED",
+                    $"Max positions guard: {existingCount}/{MaxPositionsPerSymbol} on {guardMapped}");
+                return;
+            }
+
+            if (existingCount == 1)
+            {
+                var incomingTf = ExtractTriggerTf(signal.StrategyTag ?? signal.Comment ?? "");
+                if (!string.IsNullOrEmpty(incomingTf))
+                {
+                    foreach (var pos in Positions)
+                    {
+                        if (pos.SymbolName != guardMapped || !IsBotPosition(pos))
+                            continue;
+                        var existingTf = ExtractTriggerTf(pos.Label);
+                        if (!string.IsNullOrEmpty(existingTf) && existingTf == incomingTf)
+                        {
+                            Print($"⚠️ SKIP: Duplicate TF layer {incomingTf} on {guardMapped} — scale-in requires different TF (1H+4H)");
+                            WriteExecutionConfirmation(signal, null, "REJECTED",
+                                $"Duplicate TF layer: {incomingTf} already open on {guardMapped}");
+                            return;
+                        }
+                    }
+                }
+            }
+            // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
             
             // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
             // 🛡️ V8.0 SL/TP ZERO GUARD — Reject naked orders!

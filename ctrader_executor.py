@@ -145,11 +145,13 @@ class SignalQueue:
             os.replace(temp_path, target_path)
             
             logger.success(f"✅ Signal APPENDED to array ({len(existing_signals)} total): {signal['SignalId']}")
-            
+            return True
+
         except Exception as e:
             logger.error(f"❌ Failed to write signal: {e}")
             if 'temp_path' in locals() and os.path.exists(temp_path):
                 os.unlink(temp_path)
+            return False
         finally:
             # Release file lock
             if lock_fd is not None:
@@ -812,6 +814,40 @@ class CTraderExecutor:
             logger.error(f"❌ Failed to write close signal for {symbol}: {e}")
             return False
 
+    def _build_modify_sl_signal(
+        self,
+        symbol: str,
+        direction: str,
+        new_stop_loss: float,
+        reason: str = "MODIFY_SL",
+    ) -> tuple:
+        signal_id = f"MODIFY_{symbol}_{direction}_{int(datetime.now().timestamp())}"
+        modify_signal = {
+            "SignalId": signal_id,
+            "Symbol": symbol,
+            "Direction": direction.lower(),
+            "Action": "MODIFY_SL",
+            "StrategyType": "LIQUIDITY_SNIPER_BE",
+            "EntryPrice": 0,
+            "StopLoss": float(new_stop_loss),
+            "TakeProfit": 0,
+            "StopLossPips": 0,
+            "TakeProfitPips": 0,
+            "RiskReward": 0,
+            "Timestamp": datetime.now().isoformat(),
+            "LotSize": 0,
+            "RawUnits": None,
+            "CloseReason": reason,
+            "LiquiditySweep": False,
+            "SweepType": "",
+            "ConfidenceBoost": 0,
+            "OrderBlockUsed": False,
+            "OrderBlockScore": 0,
+            "PremiumDiscountZone": "BE_PROTECT",
+            "DailyRangePercentage": 0.0,
+        }
+        return signal_id, modify_signal
+
     def modify_stop_loss(
         self,
         symbol: str,
@@ -825,33 +861,9 @@ class CTraderExecutor:
         Used by Liquidity Sniper BE protection — keeps position open, zero risk.
         """
         try:
-            signal_id = f"MODIFY_{symbol}_{direction}_{int(datetime.now().timestamp())}"
-
-            modify_signal = {
-                "SignalId": signal_id,
-                "Symbol": symbol,
-                "Direction": direction.lower(),
-                "Action": "MODIFY_SL",
-                "StrategyType": "LIQUIDITY_SNIPER_BE",
-                "EntryPrice": 0,
-                "StopLoss": float(new_stop_loss),
-                "TakeProfit": 0,
-                "StopLossPips": 0,
-                "TakeProfitPips": 0,
-                "RiskReward": 0,
-                "Timestamp": datetime.now().isoformat(),
-                "LotSize": 0,
-                "RawUnits": None,
-                "CloseReason": reason,
-                "LiquiditySweep": False,
-                "SweepType": "",
-                "ConfidenceBoost": 0,
-                "OrderBlockUsed": False,
-                "OrderBlockScore": 0,
-                "PremiumDiscountZone": "BE_PROTECT",
-                "DailyRangePercentage": 0.0,
-            }
-
+            signal_id, modify_signal = self._build_modify_sl_signal(
+                symbol, direction, new_stop_loss, reason,
+            )
             success = self.signal_queue.enqueue(modify_signal)
 
             if success:
@@ -866,6 +878,64 @@ class CTraderExecutor:
         except Exception as e:
             logger.error(f"❌ Failed to write MODIFY SL signal for {symbol}: {e}")
             return False
+
+    def modify_stop_loss_confirmed(
+        self,
+        symbol: str,
+        direction: str,
+        new_stop_loss: float,
+        reason: str = "MODIFY_SL",
+        timeout: int = 35,
+    ) -> Dict:
+        """
+        V43.9: MODIFY SL with cBot handshake — Telegram only after Status=MODIFIED.
+        Bypasses queue worker; writes atomically and waits for execution_report.json.
+        """
+        try:
+            signal_id, modify_signal = self._build_modify_sl_signal(
+                symbol, direction, new_stop_loss, reason,
+            )
+            written = self.signal_queue._write_signal_atomic(modify_signal)
+            if not written:
+                return {
+                    'ok': False,
+                    'status': 'WRITE_FAILED',
+                    'reason': 'Failed to write MODIFY_SL signal to signals.json',
+                }
+
+            logger.info(
+                f"🔒 V43.9 MODIFY SL dispatched: {symbol} {direction} → "
+                f"SL={new_stop_loss:.5f} — waiting for cBot confirmation..."
+            )
+            confirmation = self.signal_queue._wait_for_confirmation(signal_id, timeout=timeout)
+            if confirmation is None:
+                return {
+                    'ok': False,
+                    'status': 'TIMEOUT',
+                    'reason': f'No cBot confirmation within {timeout}s',
+                }
+
+            status = str(confirmation.get('Status', 'UNKNOWN')).upper()
+            reason_text = (
+                confirmation.get('Reason')
+                or confirmation.get('Message')
+                or status
+            )
+            ok = status == 'MODIFIED'
+            if ok:
+                logger.success(
+                    f"✅ V43.9 MODIFY SL confirmed: {symbol} {direction} → SL={new_stop_loss:.5f}"
+                )
+            else:
+                logger.warning(
+                    f"⚠️ V43.9 MODIFY SL failed: {symbol} {direction} — "
+                    f"{status}: {reason_text}"
+                )
+            return {'ok': ok, 'status': status, 'reason': str(reason_text)}
+
+        except Exception as e:
+            logger.error(f"❌ V43.9 MODIFY SL error for {symbol}: {e}")
+            return {'ok': False, 'status': 'ERROR', 'reason': str(e)}
     
     def clear_signals(self):
         """Clear all signals from signals.json (write empty array)"""
