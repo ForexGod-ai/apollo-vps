@@ -1,6 +1,6 @@
 """
 Telegram Notifier for ForexGod - ETM Signals
-Sends trade alerts with screenshots and interactive buttons
+Sends trade alerts with chart screenshots (info-only scan cards)
 NOW USES ChartGenerator FOR PROFESSIONAL WHITE CHARTS
 """
 
@@ -325,7 +325,8 @@ class TelegramNotifier:
         - 4H chart screenshot (ONLY when charts_mode='full')
         - 1H chart screenshot  (ONLY when charts_mode='full')
         V15.0 Silent Scan: charts_mode='daily_only' → trimite doar Daily chart la scanare.
-        4H+1H se trimit separat la confirmare CHoCH (send_4h_choch_alert / send_1h_choch_alert).
+        V43.9: fără butoane manuale — execuția rămâne autonomă (radar + executor).
+        4H+1H se trimit separat la confirmare CHoCH (send_4h_choch_alert: photo+caption 4H / send_1h_choch_alert).
         """
         # 1. Send main alert message
         message = self.format_setup_alert(setup)
@@ -353,8 +354,7 @@ class TelegramNotifier:
         
         # V15.0 SILENT SCAN: la charts_mode='daily_only' oprim aici — 4H+1H vin la confirmare CHoCH
         if charts_mode == 'daily_only':
-            print(f"[INFO] {setup.symbol}: daily_only mode — skip 4H/1H charts (vor veni la CHoCH confirm)")
-            self._send_action_buttons(setup)
+            print(f"[INFO] {setup.symbol}: daily_only mode — scan card complete (no manual buttons)")
             return True
 
         time.sleep(3)
@@ -391,8 +391,6 @@ class TelegramNotifier:
                 import traceback
                 traceback.print_exc()
         
-        # 5. Send interactive buttons
-        self._send_action_buttons(setup)
         return True
 
     def send_setup_expired_alert(self, symbol: str, direction: str, reason: str) -> bool:
@@ -417,13 +415,14 @@ class TelegramNotifier:
             print(f"❌ [GRAVEYARD ALERT] Eroare trimitere alert expired {symbol}: {e}")
             return False
 
-    def send_4h_choch_alert(self, setup_data: dict, df_4h: pd.DataFrame, df_w1: pd.DataFrame = None) -> bool:
+    def send_4h_choch_alert(self, setup_data: dict, df_4h: pd.DataFrame) -> bool:
         """
-        V15.0 EVENT ALERT: Trimis automat când setup_executor_monitor confirmă CHoCH 4H.
-        Conține: mesaj text + chart 4H + chart W1 (dacă disponibil).
+        V44.0 EVENT ALERT: Trimis de multi_tf_radar la rising edge CHoCH 4H în POI.
+        Un singur mesaj: PNG 4H + caption HTML (fără W1, fără send_message separat).
+        Fallback text-only dacă chart-ul nu se poate randa.
         """
+        symbol = setup_data.get('symbol', 'UNKNOWN')
         try:
-            symbol   = setup_data.get('symbol', 'UNKNOWN')
             direction = setup_data.get('direction', 'buy').upper()
             entry    = setup_data.get('entry_price', 0)
             sl       = setup_data.get('stop_loss', 0)
@@ -435,10 +434,10 @@ class TelegramNotifier:
             w1_emoji  = "✅" if w1_bias == 'BULLISH' and direction == 'BUY' else \
                         "✅" if w1_bias == 'BEARISH' and direction == 'SELL' else \
                         "⚠️ COUNTER" if w1_bias != 'NEUTRAL' else "⏳ NEUTRAL"
-            sep = "────────────────"
+            sep = UNIVERSAL_SEPARATOR
             trade_block = _choch_trade_block(symbol, entry, sl, tp, rr)
 
-            msg = (
+            caption = (
                 f"🚨 <b>4H CHoCH CONFIRMAT!</b> — Pregătire Entry\n"
                 f"{sep}\n"
                 f"{dir_emoji} <b>{symbol}</b> {direction}\n"
@@ -448,42 +447,46 @@ class TelegramNotifier:
                 f"{sep}\n"
                 f"⏳ Așteptăm pullback în FVG 4H pentru entry final..."
             )
-            self.send_message(msg)
-            time.sleep(2)
 
-            # Chart 4H
+            chart_4h = None
             if df_4h is not None and not df_4h.empty:
-                from types import SimpleNamespace
-                setup_ns = SimpleNamespace(
-                    symbol=symbol, entry_price=entry, stop_loss=sl, take_profit=tp,
-                    risk_reward=rr, status='MONITORING',
-                    daily_choch=SimpleNamespace(direction='bullish' if direction == 'BUY' else 'bearish'),
-                    h4_choch=None, fvg=SimpleNamespace(bottom=sl, top=tp)
-                )
-                chart_4h = self._create_4h_chart(setup_ns, df_4h)
-                if chart_4h:
-                    self.send_photo(chart_4h, caption=f"🔍 {symbol} - 4H Timeframe (CHoCH Confirmat)")
-                    time.sleep(2)
+                try:
+                    from types import SimpleNamespace
+                    setup_ns = SimpleNamespace(
+                        symbol=symbol,
+                        entry_price=entry,
+                        stop_loss=sl,
+                        take_profit=tp,
+                        risk_reward=rr,
+                        status='MONITORING',
+                        strategy_type=strategy.lower(),
+                        daily_choch=SimpleNamespace(
+                            direction='bullish' if direction == 'BUY' else 'bearish'
+                        ),
+                        h4_choch=None,
+                        fvg=SimpleNamespace(bottom=sl, top=tp),
+                    )
+                    chart_4h = self.chart_generator.create_4h_chart(
+                        symbol=symbol,
+                        df=df_4h,
+                        setup=setup_ns,
+                        save_path=None,
+                    )
+                except Exception as chart_err:
+                    print(f"[WARNING] 4H chart render failed for {symbol}: {chart_err}")
 
-            # Chart W1
-            if df_w1 is not None and not df_w1.empty:
-                from types import SimpleNamespace
-                setup_ns_w1 = SimpleNamespace(
-                    symbol=symbol, entry_price=entry, stop_loss=sl, take_profit=tp,
-                    risk_reward=rr, status='MONITORING',
-                    daily_choch=SimpleNamespace(direction='bullish' if direction == 'BUY' else 'bearish'),
-                    h4_choch=None, fvg=SimpleNamespace(bottom=sl, top=tp)
-                )
-                chart_w1 = self.chart_generator.create_daily_chart(
-                    symbol=symbol, df=df_w1, setup=setup_ns_w1, save_path=None, timeframe="W1"
-                )
-                if chart_w1:
-                    self.send_photo(chart_w1, caption=f"📅 {symbol} - W1 Timeframe (Macro Bias: {w1_bias})")
+            if chart_4h:
+                if not self.send_photo(chart_4h, caption=caption):
+                    print(f"[WARNING] send_photo failed for {symbol} — fallback to text")
+                    self.send_message(caption)
+            else:
+                print(f"[WARNING] No 4H chart bytes for {symbol} — fallback to text alert")
+                self.send_message(caption)
 
             print(f"[✅] 4H CHoCH Alert sent: {symbol}")
             return True
         except Exception as e:
-            print(f"[ERROR] send_4h_choch_alert failed for {setup_data.get('symbol', '?')}: {e}")
+            print(f"[ERROR] send_4h_choch_alert failed for {symbol}: {e}")
             return False
 
     def send_1h_choch_alert(self, setup_data: dict, df_1h: pd.DataFrame) -> bool:
@@ -934,53 +937,6 @@ class TelegramNotifier:
         except Exception as e:
             print(f"❌ Error creating 1H chart: {e}")
             return None
-    
-    def _send_action_buttons(self, setup: TradeSetup) -> bool:
-        """Send interactive buttons for Execute/Skip actions"""
-        try:
-            # Only send buttons for READY setups (have h4_choch)
-            if not setup.h4_choch:
-                return True  # Skip buttons for MONITORING setups
-            
-            url = f"{self.base_url}/sendMessage"            
-            # Determine direction and format callback data
-            direction = 'buy' if setup.h4_choch.direction == 'bullish' else 'sell'
-            callback_data = f"execute_{setup.symbol}_{direction}_{setup.entry_price:.5f}_{setup.stop_loss:.5f}_{setup.take_profit:.5f}"
-            
-            keyboard = {
-                "inline_keyboard": [
-                    [
-                        {
-                            "text": "✅ Execute Trade",
-                            "callback_data": callback_data
-                        },
-                        {
-                            "text": "⏭️ Skip",
-                            "callback_data": "skip"
-                        }
-                    ],
-                    [
-                        {
-                            "text": "❌ Close Position",
-                            "callback_data": f"close_{setup.symbol}"
-                        }
-                    ]
-                ]
-            }
-            
-            data = {
-                "chat_id": self.chat_id,
-                "text": "🎯 <b>What would you like to do?</b>",
-                "parse_mode": "HTML",
-                "reply_markup": keyboard
-            }
-            
-            response = requests.post(url, json=data)
-            return response.status_code == 200
-        
-        except Exception as e:
-            print(f"❌ Error sending action buttons: {e}")
-            return False
     
     def send_system_start(self) -> bool:
         """V15.1 SYSTEM_START message — rich institutional System Boot-up design"""

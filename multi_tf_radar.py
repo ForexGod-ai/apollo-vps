@@ -2013,8 +2013,7 @@ class MultiTFRadar:
                 from telegram_notifier import TelegramNotifier
                 tn = TelegramNotifier()
                 df_4h = self.get_historical_data(sym, 'H4', 300)
-                df_w1 = self.get_historical_data(sym, 'W1', 52)
-                tn.send_4h_choch_alert(setup, df_4h, df_w1)
+                tn.send_4h_choch_alert(setup, df_4h)
                 logger.success(f"[V15.0] 4H CHoCH alert trimis: {sym}")
             except Exception as e:
                 logger.warning(f"[V15.0] 4H CHoCH Telegram alert failed for {sym}: {e}")

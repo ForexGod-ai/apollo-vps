@@ -649,7 +649,7 @@ class DailyScanner:
                                     df_daily=df_daily,
                                     df_4h=df_4h,
                                     df_1h=df_1h,
-                                    charts_mode='daily_only'  # V15.0: Silent Scan — doar Daily chart la scanare
+                                    charts_mode='daily_only'  # V43.9: info-only — no manual Execute/Skip buttons
                                 )
                                 print(f"   ✅ Chart trimis pe Telegram: {symbol} [{tg_prefix}] [DAILY ONLY]")
                             except Exception as e:
