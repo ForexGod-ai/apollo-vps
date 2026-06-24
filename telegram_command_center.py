@@ -623,8 +623,8 @@ class TelegramCommandCenter:
 
     def _status_daily_pnl(self) -> dict:
         """
-        V40.4: P/L pentru /status — sursă cTrader (8767), nu log local înghețat.
-        Afișează P/L calendaristic (00:00 RO → acum); /resume nu mai ascunde deal-uri dimineața.
+        V40.4 + V44.2: P/L pentru /status — sursă cTrader (8767).
+        Calendar (00:00 RO → acum) + session (de la /resume) când există reset_cutoff.
         """
         script_dir = Path(__file__).parent.resolve()
         today = self._status_ro_today()
@@ -666,6 +666,20 @@ class TelegramCommandCenter:
         pnl_pct = pnl['pnl_pct']
         broker_synced = pnl.get('broker_synced', False)
 
+        session_closed_pnl = closed_pnl
+        session_trade_count = trade_count
+        session_pnl_pct = pnl_pct
+        if reset_cutoff:
+            session = tm.get_today_pnl(
+                today=today,
+                reset_cutoff=reset_cutoff,
+                starting_balance=starting_balance,
+                calendar_day_pnl=False,
+            )
+            session_closed_pnl = session['closed_pnl']
+            session_trade_count = session['trade_count']
+            session_pnl_pct = session['pnl_pct']
+
         max_loss = 10.0
         try:
             config_file = script_dir / 'SUPER_CONFIG.json'
@@ -677,19 +691,29 @@ class TelegramCommandCenter:
             pass
 
         resumed_today = self._status_resumed_today()
-        if resumed_today and pnl_pct > -max_loss:
-            risk_label = '🔱 RESUME ACTIVE (session tracking)'
-        elif pnl_pct >= 0:
+        risk_pnl_pct = session_pnl_pct if reset_cutoff else pnl_pct
+        if reset_cutoff and resumed_today:
+            if risk_pnl_pct >= 0:
+                risk_label = f'🔱 RESUME ACTIVE — session {risk_pnl_pct:+.1f}%'
+            elif risk_pnl_pct > -max_loss:
+                risk_label = f'🔱 RESUME ACTIVE — session {risk_pnl_pct:+.1f}%'
+            else:
+                risk_label = f'🔴 SESSION LIMIT ({risk_pnl_pct:+.1f}%)'
+        elif risk_pnl_pct >= 0:
             risk_label = '🟢 SAFE'
-        elif pnl_pct > -max_loss:
-            risk_label = f'🟡 CAUTION ({pnl_pct:+.1f}%)'
+        elif risk_pnl_pct > -max_loss:
+            risk_label = f'🟡 CAUTION ({risk_pnl_pct:+.1f}%)'
         else:
-            risk_label = f'🔴 LIMIT HIT ({pnl_pct:+.1f}%)'
+            risk_label = f'🔴 LIMIT HIT ({risk_pnl_pct:+.1f}%)'
 
         return {
             'closed_pnl': closed_pnl,
             'trade_count': trade_count,
             'pnl_pct': pnl_pct,
+            'session_closed_pnl': session_closed_pnl,
+            'session_trade_count': session_trade_count,
+            'session_pnl_pct': session_pnl_pct,
+            'risk_pnl_pct': risk_pnl_pct,
             'balance': balance,
             'starting_balance': starting_balance,
             'max_loss': max_loss,
@@ -842,14 +866,31 @@ class TelegramCommandCenter:
                 trade_count = pnl_ctx['trade_count']
                 pnl_pct = pnl_ctx['pnl_pct']
                 max_loss = pnl_ctx['max_loss']
-                pnl_emoji = '🟢' if closed_pnl >= 0 else '🔴'
+                reset_cutoff = pnl_ctx.get('reset_cutoff')
 
-                message += f"  {pnl_emoji} Closed: <code>${closed_pnl:+.2f}</code> ({pnl_pct:+.1f}%)\n"
-                message += f"  📊 Trades today: <code>{trade_count}</code>\n"
+                if reset_cutoff:
+                    sess_pnl = pnl_ctx['session_closed_pnl']
+                    sess_pct = pnl_ctx['session_pnl_pct']
+                    sess_trades = pnl_ctx['session_trade_count']
+                    sess_emoji = '🟢' if sess_pnl >= 0 else '🔴'
+                    cal_emoji = '🟢' if closed_pnl >= 0 else '🔴'
+                    message += (
+                        f"  🔱 Session: {sess_emoji} <code>${sess_pnl:+.2f}</code> "
+                        f"({sess_pct:+.1f}%) · <code>{sess_trades}</code> trade(s) "
+                        f"since <code>{reset_cutoff[:19]}</code>\n"
+                    )
+                    message += (
+                        f"  📅 Calendar: {cal_emoji} <code>${closed_pnl:+.2f}</code> "
+                        f"({pnl_pct:+.1f}%) · <code>{trade_count}</code> trade(s) "
+                        f"(00:00 RO → now)\n"
+                    )
+                else:
+                    pnl_emoji = '🟢' if closed_pnl >= 0 else '🔴'
+                    message += f"  {pnl_emoji} Closed: <code>${closed_pnl:+.2f}</code> ({pnl_pct:+.1f}%)\n"
+                    message += f"  📊 Trades today: <code>{trade_count}</code>\n"
+
                 if pnl_ctx.get('broker_synced'):
                     message += "  📡 Source: <code>cTrader broker (synced)</code>\n"
-                if pnl_ctx.get('reset_cutoff'):
-                    message += f"  📌 Risk session since: <code>{pnl_ctx['reset_cutoff'][:19]}</code>\n"
                 message += f"  🛡️ Risk: {pnl_ctx['risk_label']} (limit: -{max_loss}%)\n\n"
 
             except Exception as e:
@@ -985,7 +1026,7 @@ class TelegramCommandCenter:
                     # V19.6.2: Fallback — dacă fișierul nu există dar P/L arată LIMIT HIT
                     # (executor vechi nu a scris fișierul, dar știm că limita e atinsă)
                     try:
-                        _pnl_pct_check = pnl_ctx.get('pnl_pct', 0)
+                        _pnl_pct_check = pnl_ctx.get('risk_pnl_pct', pnl_ctx.get('pnl_pct', 0))
                         _max_loss_check = pnl_ctx.get('max_loss', 10.0)
                         _resumed_today = pnl_ctx.get('resumed_today', False) or self._status_resumed_today()
                         if _pnl_pct_check <= -_max_loss_check and not _resumed_today:
@@ -1026,9 +1067,11 @@ class TelegramCommandCenter:
                     # V19.6.2: Fallback — dacă fișierul nu există dar P/L arată LIMIT HIT
                     # afișăm cel puțin că există rejecții legate de daily loss
                     try:
-                        if pnl_ctx.get('pnl_pct', 0) <= -pnl_ctx.get('max_loss', 10.0):
+                        _risk_pct = pnl_ctx.get('risk_pnl_pct', pnl_ctx.get('pnl_pct', 0))
+                        _resumed = pnl_ctx.get('resumed_today', False)
+                        if _risk_pct <= -pnl_ctx.get('max_loss', 10.0) and not _resumed:
                             message += f"  ⚠️ <i>Rejecții detectate via P/L (fișier lipsă)\n"
-                            message += f"  • Daily Loss Limit: <code>≥1</code> (trade respins la {pnl_ctx.get('pnl_pct', 0):+.1f}%)\n"
+                            message += f"  • Daily Loss Limit: <code>≥1</code> (trade respins la {_risk_pct:+.1f}%)\n"
                             message += f"  ℹ️ Restart executor pentru tracking complet</i>\n\n"
                         else:
                             message += "  <code>0</code> (clean day)\n\n"
@@ -1128,7 +1171,7 @@ class TelegramCommandCenter:
             
             _script_dir = Path(__file__).parent.resolve()
             _deep_sleep_file = _script_dir / 'data' / 'deep_sleep_state.json'
-            _limit_hit = pnl_ctx.get('pnl_pct', 0) <= -pnl_ctx.get('max_loss', 10.0)
+            _limit_hit = pnl_ctx.get('risk_pnl_pct', pnl_ctx.get('pnl_pct', 0)) <= -pnl_ctx.get('max_loss', 10.0)
             _resumed = pnl_ctx.get('resumed_today', False)
             if _deep_sleep_file.exists() and not _resumed:
                 _verdict = '😴 DEEP SLEEP'

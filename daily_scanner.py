@@ -1120,9 +1120,11 @@ def _apply_v43_poi_persistence(old: dict, new_macro: dict) -> dict:
 
     if _bos_new_range_detected(old, new_macro):
         out['preserve_stored_poi'] = False
-        if old.get('poi_top') is not None:
-            out.setdefault('legacy_poi_top', old.get('poi_top'))
-            out.setdefault('legacy_poi_bottom', old.get('poi_bottom'))
+        _old_top = old.get('poi_top') if old.get('poi_top') is not None else old.get('fvg_top')
+        _old_bottom = old.get('poi_bottom') if old.get('poi_bottom') is not None else old.get('fvg_bottom')
+        if _old_top is not None:
+            out.setdefault('legacy_poi_top', _old_top)
+            out.setdefault('legacy_poi_bottom', _old_bottom)
         out['poi_v43_source'] = new_macro.get('poi_v43_source') or 'V44.1 BOS new range rehydrate'
         print(
             f"  [V44.1 NEW RANGE] {sym}: BOS expansion — archived old POI, rehydrated live "
@@ -1130,7 +1132,8 @@ def _apply_v43_poi_persistence(old: dict, new_macro: dict) -> dict:
         )
         return out
 
-    if old.get('preserve_stored_poi') or new_macro.get('preserve_stored_poi'):
+    # V44.1.1: preserve only when LIVE scan requests it — old JSON sticky flag alone must not revert POI
+    if new_macro.get('preserve_stored_poi'):
         for key in ('poi_top', 'poi_bottom', 'fvg_top', 'fvg_bottom'):
             if old.get(key) is not None:
                 out[key] = old[key]
@@ -1268,6 +1271,11 @@ def _rehydrate_poi_from_bos_range(
     out['direction'] = 'buy' if current_trend == 'bullish' else 'sell'
     if out.get('status') not in ('TRADE_OPEN', 'PARTIAL_OPEN'):
         out['status'] = 'WAITING_D1_PULLBACK'
+    for key in (
+        'poi_first_touch_time', 'h4_fvg_first_touch_time',
+        '_poi_occupied', '_h4_fvg_occupied',
+    ):
+        out.pop(key, None)
     for key in _RADAR_RESET_KEYS:
         out.pop(key, None)
     for key in list(out.keys()):
@@ -1284,8 +1292,6 @@ def _try_bos_new_range_evolution(
 ) -> dict:
     """V44.1 — reversal/stale POI → continuation after expansion BOS (no TP required)."""
     if setup_dict.get('entry1_filled') or setup_dict.get('status') in ('TRADE_OPEN', 'PARTIAL_OPEN'):
-        return setup_dict
-    if not _has_expansion_bos_after_tp(detector, df_daily, setup_dict, symbol):
         return setup_dict
 
     sym = setup_dict.get('symbol', symbol)
