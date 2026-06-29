@@ -116,7 +116,7 @@ namespace cAlgo.Robots
                         }
                         catch (Exception ex) { res = $"{{\"error\":\"{ex.Message}\"}}"; }
                     });
-                    WaitFor(ref res, "{{\"error\":\"Timeout\"}}");
+                    WaitFor(ref res, "{{\"error\":\"Timeout\"}}", 15000);
                     Send(response, 200, res);
                     _listener.BeginGetContext(HandleRequest, _listener);
                     return;
@@ -141,7 +141,7 @@ namespace cAlgo.Robots
                         }
                         catch (Exception ex) { res = $"{{\"error\":\"{ex.Message}\"}}"; }
                     });
-                    WaitFor(ref res, "{\"error\":\"Timeout\"}");
+                    WaitFor(ref res, "{\"error\":\"Timeout\"}", 5000);
                     Send(response, 200, res);
                     _listener.BeginGetContext(HandleRequest, _listener);
                     return;
@@ -174,7 +174,7 @@ namespace cAlgo.Robots
                         }
                         catch (Exception ex) { res = $"{{\"success\":false,\"error\":\"{ex.Message}\"}}"; }
                     });
-                    WaitFor(ref res, "{\"success\":false,\"error\":\"Timeout\"}");
+                    WaitFor(ref res, "{\"success\":false,\"error\":\"Timeout\"}", 5000);
                     Send(response, 200, res);
                     _listener.BeginGetContext(HandleRequest, _listener);
                     return;
@@ -207,7 +207,7 @@ namespace cAlgo.Robots
                         }
                         catch (Exception ex) { res = $"{{\"error\":\"{ex.Message}\"}}"; }
                     });
-                    WaitFor(ref res, "{\"error\":\"Timeout\"}");
+                    WaitFor(ref res, "{\"error\":\"Timeout\"}", 10000);
                     Send(response, 200, res);
                     _listener.BeginGetContext(HandleRequest, _listener);
                     return;
@@ -224,7 +224,7 @@ namespace cAlgo.Robots
                         int bars = int.Parse(parts[3]);
                         string res = null;
                         BeginInvokeOnMainThread(() => { res = FetchBars(sym, tf, bars); });
-                        WaitFor(ref res, "{\"error\":\"Timeout\"}");
+                        WaitFor(ref res, "{\"error\":\"Timeout\"}", DataWaitMs(bars));
                         Send(response, res.Contains("\"error\"") ? 500 : 200, res);
                         _listener.BeginGetContext(HandleRequest, _listener);
                         return;
@@ -238,7 +238,7 @@ namespace cAlgo.Robots
                     int bars = int.Parse(GetParam(request.Url.Query, "bars") ?? "100");
                     string res = null;
                     BeginInvokeOnMainThread(() => { res = FetchBars(sym, tf, bars); });
-                    WaitFor(ref res, "{\"error\":\"Timeout\"}");
+                    WaitFor(ref res, "{\"error\":\"Timeout\"}", DataWaitMs(bars));
                     Send(response, res.Contains("\"error\"") ? 500 : 200, res);
                 }
             }
@@ -308,7 +308,16 @@ namespace cAlgo.Robots
             catch { }
         }
 
-        private void WaitFor(ref string result, string timeoutValue, int maxMs = 1000)
+        /// <summary>
+        /// V44.2: WaitFor era 1000ms — sub load (radar + scanner) BeginInvokeOnMainThread
+        /// nu apuca → HTTP 500 {"error":"Timeout"} la TOATE paritățile.
+        /// </summary>
+        private static int DataWaitMs(int bars)
+        {
+            return Math.Min(45000, 5000 + bars * 80);
+        }
+
+        private void WaitFor(ref string result, string timeoutValue, int maxMs = 5000)
         {
             int waited = 0;
             while (result == null && waited < maxMs)
@@ -316,7 +325,11 @@ namespace cAlgo.Robots
                 Thread.Sleep(20);
                 waited += 20;
             }
-            if (result == null) result = timeoutValue;
+            if (result == null)
+            {
+                Print($"⚠️ WaitFor timeout after {maxMs}ms — cTrader main thread busy");
+                result = timeoutValue;
+            }
         }
 
         private string GetParam(string query, string param)

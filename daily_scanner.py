@@ -333,11 +333,15 @@ class DailyScanner:
                 
                 print(f"\n🔍 Scanning {symbol} ({scan_reason})...")
                 
-                # Download Daily data
+                # Download Daily data — V44.2: min 250 bare (~1 an), prefer config (365 în pairs_config)
+                _d1_lookback = max(
+                    250,
+                    int(self.scanner_settings.get('lookback_candles', {}).get('daily', 250)),
+                )
                 df_daily = self.data_provider.get_historical_data(
                     symbol,
                     "D1",
-                    250  # V31.0: 250 bare fixe — suficient pentru 1 an D1
+                    _d1_lookback,
                 )
                 
                 if df_daily is None or df_daily.empty:
@@ -712,6 +716,9 @@ class DailyScanner:
                             print(f"⛔ {symbol} — NO SETUP + BIAS NEUTRAL [V10.2 REJECT: vezi log-ul ↑]")
                     except Exception as _bf_err:
                         print(f"⛔ {symbol} — NO SETUP [V10.2 REJECT: vezi log-ul ↑] | bias fallback error: {_bf_err}")
+
+                # V44.2: pauză scurtă — cBot main thread (radar + scanner simultan → HTTP 500 Timeout)
+                time.sleep(0.25)
         
         finally:
             # Disconnect cTrader unless keep_connection=True

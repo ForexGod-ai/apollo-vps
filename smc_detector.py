@@ -2568,6 +2568,90 @@ class SMCDetector:
         lh = min(post_highs, key=lambda h: self._swing_body_high(df, h.index))
         return float(lh.price) > float(latest_bos.break_price)
 
+    def classify_setup_type(
+        self,
+        df: pd.DataFrame,
+        chochs: List[CHoCH],
+        bos_list: List,
+        leg_choch: Optional[CHoCH],
+        symbol: str = "",
+        debug: bool = False,
+    ) -> Tuple[Optional[object], str, str, Optional[CHoCH], str]:
+        """
+        V44.2 — Canonical CONTINUATION vs REVERSAL (înlocuiește detect_setup_type).
+
+        Reguli:
+          • D1 bias = direcția leg CHoCH (autoritate macro)
+          • Breakout ACEEAȘI direcție ca D1 bias → CONTINUATION (ultimul BOS aliniat)
+          • Breakout OPUS D1 bias → REVERSAL doar dacă leg-ul e invalidat
+          • CHoCH opus în pullback (leg intact) → ignorat, rămâne CONTINUATION dacă există BOS
+          • CHoCH = prima schimbare de direcție (detect_choch_and_bos); BOS = menținere CONTINUATION
+          • Body close: validat exclusiv în detect_choch_and_bos (V36.0)
+        """
+        sym = symbol or "?"
+
+        if leg_choch is None:
+            if not bos_list:
+                return None, "continuation", "neutral", None, "no_structure"
+            latest_bos = bos_list[-1]
+            return (
+                latest_bos,
+                "continuation",
+                latest_bos.direction,
+                None,
+                "bos_only_no_leg_choch",
+            )
+
+        daily_bias = leg_choch.direction
+        same_dir_bos = [
+            b for b in bos_list
+            if b.index > leg_choch.index and b.direction == daily_bias
+        ]
+        opposite_after_leg = [
+            c for c in chochs
+            if c.index > leg_choch.index and c.direction != daily_bias
+        ]
+        ignored_opposite = [
+            c for c in opposite_after_leg
+            if self._leg_choch_still_valid(df, leg_choch, bos_list)
+        ]
+
+        # ── Rule 1: BOS aliniat cu D1 bias → CONTINUATION (≥1, nu ≥2) ──
+        if same_dir_bos:
+            latest_bos = same_dir_bos[-1]
+            reason = f"aligned_bos_d1_{daily_bias}"
+            if ignored_opposite:
+                reason += f"_ignored_{len(ignored_opposite)}_opposite_pullback_choch"
+            msg = (
+                f"   🧭 [V44.2 CLASSIFY] {sym}: D1 bias={daily_bias.upper()} | "
+                f"CONTINUATION | BOS @bar{latest_bos.index} | leg CHoCH @bar{leg_choch.index} | {reason}"
+            )
+            print(msg)
+            if debug:
+                print(f"      ignored opposite CHoCH bars: {[c.index for c in ignored_opposite]}")
+            return latest_bos, "continuation", daily_bias, leg_choch, reason
+
+        # ── Rule 2: CHoCH opus care INVALIDEAZĂ leg → REVERSAL (leg nou) ──
+        leg_still_valid = self._leg_choch_still_valid(df, leg_choch, bos_list)
+        for oc in reversed(opposite_after_leg):
+            if not leg_still_valid:
+                reason = f"opposite_choch_new_leg_{oc.direction}_leg_broken"
+                print(
+                    f"   🧭 [V44.2 CLASSIFY] {sym}: D1 bias was {daily_bias.upper()} | "
+                    f"REVERSAL | opposite CHoCH @bar{oc.index} ({oc.direction.upper()}) | {reason}"
+                )
+                return oc, "reversal", oc.direction, oc, reason
+
+        # ── Rule 3: Leg intact, fără BOS post-leg → anchor REVERSAL (așteaptă pullback LTF) ──
+        reason = "leg_anchor_waiting_4h_choch"
+        if ignored_opposite:
+            reason += f"_ignored_{len(ignored_opposite)}_pullback_noise"
+        print(
+            f"   🧭 [V44.2 CLASSIFY] {sym}: D1 bias={daily_bias.upper()} | "
+            f"REVERSAL | leg CHoCH @bar{leg_choch.index} | {reason}"
+        )
+        return leg_choch, "reversal", daily_bias, leg_choch, reason
+
     def _resolve_d1_leg(
         self,
         df: pd.DataFrame,
@@ -2575,6 +2659,7 @@ class SMCDetector:
         bos_list: List,
         debug: bool = False,
         range_state: Optional[StructuralRangeState] = None,
+        symbol: str = "",
     ) -> Tuple[Optional[object], str, str, Optional[CHoCH]]:
         """
         V42.5 Leg Authority — CHoCH once per leg, then BOS continuation.
@@ -2686,20 +2771,7 @@ class SMCDetector:
                     )
                     return latest_signal, strategy_type, 'bearish', new_leg
 
-        # BTC: post-CHoCH BOS chain + opposite pullback CHoCH ignored → continuation
-        if len(ignored_opposite) >= 1 and len(same_dir_bos) >= 2:
-            latest_signal = same_dir_bos[-1]
-            strategy_type = 'continuation'
-            current_trend = leg_choch.direction
-            if debug:
-                print(
-                    f"   📐 [V42.5 LEG] continuation — leg CHoCH {leg_choch.direction.upper()} "
-                    f"@bar{leg_choch.index}, BOS @bar{latest_signal.index}, "
-                    f"ignored {len(ignored_opposite)} opposite pullback CHoCH"
-                )
-            return latest_signal, strategy_type, current_trend, leg_choch
-
-        # V44.1 NEW RANGE — single expansion BOS confirms HL→HH / LH→LL dealing range
+        # V44.1 NEW RANGE — expansion BOS confirms HL→HH / LH→LL (bonus log before classify)
         if same_dir_bos:
             latest_bos = same_dir_bos[-1]
             if self._expansion_bos_confirms_new_range(df, leg_choch, latest_bos):
@@ -2708,15 +2780,12 @@ class SMCDetector:
                     f"@bar{leg_choch.index}, expansion BOS @bar{latest_bos.index} "
                     f"→ new dealing range confirmed"
                 )
-                return latest_bos, 'continuation', leg_choch.direction, leg_choch
 
-        # GBPJPY / GBPNZD: reversal leg — anchor on leg CHoCH, wait pullback AOI + LTF
-        if debug:
-            print(
-                f"   📐 [V42.5 LEG] reversal — leg CHoCH {leg_choch.direction.upper()} "
-                f"@bar{leg_choch.index} → WAITING_D1_PULLBACK"
-            )
-        return leg_choch, 'reversal', leg_choch.direction, leg_choch
+        # V44.2: canonical CONTINUATION vs REVERSAL (fix BTC ≥2 BOS gate, EURUSD BOS miss)
+        latest_signal, strategy_type, current_trend, leg_out, _reason = self.classify_setup_type(
+            df, chochs, bos_list, leg_choch, symbol=symbol, debug=debug
+        )
+        return latest_signal, strategy_type, current_trend, leg_out
 
     def filter_internal_range_signals(
         self,
@@ -2861,7 +2930,7 @@ class SMCDetector:
                 )
         
         _d1_signal, _d1_strategy, final_bias, _leg_choch = self._resolve_d1_leg(
-            df, daily_chochs, daily_bos_list, debug=debug, range_state=_v39_rs
+            df, daily_chochs, daily_bos_list, debug=debug, range_state=_v39_rs, symbol=symbol or ''
         )
         latest_signal = _d1_signal
         latest_index = latest_signal.index if latest_signal else -1
@@ -3931,7 +4000,7 @@ class SMCDetector:
         df_daily: pd.DataFrame,
         symbol: Optional[str] = None,
     ) -> Tuple[str, str]:
-        """V37.15: CHoCH → reversal, BOS → continuation (inclusiv sub V40 range lock)."""
+        """V44.2: classify_setup_type via _resolve_d1_leg — CHoCH→reversal anchor, BOS→continuation."""
         sh = self.detect_swing_highs(df_daily)
         sl = self.detect_swing_lows(df_daily)
         chochs, bos_list = self.detect_choch_and_bos(df_daily)
@@ -3940,7 +4009,7 @@ class SMCDetector:
             symbol or '', df_daily, chochs, bos_list, rs
         )
         latest_signal, strategy, current_trend, _leg = self._resolve_d1_leg(
-            df_daily, chochs, bos_list, range_state=rs
+            df_daily, chochs, bos_list, range_state=rs, symbol=symbol or ''
         )
         if latest_signal:
             signal_label = 'CHoCH' if isinstance(latest_signal, CHoCH) else 'BOS'
@@ -4144,7 +4213,8 @@ class SMCDetector:
         )
 
         latest_signal, strategy_type, current_trend, leg_choch = self._resolve_d1_leg(
-            df_daily, daily_chochs, daily_bos_list, debug=debug, range_state=_range_state
+            df_daily, daily_chochs, daily_bos_list, debug=debug, range_state=_range_state,
+            symbol=symbol,
         )
         if latest_signal is None:
             if debug:

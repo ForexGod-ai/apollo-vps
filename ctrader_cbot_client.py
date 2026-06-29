@@ -5,6 +5,7 @@ Connects to local cBot HTTP server for real-time IC Markets data
 
 import requests
 import pandas as pd
+import time
 from datetime import datetime
 from typing import List, Optional
 from loguru import logger
@@ -19,26 +20,39 @@ class CTraderCBotClient:
     def is_available(self, retries: int = 3, wait: float = 2.0) -> bool:
         """
         Check if cBot server is running on port 8010 with retry logic.
-        V14.5 FIX: Nu mai folosim /health (endpoint inexistent pe cBot) — 
-        testăm direct /data cu GBPUSD 1 bar. Orice răspuns HTTP = cBot pornit.
+        V44.2: /health (instant) + probe /data 1 bar — 500 Timeout = cBot pornit dar main thread blocat.
         """
         for attempt in range(1, retries + 1):
             try:
-                # Test real: cerem 1 bar de GBPUSD — dacă cBot răspunde, e pornit
+                health = requests.get(f"{self.base_url}/health", timeout=5)
+                if health.status_code != 200:
+                    raise requests.exceptions.ConnectionError("health not ok")
+                # Probe real data — 1 bar Daily
                 response = requests.get(
                     f"{self.base_url}/data",
                     params={'symbol': 'GBPUSD', 'timeframe': 'Daily', 'bars': 1},
-                    timeout=5
+                    timeout=15,
                 )
-                # Orice răspuns HTTP (200, 500 etc.) = cBot-ul ascultă pe port 8010
-                if response.status_code in (200, 500, 400):
+                if response.status_code == 200:
+                    payload = response.json()
+                    if payload.get('bars'):
+                        return True
+                    api_err = payload.get('error', '')
+                    if api_err and 'Timeout' in str(api_err):
+                        logger.warning(
+                            "⚠️ cBot port 8010 UP but main thread busy (Timeout on probe) — "
+                            "restart MarketDataProvider cBot or reduce radar load during scan"
+                        )
+                        return True  # server up; scanner may still struggle until cBot fix deployed
+                elif response.status_code == 500 and 'Timeout' in response.text:
+                    logger.warning("⚠️ cBot HTTP 500 Timeout on probe — main thread overloaded")
                     return True
             except requests.exceptions.ConnectionError:
                 print(f"⏳ Waiting for cTrader on port 8010... (attempt {attempt}/{retries})")
             except Exception as e:
                 print(f"⚠️ cTrader health check error: {e}")
             if attempt < retries:
-                import time as _t; _t.sleep(wait)
+                time.sleep(wait)
         print("❌ cTrader MarketDataProvider (port 8010) not reachable. Start the DATA-Market cBot in cTrader.")
         return False
     
@@ -142,6 +156,7 @@ class CTraderCBotClient:
                     logger.warning(
                         f"⚠️ [V36.4] Cerere eșuată {symbol} {timeframe} x{bar_count}: {req_err}"
                     )
+                time.sleep(0.15)  # V44.2: evită flood pe cBot main thread (radar + scanner)
             logger.warning(f"⚠️ [V36.4] Toate fallback-urile epuizate pentru {symbol} {timeframe}")
             return None
         except requests.exceptions.ConnectionError:
