@@ -3,7 +3,7 @@
 Audit V44.2 — CONTINUATION vs REVERSAL + D1 lookback + body-close CHoCH/BOS.
 
 Module map (fișierele din brief → cod real):
-  structural_analyzer / daily_bias → smc_detector.py (classify_setup_type, _resolve_d1_leg)
+  structural_analyzer / daily_bias → smc_detector.py (_resolve_d1_leg)
   h4_radar                         → multi_tf_radar.py (4H/1H structure + JSON merge)
 
 Usage:
@@ -47,10 +47,10 @@ def audit_symbol(detector: SMCDetector, symbol: str, d1_bars: int, debug: bool) 
     chochs, bos_list, rs = detector.filter_internal_range_signals(
         symbol, df, chochs, bos_list, rs
     )
-    leg_choch = detector._find_leg_choch(df, chochs, bos_list)
-    latest, strategy, trend, leg, reason = detector.classify_setup_type(
-        df, chochs, bos_list, leg_choch, symbol=symbol, debug=debug
+    latest, strategy, trend, leg = detector._resolve_d1_leg(
+        df, chochs, bos_list, debug=debug, range_state=rs
     )
+    reason = f"{strategy}_via_resolve_d1_leg"
     bias = detector.determine_daily_trend(df, debug=debug, symbol=symbol)
 
     signal_kind = None
@@ -85,7 +85,7 @@ def audit_symbol(detector: SMCDetector, symbol: str, d1_bars: int, debug: bool) 
         "classify_reason": reason,
         "latest_signal": signal_kind,
         "latest_signal_bar": getattr(latest, "index", None),
-        "leg_choch_bar": getattr(leg_choch, "index", None) if leg_choch else None,
+        "leg_choch_bar": getattr(leg, "index", None) if leg else None,
         "choch_count": len(chochs),
         "bos_count": len(bos_list),
         "json_snapshot": json_row,
