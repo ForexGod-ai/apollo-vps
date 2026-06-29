@@ -1,13 +1,19 @@
 """
-⏰ AUTO SCANNER DAEMON - Glitch in Matrix V11.2
+⏰ AUTO SCANNER DAEMON - Glitch in Matrix V44.2
 Rulează daily_scanner.py automat Luni/Miercuri/Vineri la 07:00 ora București
 
 Logică:
   - Loop infinit, verifică ora la fiecare 60 secunde
-  - Declanșează: reset_matrix.py → daily_scanner.py
+  - Declanșează daily_scanner.py (15 perechi × D1/H4/H1/W1 + raport Telegram)
   - Timezone: Europe/Bucharest (EEST = UTC+3, EET = UTC+2)
-  - Anti-double-trigger: salvează data ultimului scan în data/last_auto_scan.json
+  - Anti-double-trigger: last_auto_scan.json salvat DOAR după scan reușit
+  - Retry automat în fereastra 07:00–07:59 dacă scanul eșuează / timeout
   - Trimite notificare Telegram la start + finish
+
+Loguri VPS (watchdog redirect stdout → auto_scanner_daemon_stdout.log):
+  - logs/auto_scanner.log              — loguru (daemon)
+  - logs/auto_scanner_daemon_stdout.log — stdout watchdog (cel mai recent)
+  - logs/daily_scanner_subprocess.log   — output live daily_scanner.py
 """
 
 import os
@@ -36,6 +42,9 @@ SCAN_HOUR = 7           # 07:00 ora București
 SCAN_MINUTE = 0         # :00
 SCAN_DAYS = {0, 2, 4}  # Monday=0, Wednesday=2, Friday=4
 CHECK_INTERVAL = 60     # Verifică la fiecare 60 secunde
+# V44.2: 15 perechi × 4 TF × cTrader API + SMC + charts Telegram → 5 min era prea puțin
+SCAN_TIMEOUT_SEC = int(os.getenv('AUTO_SCAN_TIMEOUT_SEC', '900'))  # 15 minute default
+SCAN_WINDOW_END_MINUTE = 59  # retry până la 07:59 dacă scanul a eșuat
 
 # ── Weekly Report: Vineri 23:59 EET (după închiderea pieței Forex) ──
 WEEKLY_REPORT_HOUR = 23
@@ -44,6 +53,8 @@ WEEKLY_REPORT_DAY = 4  # Friday
 
 BASE_DIR = Path(__file__).parent
 LAST_SCAN_FILE = BASE_DIR / "data" / "last_auto_scan.json"
+SCAN_LOCK_FILE = BASE_DIR / "data" / "auto_scan_in_progress.lock"
+DAILY_SCANNER_SUBPROCESS_LOG = BASE_DIR / "logs" / "daily_scanner_subprocess.log"
 LAST_WEEKLY_REPORT_FILE = BASE_DIR / "data" / "last_weekly_report.json"
 LAST_CB_RATES_REFRESH_FILE = BASE_DIR / "data" / "last_cb_rates_refresh.json"
 
@@ -100,18 +111,65 @@ def get_last_scan_date() -> str:
     return ''
 
 
-def save_last_scan_date(scan_date: str):
-    """Salvează data ultimului scan"""
+def save_last_scan_date(scan_date: str, *, success: bool = True):
+    """Salvează data ultimului scan — doar după succes (V44.2)."""
     try:
         LAST_SCAN_FILE.parent.mkdir(parents=True, exist_ok=True)
         with open(LAST_SCAN_FILE, 'w') as f:
             json.dump({
                 'last_scan_date': scan_date,
                 'last_scan_timestamp': datetime.now().isoformat(),
+                'last_scan_success': success,
                 'updated_by': 'auto_scanner_daemon.py'
             }, f, indent=2)
     except Exception as e:
         logger.warning(f"Could not save last scan date: {e}")
+
+
+def is_scan_in_progress() -> bool:
+    """Lock file — evită 2 scanuri paralele când primul depășește 5 min."""
+    try:
+        if not SCAN_LOCK_FILE.exists():
+            return False
+        # Lock stale > 20 min (proces mort fără cleanup)
+        age_sec = time.time() - SCAN_LOCK_FILE.stat().st_mtime
+        if age_sec > max(SCAN_TIMEOUT_SEC + 300, 1200):
+            logger.warning(f"[SCAN LOCK] Stale lock ({age_sec:.0f}s) — removing")
+            SCAN_LOCK_FILE.unlink(missing_ok=True)
+            return False
+        return True
+    except Exception:
+        return False
+
+
+def acquire_scan_lock() -> bool:
+    try:
+        SCAN_LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
+        if is_scan_in_progress():
+            return False
+        with open(SCAN_LOCK_FILE, 'w', encoding='utf-8') as f:
+            json.dump({'pid': os.getpid(), 'started_at': datetime.now().isoformat()}, f)
+        return True
+    except Exception as e:
+        logger.warning(f"Could not acquire scan lock: {e}")
+        return True  # fail-open — nu blocăm scanul permanent
+
+
+def release_scan_lock():
+    try:
+        SCAN_LOCK_FILE.unlink(missing_ok=True)
+    except Exception as e:
+        logger.warning(f"Could not release scan lock: {e}")
+
+
+def is_scan_trigger_window(now: datetime, scan_hour: int, scan_minute: int) -> bool:
+    """
+    V44.2: Fereastră 07:00–07:59 (retry dacă eșuează).
+    V11.3 folosea doar 07:00–07:04 — prea îngust + save prematur = scan pierdut.
+    """
+    if now.hour != scan_hour:
+        return False
+    return scan_minute <= now.minute <= SCAN_WINDOW_END_MINUTE
 
 
 # ━━━ CORE: RUN SCAN ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -137,7 +195,7 @@ def run_auto_scan():
         f"{_sep}\n"
         f"📅 {day_name}, {timestamp}\n"
         f"🔄 Scanez piețele... (setup-urile vechi sunt pastrate)\n"
-        f"⏳ Scanul durează ~2-4 minute\n"
+        f"⏳ Scanul durează ~5-12 minute (15 perechi × cTrader API)\n"
         f"{_sep}\n"
         f"🔱 AUTHORED BY <b>ФорексГод</b> 🔱\n"
         f"{_sep}\n"
@@ -148,46 +206,60 @@ def run_auto_scan():
     scan_ok = False
 
     # ── Daily Scanner (SMCDetector — merge cu setups existente) ──────────────
-    logger.info("[Step 1/1] Running daily_scanner.py (preserving existing setups)...")
+    logger.info(
+        f"[Step 1/1] Running daily_scanner.py (timeout={SCAN_TIMEOUT_SEC}s, "
+        f"log={DAILY_SCANNER_SUBPROCESS_LOG.name})..."
+    )
+    subprocess_log_path = DAILY_SCANNER_SUBPROCESS_LOG
+    subprocess_log_path.parent.mkdir(parents=True, exist_ok=True)
     try:
         # ✅ V14.6 FIX: Force UTF-8 in child process so emoji prints don't crash
-        # Windows cp1252 can't encode 📊 🔥 etc → UnicodeEncodeError in daily_scanner.py
         child_env = os.environ.copy()
         child_env['PYTHONIOENCODING'] = 'utf-8'
-        child_env['PYTHONUTF8'] = '1'  # Python 3.7+ UTF-8 mode
+        child_env['PYTHONUTF8'] = '1'
+        child_env['PYTHONUNBUFFERED'] = '1'
 
-        result = subprocess.run(
-            [python, 'daily_scanner.py'],
-            cwd=str(BASE_DIR),
-            capture_output=True,
-            text=True,
-            encoding='utf-8',       # ✅ Windows fix: prevent cp1252 crash
-            errors='replace',       # ✅ Replace undecodable chars instead of crashing
-            timeout=300,            # 5 minute max
-            env=child_env           # ✅ V14.6: UTF-8 mode for child process
-        )
+        with open(subprocess_log_path, 'a', encoding='utf-8', errors='replace') as scan_log:
+            scan_log.write(f"\n{'=' * 60}\n")
+            scan_log.write(f"[AUTO SCAN] {day_name} {timestamp} — daily_scanner.py start\n")
+            scan_log.write(f"{'=' * 60}\n")
+            scan_log.flush()
+
+            result = subprocess.run(
+                [python, '-u', 'daily_scanner.py'],
+                cwd=str(BASE_DIR),
+                stdout=scan_log,
+                stderr=subprocess.STDOUT,
+                timeout=SCAN_TIMEOUT_SEC,
+                env=child_env,
+            )
+            scan_log.write(
+                f"\n[EXIT] code={result.returncode} at "
+                f"{get_bucharest_time().strftime('%H:%M:%S')}\n"
+            )
+            scan_log.flush()
+
         if result.returncode == 0:
             logger.success("[Step 1/1] daily_scanner.py DONE")
             scan_ok = True
         else:
             logger.error(f"[Step 1/1] daily_scanner.py FAILED (code {result.returncode})")
-            stderr_snippet = result.stderr.strip()[:1500] if result.stderr.strip() else ''
-            stdout_snippet = result.stdout.strip()[-1500:] if result.stdout.strip() else ''
-            if stderr_snippet:
-                logger.error(f"STDERR:\n{stderr_snippet}")
-            if stdout_snippet:
-                logger.error(f"STDOUT (last 1500 chars):\n{stdout_snippet}")
-            # ✅ Send error details to Telegram so user can diagnose from phone
-            error_preview = stderr_snippet or stdout_snippet or 'No output captured'
+            tail = _read_log_tail(subprocess_log_path, 1500)
+            if tail:
+                logger.error(f"Subprocess log (last 1500 chars):\n{tail}")
             _sep = "────────────────"
             send_telegram(
                 f"❌ <b>SCAN ERROR (code {result.returncode})</b>\n"
                 f"{_sep}\n"
-                f"<pre>{error_preview[:800]}</pre>"
+                f"<pre>{tail[:800] if tail else 'No output captured'}</pre>"
             )
     except subprocess.TimeoutExpired:
-        logger.error("[Step 1/1] daily_scanner.py TIMEOUT (300s)")
-        send_telegram("⏰ <b>AUTO SCAN TIMEOUT</b>\ndaily_scanner.py a depasit 5 minute!")
+        logger.error(f"[Step 1/1] daily_scanner.py TIMEOUT ({SCAN_TIMEOUT_SEC}s)")
+        send_telegram(
+            f"⏰ <b>AUTO SCAN TIMEOUT</b>\n"
+            f"daily_scanner.py a depășit {SCAN_TIMEOUT_SEC // 60} minute!\n"
+            f"Verifică logs/daily_scanner_subprocess.log pe VPS."
+        )
     except Exception as e:
         logger.error(f"[Step 1/1] daily_scanner.py ERROR: {e}")
         send_telegram(f"💥 <b>SCAN EXCEPTION</b>\n<code>{str(e)[:500]}</code>")
@@ -216,7 +288,8 @@ def run_auto_scan():
             f"❌ <b>AUTO SCAN EȘUAT</b>\n"
             f"{_sep}\n"
             f"📅 {day_name} — Ora: {finish_time}\n"
-            f"⚠️ Verifică auto_scanner.log pe VPS\n"
+            f"⚠️ Verifică logs/daily_scanner_subprocess.log\n"
+            f"⚠️ sau logs/auto_scanner_daemon_stdout.log pe VPS\n"
             f"🔧 Rulează manual: python daily_scanner.py\n"
             f"{_sep}\n"
             f"🔱 AUTHORED BY <b>ФорексГод</b> 🔱\n"
@@ -225,6 +298,16 @@ def run_auto_scan():
         )
 
     return scan_ok
+
+
+def _read_log_tail(path: Path, max_chars: int = 1500) -> str:
+    try:
+        if not path.exists():
+            return ''
+        text = path.read_text(encoding='utf-8', errors='replace')
+        return text.strip()[-max_chars:]
+    except Exception:
+        return ''
 
 
 # ━━━ WEEKLY REPORT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -422,14 +505,18 @@ def main():
         rotation="7 days",
         retention="30 days",
         format="{time:YYYY-MM-DD HH:mm:ss} | {level:<7} | {message}",
-        level="DEBUG"
+        level="DEBUG",
+        enqueue=True,  # V44.2: flush async pe Windows — evită log blocat în buffer
     )
 
     logger.info("")
     logger.info("=" * 60)
-    logger.info("  AUTO SCANNER DAEMON - Glitch in Matrix V11.2")
+    logger.info("  AUTO SCANNER DAEMON - Glitch in Matrix V44.2")
     logger.info("=" * 60)
     logger.info(f"  Trigger: Luni / Miercuri / Vineri la {scan_hour:02d}:{scan_minute:02d} Bucuresti")
+    logger.info(f"  Timeout: {SCAN_TIMEOUT_SEC}s | Retry window: {scan_hour:02d}:00-{scan_hour:02d}:59")
+    logger.info(f"  Subprocess log: {DAILY_SCANNER_SUBPROCESS_LOG}")
+    logger.info(f"  Watchdog stdout: logs/auto_scanner_daemon_stdout.log")
     logger.info(f"  Python:  {sys.executable}")
     logger.info(f"  Dir:     {BASE_DIR}")
     logger.info(f"  State:   {LAST_SCAN_FILE}")
@@ -439,9 +526,13 @@ def main():
     # ── Run now mode (manual test) ───────────────────────
     if args.run_now:
         logger.warning("[--run-now] Manual trigger! Running scan immediately...")
-        run_auto_scan()
-        today_str = date.today().isoformat()
-        save_last_scan_date(today_str)
+        if acquire_scan_lock():
+            try:
+                scan_ok = run_auto_scan()
+                if scan_ok:
+                    save_last_scan_date(date.today().isoformat())
+            finally:
+                release_scan_lock()
         logger.info("[--run-now] Done. Exiting.")
         return
 
@@ -481,10 +572,9 @@ def main():
 
             # Verifică dacă suntem în fereastra de trigger (ziua + ora + minutul)
             is_scan_day = weekday in SCAN_DAYS
-            # V11.3 FIX: Fereastra de 5 minute (07:00–07:04) în loc de exact minute==0
-            # sleep(60) pe Windows poate deriva și sări peste minutul exact → scan pierdut
-            is_scan_time = (now.hour == scan_hour) and (scan_minute <= now.minute <= scan_minute + 4)
+            is_scan_time = is_scan_trigger_window(now, scan_hour, scan_minute)
             already_scanned_today = (get_last_scan_date() == today_str)
+            scan_busy = is_scan_in_progress()
 
             # ── Weekly Report: Vineri 23:59 EET ──────────────────────────────
             is_weekly_report_time = (
@@ -509,10 +599,20 @@ def main():
                 save_last_cb_rates_refresh_date(today_str)
                 run_daily_cb_rates_refresh()
 
-            if is_scan_day and is_scan_time and not already_scanned_today:
-                logger.info(f"[TRIGGER] {DAY_NAMES[weekday]} {now.strftime('%H:%M')} — SCAN START!")
-                save_last_scan_date(today_str)   # Salvează ÎNAINTE să ruleze (anti double-trigger)
-                run_auto_scan()
+            if is_scan_day and is_scan_time and not already_scanned_today and not scan_busy:
+                if acquire_scan_lock():
+                    logger.info(f"[TRIGGER] {DAY_NAMES[weekday]} {now.strftime('%H:%M')} — SCAN START!")
+                    try:
+                        scan_ok = run_auto_scan()
+                        if scan_ok:
+                            save_last_scan_date(today_str)
+                        else:
+                            logger.warning(
+                                "[TRIGGER] Scan failed — last_scan_date NOT saved; "
+                                f"retry until {scan_hour:02d}:{SCAN_WINDOW_END_MINUTE:02d}"
+                            )
+                    finally:
+                        release_scan_lock()
 
             else:
                 # Log la fiecare 30 minute pentru vizibilitate în logs
@@ -520,7 +620,8 @@ def main():
                     next_scan_info = "azi" if (is_scan_day and not already_scanned_today) else "nu azi"
                     logger.debug(
                         f"[HEARTBEAT] {DAY_NAMES[weekday]} {now.strftime('%H:%M')} | "
-                        f"scan_day={is_scan_day} | scanned={already_scanned_today} | "
+                        f"scan_day={is_scan_day} | scan_time={is_scan_time} | "
+                        f"scanned={already_scanned_today} | busy={scan_busy} | "
                         f"next={next_scan_info}"
                     )
 
