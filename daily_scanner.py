@@ -28,6 +28,7 @@ from ctrader_cbot_client import CTraderCBotClient
 from strategy_optimizer import StrategyOptimizer
 from ai_probability_analyzer import AIProbabilityAnalyzer
 from pip_utils import get_pip_size, liquidity_already_swept
+from poi_utils import poi_bounds_from_stored, poi_touch_active
 
 load_dotenv()
 
@@ -1007,14 +1008,21 @@ def _parse_setup_time_days(setup_time_str) -> Optional[float]:
         return None
 
 
-def _price_in_daily_poi(price: float, stored: dict) -> bool:
-    """True dacă prețul curent intersectează zona POI/FVG Daily salvată."""
-    top = stored.get('poi_top') if stored.get('poi_top') is not None else stored.get('fvg_top')
-    bottom = stored.get('poi_bottom') if stored.get('poi_bottom') is not None else stored.get('fvg_bottom')
-    if top is None or bottom is None:
-        return False
-    lo, hi = min(float(top), float(bottom)), max(float(top), float(bottom))
-    return lo <= float(price) <= hi
+def _price_in_daily_poi(
+    price: Optional[float],
+    stored: dict,
+    d1_wick_high: Optional[float] = None,
+    d1_wick_low: Optional[float] = None,
+) -> bool:
+    """True dacă wick Daily sau prețul curent intersectează POI (V45 aliniat cu radar)."""
+    poi_bottom, poi_top = poi_bounds_from_stored(stored)
+    return poi_touch_active(price, poi_bottom, poi_top, d1_wick_high, d1_wick_low)
+
+
+def _d1_wick_from_df(df_d1: Optional[pd.DataFrame]) -> tuple[Optional[float], Optional[float]]:
+    if df_d1 is None or df_d1.empty:
+        return None, None
+    return float(df_d1['high'].iloc[-1]), float(df_d1['low'].iloc[-1])
 
 
 def _price_at_d1_poi_for_direction(price: float, stored: dict) -> bool:
@@ -1449,14 +1457,19 @@ def _hydrate_bias_fallback_poi(
         return entry
 
 
-def _apply_v431_lifecycle_gates(setup_dict: dict, price: Optional[float]) -> dict:
-    """V43.1 E2-T1/T4: strict state machine POI gates (stateless JSON dict)."""
-    if price is None:
+def _apply_v431_lifecycle_gates(
+    setup_dict: dict,
+    price: Optional[float],
+    d1_wick_high: Optional[float] = None,
+    d1_wick_low: Optional[float] = None,
+) -> dict:
+    """V43.1 E2-T1/T4: strict state machine POI gates (stateless JSON dict). V45: wick Daily ∪ preț."""
+    if price is None and d1_wick_high is None and d1_wick_low is None:
         return setup_dict
     setup_dict = dict(setup_dict)
     sym = setup_dict.get('symbol', '?')
     status = setup_dict.get('status', '')
-    in_poi = _price_in_daily_poi(price, setup_dict)
+    in_poi = _price_in_daily_poi(price, setup_dict, d1_wick_high, d1_wick_low)
 
     if setup_dict.get('structural_breach'):
         if not setup_dict.get('entry1_filled') and status not in ('TRADE_OPEN', 'PARTIAL_OPEN'):
@@ -1469,7 +1482,8 @@ def _apply_v431_lifecycle_gates(setup_dict: dict, price: Optional[float]) -> dic
 
     if status == 'WAITING_D1_PULLBACK' and in_poi:
         setup_dict['status'] = 'MONITORING'
-        print(f"  [V43.1 LIFECYCLE] {sym}: WAITING_D1_PULLBACK → MONITORING (price inside POI)")
+        _touch = 'wick/preț în POI' if d1_wick_high is not None else 'preț în POI'
+        print(f"  [V43.1 LIFECYCLE] {sym}: WAITING_D1_PULLBACK → MONITORING ({_touch})")
 
     elif status == 'MONITORING' and not in_poi:
         setup_dict['status'] = 'WAITING_D1_PULLBACK'
@@ -1693,7 +1707,9 @@ def save_monitoring_setups(
             if poi_top is None or poi_bottom is None:
                 continue
             price = symbol_price_map.get(sym)
-            if price is not None and _price_in_daily_poi(price, stored):
+            df_d1 = symbol_df_daily_map.get(sym)
+            _d1_h, _d1_l = _d1_wick_from_df(df_d1)
+            if _price_in_daily_poi(price, stored, _d1_h, _d1_l):
                 continue
             _soft_ttl_expired.append(sym)
             print(
@@ -1733,11 +1749,12 @@ def save_monitoring_setups(
         # V43.1 + V44.1: lifecycle + BOS new range + post-TP pe setup-uri păstrate
         for sym, stored in list(existing_active.items()):
             price = symbol_price_map.get(sym)
-            stored = _apply_v431_lifecycle_gates(stored, price)
+            df_d1 = symbol_df_daily_map.get(sym)
+            _d1_h, _d1_l = _d1_wick_from_df(df_d1)
+            stored = _apply_v431_lifecycle_gates(stored, price, _d1_h, _d1_l)
             if stored.get('status') in _DEAD_STATUSES:
                 existing_active.pop(sym, None)
                 continue
-            df_d1 = symbol_df_daily_map.get(sym)
             if df_d1 is not None:
                 stored = _try_bos_new_range_evolution(detector, df_d1, stored, sym)
                 stored = _try_post_tp_evolution(detector, df_d1, stored, sym)
@@ -1836,8 +1853,10 @@ def save_monitoring_setups(
                     merged_fb = _apply_v42_macro_override(_old, _new_fb)
                     merged_fb = _apply_v43_poi_persistence(_old, merged_fb)
                     _live_fb = symbol_price_map.get(sym)
-                    merged_fb = _apply_v431_lifecycle_gates(merged_fb, _live_fb)
-                    df_d1 = symbol_df_daily_map.get(sym)
+                    _df_fb = symbol_df_daily_map.get(sym)
+                    _fb_h, _fb_l = _d1_wick_from_df(_df_fb)
+                    merged_fb = _apply_v431_lifecycle_gates(merged_fb, _live_fb, _fb_h, _fb_l)
+                    df_d1 = _df_fb
                     if df_d1 is not None:
                         merged_fb = _try_bos_new_range_evolution(detector, df_d1, merged_fb, sym)
                         merged_fb = _try_post_tp_evolution(detector, df_d1, merged_fb, sym)
@@ -1860,7 +1879,9 @@ def save_monitoring_setups(
                       f"open {open_dir.upper()} position exists")
                 continue
             _live_fb = symbol_price_map.get(sym)
-            entry = _apply_v431_lifecycle_gates(entry, _live_fb)
+            _df_fb = symbol_df_daily_map.get(sym)
+            _fb_h, _fb_l = _d1_wick_from_df(_df_fb)
+            entry = _apply_v431_lifecycle_gates(entry, _live_fb, _fb_h, _fb_l)
             if entry.get('status') in _DEAD_STATUSES:
                 continue
             monitoring_setups.append(entry)

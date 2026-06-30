@@ -196,15 +196,20 @@ flowchart TD
 | -------------- | --------------------------------------------- | ----------------------------------- |
 | Structură D1   | CHoCH/BOS doar body close                     | `smc_detector.detect_choch_and_bos` |
 | Activare radar | Wick intersectează POI Daily → **pândă**      | `multi_tf_radar` + `daily_scanner`  |
-| Execuție LTF   | După touch POI: **CHoCH 4H** = direcția Daily | `analyze_timeframe` 4H              |
+| Execuție LTF   | După CHoCH 4H aliniat Daily: Trigger A (CHoCH live) sau Trigger B (BOS post-CHoCH ratat) + pullback FVG | `analyze_timeframe` 4H |
 
 
-### Gap-uri cod actual
+### Gap-uri cod actual (V45.1 — implementat)
 
-1. POI touch = `get_current_price()` punctual, nu wick high/low.
-2. `validated = in_poi AND pd_passed` — fără ambele, zero scan 4H.
-3. CONTINUATION permite BOS 4H (`allow_bos_4h=True`) — dorim CHoCH 4H în pândă.
-4. Lifecycle scanner folosește preț punctual, nu wick.
+1. ~~POI wick~~ → `poi_utils.py` + scanner lifecycle.
+2. ~~PAS 2 BOS-as-CHoCH~~ → eliminat; CHoCH real obligatoriu.
+3. ~~CONTINUATION BOS shortcut~~ → `_allow_bos_4h=False`; Trigger B doar post-CHoCH.
+
+### Gap-uri rămase (P1/P2)
+
+1. `print_result` misleading Always-On VALIDATED.
+2. `_strategy_type` dead read.
+3. Forming bar H4 exclude (opțional, amânat).
 
 ### Flux țintă
 

@@ -9,8 +9,10 @@ if sys.stderr.encoding != 'utf-8':
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
 """
-🎯 MULTI-TIMEFRAME EXECUTION RADAR - V36.5 ALWAYS-ON H4/H1
+🎯 MULTI-TIMEFRAME EXECUTION RADAR - V45.1 CHoCH-GATED EXECUTION
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+V45.1: PAS 2 BOS-as-CHoCH eliminat | Trigger B doar post-CHoCH | poi_utils shared
+V45: POI wick panda | _allow_bos_4h=False (fara V30.1 shortcut)
 V36.5: P/D Guard blochează EXECUTE_NOW, NU scanarea H4/H1 — JSON mereu actualizat
 V36.4: H4/H1 bar fallback (300→150→100) | XTIUSD prioritar vs WTIUSD | crash-safe cBot parse
 V36.3: pip_size Crypto/Commodities | symbol broker map | skip logging verbose
@@ -56,6 +58,10 @@ from enum import Enum
 from loguru import logger
 
 from pip_utils import get_pip_size, get_max_sl_pips
+from poi_utils import (
+    poi_box_intersects_wick as _poi_box_intersects_wick,
+    price_in_poi_box as _price_in_poi_box,
+)
 
 try:
     from ctrader_cbot_client import CTraderCBotClient
@@ -119,35 +125,6 @@ def _fmt_price(val: Optional[float], digits: int = 5) -> str:
     if val is None or val == 0:
         return "N/A"
     return f"{val:.{digits}f}"
-
-
-def _price_in_poi_box(
-    price: float,
-    poi_bottom: Optional[float],
-    poi_top: Optional[float],
-) -> bool:
-    """V43.2: preț live strict în caseta POI Daily [poi_bottom, poi_top]."""
-    if poi_bottom is None or poi_top is None:
-        return False
-    lo = min(float(poi_bottom), float(poi_top))
-    hi = max(float(poi_bottom), float(poi_top))
-    return lo <= float(price) <= hi
-
-
-def _poi_box_intersects_wick(
-    candle_high: Optional[float],
-    candle_low: Optional[float],
-    poi_bottom: Optional[float],
-    poi_top: Optional[float],
-) -> bool:
-    """V45: wick Daily intersectează POI — trigger radar pândă (nu schimbă clasificarea D1)."""
-    if poi_bottom is None or poi_top is None:
-        return False
-    if candle_high is None or candle_low is None:
-        return False
-    lo = min(float(poi_bottom), float(poi_top))
-    hi = max(float(poi_bottom), float(poi_top))
-    return float(candle_low) <= hi and float(candle_high) >= lo
 
 
 def _evaluate_v43_daily_zone(
@@ -940,17 +917,8 @@ class MultiTFRadar:
                 )
             
             # ━━━ V24.1: ORGANIC STRUCTURAL ALIGNMENT — NO LOOKBACK WALL ━━━
-            # Colonel's fix: cel mai recent CHoCH sau BOS aliniat din TOATĂ seria.
-            # LOOKBACK_BARS=100 eliminat — un semnal la bara 150 primează față de BOS minor la bara 80.
-            # Consistent cu V24.0 organic (fractal 2, no pivot expiry în smc_detector).
+            # V45: doar CHoCH aliniat; BOS fără CHoCH real → WAITING (PAS 2 eliminat).
 
-            use_bos_as_choch = False
-            bos_used = None
-
-            # PAS 1: Cel mai recent CHoCH aliniat din TOATĂ seria descărcată
-            # ── V24.9 DIRECTION GUARD: filtrăm STRICT pe required_direction ──
-            # Setup BUY → acceptăm DOAR CHoCH Bullish. Setup SELL → DOAR CHoCH Bearish.
-            # CHoCH-urile în direcție contrară sunt IGNORATE complet (zgomot structural).
             all_chochs_count = len(choch_list)
             aligned_chochs = sorted(
                 [c for c in choch_list if c.direction == required_direction],
@@ -958,40 +926,25 @@ class MultiTFRadar:
             )
             rejected_count = all_chochs_count - len(aligned_chochs)
             if rejected_count > 0:
-                print(f"  🚫 [{timeframe_display} DIRECTION GUARD] {symbol}: {rejected_count} CHoCH(uri) în direcție contrară ({required_direction.upper()} opus) — IGNORATE strict")
+                print(
+                    f"  🚫 [{timeframe_display} DIRECTION GUARD] {symbol}: "
+                    f"{rejected_count} CHoCH(uri) contrare ({required_direction.upper()} opus) — IGNORATE"
+                )
                 sys.stdout.flush()
             if aligned_chochs:
                 bars_ago = len(df) - aligned_chochs[-1].index
-                print(f"  ✅ [{timeframe_display} SCAN] {symbol} | CHoCH {required_direction.upper()} la -{bars_ago} bare | VALIDATED ✅")
-                sys.stdout.flush()
-            else:
-                print(f"  ⚠️  [{timeframe_display} DIRECTION GUARD] {symbol}: Zero CHoCH {required_direction.upper()} găsit din {all_chochs_count} total — cascadem la BOS")
-                sys.stdout.flush()
-
-            # PAS 2: Cel mai recent BOS aliniat din TOATĂ seria (dacă nu există CHoCH)
-            if not aligned_chochs:
-                aligned_bos_all = sorted(
-                    [b for b in bos_list if b.direction == required_direction],
-                    key=lambda x: x.index
+                print(
+                    f"  ✅ [{timeframe_display} SCAN] {symbol} | CHoCH {required_direction.upper()} "
+                    f"la -{bars_ago} bare | VALIDATED ✅"
                 )
-                if aligned_bos_all:
-                    use_bos_as_choch = True
-                    bos_used = aligned_bos_all[-1]
-                    bars_ago = len(df) - bos_used.index
-                    if allow_bos_trigger:
-                        # V30.1 CONTINUATION TRIGGER: BOS pe 4H in directia Daily Bias = intrare directa
-                        # Trendul macro e lansat, pullback superficial nu va printa CHoCH de inversare.
-                        # BOS = confirmare ca impulsul continua. Echivalent functional cu CHoCH pt entry.
-                        print(f"  ⚡ [V30.1 CONTINUATION BOS-TRIGGER] {symbol} {timeframe_display}: "
-                              f"BOS {required_direction.upper()} la -{bars_ago} bare — "
-                              f"TRIGACI DIRECT (CONTINUATION, nu asteptam CHoCH inversare)")
-                    else:
-                        print(f"  ✅ [{timeframe_display} SCAN] {symbol} | BOS {required_direction.upper()} la -{bars_ago} bare | VALIDATED ✅ (BOS confirmare)")
-                    sys.stdout.flush()
+                sys.stdout.flush()
 
-            # TRULY NOTHING — nicio structură aliniată în toți cei {len(df)} bari descărcați
-            if not aligned_chochs and not use_bos_as_choch:
-                print(f"  ⚠️  [{timeframe_display}] Nicio structură {required_direction.upper()} găsită în {len(df)} bare disponibile — WAITING")
+            # V45: fără CHoCH aliniat → WAITING (BOS singur nu deschide fereastra de execuție)
+            if not aligned_chochs:
+                print(
+                    f"  ⏳ [{timeframe_display} V45] {symbol}: Zero CHoCH {required_direction.upper()} "
+                    f"din {all_chochs_count} total — WAITING (fără BOS-as-CHoCH)"
+                )
                 sys.stdout.flush()
                 return TimeframeAnalysis(
                     timeframe=timeframe_display,
@@ -1008,21 +961,8 @@ class MultiTFRadar:
                     status=PullbackStatus.WAITING_1H_CHOCH if timeframe == "H1" else PullbackStatus.WAITING_4H_CHOCH
                 )
 
-            if use_bos_as_choch and bos_used is not None:
-                # Construim un CHoCH sintetic din BOS pentru a putea extrage FVG
-                from smc_detector import CHoCH as _CHoCH
-                latest_choch = _CHoCH(
-                    index=bos_used.index,
-                    direction=bos_used.direction,
-                    break_price=bos_used.break_price,
-                    previous_trend=required_direction,
-                    candle_time=bos_used.candle_time,
-                    swing_broken=bos_used.swing_broken
-                )
-                _choch_bars_ago = len(df) - bos_used.index
-            else:
-                latest_choch = aligned_chochs[-1]
-                _choch_bars_ago = len(df) - latest_choch.index
+            latest_choch = aligned_chochs[-1]
+            _choch_bars_ago = len(df) - latest_choch.index
             choch_direction = latest_choch.direction
             # ── V24.9 DIRECTION ASSERTION — guard final ──────────────────────
             # Paranoid check: dacă după toate filtrele choch_direction != required_direction
@@ -1048,6 +988,12 @@ class MultiTFRadar:
                 )
             choch_index = latest_choch.index
             choch_break_price = float(latest_choch.break_price)   # V24.3 FIX: definit în scope principal
+
+            # V45 Trigger B: BOS trebuie să fie DUPĂ CHoCH (index strict), nu orice BOS vechi
+            _bos_after_choch = [b for b in _all_aligned_bos_for_lock if b.index > choch_index]
+            _bos_trigger_bars_ago = (
+                len(df) - _bos_after_choch[-1].index if _bos_after_choch else 9999
+            )
             
             # Get CHoCH details
             if choch_index < len(df):
@@ -1255,17 +1201,17 @@ class MultiTFRadar:
                                   f"-> EXECUTE_NOW (CHoCH <=3 bare LIVE) "
                                   f"Fibo [{fvg_bottom_synth:.5f}-{fvg_top_synth:.5f}] Retrace={retrace_pct*100:.1f}%")
                             sys.stdout.flush()
-                        elif _bos_bars_ago_val <= 3:
-                            # Tragaci B: BOS live + CHoCH ancora istorica = Trend Rider
+                        elif _bos_trigger_bars_ago <= 3:
+                            # Tragaci B: BOS live DUPĂ CHoCH + CHoCH ancora istorica = Trend Rider
                             status_synth = PullbackStatus.EXECUTE_NOW_1H if timeframe == "H1" else PullbackStatus.EXECUTE_NOW_4H
                             print(f"  [V32 FIBO TRIGGER-B {timeframe_display}] {symbol} {required_direction.upper()} "
-                                  f"-> EXECUTE_NOW (BOS <=3 bare LIVE | ancora CHoCH la -{_choch_bars_ago} bare) "
+                                  f"-> EXECUTE_NOW (BOS <=3 bare LIVE post-CHoCH | ancora CHoCH la -{_choch_bars_ago} bare) "
                                   f"Fibo [{fvg_bottom_synth:.5f}-{fvg_top_synth:.5f}] Retrace={retrace_pct*100:.1f}%")
                             sys.stdout.flush()
                         else:
                             status_synth = PullbackStatus.WAITING_1H_PULLBACK if timeframe == "H1" else PullbackStatus.WAITING_4H_PULLBACK
                             print(f"  [V32 NO TRIGGER FIBO {timeframe_display}] {symbol}: in Fibo dar "
-                                  f"ancora CHoCH -{_choch_bars_ago}b / BOS -{_bos_bars_ago_val}b > 3 — WAITING")
+                                  f"ancora CHoCH -{_choch_bars_ago}b / BOS post-CHoCH -{_bos_trigger_bars_ago}b > 3 — WAITING")
                             sys.stdout.flush()
                     else:
                         if choch_direction == 'bullish':
@@ -1355,20 +1301,26 @@ class MultiTFRadar:
                           f"-> EXECUTE_NOW (CHoCH <=3 bare LIVE) "
                           f"FVG [{fvg_bottom:.5f}-{fvg_top:.5f}] | Pret={current_price:.5f}")
                     sys.stdout.flush()
-                elif _bos_bars_ago_val <= 3:
-                    # Trigger B: BOS live — Trend Rider (CHoCH deja format, trendul confirmat)
+                elif _bos_trigger_bars_ago <= 3:
+                    # Trigger B: BOS live DUPĂ CHoCH — Trend Rider (CHoCH deja format, trendul confirmat)
                     status = PullbackStatus.EXECUTE_NOW_1H if timeframe == "H1" else PullbackStatus.EXECUTE_NOW_4H
-                    _sniper_note = f"[TriggerB] BOS LIVE -{_bos_bars_ago_val} bare | CHoCH la -{_choch_bars_ago} bare"
+                    _sniper_note = (
+                        f"[TriggerB] BOS LIVE -{_bos_trigger_bars_ago} bare post-CHoCH | "
+                        f"CHoCH la -{_choch_bars_ago} bare"
+                    )
                     print(f"  [V31.0 TRIGGER-B {timeframe_display}] {symbol} {required_direction.upper()} "
-                          f"-> EXECUTE_NOW (BOS <=3 bare LIVE, CHoCH la -{_choch_bars_ago} bare) "
+                          f"-> EXECUTE_NOW (BOS <=3 bare LIVE post-CHoCH, CHoCH la -{_choch_bars_ago} bare) "
                           f"FVG [{fvg_bottom:.5f}-{fvg_top:.5f}] | Pret={current_price:.5f}")
                     sys.stdout.flush()
                 else:
-                    # Niciun trigger live — asteptam CHoCH sau BOS proaspat
+                    # Niciun trigger live — asteptam CHoCH sau BOS proaspat post-CHoCH
                     status = PullbackStatus.WAITING_1H_PULLBACK if timeframe == "H1" else PullbackStatus.WAITING_4H_PULLBACK
-                    _sniper_note = f"IN FVG dar CHoCH -{_choch_bars_ago}b / BOS -{_bos_bars_ago_val}b > 3 — asteptam trigger live"
+                    _sniper_note = (
+                        f"IN FVG dar CHoCH -{_choch_bars_ago}b / BOS post-CHoCH -{_bos_trigger_bars_ago}b > 3 "
+                        f"— asteptam trigger live"
+                    )
                     print(f"  [V31.0 NO TRIGGER {timeframe_display}] {symbol}: in FVG dar CHoCH -{_choch_bars_ago}b "
-                          f"/ BOS -{_bos_bars_ago_val}b > 3 — WAITING trigger live")
+                          f"/ BOS post-CHoCH -{_bos_trigger_bars_ago}b > 3 — WAITING trigger live")
                     sys.stdout.flush()
             else:
                 if required_direction == 'bullish':
