@@ -9,8 +9,9 @@ if sys.stderr.encoding != 'utf-8':
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
 """
-🎯 MULTI-TIMEFRAME EXECUTION RADAR - V45.1 CHoCH-GATED EXECUTION
+🎯 MULTI-TIMEFRAME EXECUTION RADAR - V46 POI PREMIUM/DISCOUNT ENTRY
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+V46: EXECUTE = POI Daily + CHoCH 4H + retrace 60–80% (fără gate ≤3 bare)
 V45.1: PAS 2 BOS-as-CHoCH eliminat | Trigger B doar post-CHoCH | poi_utils shared
 V45: POI wick panda | _allow_bos_4h=False (fara V30.1 shortcut)
 V36.5: P/D Guard blochează EXECUTE_NOW, NU scanarea H4/H1 — JSON mereu actualizat
@@ -125,6 +126,85 @@ def _fmt_price(val: Optional[float], digits: int = 5) -> str:
     if val is None or val == 0:
         return "N/A"
     return f"{val:.{digits}f}"
+
+
+# V46: Premium/Discount entry band on CHoCH impulse (Daily POI pullback model)
+_RETRACE_ENTRY_MIN = 0.60
+_RETRACE_ENTRY_MAX = 0.80
+
+
+def _choch_impulse_retrace_pct(
+    break_price: float,
+    swing_broken_price: float,
+    current_price: float,
+    direction: str,
+) -> tuple[float, float]:
+    """Return (retrace_pct, impulse_size). Bearish: retrace up from break."""
+    impulse = abs(break_price - swing_broken_price)
+    if impulse <= 0:
+        return 0.0, 0.0
+    if direction == 'bullish':
+        retrace = (break_price - current_price) / impulse
+    else:
+        retrace = (current_price - break_price) / impulse
+    return retrace, impulse
+
+
+def _choch_premium_discount_zone(
+    break_price: float,
+    impulse: float,
+    direction: str,
+) -> tuple[float, float, float]:
+    """V46: 60–80% retrace zone (bottom, top, midpoint)."""
+    if direction == 'bullish':
+        z_top = break_price - impulse * _RETRACE_ENTRY_MIN
+        z_bottom = break_price - impulse * _RETRACE_ENTRY_MAX
+    else:
+        z_bottom = break_price + impulse * _RETRACE_ENTRY_MIN
+        z_top = break_price + impulse * _RETRACE_ENTRY_MAX
+    lo, hi = min(z_bottom, z_top), max(z_bottom, z_top)
+    return lo, hi, (lo + hi) / 2.0
+
+
+def _v46_entry_status_and_note(
+    timeframe_key: str,
+    symbol: str,
+    required_direction: str,
+    in_poi_entry: bool,
+    retrace_pct: float,
+    choch_bars_ago: int,
+) -> tuple['PullbackStatus', str]:
+    """V46: EXECUTE on POI + 60–80% retrace — no ≤3 bar gate."""
+    is_h1 = timeframe_key.upper() in ('H1', '1H')
+    exec_st = PullbackStatus.EXECUTE_NOW_1H if is_h1 else PullbackStatus.EXECUTE_NOW_4H
+    wait_st = PullbackStatus.WAITING_1H_PULLBACK if is_h1 else PullbackStatus.WAITING_4H_PULLBACK
+    if in_poi_entry:
+        print(
+            f"  [V46 POI-PD ENTRY {timeframe_key}] {symbol} {required_direction.upper()} "
+            f"-> EXECUTE_NOW retrace={retrace_pct * 100:.1f}% "
+            f"CHoCH=-{choch_bars_ago}b (fara gate 3 bare)"
+        )
+        sys.stdout.flush()
+        return exec_st, (
+            f"[V46] POI + Premium/Discount {retrace_pct * 100:.1f}% | CHoCH ancora -{choch_bars_ago}b"
+        )
+    if not in_poi_entry and _RETRACE_ENTRY_MIN <= retrace_pct <= _RETRACE_ENTRY_MAX:
+        note = (
+            f"⏳ retrace {retrace_pct * 100:.1f}% in 60–80% dar POI Daily inactiv"
+        )
+    elif retrace_pct > _RETRACE_ENTRY_MAX:
+        note = (
+            f"⏳ retrace {retrace_pct * 100:.1f}% > {_RETRACE_ENTRY_MAX * 100:.0f}% — "
+            f"asteptam re-intrare in Premium/Discount 60–80%"
+        )
+    elif retrace_pct < _RETRACE_ENTRY_MIN:
+        note = (
+            f"⏳ retrace {retrace_pct * 100:.1f}% < {_RETRACE_ENTRY_MIN * 100:.0f}% — "
+            f"asteptam Premium/Discount 60–80%"
+        )
+    else:
+        note = f"⏳ retrace {retrace_pct * 100:.1f}% — asteptam POI + 60–80%"
+    return wait_st, note
 
 
 def _evaluate_v43_daily_zone(
@@ -404,6 +484,9 @@ class TimeframeAnalysis:
     bos_detected: bool = False
     bos_direction: Optional[str] = None
     bos_bars_ago: int = 9999
+    # V46: POI + Premium/Discount 60–80% entry tracking
+    retrace_pct: Optional[float] = None
+    in_poi_entry_zone: bool = False
 
 
 @dataclass
@@ -828,6 +911,173 @@ class MultiTFRadar:
         sys.stdout.flush()
         return None
     
+    def _build_v46_choch_entry_analysis(
+        self,
+        *,
+        symbol: str,
+        timeframe: str,
+        timeframe_display: str,
+        required_direction: str,
+        current_price: float,
+        latest_choch,
+        choch_direction: str,
+        choch_time_str: str,
+        choch_price,
+        choch_break_price: float,
+        choch_equilibrium,
+        h4_sl_price,
+        _choch_bars_ago: int,
+        _bos_detected_val: bool,
+        _bos_direction_val,
+        _bos_bars_ago_val: int,
+        _bos_trigger_bars_ago: int,
+        daily_in_poi: bool,
+        latest_fvg=None,
+    ) -> TimeframeAnalysis:
+        """V46: POI Daily + Premium/Discount 60–80% pe impuls CHoCH — fără gate ≤3 bare."""
+        wait_pb = (
+            PullbackStatus.WAITING_1H_PULLBACK
+            if timeframe == "H1"
+            else PullbackStatus.WAITING_4H_PULLBACK
+        )
+        try:
+            swing_broken_price = float(latest_choch.swing_broken.price)
+        except Exception:
+            return TimeframeAnalysis(
+                timeframe=timeframe_display,
+                choch_detected=True,
+                choch_direction=choch_direction,
+                choch_time=choch_time_str,
+                choch_price=choch_price,
+                fvg_detected=False,
+                status=wait_pb,
+                equilibrium=choch_equilibrium,
+                h4_sl_price=h4_sl_price,
+                choch_bars_ago=_choch_bars_ago,
+                bos_detected=_bos_detected_val,
+                bos_direction=_bos_direction_val,
+                bos_bars_ago=_bos_bars_ago_val,
+            )
+
+        retrace_pct, impulse_size = _choch_impulse_retrace_pct(
+            choch_break_price, swing_broken_price, current_price, choch_direction,
+        )
+        pip_size = self._get_pip_size(symbol)
+
+        if impulse_size <= 0:
+            print(f"  ⚠️ [V46 GUARD] {symbol}: impuls 0 pips — WAITING")
+            sys.stdout.flush()
+            return TimeframeAnalysis(
+                timeframe=timeframe_display,
+                choch_detected=True,
+                choch_direction=choch_direction,
+                choch_time=choch_time_str,
+                choch_price=choch_price,
+                fvg_detected=False,
+                status=wait_pb,
+                equilibrium=choch_equilibrium,
+                h4_sl_price=h4_sl_price,
+                choch_bars_ago=_choch_bars_ago,
+                retrace_pct=retrace_pct,
+                bos_detected=_bos_detected_val,
+                bos_direction=_bos_direction_val,
+                bos_bars_ago=_bos_bars_ago_val,
+            )
+
+        if _choch_bars_ago > 72:
+            print(
+                f"  ⚠️ [V46 AGE] {symbol}: CHoCH la -{_choch_bars_ago} bare > 72 — "
+                f"ancora expirata, asteptam CHoCH nou"
+            )
+            sys.stdout.flush()
+            return TimeframeAnalysis(
+                timeframe=timeframe_display,
+                choch_detected=True,
+                choch_direction=choch_direction,
+                choch_time=choch_time_str,
+                choch_price=choch_price,
+                fvg_detected=False,
+                status=wait_pb,
+                equilibrium=choch_equilibrium,
+                h4_sl_price=h4_sl_price,
+                choch_bars_ago=_choch_bars_ago,
+                retrace_pct=retrace_pct,
+                bos_detected=_bos_detected_val,
+                bos_direction=_bos_direction_val,
+                bos_bars_ago=_bos_bars_ago_val,
+            )
+
+        zone_bottom, zone_top, zone_entry = _choch_premium_discount_zone(
+            choch_break_price, impulse_size, choch_direction,
+        )
+        in_retrace_band = (
+            zone_bottom <= current_price <= zone_top
+            and _RETRACE_ENTRY_MIN <= retrace_pct <= _RETRACE_ENTRY_MAX
+        )
+        in_poi_entry = daily_in_poi and in_retrace_band
+
+        status, sniper_note = _v46_entry_status_and_note(
+            timeframe_display,
+            symbol,
+            required_direction,
+            in_poi_entry,
+            retrace_pct,
+            _choch_bars_ago,
+        )
+
+        if in_retrace_band:
+            distance_to_fvg_pips = 0.0
+        elif choch_direction == 'bullish':
+            distance_to_fvg_pips = abs(current_price - zone_top) / pip_size
+        else:
+            distance_to_fvg_pips = abs(zone_bottom - current_price) / pip_size
+
+        if _choch_bars_ago <= 3:
+            print(f"  [V46 INFO] CHoCH LIVE -{_choch_bars_ago}b (informativ, nu gate)")
+        elif _bos_trigger_bars_ago <= 3:
+            print(
+                f"  [V46 INFO] BOS post-CHoCH LIVE -{_bos_trigger_bars_ago}b "
+                f"(CHoCH ancora -{_choch_bars_ago}b, informativ)"
+            )
+        sys.stdout.flush()
+
+        fvg_source = "structural" if latest_fvg else "premium_discount"
+        eq_val = choch_equilibrium if choch_equilibrium else zone_entry
+        print(
+            f"  [V46 POI-PD] {symbol} {timeframe_display} | "
+            f"Impulse anchor: swing_broken {swing_broken_price:.5f} -> break {choch_break_price:.5f} "
+            f"({impulse_size / pip_size:.1f}p)"
+        )
+        print(
+            f"     Zone 60–80%: [{zone_bottom:.5f}–{zone_top:.5f}] | "
+            f"Retrace={retrace_pct * 100:.1f}% | in_poi={daily_in_poi} | {sniper_note}"
+        )
+        sys.stdout.flush()
+
+        return TimeframeAnalysis(
+            timeframe=timeframe_display,
+            choch_detected=True,
+            choch_direction=choch_direction,
+            choch_time=choch_time_str,
+            choch_price=choch_price,
+            fvg_detected=True,
+            fvg_top=zone_top,
+            fvg_bottom=zone_bottom,
+            fvg_entry=zone_entry,
+            in_fvg=in_poi_entry,
+            in_poi_entry_zone=in_poi_entry,
+            retrace_pct=retrace_pct,
+            distance_to_fvg_pips=distance_to_fvg_pips,
+            status=status,
+            equilibrium=eq_val,
+            fvg_source=fvg_source,
+            h4_sl_price=h4_sl_price,
+            choch_bars_ago=_choch_bars_ago,
+            bos_detected=_bos_detected_val,
+            bos_direction=_bos_direction_val,
+            bos_bars_ago=_bos_bars_ago_val,
+        )
+
     def analyze_timeframe(
         self,
         symbol: str,
@@ -835,7 +1085,8 @@ class MultiTFRadar:
         required_direction: str,
         current_price: float,
         smc_detector: SMCDetector,
-        allow_bos_trigger: bool = False  # V30.1: True pt CONTINUATION 4H — BOS = trigger direct
+        allow_bos_trigger: bool = False,  # V30.1: True pt CONTINUATION 4H — BOS = trigger direct
+        daily_in_poi: bool = False,  # V46: preț/wick Daily în POI box
     ) -> TimeframeAnalysis:
         """
         Analyze a specific timeframe for CHoCH and FVG
@@ -1106,256 +1357,26 @@ class MultiTFRadar:
                 )
                 latest_fvg = None
             
-            if not latest_fvg:
-                # V32 FIBO FALLBACK: CHoCH detectat dar FVG absent sau consumat.
-                # FIX V02: Dezactivat pe CHoCH > 72 bare (impuls epuizat — geometrie Fibo invalida).
-                # FIX V01/V08: Cod Fibo mutat AFARA din dead-code block (if impulse<=0 after return).
-                # ANCORA (<=72b): context structural valid. TRAGACI (<= 3b): CHoCH sau BOS live.
-                try:
-                    swing_broken_price = float(latest_choch.swing_broken.price)
-                    # choch_break_price setat la L728 — nu reatribui (UnboundLocalError Python)
-                    impulse_size = abs(choch_break_price - swing_broken_price)
-
-                    # Guard 1: impuls 0 pips (date corupte / tick duplicat)
-                    if impulse_size <= 0:
-                        print(f"  ⚠️ [V32 FIBO GUARD] {symbol}: impuls 0 pips — WAITING")
-                        sys.stdout.flush()
-                        return TimeframeAnalysis(
-                            timeframe=timeframe_display,
-                            choch_detected=True,
-                            choch_direction=choch_direction,
-                            choch_time=choch_time_str,
-                            choch_price=choch_price,
-                            fvg_detected=False,
-                            fvg_top=None,
-                            fvg_bottom=None,
-                            fvg_entry=None,
-                            in_fvg=False,
-                            distance_to_fvg_pips=0.0,
-                            status=PullbackStatus.WAITING_1H_PULLBACK if timeframe == "H1" else PullbackStatus.WAITING_4H_PULLBACK,
-                            equilibrium=choch_equilibrium,
-                            h4_sl_price=h4_sl_price,
-                            bos_detected=_bos_detected_val,
-                            bos_direction=_bos_direction_val,
-                            bos_bars_ago=_bos_bars_ago_val
-                        )
-
-                    # Guard 2 (Fix V02): CHoCH > 72 bare — impuls epuizat, Fibo geometric invalid
-                    # Ancora structurala e inca valida (h4_structure_locked), dar zona Fibo nu.
-                    # Asteptam BOS live care va crea FVG nou pe piciorul curent.
-                    if _choch_bars_ago > 72:
-                        print(f"  ⚠️ [V32 FIBO AGE] {symbol}: CHoCH la -{_choch_bars_ago} bare > 72 — "
-                              f"Fibo dezactivat (impuls epuizat). Ancora activa, asteptam BOS live.")
-                        sys.stdout.flush()
-                        return TimeframeAnalysis(
-                            timeframe=timeframe_display,
-                            choch_detected=True,
-                            choch_direction=choch_direction,
-                            choch_time=choch_time_str,
-                            choch_price=choch_price,
-                            fvg_detected=False,
-                            fvg_top=None,
-                            fvg_bottom=None,
-                            fvg_entry=None,
-                            in_fvg=False,
-                            distance_to_fvg_pips=0.0,
-                            status=PullbackStatus.WAITING_1H_PULLBACK if timeframe == "H1" else PullbackStatus.WAITING_4H_PULLBACK,
-                            equilibrium=choch_equilibrium,
-                            h4_sl_price=h4_sl_price,
-                            choch_bars_ago=_choch_bars_ago,
-                            bos_detected=_bos_detected_val,
-                            bos_direction=_bos_direction_val,
-                            bos_bars_ago=_bos_bars_ago_val
-                        )
-
-                    # Fibo zone calculation (ACTIV — impuls valid, CHoCH <= 72 bare)
-                    pip_size_synth = self._get_pip_size(symbol)
-                    if choch_direction == 'bullish':
-                        fib60 = choch_break_price - impulse_size * 0.40  # top zone
-                        fib40 = choch_break_price - impulse_size * 0.60  # bottom zone
-                    else:
-                        fib60 = choch_break_price + impulse_size * 0.60  # top zone
-                        fib40 = choch_break_price + impulse_size * 0.40  # bottom zone
-                    fvg_top_synth = max(fib40, fib60)
-                    fvg_bottom_synth = min(fib40, fib60)
-                    fvg_entry_synth = (fvg_top_synth + fvg_bottom_synth) / 2.0
-
-                    # Retrace calculation (anti-FOMO: trebuie >= 35% retragere fizica)
-                    if choch_direction == 'bullish':
-                        retrace_pct = (choch_break_price - current_price) / impulse_size
-                    else:
-                        retrace_pct = (current_price - choch_break_price) / impulse_size
-
-                    in_fvg_synth = fvg_bottom_synth <= current_price <= fvg_top_synth
-
-                    if in_fvg_synth and retrace_pct >= 0.35:
-                        dist_synth = 0.0
-                        # ━━━ V32 MATRICEA DUBLA — Ancora Istorica vs Tragaci Live ━━━━━━━━━━━━
-                        # Ancora (CHoCH <= 72b): context structural valid.
-                        # Tragaci A (CHoCH <=3b): first CHoCH de confirmare = Sniper Entry.
-                        # Tragaci B (BOS  <=3b): BOS proaspat pe trend stabilit = Trend Rider.
-                        if _choch_bars_ago <= 3:
-                            # Tragaci A: CHoCH live in zona Fibo
-                            status_synth = PullbackStatus.EXECUTE_NOW_1H if timeframe == "H1" else PullbackStatus.EXECUTE_NOW_4H
-                            print(f"  [V32 FIBO TRIGGER-A {timeframe_display}] {symbol} {required_direction.upper()} "
-                                  f"-> EXECUTE_NOW (CHoCH <=3 bare LIVE) "
-                                  f"Fibo [{fvg_bottom_synth:.5f}-{fvg_top_synth:.5f}] Retrace={retrace_pct*100:.1f}%")
-                            sys.stdout.flush()
-                        elif _bos_trigger_bars_ago <= 3:
-                            # Tragaci B: BOS live DUPĂ CHoCH + CHoCH ancora istorica = Trend Rider
-                            status_synth = PullbackStatus.EXECUTE_NOW_1H if timeframe == "H1" else PullbackStatus.EXECUTE_NOW_4H
-                            print(f"  [V32 FIBO TRIGGER-B {timeframe_display}] {symbol} {required_direction.upper()} "
-                                  f"-> EXECUTE_NOW (BOS <=3 bare LIVE post-CHoCH | ancora CHoCH la -{_choch_bars_ago} bare) "
-                                  f"Fibo [{fvg_bottom_synth:.5f}-{fvg_top_synth:.5f}] Retrace={retrace_pct*100:.1f}%")
-                            sys.stdout.flush()
-                        else:
-                            status_synth = PullbackStatus.WAITING_1H_PULLBACK if timeframe == "H1" else PullbackStatus.WAITING_4H_PULLBACK
-                            print(f"  [V32 NO TRIGGER FIBO {timeframe_display}] {symbol}: in Fibo dar "
-                                  f"ancora CHoCH -{_choch_bars_ago}b / BOS post-CHoCH -{_bos_trigger_bars_ago}b > 3 — WAITING")
-                            sys.stdout.flush()
-                    else:
-                        if choch_direction == 'bullish':
-                            dist_synth = abs(current_price - fvg_top_synth) / pip_size_synth
-                        else:
-                            dist_synth = abs(fvg_bottom_synth - current_price) / pip_size_synth
-                        status_synth = PullbackStatus.WAITING_1H_PULLBACK if timeframe == "H1" else PullbackStatus.WAITING_4H_PULLBACK
-
-                    eq_for_synth = choch_equilibrium if choch_equilibrium else fvg_entry_synth
-                    _eq_synth_str = f"{eq_for_synth:.5f}" if eq_for_synth is not None else "N/A"
-                    _retrace_str = f"{retrace_pct*100:.1f}%"
-                    _sniper_note = ("🎯 IN ZONE — EXECUTE"
-                                    if status_synth in (PullbackStatus.EXECUTE_NOW_1H, PullbackStatus.EXECUTE_NOW_4H)
-                                    else f"⏳ PANDA ({_retrace_str} retrace, asteptam 40-60%)")
-                    print(f"  ⚡ [V32 FIBO FALLBACK] No FVG — Synthetic zone 40-60%")
-                    print(f"     Impulse: {swing_broken_price:.5f} -> {choch_break_price:.5f} ({impulse_size/pip_size_synth:.1f} pips)")
-                    print(f"     Zone: [{fvg_bottom_synth:.5f} - {fvg_top_synth:.5f}] | EQ={_eq_synth_str} | Retrace: {_retrace_str} | {_sniper_note}")
-                    sys.stdout.flush()
-                    return TimeframeAnalysis(
-                        timeframe=timeframe_display,
-                        choch_detected=True,
-                        choch_direction=choch_direction,
-                        choch_time=choch_time_str,
-                        choch_price=choch_price,
-                        fvg_detected=True,
-                        fvg_top=fvg_top_synth,
-                        fvg_bottom=fvg_bottom_synth,
-                        fvg_entry=fvg_entry_synth,
-                        in_fvg=in_fvg_synth and retrace_pct >= 0.35,  # Anti-FOMO
-                        distance_to_fvg_pips=dist_synth,
-                        status=status_synth,
-                        equilibrium=eq_for_synth,
-                        fvg_source="fibo_fallback",
-                        h4_sl_price=h4_sl_price,
-                        choch_bars_ago=_choch_bars_ago,
-                        bos_detected=_bos_detected_val,
-                        bos_direction=_bos_direction_val,
-                        bos_bars_ago=_bos_bars_ago_val
-                    )
-                except Exception as _fib_err:
-                    print(f"  ⚠️ [V32 FIBO FALLBACK] Error: {_fib_err}")
-                # Dacă fallback-ul eșuează, rămânem în WAITING
-                return TimeframeAnalysis(
-                    timeframe=timeframe_display,
-                    choch_detected=True,
-                    choch_direction=choch_direction,
-                    choch_time=choch_time_str,
-                    choch_price=choch_price,
-                    fvg_detected=False,
-                    fvg_top=None,
-                    fvg_bottom=None,
-                    fvg_entry=None,
-                    in_fvg=False,
-                    distance_to_fvg_pips=0.0,
-                    status=PullbackStatus.WAITING_1H_PULLBACK if timeframe == "H1" else PullbackStatus.WAITING_4H_PULLBACK,
-                    equilibrium=choch_equilibrium,
-                    h4_sl_price=h4_sl_price,
-                    bos_detected=_bos_detected_val,
-                    bos_direction=_bos_direction_val,
-                    bos_bars_ago=_bos_bars_ago_val
-                )
-            
-            fvg_top = latest_fvg.top
-            fvg_bottom = latest_fvg.bottom
-            fvg_entry = (fvg_top + fvg_bottom) / 2.0
-            
-            # ── V24.2 SNIPER ANTI-FOMO — Structural FVG ─────────────────────────
-            # EXECUTE_NOW STRICT doar dacă prețul e FIZIC în FVG.
-            # Dacă structura s-a rupt și prețul a fugit fără a mai reveni → WAITING.
-            # Check if price in FVG
-            in_fvg = fvg_bottom <= current_price <= fvg_top
-            
-            # Calculate distance to FVG
-            # V24.4: pip_size Symbol-Agnostic — suportă FX, JPY, XAU, BTC, OIL
-            _pip_size_dist = self._get_pip_size(symbol)
-            if in_fvg:
-                distance_to_fvg_pips = 0.0
-                # ━━━ V31.0 MATRICEA DUBLA DE TRAGACI ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-                # Trigger A (Sniper Entry): CHoCH proaspat <=3 bare — confirmare imediata
-                # Trigger B (Trend Rider):  BOS proaspat  <=3 bare — a doua sansa (trenul a plecat)
-                # Ambele triggere sunt interzise daca semnalul de break e >3 bare vechi.
-                if _choch_bars_ago <= 3:
-                    # Trigger A: CHoCH live — intrare de precizie
-                    status = PullbackStatus.EXECUTE_NOW_1H if timeframe == "H1" else PullbackStatus.EXECUTE_NOW_4H
-                    _sniper_note = f"[TriggerA] CHoCH LIVE -{_choch_bars_ago} bare | pret IN FVG"
-                    print(f"  [V31.0 TRIGGER-A {timeframe_display}] {symbol} {required_direction.upper()} "
-                          f"-> EXECUTE_NOW (CHoCH <=3 bare LIVE) "
-                          f"FVG [{fvg_bottom:.5f}-{fvg_top:.5f}] | Pret={current_price:.5f}")
-                    sys.stdout.flush()
-                elif _bos_trigger_bars_ago <= 3:
-                    # Trigger B: BOS live DUPĂ CHoCH — Trend Rider (CHoCH deja format, trendul confirmat)
-                    status = PullbackStatus.EXECUTE_NOW_1H if timeframe == "H1" else PullbackStatus.EXECUTE_NOW_4H
-                    _sniper_note = (
-                        f"[TriggerB] BOS LIVE -{_bos_trigger_bars_ago} bare post-CHoCH | "
-                        f"CHoCH la -{_choch_bars_ago} bare"
-                    )
-                    print(f"  [V31.0 TRIGGER-B {timeframe_display}] {symbol} {required_direction.upper()} "
-                          f"-> EXECUTE_NOW (BOS <=3 bare LIVE post-CHoCH, CHoCH la -{_choch_bars_ago} bare) "
-                          f"FVG [{fvg_bottom:.5f}-{fvg_top:.5f}] | Pret={current_price:.5f}")
-                    sys.stdout.flush()
-                else:
-                    # Niciun trigger live — asteptam CHoCH sau BOS proaspat post-CHoCH
-                    status = PullbackStatus.WAITING_1H_PULLBACK if timeframe == "H1" else PullbackStatus.WAITING_4H_PULLBACK
-                    _sniper_note = (
-                        f"IN FVG dar CHoCH -{_choch_bars_ago}b / BOS post-CHoCH -{_bos_trigger_bars_ago}b > 3 "
-                        f"— asteptam trigger live"
-                    )
-                    print(f"  [V31.0 NO TRIGGER {timeframe_display}] {symbol}: in FVG dar CHoCH -{_choch_bars_ago}b "
-                          f"/ BOS post-CHoCH -{_bos_trigger_bars_ago}b > 3 — WAITING trigger live")
-                    sys.stdout.flush()
-            else:
-                if required_direction == 'bullish':
-                    # For LONG: need to pull back DOWN to FVG
-                    distance_to_fvg_pips = abs(current_price - fvg_top) / _pip_size_dist
-                else:
-                    # For SHORT: need to pull back UP to FVG
-                    distance_to_fvg_pips = abs(fvg_bottom - current_price) / _pip_size_dist
-
-                status = PullbackStatus.WAITING_1H_PULLBACK if timeframe == "H1" else PullbackStatus.WAITING_4H_PULLBACK
-                _sniper_note = f"⏳ SNIPER PÂNDĂ — prețul {current_price:.5f} NOT IN FVG [{fvg_bottom:.5f}-{fvg_top:.5f}] | dist={distance_to_fvg_pips:.1f}p"
-
-            print(f"  🔭 [V24.2 SNIPER] {symbol} {timeframe} | {choch_direction.upper()} CHoCH @ {choch_break_price:.5f}")
-            print(f"     {_sniper_note}")
-            sys.stdout.flush()
-            
-            return TimeframeAnalysis(
-                timeframe=timeframe_display,
-                choch_detected=True,
+            return self._build_v46_choch_entry_analysis(
+                symbol=symbol,
+                timeframe=timeframe,
+                timeframe_display=timeframe_display,
+                required_direction=required_direction,
+                current_price=current_price,
+                latest_choch=latest_choch,
                 choch_direction=choch_direction,
-                choch_time=choch_time_str,
+                choch_time_str=choch_time_str,
                 choch_price=choch_price,
-                fvg_detected=True,
-                fvg_top=fvg_top,
-                fvg_bottom=fvg_bottom,
-                fvg_entry=fvg_entry,
-                in_fvg=in_fvg,
-                distance_to_fvg_pips=distance_to_fvg_pips,
-                status=status,
-                equilibrium=choch_equilibrium,
+                choch_break_price=choch_break_price,
+                choch_equilibrium=choch_equilibrium,
                 h4_sl_price=h4_sl_price,
-                choch_bars_ago=_choch_bars_ago,
-                bos_detected=_bos_detected_val,
-                bos_direction=_bos_direction_val,
-                bos_bars_ago=_bos_bars_ago_val
+                _choch_bars_ago=_choch_bars_ago,
+                _bos_detected_val=_bos_detected_val,
+                _bos_direction_val=_bos_direction_val,
+                _bos_bars_ago_val=_bos_bars_ago_val,
+                _bos_trigger_bars_ago=_bos_trigger_bars_ago,
+                daily_in_poi=daily_in_poi,
+                latest_fvg=latest_fvg,
             )
         
         except Exception as e:
@@ -1528,6 +1549,7 @@ class MultiTFRadar:
         sys.stdout.flush()
 
         if daily_zone_validated:
+            _daily_in_poi = bool(_v43_zone.get('in_poi', False))
             # Analyze 1H — doar în POI validat
             print("\n🔎 [1H] SNIPER SCAN (ATR 0.8x)...")
             sys.stdout.flush()
@@ -1537,7 +1559,8 @@ class MultiTFRadar:
                 timeframe="H1",
                 required_direction=required_direction,
                 current_price=current_price,
-                smc_detector=self.smc_1h
+                smc_detector=self.smc_1h,
+                daily_in_poi=_daily_in_poi,
             )
             self._log_scan_done(symbol, tf_1h, _h1_bars)
 
@@ -1553,7 +1576,8 @@ class MultiTFRadar:
                 required_direction=required_direction,
                 current_price=current_price,
                 smc_detector=self.smc_4h,
-                allow_bos_trigger=_allow_bos_4h  # V30.1
+                allow_bos_trigger=_allow_bos_4h,  # V30.1
+                daily_in_poi=_daily_in_poi,
             )
             self._log_scan_done(symbol, tf_4h, _h4_bars)
 
@@ -1585,10 +1609,10 @@ class MultiTFRadar:
         # V43.2 E3-T4: 4H prioritar; 1H Entry doar dacă 4H deja aliniat în POI validat
         _4h_aligned = self._is_4h_aligned_for_1h_entry(tf_4h, required_direction, _allow_bos_4h)
 
-        if tf_4h.status == PullbackStatus.EXECUTE_NOW_4H:
+        if tf_4h.status == PullbackStatus.EXECUTE_NOW_4H or tf_4h.in_poi_entry_zone:
             execution_ready = True
             priority_timeframe = "4H"
-            verdict = "🔥 EXECUTE NOW (4H HIGH CONFIDENCE!)"
+            verdict = "🔥 EXECUTE NOW (4H POI + Premium/Discount 60–80%!)"
         elif tf_1h.status == PullbackStatus.EXECUTE_NOW_1H:
             if _4h_aligned:
                 execution_ready = True
@@ -1679,12 +1703,8 @@ class MultiTFRadar:
 
     def _evaluate_confirmed_pullback_latch(self, setup: dict, result: 'MultiTFResult') -> Optional[str]:
         """
-        V37.5: CHoCH apare o singura data — apoi ramane in structura ca ancora.
-        Daca pretul e IN FVG si CHoCH/BOS e confirmat pe TF, executorul trebuie sa
-        execute chiar daca trigger-ul live (<=3 bare) a expirat.
+        V46: Latch safety net — POI + Premium/Discount 60–80% fără gate ≤3 bare.
         Returns: '1H' | '4H' | None
-
-        V42.2: PARTIAL_OPEN — latch permis doar pentru TF-uri din multi_entry_pending.
         """
         if setup.get('status') == 'TRADE_OPEN':
             return None
@@ -1718,7 +1738,7 @@ class MultiTFRadar:
                 continue
             if pending is not None and tf_name.upper() not in pending:
                 continue
-            if not tf_data.in_fvg or not tf_data.fvg_detected:
+            if not tf_data.in_poi_entry_zone:
                 continue
             if is_reversal:
                 if not tf_data.choch_detected:
@@ -2096,10 +2116,15 @@ class MultiTFRadar:
             if exec_tf_data.fvg_top and exec_tf_data.fvg_bottom else "zona necunoscuta"
         )
         exec_eq = f"EQ={exec_tf_data.equilibrium:.5f}" if exec_tf_data.equilibrium else "EQ=N/A"
+        _retrace_log = (
+            f"{exec_tf_data.retrace_pct * 100:.1f}%"
+            if exec_tf_data.retrace_pct is not None
+            else "N/A"
+        )
         logger.success(
-            f"[V37.5 EXECUTE_NOW {source.upper()} {exec_tf}] {result.symbol} {result.direction} "
-            f"-> EXECUTE_NOW=True | {'FVG structural' if exec_fvg_src == 'structural' else 'Fibo Fallback'} "
-            f"| Zona: {exec_zone} | Pret={result.current_price:.5f} | {exec_eq}"
+            f"[V46 EXECUTE_NOW {source.upper()} {exec_tf}] {result.symbol} {result.direction} "
+            f"-> EXECUTE_NOW=True | POI + Premium/Discount 60–80% "
+            f"| Zona: {exec_zone} | Retrace={_retrace_log} | Pret={result.current_price:.5f} | {exec_eq}"
         )
 
         self._flush_execute_now_to_json(setup)
@@ -2205,6 +2230,8 @@ class MultiTFRadar:
             setup['radar_4h_in_fvg'] = result.tf_4h.in_fvg
             setup['radar_4h_distance_pips'] = result.tf_4h.distance_to_fvg_pips
             setup['radar_4h_fvg_source'] = result.tf_4h.fvg_source
+            setup['radar_4h_retrace_pct'] = result.tf_4h.retrace_pct
+            setup['radar_4h_in_poi_entry'] = result.tf_4h.in_poi_entry_zone
             setup.pop('radar_4h_scan_error', None)
         else:
             # V34 FIX V10: PROTECTIE MEMORIE FVG 4H

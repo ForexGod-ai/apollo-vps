@@ -15,7 +15,7 @@
 |-----------|---------------|
 | **Rulează din 10 în 10 secunde?** | **Nu fix.** Default VPS = **30s**. **10s** doar când există pullback activ pe 4H/1H. **5s** când prețul e la <10 pips de FVG LTF. |
 | **Așteaptă confirmări în sync cu Daily?** | **Parțial.** Radar citește macro din JSON (Daily scrie). POI gate radar = **wick + preț**; scanner lifecycle = **preț only** → pot fi desincronizați. |
-| **Respectă strategia Glitch V45?** | **Da** — Trigger A+B post-CHoCH; PAS 2 blocat (V45.1); POI wick scanner sync. |
+| **Respectă strategia Glitch V45?** | **Da** — V46: entry POI + Premium/Discount 60–80%; fără gate ≤3 bare. |
 | **Verdict general** | **Production-ready** — P0 implementat; P1 observabilitate opțional. |
 
 ---
@@ -275,11 +275,35 @@ Referință: [`SMC_DETECTOR_AUDIT_IMPLEMENTATION_PLAN.md`](SMC_DETECTOR_AUDIT_IM
 | Wick Daily ∩ POI → pândă | `_poi_box_intersects_wick` + `validated=in_poi` | **PASS** |
 | P/D nu blochează pândă | `validated` fără `pd_passed` | **PASS** |
 | P/D blochează EXECUTE | `_pd_guard_passed` la arm | **PASS** |
-| CHoCH 4H body-close obligatoriu (fără BOS shortcut) | PAS 2 eliminat; Trigger B post-CHoCH | **PASS** |
+| CHoCH 4H body-close obligatoriu (fără BOS shortcut) | PAS 2 eliminat; CHoCH real obligatoriu | **PASS** |
+| Entry LTF = POI + retrace 60–80% (V46) | `_build_v46_choch_entry_analysis` — fără gate ≤3 bare | **PASS** |
 | 1H doar după 4H aliniat | `_is_4h_aligned_for_1h_entry` | **PASS** |
 | 1H nu înainte de touch POI | V43.8 chronology guard | **PASS** |
 | W1 out of radar | Absent din pipeline radar | **PASS** |
 | Body-close LTF | `detect_choch_and_bos` pe H4/H1 | **PASS** (post-V45 D1 body swings) |
+
+---
+
+## 8.1 V46 — Entry POI + Premium/Discount 60–80%
+
+**Flux instituțional:** Daily REVERSAL → pullback în POI (zile) → CHoCH 4H aliniat → retrace **60–80%** pe impulsul CHoCH → `EXECUTE_NOW`.
+
+**Poarta structurală LTF (singura):**
+
+```
+in_poi_daily
+AND choch_4h_aligned          # orice vârstă ≤72 bare (h4 lock)
+AND 0.60 <= retrace_pct <= 0.80
+AND pd_guard_passed           # Premium SHORT / Discount LONG
+```
+
+**Eliminat ca gate EXECUTE:** `_choch_bars_ago <= 3`, `_bos_trigger_bars_ago <= 3` (V31 sniper — incompatibil cu pullback Daily multi-zile).
+
+**Helperi:** `_choch_premium_discount_zone`, `_choch_impulse_retrace_pct`, `_build_v46_choch_entry_analysis`.
+
+**Câmpuri noi JSON:** `radar_4h_retrace_pct`, `radar_4h_in_poi_entry`.
+
+**Log debug:** `[V46 POI-PD] Impulse anchor: swing_broken X → break Y` + zonă 60–80%.
 
 ---
 

@@ -445,7 +445,7 @@ class TelegramNotifier:
                 f"📅 W1 Bias: <b>{w1_bias}</b> {w1_emoji}\n"
                 f"{trade_block}"
                 f"{sep}\n"
-                f"⏳ Așteptăm pullback în FVG 4H pentru entry final..."
+                f"⏳ Așteptăm pullback Premium/Discount 60–80% în POI Daily pentru entry final..."
             )
 
             chart_4h = None
@@ -765,9 +765,15 @@ class TelegramNotifier:
 
             fvg_line = ""
             if fvg_bot is not None and fvg_top is not None:
+                retrace_pct = setup_data.get('radar_4h_retrace_pct')
+                retrace_suffix = (
+                    f" | retrace {float(retrace_pct) * 100:.1f}%"
+                    if retrace_pct is not None else ""
+                )
                 fvg_line = (
-                    f"\n🎯 FVG {exec_tf}: <code>"
+                    f"\n🎯 Premium/Discount 60–80% {exec_tf}: <code>"
                     f"{format_telegram_fvg_range(symbol, fvg_bot, fvg_top)}</code>"
+                    f"{retrace_suffix}"
                 )
 
             msg = (

@@ -196,10 +196,16 @@ flowchart TD
 | -------------- | --------------------------------------------- | ----------------------------------- |
 | Structură D1   | CHoCH/BOS doar body close                     | `smc_detector.detect_choch_and_bos` |
 | Activare radar | Wick intersectează POI Daily → **pândă**      | `multi_tf_radar` + `daily_scanner`  |
-| Execuție LTF   | După CHoCH 4H aliniat Daily: Trigger A (CHoCH live) sau Trigger B (BOS post-CHoCH ratat) + pullback FVG | `analyze_timeframe` 4H |
+| Execuție LTF   | POI Daily + CHoCH 4H + retrace Premium/Discount **60–80%** pe impuls CHoCH (fără gate ≤3 bare) | `analyze_timeframe` 4H — V46 |
 
 
-### Gap-uri cod actual (V45.1 — implementat)
+### Gap-uri cod actual (V46 — implementat)
+
+1. ~~Gate ≤3 bare V31~~ → eliminat ca poartă EXECUTE; rămâne informativ în log.
+2. ~~Fibo 40–60%~~ → înlocuit cu Premium/Discount 60–80% pe impuls CHoCH.
+3. ~~`in_fvg` fără POI~~ → `in_poi_entry_zone` = POI + bandă 60–80%.
+
+### Gap-uri cod anterior (V45.1 — implementat)
 
 1. ~~POI wick~~ → `poi_utils.py` + scanner lifecycle.
 2. ~~PAS 2 BOS-as-CHoCH~~ → eliminat; CHoCH real obligatoriu.
@@ -223,7 +229,7 @@ stateDiagram-v2
 
     WaitingD1 --> Monitoring: wick intersecteaza POI Daily
     Monitoring --> Wait4H: scan 4H activ
-    Wait4H --> Execute: CHoCH 4H aliniat cu Daily bias
+    Wait4H --> Execute: CHoCH 4H + POI + retrace 60-80%
     Monitoring --> WaitingD1: pret pleaca fara CHoCH 4H
 ```
 
