@@ -134,19 +134,39 @@ def _price_in_poi_box(
     return lo <= float(price) <= hi
 
 
+def _poi_box_intersects_wick(
+    candle_high: Optional[float],
+    candle_low: Optional[float],
+    poi_bottom: Optional[float],
+    poi_top: Optional[float],
+) -> bool:
+    """V45: wick Daily intersectează POI — trigger radar pândă (nu schimbă clasificarea D1)."""
+    if poi_bottom is None or poi_top is None:
+        return False
+    if candle_high is None or candle_low is None:
+        return False
+    lo = min(float(poi_bottom), float(poi_top))
+    hi = max(float(poi_bottom), float(poi_top))
+    return float(candle_low) <= hi and float(candle_high) >= lo
+
+
 def _evaluate_v43_daily_zone(
     setup_data: dict,
     direction: str,
     current_price: float,
     poi_bottom: float,
     poi_top: float,
+    d1_wick_high: Optional[float] = None,
+    d1_wick_low: Optional[float] = None,
 ) -> dict:
     """
     V43.2 E3-T1/T3: POI box + Premium/Discount ADR din JSON.
     LONG = Discount (sub EQ 50% adr_hl–adr_ll); SHORT = Premium (peste EQ adr_ll–adr_lh).
     """
     sym = setup_data.get('symbol', '?')
-    in_poi = _price_in_poi_box(current_price, poi_bottom, poi_top)
+    in_poi_wick = _poi_box_intersects_wick(d1_wick_high, d1_wick_low, poi_bottom, poi_top)
+    in_poi_price = _price_in_poi_box(current_price, poi_bottom, poi_top)
+    in_poi = in_poi_wick or in_poi_price
     adr_lh = setup_data.get('adr_lh')
     adr_ll = setup_data.get('adr_ll')
     adr_hl = setup_data.get('adr_hl')
@@ -180,10 +200,10 @@ def _evaluate_v43_daily_zone(
     else:
         pd_reason = f'direcție invalidă: {direction}'
 
-    validated = in_poi and pd_passed
+    validated = in_poi
     if not in_poi:
         gate_reason = (
-            f"preț {current_price:.5f} în afara POI "
+            f"wick/preț în afara POI "
             f"[{min(poi_bottom, poi_top):.5f}–{max(poi_bottom, poi_top):.5f}]"
         )
     elif not pd_passed:
@@ -194,6 +214,7 @@ def _evaluate_v43_daily_zone(
     return {
         'validated': validated,
         'in_poi': in_poi,
+        'in_poi_wick': in_poi_wick,
         'pd_passed': pd_passed,
         'equilibrium': eq,
         'reason': gate_reason,
@@ -1499,7 +1520,8 @@ class MultiTFRadar:
         # CONTINUATION (Daily BOS): allow_bos=True — 4H BOS in directie = executie imediata
         # REVERSAL (Daily CHoCH): allow_bos=False — asteptam CHoCH de inversare pe 4H
         _strategy_type = str(setup_data.get('strategy_type', 'reversal')).lower()
-        _allow_bos_4h = (_strategy_type == 'continuation')  # True doar pentru trend continuation
+        # V45: în pândă post-POI — CHoCH 4H body-close obligatoriu (fără BOS 4H shortcut)
+        _allow_bos_4h = False
         # V19.4 FIX #4: prețul live este IMPERATIV — nu existe fallback silențios la daily_entry.
         # Dacă portul 8010 nu răspunde → RuntimeError explicit, prins de run_scan cu `continue`.
         current_price = self.get_current_price(symbol)
@@ -1516,9 +1538,20 @@ class MultiTFRadar:
 
         required_direction = 'bullish' if direction == 'LONG' else 'bearish'
 
-        # V43.2 E3-T1/T3: POI box strict + Premium/Discount ADR din JSON
+        _d1_wick_high = None
+        _d1_wick_low = None
+        try:
+            _df_d1_touch = self.get_historical_data(symbol, "D1", 3)
+            if _df_d1_touch is not None and not _df_d1_touch.empty:
+                _d1_wick_high = float(_df_d1_touch['high'].iloc[-1])
+                _d1_wick_low = float(_df_d1_touch['low'].iloc[-1])
+        except Exception:
+            pass
+
+        # V45: wick Daily ∩ POI → pândă radar; P/D = filtru execuție, nu gate scan
         _v43_zone = _evaluate_v43_daily_zone(
             setup_data, direction, current_price, daily_fvg_bottom, daily_fvg_top,
+            d1_wick_high=_d1_wick_high, d1_wick_low=_d1_wick_low,
         )
         daily_zone_validated = _v43_zone['validated']
         _track_mitigation_touch(setup_data, _v43_zone)
@@ -2053,7 +2086,7 @@ class MultiTFRadar:
             )
             return
         _macro_dir = 'bullish' if result.direction == 'LONG' else 'bearish'
-        _allow_bos = (str(setup.get('strategy_type', 'reversal')).lower() == 'continuation')
+        _allow_bos = False  # V45: CHoCH 4H obligatoriu în pândă
         if exec_tf == '1H' and not self._is_4h_aligned_for_1h_entry(
             result.tf_4h, _macro_dir, _allow_bos,
         ):

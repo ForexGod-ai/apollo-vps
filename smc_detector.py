@@ -169,6 +169,8 @@ class SMCDetector:
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     # V15.0 WEEKLY ANCHOR — W1 BIAS CALCULATOR (Body Close Rule)
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # W1 POLICY: INFORMATIV ONLY — apelat exclusiv din daily_scanner.py pentru Telegram/confidence.
+    # NU apela din pipeline-ul D1 de clasificare (_resolve_d1_leg, detect_choch_and_bos, detect_fvg).
     def calculate_w1_bias(self, df_w1: 'pd.DataFrame') -> dict:
         """
         Calculează W1 macro bias folosind EXCLUSIV Body Close (nu wick).
@@ -992,30 +994,18 @@ class SMCDetector:
                 return True
             return self._fvg_within_adr(fvg, dealing_range, orderflow_direction)
         
-        # METHOD 1: Strict 3-candle gap (classic FVG)
-        # 🔥 V8.0: BODY CLOSURE ONLY for FVG detection (ignore wicks completely)
-        body_highs = df[['open', 'close']].max(axis=1)
-        body_lows = df[['open', 'close']].min(axis=1)
-        
-        # ✅ V10.3 BUG#1 FIX: Memorie completă — scanăm de la CHoCH până la ultima bară
-        # Vechiul limit de 30 bare bloca FVG-urile mai recente; acum acoperim TOT intervalul CHoCH→prezent
+        # V45 METHOD 1 — wick-to-wick FVG (Pianul Pur); wick overlap = skip
         search_end = end_idx - 1
-        
-        # Need at least 2 candles after start_idx for i-1, i, i+1 pattern
+
         for i in range(start_idx + 1, search_end):
-            # 🔥 V8.1: ORDERFLOW ALIGNMENT - Search ONLY for FVGs matching orderflow direction
             if orderflow_direction == 'bullish':
-                # BULLISH ORDERFLOW: Search ONLY for BULLISH FVGs (demand zones below price)
-                # BULLISH FVG: body_high[i-1] < body_low[i+1] (gap up)
-                if body_highs.iloc[i - 1] < body_lows.iloc[i + 1]:
-                    gap_top = body_lows.iloc[i + 1]
-                    gap_bottom = body_highs.iloc[i - 1]
-                    
-                    # Validate gap size (must be significant)
+                if df['high'].iloc[i - 1] < df['low'].iloc[i + 1]:
+                    gap_top = df['low'].iloc[i + 1]
+                    gap_bottom = df['high'].iloc[i - 1]
                     gap_size = gap_top - gap_bottom
-                    if gap_size > 0 and (gap_size / gap_bottom) >= 0.0005:  # Min 0.05% gap
+                    if gap_size > 0 and (gap_size / gap_bottom) >= 0.0005:
                         fvg = FVG(
-                            index=i,  # Middle candle created the gap
+                            index=i,
                             direction='bullish',
                             top=gap_top,
                             bottom=gap_bottom,
@@ -1026,19 +1016,15 @@ class SMCDetector:
                         )
                         if _v43_adr_allows(fvg):
                             all_fvgs.append(fvg)
-            
+
             elif orderflow_direction == 'bearish':
-                # BEARISH ORDERFLOW: Search ONLY for BEARISH FVGs (supply zones above price)
-                # BEARISH FVG: body_low[i-1] > body_high[i+1] (gap down)
-                if body_lows.iloc[i - 1] > body_highs.iloc[i + 1]:
-                    gap_top = body_lows.iloc[i - 1]
-                    gap_bottom = body_highs.iloc[i + 1]
-                    
-                    # Validate gap size (must be significant)
+                if df['low'].iloc[i - 1] > df['high'].iloc[i + 1]:
+                    gap_top = df['low'].iloc[i - 1]
+                    gap_bottom = df['high'].iloc[i + 1]
                     gap_size = gap_top - gap_bottom
-                    if gap_size > 0 and (gap_size / gap_bottom) >= 0.0005:  # Min 0.05% gap
+                    if gap_size > 0 and (gap_size / gap_bottom) >= 0.0005:
                         fvg = FVG(
-                            index=i,  # Middle candle created the gap
+                            index=i,
                             direction='bearish',
                             top=gap_top,
                             bottom=gap_bottom,
@@ -1049,53 +1035,6 @@ class SMCDetector:
                         )
                         if _v43_adr_allows(fvg):
                             all_fvgs.append(fvg)
-
-        body_fvgs = list(all_fvgs)
-
-        # ✅ V10.7: METHOD 2 FALLBACK — Wick-to-Wick FVG dacă nu există body FVG
-        # Logică: dacă body_FVG pur nu există în intervalul complet CHoCH→prezent (100 bare V10.7), încearcă wick overlap
-        # Wick FVG = high[i-1] < low[i+1] (BULLISH) sau low[i-1] > high[i+1] (BEARISH)
-        # Mai permisiv dar valabil pentru piețele volatile/trending
-        if not all_fvgs:
-            for i in range(start_idx + 1, search_end):
-                if orderflow_direction == 'bullish':
-                    # WICK-BASED: high[i-1] < low[i+1]
-                    if df['high'].iloc[i - 1] < df['low'].iloc[i + 1]:
-                        gap_top = df['low'].iloc[i + 1]
-                        gap_bottom = df['high'].iloc[i - 1]
-                        gap_size = gap_top - gap_bottom
-                        if gap_size > 0 and (gap_size / gap_bottom) >= 0.0003:  # 0.03% min
-                            fvg = FVG(
-                                index=i,
-                                direction='bullish',
-                                top=gap_top,
-                                bottom=gap_bottom,
-                                middle=(gap_top + gap_bottom) / 2,
-                                candle_time=df['time'].iloc[i] if 'time' in df.columns else i,
-                                is_filled=False,
-                                associated_choch=choch
-                            )
-                            if _v43_adr_allows(fvg):
-                                all_fvgs.append(fvg)
-                elif orderflow_direction == 'bearish':
-                    # WICK-BASED: low[i-1] > high[i+1]
-                    if df['low'].iloc[i - 1] > df['high'].iloc[i + 1]:
-                        gap_top = df['low'].iloc[i - 1]
-                        gap_bottom = df['high'].iloc[i + 1]
-                        gap_size = gap_top - gap_bottom
-                        if gap_size > 0 and (gap_size / gap_bottom) >= 0.0003:
-                            fvg = FVG(
-                                index=i,
-                                direction='bearish',
-                                top=gap_top,
-                                bottom=gap_bottom,
-                                middle=(gap_top + gap_bottom) / 2,
-                                candle_time=df['time'].iloc[i] if 'time' in df.columns else i,
-                                is_filled=False,
-                                associated_choch=choch
-                            )
-                            if _v43_adr_allows(fvg):
-                                all_fvgs.append(fvg)
 
         all_found_fvgs = list(all_fvgs)
 
@@ -1166,7 +1105,7 @@ class SMCDetector:
             if v43_extra:
                 v43_block.update(v43_extra)
             audit_out.update({
-                "body_fvgs": [self.fvg_audit_entry(f) for f in body_fvgs],
+                "body_fvgs": [self.fvg_audit_entry(f) for f in all_found_fvgs],
                 "all_fvgs": [self.fvg_audit_entry(f) for f in all_found_fvgs],
                 "after_mitigation": [self.fvg_audit_entry(f) for f in after_mitigation_fvgs],
                 "pd_valid": [self.fvg_audit_entry(f) for f in pd_valid],
@@ -1297,212 +1236,6 @@ class SMCDetector:
         _fill_audit(None, "V16.1 no P/D valid — synthetic fallback", equilibrium, pd_valid_fvgs, [])
         return None
 
-    # ─── V9.0: Blocul orfan detect_choch_and_bos (fără def) + duplicatul V6.0 eliminate ───
-        
-        # Determine INITIAL trend from historical structure (older swings)
-        # Use swings from middle of data to establish baseline trend
-        mid_point = max(10, len(df) // 2)
-        historical_highs = [sh for sh in swing_highs if sh.index < mid_point]
-        historical_lows = [sl for sl in swing_lows if sl.index < mid_point]
-        
-        current_trend = None
-        if len(historical_highs) >= 2 and len(historical_lows) >= 2:
-            # Check if highs/lows were ascending or descending historically
-            h_ascending = historical_highs[-1].price > historical_highs[-2].price
-            l_ascending = historical_lows[-1].price > historical_lows[-2].price
-            
-            if h_ascending and l_ascending:
-                current_trend = 'bullish'
-            elif not h_ascending and not l_ascending:
-                current_trend = 'bearish'
-        
-        # Now look for RECENT BREAKS of swing points (last 30 candles)
-        recent_start = max(0, len(df) - 30)
-        
-        # Combine all swings and sort by index
-        all_swings = []
-        for sh in swing_highs:
-            all_swings.append(('high', sh))
-        for sl in swing_lows:
-            all_swings.append(('low', sl))
-        all_swings.sort(key=lambda x: x[1].index)
-        
-        # Process swings and look for breaks AFTER each swing
-        for i, (swing_type, swing) in enumerate(all_swings):
-            # Look for price breaks AFTER this swing point
-            break_start = swing.index + 1
-            break_end = min(swing.index + 40, len(df))  # V16 FIX (B6): 20→40 bare — prinde CHoCH-uri lente
-            
-            if break_end <= break_start:
-                continue
-            
-            for j in range(break_start, break_end):
-                # 🔥 V8.1 CRITICAL FIX: STRICT BODY CLOSURE for CHoCH/BOS detection
-                # Use BODY HIGH/LOW (not close or wicks) to validate structure breaks
-                # Body = max(open, close) for highs, min(open, close) for lows
-                body_high = max(df['open'].iloc[j], df['close'].iloc[j])
-                body_low = min(df['open'].iloc[j], df['close'].iloc[j])
-                
-                if swing_type == 'high':
-                    # Check if BODY BROKE ABOVE this swing high (ignore wicks!)
-                    if body_high > swing.price:
-                        # Price broke a high = BULLISH signal
-                        if current_trend == 'bearish':
-                            # VALIDATION: Was structure truly bearish before break?
-                            # Need BOTH LH and LL patterns (strong bearish structure)
-                            recent_highs = [s for s in swing_highs if s.index <= swing.index][-3:]
-                            recent_lows = [s for s in swing_lows if s.index <= swing.index][-3:]
-                            
-                            lh_pattern = False
-                            ll_pattern = False
-                            
-                            # Check for LH (lower highs)
-                            if len(recent_highs) >= 2:
-                                lh_pattern = recent_highs[-1].price < recent_highs[-2].price
-                            
-                            # Check for LL (lower lows)
-                            if len(recent_lows) >= 2:
-                                ll_pattern = recent_lows[-1].price < recent_lows[-2].price
-                            
-                            # STRICT VALIDATION: CHoCH requires BOTH LH AND LL patterns
-                            # This ensures we only detect TRUE structure changes (REVERSAL)
-                            # If only one pattern exists → it's BOS, not CHoCH!
-                            if lh_pattern and ll_pattern:  # AND - both patterns required!
-                                # POST-BREAK VALIDATION: Check if price CONFIRMS the change
-                                # Look for swings AFTER the break to confirm HH or HL
-                                swings_after_break = [s for s in swing_highs if s.index > j] + \
-                                                    [s for s in swing_lows if s.index > j]
-                                
-                                # Fix #3: Guilty until proven innocent — confirmat DOAR dacă
-                                # există cel puțin un swing valid format DUPĂ spargerea structurii.
-                                confirmed = False  # Fix #3: Default FALSE — nu mai asumăm CHoCH
-                                
-                                # If we have recent data after break, validate confirmation
-                                if len(swings_after_break) >= 1:
-                                    # Check if any HIGH after break is Higher High
-                                    highs_after = [s for s in swing_highs if s.index > j]
-                                    lows_after = [s for s in swing_lows if s.index > j]
-                                    
-                                    # For BULLISH CHoCH: need HH or HL after break
-                                    if len(highs_after) >= 1:
-                                        # Is there a Higher High?
-                                        if any(h.price > swing.price for h in highs_after):
-                                            confirmed = True
-                                    if not confirmed and len(lows_after) >= 1 and len(recent_lows) >= 1:
-                                        # Is there a Higher Low?
-                                        if any(l.price > recent_lows[-1].price for l in lows_after):
-                                            confirmed = True
-                                
-                                if confirmed:
-                                    # WHIPSAW PROTECTION: Minimum 10 candles between CHoCH
-                                    if chochs and (j - chochs[-1].index) < 10:
-                                        continue  # Skip this CHoCH, too close to previous one
-                                    
-                                    chochs.append(CHoCH(
-                                        index=j,
-                                        direction='bullish',
-                                        break_price=swing.price,
-                                        previous_trend='bearish',
-                                        candle_time=df['time'].iloc[j] if 'time' in df.columns else j,
-                                        swing_broken=swing
-                                    ))
-                                    current_trend = 'bullish'
-                        elif current_trend == 'bullish':
-                            # Already bullish, breaking another high → BOS
-                            bos_list.append(BOS(
-                                index=j,
-                                direction='bullish',
-                                break_price=swing.price,
-                                candle_time=df['time'].iloc[j] if 'time' in df.columns else j,
-                                swing_broken=swing
-                            ))
-                        else:
-                            # First trend establishment
-                            current_trend = 'bullish'
-                        break  # Only count first break
-                
-                elif swing_type == 'low':
-                    # Check if BODY BROKE BELOW this swing low (ignore wicks!)
-                    if body_low < swing.price:
-                        # Price broke a low = BEARISH signal
-                        if current_trend == 'bullish':
-                            # VALIDATION: Was structure truly bullish before break?
-                            # Need BOTH HH and HL patterns (strong bullish structure)
-                            recent_highs = [s for s in swing_highs if s.index <= swing.index][-3:]
-                            recent_lows = [s for s in swing_lows if s.index <= swing.index][-3:]
-                            
-                            hh_pattern = False
-                            hl_pattern = False
-                            
-                            # Check for HH (higher highs)
-                            if len(recent_highs) >= 2:
-                                hh_pattern = recent_highs[-1].price > recent_highs[-2].price
-                            
-                            # Check for HL (higher lows)
-                            if len(recent_lows) >= 2:
-                                hl_pattern = recent_lows[-1].price > recent_lows[-2].price
-                            
-                            # STRICT VALIDATION: CHoCH requires BOTH HH AND HL patterns
-                            # This ensures we only detect TRUE structure changes (REVERSAL)
-                            # If only one pattern exists → it's BOS, not CHoCH!
-                            if hh_pattern and hl_pattern:  # AND - both patterns required!
-                                # POST-BREAK VALIDATION: Check if price CONFIRMS the change
-                                # Look for swings AFTER the break to confirm LH or LL
-                                swings_after_break = [s for s in swing_highs if s.index > j] + \
-                                                    [s for s in swing_lows if s.index > j]
-                                
-                                # Fix #3: Guilty until proven innocent — confirmat DOAR dacă
-                                # există cel puțin un swing valid format DUPĂ spargerea structurii.
-                                confirmed = False  # Fix #3: Default FALSE — nu mai asumăm CHoCH
-                                
-                                # If we have recent data after break, validate confirmation
-                                if len(swings_after_break) >= 1:
-                                    # Check if any LOW after break is Lower Low
-                                    highs_after = [s for s in swing_highs if s.index > j]
-                                    lows_after = [s for s in swing_lows if s.index > j]
-                                    
-                                    # For BEARISH CHoCH: need LL or LH after break
-                                    if len(lows_after) >= 1:
-                                        # Is there a Lower Low?
-                                        if any(l.price < swing.price for l in lows_after):
-                                            confirmed = True
-                                    if not confirmed and len(highs_after) >= 1 and len(recent_highs) >= 1:
-                                        # Is there a Lower High?
-                                        if any(h.price < recent_highs[-1].price for h in highs_after):
-                                            confirmed = True
-                                
-                                if confirmed:
-                                    # WHIPSAW PROTECTION: Minimum 10 candles between CHoCH
-                                    if chochs and (j - chochs[-1].index) < 10:
-                                        continue  # Skip this CHoCH, too close to previous one
-                                    
-                                    chochs.append(CHoCH(
-                                        index=j,
-                                        direction='bearish',
-                                        break_price=swing.price,
-                                        previous_trend='bullish',
-                                        candle_time=df['time'].iloc[j] if 'time' in df.columns else j,
-                                        swing_broken=swing
-                                    ))
-                                    current_trend = 'bearish'
-                        elif current_trend == 'bearish':
-                            # Already bearish, breaking another low → BOS
-                            bos_list.append(BOS(
-                                index=j,
-                                direction='bearish',
-                                break_price=swing.price,
-                                candle_time=df['time'].iloc[j] if 'time' in df.columns else j,
-                                swing_broken=swing
-                            ))
-                        else:
-                            # First trend establishment
-                            current_trend = 'bearish'
-                        break  # Only count first break
-        
-        # ⚡ V13.1: Stochează în cache înainte de return
-        self._choch_bos_cache[_cache_key] = (chochs, bos_list)
-        return chochs, bos_list
-    
     def detect_swing_highs(self, df: pd.DataFrame) -> List[SwingPoint]:
         """🎯 GLITCH IN MATRIX - MACRO SWING DETECTION V24.0 (ORGANIC PIVOT)
 
@@ -1550,26 +1283,24 @@ class SMCDetector:
         except Exception:
             pass  # index non-timestamp (RangeIndex, backtesting) → fallback 2
         swing_highs = []
-        wick_highs = df['high']
+        body_highs = df[['open', 'close']].max(axis=1)
 
         for i in range(FRACTAL_WINDOW, len(df) - FRACTAL_WINDOW):
-            current_high = wick_highs.iloc[i]
+            current_high = body_highs.iloc[i]
 
             left_check = all(
-                current_high > wick_highs.iloc[i - j]
+                current_high > body_highs.iloc[i - j]
                 for j in range(1, FRACTAL_WINDOW + 1)
             )
             right_check = all(
-                current_high > wick_highs.iloc[i + j]
+                current_high > body_highs.iloc[i + j]
                 for j in range(1, FRACTAL_WINDOW + 1)
             )
 
             if left_check and right_check:
-                # ✅ Pivot geometric valid — wick absolut real al pieței
-                # Rămâne în memorie PERMANENT până când prețul îl sparge (Body Close)
                 swing_highs.append(SwingPoint(
                     index=i,
-                    price=current_high,
+                    price=float(current_high),
                     swing_type='high',
                     candle_time=df.index[i] if not isinstance(df.index, pd.RangeIndex) else i
                 ))
@@ -1577,128 +1308,6 @@ class SMCDetector:
         # ⚡ V13.1: Stochează în cache înainte de return
         self._swing_highs_cache[_cache_key] = swing_highs
         return swing_highs
-
-    def detect_structure_bos_driven(self, df: pd.DataFrame) -> Tuple[List[SwingPoint], List[SwingPoint]]:
-        """🎯 V18.0 BOS-DRIVEN SWING DETECTION — ФорексГод
-
-        FILOZOFIE: Un swing high/low devine VALID retroactiv când piața îl confirmă
-        prin body close opus. Nu numărăm bare stânga/dreapta — piața decide.
-
-        ALGORITM în 2 pași:
-        Pas 1 — ZigZag 1-bar: găsim TOATE punctele de întoarcere locale
-                 body_high[i] > body_high[i-1] AND body_high[i] >= body_high[i+1] = pivot HIGH
-                 body_low[i]  < body_low[i-1]  AND body_low[i]  <= body_low[i+1]  = pivot LOW
-                 (1 bară confirmare = piața s-a întors)
-
-        Pas 2 — Structural filtering: din pivoti, păstrăm doar cei STRUCTURALI
-                 High structural = pivot high care a fost RUPt CU BODY (BOS confirmat)
-                 Low structural  = ultimul HL / LL înainte de acel BOS
-
-        REZULTAT: swinguri structurale reale, identice cu lectura manuală SMC.
-        """
-        if df is None or len(df) < 4:
-            return [], []
-
-        body_highs = df[['open', 'close']].max(axis=1).values
-        body_lows  = df[['open', 'close']].min(axis=1).values
-        times = df.index if not isinstance(df.index, pd.RangeIndex) else list(range(len(df)))
-
-        # ── PAS 1: ZigZag — găsim toți pivotii locali (1-bar confirmare) ──
-        raw_pivots = []  # list of ('high'/'low', idx, price)
-
-        for i in range(1, len(df) - 1):
-            bh_prev, bh_curr, bh_next = body_highs[i-1], body_highs[i], body_highs[i+1]
-            bl_prev, bl_curr, bl_next = body_lows[i-1],  body_lows[i],  body_lows[i+1]
-
-            is_pivot_high = (bh_curr >= bh_prev) and (bh_curr >= bh_next)
-            is_pivot_low  = (bl_curr <= bl_prev) and (bl_curr <= bl_next)
-
-            if is_pivot_high and not is_pivot_low:
-                raw_pivots.append(('high', i, bh_curr))
-            elif is_pivot_low and not is_pivot_high:
-                raw_pivots.append(('low', i, bl_curr))
-            # Dacă ambele (inside bar extremes) — îl ignorăm, prea ambiguu
-
-        if len(raw_pivots) < 2:
-            return [], []
-
-        # ── PAS 2: Curățăm zigzag-ul — alternare strict high/low ──
-        # Dacă avem 2 high-uri consecutive, păstrăm cel mai înalt. La fel pentru low.
-        clean_pivots = [raw_pivots[0]]
-        for pt in raw_pivots[1:]:
-            last = clean_pivots[-1]
-            if pt[0] == last[0]:
-                # Același tip — păstrăm extremul
-                if pt[0] == 'high' and pt[2] > last[2]:
-                    clean_pivots[-1] = pt
-                elif pt[0] == 'low' and pt[2] < last[2]:
-                    clean_pivots[-1] = pt
-            else:
-                clean_pivots.append(pt)
-
-        # ── PAS 3: Din pivoti curați, identificăm swing-urile structurale ──
-        # Un swing high e structural dacă un pivot high ulterior îl depășește (BOS bullish)
-        # Un swing low e structural dacă un pivot low ulterior îl coboară (BOS bearish)
-        swing_highs: List[SwingPoint] = []
-        swing_lows:  List[SwingPoint] = []
-
-        if len(clean_pivots) < 3:
-            # Prea puțini pivoti — returnăm ce avem
-            for ptype, pidx, pprice in clean_pivots:
-                sp = SwingPoint(index=pidx, price=pprice, swing_type=ptype,
-                                candle_time=times[pidx])
-                if ptype == 'high':
-                    swing_highs.append(sp)
-                else:
-                    swing_lows.append(sp)
-            return swing_highs, swing_lows
-
-        # Grupăm highs și lows separat pentru comparație High-vs-High, Low-vs-Low
-        pivot_highs = [(pidx, pprice) for ptype, pidx, pprice in clean_pivots if ptype == 'high']
-        pivot_lows  = [(pidx, pprice) for ptype, pidx, pprice in clean_pivots if ptype == 'low']
-
-        # Marcam highs structurale (cele rupte de un high ulterior = BOS bullish)
-        # Primul high e mereu structural (referință inițială)
-        structural_high_indices = set()
-        if pivot_highs:
-            structural_high_indices.add(pivot_highs[0][0])
-            last_high_price = pivot_highs[0][1]
-            for i in range(1, len(pivot_highs)):
-                pidx, pprice = pivot_highs[i]
-                if pprice > last_high_price:
-                    # BOS bullish — high-ul anterior devine structural
-                    structural_high_indices.add(pivot_highs[i-1][0])
-                    last_high_price = pprice
-                # Ultimul high e mereu structural (referință curentă)
-            structural_high_indices.add(pivot_highs[-1][0])
-
-        # Marcam lows structurale (cele rupte de un low ulterior = BOS bearish)
-        structural_low_indices = set()
-        if pivot_lows:
-            structural_low_indices.add(pivot_lows[0][0])
-            last_low_price = pivot_lows[0][1]
-            for i in range(1, len(pivot_lows)):
-                pidx, pprice = pivot_lows[i]
-                if pprice < last_low_price:
-                    # BOS bearish — low-ul anterior devine structural
-                    structural_low_indices.add(pivot_lows[i-1][0])
-                    last_low_price = pprice
-            structural_low_indices.add(pivot_lows[-1][0])
-
-        # Construim listele finale
-        for ptype, pidx, pprice in clean_pivots:
-            if ptype == 'high' and pidx in structural_high_indices:
-                swing_highs.append(SwingPoint(
-                    index=pidx, price=pprice, swing_type='high',
-                    candle_time=times[pidx]
-                ))
-            elif ptype == 'low' and pidx in structural_low_indices:
-                swing_lows.append(SwingPoint(
-                    index=pidx, price=pprice, swing_type='low',
-                    candle_time=times[pidx]
-                ))
-
-        return swing_highs, swing_lows
 
     def detect_swing_lows(self, df: pd.DataFrame) -> List[SwingPoint]:
         """🎯 GLITCH IN MATRIX - MACRO SWING DETECTION V24.0 (ORGANIC PIVOT)
@@ -1736,26 +1345,24 @@ class SMCDetector:
         except Exception:
             pass
         swing_lows = []
-        wick_lows = df['low']
+        body_lows = df[['open', 'close']].min(axis=1)
 
         for i in range(FRACTAL_WINDOW, len(df) - FRACTAL_WINDOW):
-            current_low = wick_lows.iloc[i]
+            current_low = body_lows.iloc[i]
 
             left_check = all(
-                current_low < wick_lows.iloc[i - j]
+                current_low < body_lows.iloc[i - j]
                 for j in range(1, FRACTAL_WINDOW + 1)
             )
             right_check = all(
-                current_low < wick_lows.iloc[i + j]
+                current_low < body_lows.iloc[i + j]
                 for j in range(1, FRACTAL_WINDOW + 1)
             )
 
             if left_check and right_check:
-                # ✅ Pivot geometric valid — wick absolut real al pieței
-                # Rămâne în memorie PERMANENT până când prețul îl sparge (Body Close)
                 swing_lows.append(SwingPoint(
                     index=i,
-                    price=current_low,
+                    price=float(current_low),
                     swing_type='low',
                     candle_time=df.index[i] if not isinstance(df.index, pd.RangeIndex) else i
                 ))
@@ -2505,17 +2112,34 @@ class SMCDetector:
         chochs: List[CHoCH],
         bos_list: List,
     ) -> Optional[CHoCH]:
-        """V42.5: authoritative leg CHoCH — ignore opposite micro-CHoCH pullback noise."""
+        """V45: authoritative leg = last CHoCH unless opposite micro-CHoCH is pullback noise."""
         if not chochs:
             return None
         if len(chochs) == 1:
             return chochs[0]
+
         last = chochs[-1]
+
         for i in range(len(chochs) - 2, -1, -1):
             candidate = chochs[i]
-            if candidate.direction != last.direction:
-                if self._leg_choch_still_valid(df, candidate, bos_list):
-                    return candidate
+            if candidate.direction == last.direction:
+                continue
+            if last.index <= candidate.index:
+                continue
+            if not self._leg_choch_still_valid(df, candidate, bos_list):
+                return last
+            bos_on_candidate_after_last = [
+                b for b in bos_list
+                if b.index > last.index and b.direction == candidate.direction
+            ]
+            bos_on_last_dir = [
+                b for b in bos_list
+                if b.index > last.index and b.direction == last.direction
+            ]
+            if bos_on_candidate_after_last and not bos_on_last_dir:
+                return candidate
+            return last
+
         return last
 
     def _expansion_bos_confirms_new_range(
@@ -2581,14 +2205,21 @@ class SMCDetector:
 
         Returns: (latest_signal, strategy_type, current_trend, leg_choch)
         """
-        # V40 breakdown: close sub LL → LOCK BEARISH are prioritate față de leg bullish vechi
+        # V40 breakdown: close sub LL → LOCK BEARISH — unless bullish CHoCH post-LL flipped structure (V45)
         if (
             range_state is not None
             and range_state.locked
             and range_state.locked_bias == 'bearish'
         ):
             close = float(df['close'].iloc[-1])
-            if close <= range_state.macro_range_low:
+            _ll = float(range_state.macro_range_low)
+            _last_choch = chochs[-1] if chochs else None
+            _bullish_flip = (
+                _last_choch is not None
+                and _last_choch.direction == 'bullish'
+                and _last_choch.index >= range_state.macro_range_low_bar
+            )
+            if close <= _ll and not _bullish_flip:
                 bearish_bos = [b for b in bos_list if b.direction == 'bearish']
                 bearish_chochs = [c for c in chochs if c.direction == 'bearish']
                 if bearish_bos:
@@ -2596,7 +2227,7 @@ class SMCDetector:
                     leg_choch = bearish_chochs[-1] if bearish_chochs else None
                     msg = (
                         f"   🔒 [V40→V42.5] breakdown below LL "
-                        f"{range_state.macro_range_low:.2f} — LOCK BEARISH overrides leg "
+                        f"{_ll:.2f} — LOCK BEARISH overrides leg "
                         f"→ BOS @bar{latest_signal.index}"
                     )
                     print(msg)
@@ -2605,11 +2236,16 @@ class SMCDetector:
                     leg_choch = bearish_chochs[-1]
                     msg = (
                         f"   🔒 [V40→V42.5] breakdown below LL "
-                        f"{range_state.macro_range_low:.2f} — LOCK BEARISH overrides leg "
+                        f"{_ll:.2f} — LOCK BEARISH overrides leg "
                         f"→ CHoCH @bar{leg_choch.index}"
                     )
                     print(msg)
                     return leg_choch, 'reversal', 'bearish', leg_choch
+            elif _bullish_flip and close <= _ll:
+                print(
+                    f"   📐 [V45 FLIP] bullish CHoCH @bar{_last_choch.index} post-LL {_ll:.2f} "
+                    f"— V40 bearish lock superseded"
+                )
 
         leg_choch = self._find_leg_choch(df, chochs, bos_list)
 
@@ -2701,17 +2337,6 @@ class SMCDetector:
                     )
                 )
             return latest_signal, strategy_type, current_trend, leg_choch
-
-        # V44.1 NEW RANGE — single expansion BOS confirms HL→HH / LH→LL dealing range
-        if same_dir_bos:
-            latest_bos = same_dir_bos[-1]
-            if self._expansion_bos_confirms_new_range(df, leg_choch, latest_bos):
-                print(
-                    f"   📐 [V44.1 NEW RANGE] continuation — leg CHoCH {leg_choch.direction.upper()} "
-                    f"@bar{leg_choch.index}, expansion BOS @bar{latest_bos.index} "
-                    f"→ new dealing range confirmed"
-                )
-                return latest_bos, 'continuation', leg_choch.direction, leg_choch
 
         # GBPJPY / GBPNZD: reversal leg — anchor on leg CHoCH, wait pullback AOI + LTF
         if debug:
@@ -3407,6 +3032,7 @@ class SMCDetector:
                 best_bar = pos
         return best_high, best_bar
 
+    # W1 POLICY: INFORMATIV ONLY — nu respinge setup-uri Daily; doar annotare confidence.
     def apply_w1_gate(self, setup: Optional['TradeSetup'], w1_bias: str) -> Optional['TradeSetup']:
         """
         V40.3 W1 PURE INFORMATIVE — nu respinge și nu degradează setup-uri Daily.
