@@ -700,6 +700,90 @@ class UnifiedRiskManager:
         """V39.1: Colonel /resume sau force_bypass_loss_limit din JSON."""
         return self._manual_resume_active() or self._force_bypass_loss_limit_active()
 
+    def compute_lot_size(
+        self,
+        symbol: str,
+        entry_price: float,
+        stop_loss: float,
+        risk_override_percent: float = None,
+        balance: float = None,
+    ) -> float:
+        """
+        V48: Single source of truth for lot sizing — no gates, no side effects.
+        Used by setup_executor preview, Guard#3 sentinel, and validate_new_trade().
+        """
+        if entry_price <= 0 or stop_loss <= 0:
+            return 0.01
+        if balance is None or balance <= 0:
+            _, balance = self.get_account_balance()
+        if balance <= 0:
+            balance = float(os.getenv('ACCOUNT_BALANCE', 1336))
+
+        effective_risk_pct = (
+            risk_override_percent if risk_override_percent is not None else self.risk_per_trade
+        )
+        risk_amount = balance * (effective_risk_pct / 100.0)
+        sl_distance = abs(entry_price - stop_loss)
+        symbol_clean = symbol.upper().replace(' ', '').replace('/', '')
+
+        if 'BTC' in symbol_clean:
+            pip_size = 1.0
+            pip_value = 1.0
+        elif any(x in symbol_clean for x in ['ETH', 'XRP', 'LTC', 'ADA']):
+            pip_size = 1.0
+            pip_value = 1.0
+        elif any(x in symbol_clean for x in ['XAU', 'XAG', 'GOLD', 'SILVER']):
+            pip_size = 0.01
+            pip_value = 10.0
+        elif 'JPY' in symbol_clean:
+            pip_size = 0.01
+            pip_value = self._get_pip_value(symbol)
+        elif any(x in symbol_clean for x in ['XTI', 'WTI', 'OIL']):
+            pip_size = 0.01
+            pip_value = 10.0
+        else:
+            pip_size = 0.0001
+            pip_value = self._get_pip_value(symbol)
+
+        sl_pips = sl_distance / pip_size
+        if sl_pips <= 0:
+            return 0.01
+
+        lot_size = risk_amount / (sl_pips * pip_value)
+        lot_size = round(lot_size, 2)
+        min_lot = self.config['lot_size']['min_lot']
+        max_lot = self.config['lot_size']['max_lot']
+        lot_size = max(min_lot, min(lot_size, max_lot))
+        if lot_size < 0.01:
+            lot_size = 0.01
+        return lot_size
+
+    def estimate_loss_at_sl(
+        self,
+        symbol: str,
+        entry_price: float,
+        stop_loss: float,
+        lot_size: float,
+    ) -> float:
+        """V48: USD loss if SL hit (for Guard#3 sentinel)."""
+        if entry_price <= 0 or stop_loss <= 0 or lot_size <= 0:
+            return 0.0
+        symbol_clean = symbol.upper().replace(' ', '').replace('/', '')
+        sl_distance = abs(entry_price - stop_loss)
+        if 'BTC' in symbol_clean or any(x in symbol_clean for x in ['ETH', 'XRP', 'LTC', 'ADA']):
+            return lot_size * sl_distance
+        if any(x in symbol_clean for x in ['XAU', 'XAG', 'GOLD', 'SILVER', 'XTI', 'WTI', 'OIL']):
+            pip_size = 0.01
+            pip_value = 10.0
+        elif 'JPY' in symbol_clean:
+            pip_size = 0.01
+            pip_value = self._get_pip_value(symbol)
+        else:
+            pip_size = 0.0001
+            pip_value = self._get_pip_value(symbol)
+        sl_pips = sl_distance / pip_size if pip_size > 0 else 0
+        return lot_size * sl_pips * pip_value
+
     def validate_new_trade(self, symbol="", direction="", entry_price=0, stop_loss=0,
                            risk_override_percent: float = None):
         """
@@ -791,78 +875,24 @@ class UnifiedRiskManager:
         if not _resume_override and daily_loss_pct <= -self.daily_warning_pct:
             self._send_warning_alert(daily_loss_pct, balance, pnl['total_pnl'])
         
-        # 4. Calculate lot size - CASH RISK ALIGNMENT (The $200 Rule)
+        # 4. Calculate lot size — V48: delegated to compute_lot_size()
         if entry_price > 0 and stop_loss > 0:
-            # ✅ V8.1 BULLETPROOF: Robust lot calculation for $200 risk
-            # V14.1: Use risk_override_percent if provided (e.g. Entry 2 scale-in = 7.5%)
-            effective_risk_pct = risk_override_percent if risk_override_percent is not None else self.risk_per_trade
+            effective_risk_pct = (
+                risk_override_percent if risk_override_percent is not None else self.risk_per_trade
+            )
+            lot_size = self.compute_lot_size(
+                symbol, entry_price, stop_loss, effective_risk_pct, balance=balance,
+            )
             risk_amount = balance * (effective_risk_pct / 100.0)
             sl_distance = abs(entry_price - stop_loss)
-            
-            # 🚨 V8.1 BULLETPROOF: Clean symbol for robust detection
-            symbol_clean = symbol.upper().replace(' ', '').replace('/', '')
-            
-            if 'BTC' in symbol_clean:
-                # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-                # V14.0 BTCUSD DYNAMIC LOT — cTrader Crypto Contract
-                # cTrader: 1 lot BTC = 1 BTC. pip_size = 1 USD.
-                # pip_value = entry_price / 1 (BTC moves 1$ → P&L = lot_size × $1)
-                # Formula: lot = risk_amount / sl_distance_in_USD
-                # Example: $230 risk / $2000 SL = 0.115 lots
-                # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-                pip_size = 1.0   # $1 = 1 pip on BTC
-                pip_value = 1.0  # $1 P&L per standard lot per $1 BTC move
-            elif any(x in symbol_clean for x in ['ETH', 'XRP', 'LTC', 'ADA']):
-                # Other crypto: same model as BTC
-                pip_size = 1.0
-                pip_value = 1.0
-            elif any(x in symbol_clean for x in ['XAU', 'XAG', 'GOLD', 'SILVER']):
-                # Metals: pip at 2nd decimal
-                pip_size = 0.01
-                pip_value = 10.0
-            elif 'JPY' in symbol_clean:
-                # Fix #8: JPY pairs — pip_value dinamic (1000 JPY / USDJPY rate)
-                pip_size = 0.01
-                pip_value = self._get_pip_value(symbol)
-            elif any(x in symbol_clean for x in ['XTI', 'WTI', 'OIL']):
-                # Oil: pip at 2nd decimal
-                pip_size = 0.01
-                pip_value = 10.0
-            else:
-                # Fix #8: Standard/cross forex — pip_value dinamic per quote currency
-                pip_size = 0.0001
-                pip_value = self._get_pip_value(symbol)
-            
-            # Calculate lot size: risk_amount / (SL_distance_in_price * pip_value_per_unit)
-            sl_pips = sl_distance / pip_size
-            
-            if sl_pips > 0:
-                # Formula: LotSize = Risk_Amount / (SL_Distance_in_Price * Pip_Value)
-                lot_size = risk_amount / (sl_pips * pip_value)
-                lot_size = round(lot_size, 2)
-                
-                # Apply limits
-                min_lot = self.config['lot_size']['min_lot']
-                max_lot = self.config['lot_size']['max_lot']
-                lot_size = max(min_lot, min(lot_size, max_lot))
-                
-                # 🚨 CRITICAL: Force minimum 0.01 lots to prevent BadVolume
-                # Especially for small accounts (<$1000) on BTC with large SL
-                if lot_size < 0.01:
-                    print(f"⚠️  Lot size {lot_size:.4f} below broker minimum - forcing to 0.01")
-                    lot_size = 0.01
-                
-                # ✅ Logging for debugging
-                print(f"\n[LOT CALCULATION] {symbol}")
-                print(f"   Risk Amount: ${risk_amount:.2f} ({effective_risk_pct:.1f}%)")
-                print(f"   SL Distance: {sl_distance:.5f} ({sl_pips:.1f} pips)")
-                print(f"   Pip Value: ${pip_value:.2f}")
-                print(f"   Calculated Lot: {lot_size:.2f}")
-                
-                result['lot_size'] = lot_size
-            else:
-                result['lot_size'] = 0.01
-                print(f"⚠️  Invalid SL distance, defaulting to 0.01 lots")
+            print(f"\n[LOT CALCULATION] {symbol}")
+            print(f"   Risk Amount: ${risk_amount:.2f} ({effective_risk_pct:.1f}%)")
+            print(f"   SL Distance: {sl_distance:.5f}")
+            print(f"   Calculated Lot: {lot_size:.2f}")
+            result['lot_size'] = lot_size
+        else:
+            result['lot_size'] = 0.01
+            print(f"⚠️  Invalid SL distance, defaulting to 0.01 lots")
         
         # All checks passed
         result['approved'] = True

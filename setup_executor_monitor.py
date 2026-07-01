@@ -1,18 +1,11 @@
 """
-Setup Executor Monitor — V43.3 Radar-only execution layer
+Setup Executor Monitor — V48 Production Hardening
 
-Arhitectura 3 straturi (Apollo / Glitch in Matrix):
-1. daily_scanner.py + smc_detector.scan_for_setup() → monitoring_setups.json + Telegram
-2. multi_tf_radar.py → EXECUTE_NOW, h4_structure_locked, radar_* FVG
-3. setup_executor_monitor.py (acest script) → signals.json → cTrader VPS port 8010
-
-V43.3 EXECUTOR (Etapa 4):
-- Singura poarta de intrare: EXECUTE_NOW=True (Radar) — calea status=READY eliminata
-- SL live: tightest pivot 1H/4H (trigger TF = nearest pivot)
-- TP macro: adr_lh (SHORT) / adr_ll (LONG) din JSON; fallback V40.8 daca ADR lipseste
-- Sentinela _final_safety_check: RR net >= 1:2, SL cap, capital guard, h4_structure_locked
-
-Ciclu: citeste monitoring_setups.json la ~5s, merge-safe write-back, anti-duplicate broker guard.
+V48 (plan SYSTEM_PRODUCTION_AND_EXECUTOR_AUDIT):
+- Fail-hard live OHLC on EXECUTE_NOW (no stale cache)
+- Spread guard via /price:8010 — gate before execute_trade()
+- Single lot source: unified_risk_manager.compute_lot_size()
+- SL on executing TF (1H/4H); TP on live D1 only
 """
 # Windows VPS fix: force UTF-8 stdout to prevent UnicodeEncodeError on emoji
 import sys as _sys, io as _io, re as _re
@@ -173,14 +166,8 @@ from ctrader_cbot_client import CTraderCBotClient
 from ctrader_executor import CTraderExecutor
 from telegram_notifier import TelegramNotifier
 from daily_scanner import CTraderDataProvider
-from smc_detector import (
-    SMCDetector,
-    TradeSetup,
-    CHoCH,
-    FVG,
-    get_4h_body_close_confirmation,  # ✅ V10.6 FUNCȚIE UNIFICATĂ — același creier ca scanner-ul
-)
-from pip_utils import get_pip_size, get_max_sl_pips, MIN_SL_PIPS, sl_pips_between, liquidity_already_swept
+from smc_detector import SMCDetector
+from pip_utils import get_pip_size, get_max_sl_pips, MIN_SL_PIPS, sl_pips_between
 from news_calendar_utils import (
     load_high_impact_events,
     get_affected_currencies,
@@ -199,18 +186,6 @@ from signal_cache import (
     get_signal_cache,
     get_telegram_debouncer
 )
-
-
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# V16.3 EQUILIBRIUM BUFFER
-# Toleranță directională față de nivelul 50% Equilibrium al impulsului CHoCH.
-# Scop: permite execuția chiar dacă prețul nu a atins exact fibo_50,
-#       ci a fost cu până la 3 pips deasupra EQ (LONG) / sub EQ (SHORT).
-# Formula pip:
-#   JPY: EQUILIBRIUM_BUFFER_PIPS * 0.01
-#   Standard forex: EQUILIBRIUM_BUFFER_PIPS * 0.0001
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-EQUILIBRIUM_BUFFER_PIPS = 3
 
 
 class SetupExecutorMonitor:
@@ -380,7 +355,6 @@ class SetupExecutorMonitor:
         self.check_interval = check_interval
         _script_root = Path(__file__).parent.resolve()  # V22.2: absolut, nu CWD-dependent
         self.monitoring_file = _script_root / "monitoring_setups.json"
-        self.executed_file = _script_root / ".executed_setups.json"
         self.config_file = _script_root / "pairs_config.json"
         
         self.ctrader_client = CTraderCBotClient()
@@ -481,9 +455,6 @@ class SetupExecutorMonitor:
             atr_multiplier=0.6
         )
         
-        # Track executed setups to avoid duplicates
-        self.executed_setups = self._load_executed_setups()
-        
         logger.info("🎯 Setup Executor Monitor initialized")
         logger.info(f"⏱️  Check interval: {check_interval}s")
         logger.info(f"📊 Execution Strategy: {self.execution_strategy.get('mode', 'N/A')}")
@@ -501,80 +472,26 @@ class SetupExecutorMonitor:
                 logger.error(f"Failed to load config: {e}")
         return {}
     
-    def get_pair_config(self, symbol: str) -> dict:
-        """Get configuration for specific pair"""
-        pairs = self.config.get('pairs', [])
-        for pair in pairs:
-            if pair.get('symbol') == symbol:
-                return pair
-        return {}
-    
-    def _load_executed_setups(self):
-        """Load previously executed setups — V9.1: Auto-cleanup entries >30 days (ФорексГод)"""
-        if self.executed_file.exists():
-            try:
-                with open(self.executed_file, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                
-                # V9.1 R1 FIX: Cleanup entries older than 30 days
-                executed_keys = set(data.get('executed_keys', []))
-                timestamps = data.get('timestamps', {})
-                cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
-                
-                if timestamps:
-                    old_count = len(executed_keys)
-                    # Keep only entries newer than 30 days
-                    keys_to_remove = set()
-                    for key in executed_keys:
-                        ts = timestamps.get(key, '')
-                        if ts and ts < cutoff and ts > '1971':  # Skip epoch dates
-                            keys_to_remove.add(key)
-                    
-                    if keys_to_remove:
-                        executed_keys -= keys_to_remove
-                        for k in keys_to_remove:
-                            timestamps.pop(k, None)
-                        # Save cleaned data
-                        with open(self.executed_file, 'w', encoding='utf-8') as f:
-                            json.dump({
-                                'executed_keys': list(executed_keys),
-                                'timestamps': timestamps,
-                                'last_update': datetime.now(timezone.utc).isoformat(),
-                                'last_cleanup': datetime.now(timezone.utc).isoformat()
-                            }, f, indent=2)
-                        logger.success(f"🧹 R1 CLEANUP: Removed {len(keys_to_remove)} expired entries from .executed_setups.json ({old_count}→{len(executed_keys)})")
-                
-                return executed_keys
-            except Exception as e:
-                logger.warning(f"Could not load executed setups: {e}")
-        return set()
-    
-    def _save_executed_setup(self, setup_key: str):
-        """Save executed setup to prevent re-execution — V9.1: With timestamp for cleanup (R1 FIX)"""
-        self.executed_setups.add(setup_key)
-        try:
-            # Load existing timestamps
-            existing_timestamps = {}
-            if self.executed_file.exists():
-                try:
-                    with open(self.executed_file, 'r', encoding='utf-8') as f:
-                        old_data = json.load(f)
-                        existing_timestamps = old_data.get('timestamps', {})
-                except Exception as _err:
-                    logger.warning(f"[V37.0] non-critical error: {_err}")
-            
-            # Add timestamp for new entry
-            existing_timestamps[setup_key] = datetime.now(timezone.utc).isoformat()
-            
-            with open(self.executed_file, 'w', encoding='utf-8') as f:
-                json.dump({
-                    'executed_keys': list(self.executed_setups),
-                    'timestamps': existing_timestamps,
-                    'last_update': datetime.now(timezone.utc).isoformat()
-                }, f, indent=2)
-        except Exception as e:
-            logger.error(f"Could not save executed setup: {e}")
-    
+    def _abort_execute_now(
+        self,
+        setups: list,
+        index: int,
+        symbol: str,
+        direction: str,
+        reason: str,
+        track_key: str = None,
+    ) -> bool:
+        """V48: pop EXECUTE_NOW + Telegram alert — stop retry loops."""
+        logger.critical(f"[EXECUTE_NOW ABORT] {symbol}: {reason}")
+        if track_key:
+            self._track_rejection(track_key)
+        setups[index].pop('EXECUTE_NOW', None)
+        setups[index].pop('execute_now_trigger_tf', None)
+        setups[index]['last_rejection_reason'] = reason
+        setups[index]['execute_now_blocked_at'] = datetime.now(timezone.utc).isoformat()
+        self._notify_execute_now_blocked(symbol, direction, reason, setup=setups[index])
+        return True
+
     # ━━━ V9.3 DEEP SLEEP ENGINE ━━━
     
     @staticmethod
@@ -921,99 +838,109 @@ class SetupExecutorMonitor:
     
     # ━━━ V9.3 HTTP CACHE ENGINE ━━━
     
-    def _get_cached_data(self, symbol: str, timeframe: str, count: int):
+    def _get_cached_data(self, symbol: str, timeframe: str, count: int, require_live: bool = False):
         """
-        V9.3 HTTP CACHE: Fetch market data with TTL-based caching.
-        
-        - D1 candles → cached 4 hours (don't change between 4H closes)
-        - H4 candles → cached 30 minutes
-        - H1 candles → cached 5 minutes
-        
-        Reduces HTTP calls from ~27 per iteration to ~5-10.
-        At 30s interval: from 77,760 calls/day → ~20,000 calls/day (74% reduction).
+        V9.3 HTTP CACHE + V48 fail-hard on EXECUTE_NOW path.
+
+        require_live=True: always fetch broker; on failure return None (no stale fallback).
         """
         cache_key = f"{symbol}_{timeframe}"
         now_ts = time.time()
-        ttl = self._cache_ttl.get(timeframe, 300)  # Default 5 min
-        
-        # Check cache
-        if cache_key in self._data_cache:
-            entry = self._data_cache[cache_key]
-            age = now_ts - entry['fetched_at']
-            if age < ttl:
-                logger.debug(f"📦 CACHE HIT: {cache_key} (age: {age:.0f}s / TTL: {ttl}s)")
-                return entry['data']
-            else:
-                logger.debug(f"📦 CACHE EXPIRED: {cache_key} (age: {age:.0f}s > TTL: {ttl}s)")
-        
-        # Cache miss — fetch from cBot
+        ttl = self._cache_ttl.get(timeframe, 300)
+
+        if not require_live:
+            if cache_key in self._data_cache:
+                entry = self._data_cache[cache_key]
+                age = now_ts - entry['fetched_at']
+                if age < ttl:
+                    logger.debug(f"📦 CACHE HIT: {cache_key} (age: {age:.0f}s / TTL: {ttl}s)")
+                    return entry['data']
+                else:
+                    logger.debug(f"📦 CACHE EXPIRED: {cache_key} (age: {age:.0f}s > TTL: {ttl}s)")
+
         try:
             df = self.data_provider.get_historical_data(symbol, timeframe, count)
             if df is not None and not df.empty:
                 self._data_cache[cache_key] = {
                     'data': df,
-                    'fetched_at': now_ts
+                    'fetched_at': now_ts,
                 }
-                logger.debug(f"📦 CACHE STORE: {cache_key} ({len(df)} candles, TTL: {ttl}s)")
-            return df
+                logger.debug(
+                    f"📦 {'LIVE' if require_live else 'CACHE STORE'}: "
+                    f"{cache_key} ({len(df)} candles)"
+                )
+                return df
         except Exception as e:
-            logger.error(f"❌ Cache fetch error {cache_key}: {e}")
-            # Return stale cache if available (better than nothing)
-            if cache_key in self._data_cache:
-                logger.warning(f"📦 CACHE STALE FALLBACK: {cache_key} (fetch failed, using old data)")
-                return self._data_cache[cache_key]['data']
+            logger.error(f"❌ {'LIVE' if require_live else 'Cache'} fetch error {cache_key}: {e}")
+
+        if require_live:
+            logger.critical(
+                f"[EXECUTE_NOW ABORT] live data unavailable {symbol} {timeframe}"
+            )
             return None
+
+        if cache_key in self._data_cache:
+            logger.warning(f"📦 CACHE STALE FALLBACK: {cache_key} (fetch failed, using old data)")
+            return self._data_cache[cache_key]['data']
+        return None
     
     # ━━━ V10.3 PILLAR 4: NEWS GUARD ENGINE (Information Only) ━━━
     
     def _check_spread_guard(self, symbol: str) -> str:
         """
-        V11.2 SPREAD GUARD: Blochează execuția dacă spread > max_spread_pips
-        sau dacă suntem în fereastra de rollover 00:00 UTC.
-
-        Returnează string cu eroarea dacă trebuie blocat, '' dacă e OK.
+        V48 SPREAD GUARD: live /price on port 8010 — fail-hard if unavailable or too wide.
         """
         try:
-            # ── 1. Rollover check (00:00-00:15 UTC) ─────────────────────
             now_utc = datetime.now(timezone.utc)
             if now_utc.hour == 0 and now_utc.minute < 15:
-                return (f"ROLLOVER 00:{now_utc.minute:02d} UTC — spread periculos "
-                        f"(IC Markets rollover). Execuție blocată 15 min.")
+                return (
+                    f"ROLLOVER 00:{now_utc.minute:02d} UTC — spread periculos "
+                    f"(IC Markets rollover). Execuție blocată 15 min."
+                )
 
-            # ── 2. Live spread check via cTrader bridge ─────────────────
             try:
-                super_cfg_path = Path("SUPER_CONFIG.json")
-                with open(super_cfg_path, encoding='utf-8') as f:
+                with open(Path("SUPER_CONFIG.json"), encoding='utf-8') as f:
                     scfg = json.load(f)
                 max_spread = scfg.get('spread_guard', {}).get('max_spread_pips', 2.5)
-                block = scfg.get('spread_guard', {}).get('block_execution', True)
             except Exception:
-                max_spread, block = 2.5, True
-
-            if not block:
-                return ""
+                max_spread = 2.5
 
             ctrader_port = int(os.environ.get('CTRADER_PORT', '8010'))
-            try:
-                r = requests.get(
-                    f"http://127.0.0.1:{ctrader_port}/spread?symbol={symbol}",
-                    timeout=3
+            r = requests.get(
+                f"http://127.0.0.1:{ctrader_port}/price",
+                params={"symbol": symbol},
+                timeout=3,
+            )
+            if r.status_code != 200:
+                return f"SPREAD GUARD: /price HTTP {r.status_code} — feed live indisponibil"
+
+            data = r.json()
+            if data.get('error'):
+                return f"SPREAD GUARD: {data.get('error')}"
+
+            bid = float(data.get('bid') or 0)
+            ask = float(data.get('ask') or 0)
+            pip_size = get_pip_size(symbol)
+            if bid > 0 and ask > 0 and pip_size > 0:
+                spread_pips = (ask - bid) / pip_size
+            elif data.get('spread') is not None:
+                # cTrader Spread = points; 10 points ≈ 1 pip on 5-digit FX
+                spread_pips = float(data['spread']) / 10.0
+            else:
+                return "SPREAD GUARD: bid/ask/spread invalid — execuție blocată"
+
+            if spread_pips > max_spread:
+                return (
+                    f"{symbol} spread={spread_pips:.1f}p > max {max_spread}p "
+                    f"— execuție blocată (live /price)"
                 )
-                if r.status_code == 200:
-                    data = r.json()
-                    spread_pips = data.get('spread_pips') or data.get('spread')
-                    if spread_pips is not None and float(spread_pips) > max_spread:
-                        return (f"{symbol} spread={spread_pips:.1f} pips > max {max_spread} pips "
-                                f"— execuție blocată")
-            except requests.exceptions.ConnectionError:
-                logger.warning(f"[V37.0] spread check skipped — cBot bridge offline for {symbol}")
-            except Exception as _spr_err:
-                logger.warning(f"[V37.0] spread check failed for {symbol}: {_spr_err}")
+            logger.info(f"[V48 SPREAD GUARD] {symbol}: {spread_pips:.1f}p OK (max {max_spread}p)")
+            return ""
 
+        except requests.exceptions.ConnectionError:
+            return f"SPREAD GUARD: cBot port 8010 offline — execuție blocată pentru {symbol}"
         except Exception as _guard_err:
-            logger.warning(f"[V37.0] spread guard error for {symbol}: {_guard_err}")
-
-        return ""
+            return f"SPREAD GUARD error {symbol}: {_guard_err}"
 
     def _load_liquidity_sniper_be_state(self):
         """Restore BE-protection dedup keys across restarts."""
@@ -1224,85 +1151,6 @@ class SetupExecutorMonitor:
             logger.debug(f"V39.5 BE protect error: {e}")
 
     # ━━━ END V39.5 LIQUIDITY SNIPER ━━━
-    
-    def _get_setup_key(self, setup: dict) -> str:
-        """Generate unique key for setup"""
-        return f"{setup['symbol']}_{setup['direction']}_{setup['entry_price']}_{setup['setup_time']}"
-    
-    def _check_price_hit_entry(self, symbol: str, entry_price: float, direction: str) -> tuple:
-        """
-        Check if current price has hit entry level
-        Returns: (hit: bool, current_price: float)
-        """
-        try:
-            # Get current price from last 4H candle
-            df = self.ctrader_client.get_historical_data(symbol, 'H4', 5)
-            if df is None or df.empty:
-                logger.debug(f"⚠️ No data available for {symbol}, skipping price check")
-                return False, 0
-            
-            current_price = df['close'].iloc[-1]
-            last_candle = df.iloc[-1]
-            
-            # For BUY: price should go UP to entry (current >= entry)
-            # For SELL: price should go DOWN to entry (current <= entry)
-            
-            if direction.lower() == 'buy':
-                # BUY entry: check if price reached or exceeded entry level
-                hit = current_price >= entry_price
-                # Also check if recent candle touched the entry
-                candle_hit = last_candle['high'] >= entry_price
-                return (hit or candle_hit), current_price
-            else:
-                # SELL entry: check if price reached or went below entry level
-                hit = current_price <= entry_price
-                # Also check if recent candle touched the entry
-                candle_hit = last_candle['low'] <= entry_price
-                return (hit or candle_hit), current_price
-                
-        except Exception as e:
-            logger.error(f"Error checking price for {symbol}: {e}")
-            return False, 0
-    
-    def _symbol_already_at_broker(self, symbol: str) -> bool:
-        """
-        🛡️ V7.1 DUPLICATE GUARD + V9.1 FRESHNESS CHECK (ФорексГод)
-        Reads active_positions.json (written by cBot every 10s).
-        
-        V9.1: If file is older than 5 minutes → REFUSE execution (stale data = danger).
-        Returns True if symbol has existing position → should SKIP execution.
-        """
-        try:
-            active_pos_file = Path(__file__).parent / "active_positions.json"
-            if not active_pos_file.exists():
-                logger.warning(f"⚠️  active_positions.json not found — cannot verify broker, allowing {symbol}")
-                return False
-            
-            # V9.1 R7 FIX: Freshness check — refuse execution on stale data
-            file_age_seconds = time.time() - active_pos_file.stat().st_mtime
-            if file_age_seconds > 300:  # 5 minutes
-                logger.error(f"🚨 R7 SAFETY: active_positions.json is {file_age_seconds:.0f}s old (>{300}s) — BLOCKING {symbol} execution until fresh sync!")
-                return True  # Conservative: block execution when data is stale
-            
-            with open(active_pos_file, 'r', encoding='utf-8') as f:
-                positions = json.load(f)
-            
-            if not isinstance(positions, list):
-                return False
-            
-            clean_symbol = symbol.upper().replace("/", "").replace(" ", "")
-            
-            for pos in positions:
-                pos_symbol = pos.get('symbol', '').upper().replace("/", "").replace(" ", "")
-                if pos_symbol == clean_symbol:
-                    logger.warning(f"🛡️ DUPLICATE GUARD: {symbol} already at broker ({pos.get('direction', '?')} @ {pos.get('entry_price', '?')})")
-                    return True
-            
-            return False
-            
-        except Exception as e:
-            logger.error(f"⚠️  Error checking broker positions for {symbol}: {e} — BLOCKING execution (conservative)")
-            return True  # V9.1: Conservative — block on error instead of allowing
 
     def _atomic_write_monitoring(self, write_data: dict):
         """V24.8: Scriere atomică monitoring_setups.json — previne coruperea JSON la crash/restart.
@@ -1612,28 +1460,37 @@ class SetupExecutorMonitor:
                         )
                         _en_direction = setup.get('direction', 'buy').lower()
                         _pip_size_en = get_pip_size(symbol)
-                        _pip_value_en = 8.33 if 'JPY' in symbol.upper() else 10.0
+                        _trigger_tf = (setup.get('execute_now_trigger_tf') or '1H').upper()
+                        _sl_tf = 'H4' if _trigger_tf == '4H' else 'H1'
 
-                        # ── V40.8: SL/TP — REGULA FIXA: SL=1H/4H structural mic, TP=D1 structural ──
-                        def _float_price(val):
-                            try:
-                                return float(val) if val not in (None, 0, '0', '') else None
-                            except (TypeError, ValueError):
-                                return None
+                        _df_sl_en = self._get_cached_data(
+                            symbol, _sl_tf, 225, require_live=True,
+                        )
+                        _df_d1_en = self._get_cached_data(
+                            symbol, "D1", 100, require_live=True,
+                        )
 
-                        _df_4h_en = self._get_cached_data(symbol, "H4", 225)
-                        _df_d1_en = self._get_cached_data(symbol, "D1", 100)
-
-                        _sl = None
-                        _tp = None
+                        if _df_sl_en is None or _df_d1_en is None:
+                            _blk = (
+                                f"V48: live data unavailable {_sl_tf}/D1 — "
+                                f"broker feed required for EXECUTE_NOW"
+                            )
+                            self._abort_execute_now(
+                                setups, i, symbol, _en_direction, _blk,
+                                track_key=f"live data fail {symbol}",
+                            )
+                            updated = True
+                            continue
 
                         _sl = self._resolve_execute_now_sl(
-                            setup, symbol, _en_direction, _en_entry, _df_4h_en, _pip_size_en
+                            setup, symbol, _en_direction, _en_entry,
+                            _df_sl_en, _pip_size_en, _trigger_tf,
                         )
 
                         _tp = self._resolve_execute_now_tp(
                             setup, symbol, _en_direction, _en_entry,
-                            _df_4h_en, _df_d1_en, _pip_size_en, _sl,
+                            None, _df_d1_en, _pip_size_en, _sl,
+                            d1_live_only=True,
                         )
 
                         # Validare direcție SL/TP
@@ -1679,67 +1536,32 @@ class SetupExecutorMonitor:
                             updated = True
                             continue
 
-                        # ── STEP 5: Calcul dinamic loturi — 5% risc din balanță live ────────────────
-                        _sl_pips_en = abs(_en_entry - _sl) / _pip_size_en if _sl and _en_entry else 0.0
-
-                        # ── V19.14: GUARD RISC CUMULATIV (Mass-Trigger protection) ──────────────────
-                        # Dacă deja am angajat ≥15% din cont în ciclul curent → amânăm restul
-                        # Exemplu: cont 300$ → după 3 traduri (3×5%=15%) → stop, nu mai intrăm
-                        _base_balance_guard = float(os.getenv('ACCOUNT_BALANCE', 1336))
-                        try:
-                            _th_guard = Path(__file__).parent / 'trade_history.json'
-                            if _th_guard.exists():
-                                with open(_th_guard, 'r', encoding='utf-8') as _fg:
-                                    _tg = json.load(_fg)
-                                _lg = float(_tg.get('account', {}).get('balance', 0))
-                                if _lg > 0:
-                                    _base_balance_guard = _lg
-                        except Exception:
-                            pass
                         if _session_risk_used >= _SESSION_RISK_MAX:
                             logger.warning(
-                                f"⛔ [V19.14 RISK CAP] {symbol}: risc cumulat {_session_risk_used*100:.1f}% ≥ {_SESSION_RISK_MAX*100:.0f}% — "
-                                f"execuție amânată la ciclul următor (30s). Balanță protejată: {_base_balance_guard:.0f}$"
+                                f"⛔ [V19.14 RISK CAP] {symbol}: risc cumulat "
+                                f"{_session_risk_used*100:.1f}% ≥ {_SESSION_RISK_MAX*100:.0f}% — amânat"
                             )
-                            continue  # Sărim perechea — va fi preluată în ciclul următor
+                            continue
 
-                        _balance_en = _base_balance_guard
-                        try:
-                            _th_path_en = Path(__file__).parent / 'trade_history.json'
-                            if _th_path_en.exists():
-                                with open(_th_path_en, 'r', encoding='utf-8') as _tf_en:
-                                    _th_en = json.load(_tf_en)
-                                _live_bal_en = float(_th_en.get('account', {}).get('balance', 0))
-                                if _live_bal_en > 0:
-                                    _balance_en = _live_bal_en
-                        except Exception as _bal2_err:
-                            logger.warning(f"[V37.0] live balance read failed: {_bal2_err}")
-
-                        if _sl_pips_en > 0:
-                            _risk_budget_en = _balance_en * 0.05
-                            _lot_size_en = _risk_budget_en / (_sl_pips_en * _pip_value_en)
-                            _lot_size_en = round(_lot_size_en, 2)
-                            _lot_size_en = max(0.01, min(_lot_size_en, 10.0))
-                        else:
-                            # SL lipsă complet — nu executa, nu are sens
-                            logger.critical(f"🚨 [V19.8 NO SL] {symbol}: SL=0, execuție anulată — retry la ciclul următor")
-                            _blk = 'V40.7: SL structural indisponibil (Radar/FVG/TF mic)'
-                            self._track_rejection(f"EXECUTE_NOW no SL available for {symbol}")
-                            setups[i].pop('EXECUTE_NOW', None)
-                            setups[i]['last_rejection_reason'] = _blk
-                            self._notify_execute_now_blocked(
-                                symbol, _en_direction, _blk, setup=setups[i],
-                            )
+                        # ── V48: Lot unic via unified_risk_manager (5% SUPER_CONFIG) ─────────────
+                        _rm = getattr(self.executor, 'risk_manager', None)
+                        if _rm is None:
+                            _blk = 'V48: unified_risk_manager indisponibil'
+                            self._abort_execute_now(setups, i, symbol, _en_direction, _blk)
                             updated = True
                             continue
 
-                        logger.success(
-                            f"🔥 [V19.8 EXECUTE_NOW STRUCTURAL] {symbol}: Entry={_en_entry:.5f} "
-                            f"SL={_sl:.5f} ({_sl_pips_en:.1f}p) TP={_tp:.5f} | "
-                            f"Bal={_balance_en:.0f}$ | Risk=5% | Lots={_lot_size_en:.2f}"
+                        _lot_size_en = _rm.compute_lot_size(
+                            symbol, float(_en_entry), float(_sl),
                         )
 
-                        # ── STEP 6: SENTINELĂ pe valorile REALE calculate structural ─────────────────
+                        logger.success(
+                            f"🔥 [V48 EXECUTE_NOW STRUCTURAL] {symbol}: Entry={_en_entry:.5f} "
+                            f"SL={_sl:.5f} ({_sl_pips_en:.1f}p @{_sl_tf}) TP={_tp:.5f} (D1 live) | "
+                            f"Lots={_lot_size_en:.2f} (URM 5%)"
+                        )
+
+                        # ── SENTINELĂ ────────────────────────────────────────────────────────
                         _sentinel_ok_en, _sentinel_reason_en = self._final_safety_check(
                             symbol=symbol,
                             direction=_en_direction,
@@ -1762,8 +1584,17 @@ class SetupExecutorMonitor:
                             updated = True
                             continue
 
-                        # ── STEP 7: Execuție în cTrader ───────────────────────────────────────────────
-                        _trigger_tf = (setup.get('execute_now_trigger_tf') or '1H').upper()
+                        _spread_block = self._check_spread_guard(symbol)
+                        if _spread_block:
+                            self._abort_execute_now(
+                                setups, i, symbol, _en_direction,
+                                f"SPREAD GUARD: {_spread_block}",
+                                track_key=f"spread guard {symbol}",
+                            )
+                            updated = True
+                            continue
+
+                        # ── Execuție în cTrader ───────────────────────────────────────────────
                         _entry_num = 2 if setup.get('entry1_filled') else 1
                         _en_comment = (
                             f"D1_EXECUTE_NOW_V42.2_{_en_direction.upper()}_{_trigger_tf}_E{_entry_num}"
@@ -2029,52 +1860,28 @@ class SetupExecutorMonitor:
         symbol: str,
         direction: str,
         entry: float,
-        df_4h,
+        df_sl,
         pip_size: float,
+        trigger_tf: str,
     ):
         """
-        V43.3 SL: tightest valid pivot 1H/4H in cap sniper.
-        Trigger TF (execute_now_trigger_tf) uses nearest pivot; other TF uses last swing.
+        V48 SL: structural pivot strict pe TF executant (1H sau 4H live).
         """
-        def _f(v):
-            try:
-                return float(v) if v not in (None, 0, '0', '') else None
-            except (TypeError, ValueError):
-                return None
-
-        trigger_tf = (setup.get('execute_now_trigger_tf') or '1H').upper()
-        sl_candidates = []
-
-        radar_sl = _f(setup.get('h4_sl_price')) or _f(setup.get('stop_loss'))
-        if self._sl_valid_for_execute(symbol, direction, entry, radar_sl):
-            sl_candidates.append(
-                (radar_sl, 'RADAR', sl_pips_between(symbol, entry, radar_sl))
-            )
-
-        df_1h = self._get_cached_data(symbol, '1H', 225)
-        for tf_label, df in (('1H', df_1h), ('4H', df_4h)):
-            if df is None or df.empty:
-                continue
-            use_nearest = tf_label == trigger_tf
-            sl = self._calc_structural_sl_4h(
-                symbol, direction, entry, df, pip_size, MIN_SL_PIPS,
-                nearest=use_nearest,
-            )
-            if self._sl_valid_for_execute(symbol, direction, entry, sl):
-                sl_candidates.append(
-                    (sl, tf_label, sl_pips_between(symbol, entry, sl))
-                )
-
-        if not sl_candidates:
+        if df_sl is None or df_sl.empty:
             return None
 
-        best_sl, best_tf, best_pips = min(sl_candidates, key=lambda x: x[2])
-        logger.info(
-            f"[V43.3 EXEC SL] {symbol}: SL={best_sl:.5f} ({best_pips:.1f}p) via {best_tf} "
-            f"(trigger={trigger_tf}) — tightest of "
-            f"{[f'{t}:{p:.0f}p' for _, t, p in sl_candidates]}"
+        trigger_tf = (trigger_tf or '1H').upper()
+        sl = self._calc_structural_sl_4h(
+            symbol, direction, entry, df_sl, pip_size, MIN_SL_PIPS,
+            nearest=True,
         )
-        return best_sl
+        if self._sl_valid_for_execute(symbol, direction, entry, sl):
+            sl_pips = sl_pips_between(symbol, entry, sl)
+            logger.info(
+                f"[V48 EXEC SL] {symbol}: SL={sl:.5f} ({sl_pips:.1f}p) via {trigger_tf} live"
+            )
+            return sl
+        return None
 
     def _resolve_execute_now_tp(
         self,
@@ -2086,10 +1893,10 @@ class SetupExecutorMonitor:
         df_d1,
         pip_size: float,
         stop_loss: float,
+        d1_live_only: bool = False,
     ):
         """
-        V43.3 TP: extremitate ADR din JSON (adr_lh SHORT / adr_ll LONG).
-        Fallback V40.8: daily_tp → swing D1 → recalc live.
+        V48 TP: D1 live structural only when d1_live_only=True (EXECUTE_NOW path).
         """
         def _f(v):
             try:
@@ -2099,69 +1906,70 @@ class SetupExecutorMonitor:
 
         d = str(direction).lower()
 
-        # V43.3: TP macro Active Dealing Range din JSON (Etapa 1/2)
-        if d == 'sell':
-            tp_adr = _f(setup.get('adr_lh'))
-            if tp_adr is not None and tp_adr < entry:
-                logger.info(
-                    f"[V43.3 EXEC TP] {symbol}: ADR SHORT target adr_lh={tp_adr:.5f}"
-                )
-                return tp_adr
-        elif d == 'buy':
-            tp_adr = _f(setup.get('adr_ll'))
-            if tp_adr is not None and tp_adr > entry:
-                logger.info(
-                    f"[V43.3 EXEC TP] {symbol}: ADR LONG target adr_ll={tp_adr:.5f}"
-                )
-                return tp_adr
+        if not d1_live_only:
+            if d == 'sell':
+                tp_adr = _f(setup.get('adr_lh'))
+                if tp_adr is not None and tp_adr < entry:
+                    logger.info(
+                        f"[V43.3 EXEC TP] {symbol}: ADR SHORT target adr_lh={tp_adr:.5f}"
+                    )
+                    return tp_adr
+            elif d == 'buy':
+                tp_adr = _f(setup.get('adr_ll'))
+                if tp_adr is not None and tp_adr > entry:
+                    logger.info(
+                        f"[V43.3 EXEC TP] {symbol}: ADR LONG target adr_ll={tp_adr:.5f}"
+                    )
+                    return tp_adr
 
-        logger.debug(
-            f"[V43.3 EXEC TP] {symbol}: ADR TP indisponibil — fallback V40.8"
+            logger.debug(
+                f"[V43.3 EXEC TP] {symbol}: ADR TP indisponibil — fallback V40.8"
+            )
+
+            tp_json = _f(setup.get('daily_tp_price') or setup.get('daily_target_price'))
+            if tp_json:
+                if d == 'buy' and tp_json > entry:
+                    logger.info(f"📐 [V40.8 TP D1 SCAN] {symbol}: TP={tp_json:.5f}")
+                    return tp_json
+                if d == 'sell' and tp_json < entry:
+                    logger.info(f"📐 [V40.8 TP D1 SCAN] {symbol}: TP={tp_json:.5f}")
+                    return tp_json
+
+            swing_key = 'daily_swing_low' if d == 'sell' else 'daily_swing_high'
+            tp_swing = _f(setup.get(swing_key))
+            if tp_swing:
+                if d == 'buy' and tp_swing > entry:
+                    logger.info(f"📐 [V40.9 TP D1 SWING] {symbol}: TP={tp_swing:.5f} ({swing_key})")
+                    return tp_swing
+                if d == 'sell' and tp_swing < entry:
+                    logger.info(f"📐 [V40.9 TP D1 SWING] {symbol}: TP={tp_swing:.5f} ({swing_key})")
+                    return tp_swing
+
+        if df_d1 is None or df_d1.empty:
+            return None
+
+        tp_live = self._calc_structural_tp_d1(
+            direction, entry, df_4h, df_d1, pip_size,
+            symbol=symbol, stop_loss=stop_loss, execute_now=True,
         )
+        if tp_live:
+            if d == 'buy' and tp_live > entry:
+                logger.info(f"📐 [V48 TP D1 LIVE] {symbol}: TP={tp_live:.5f}")
+                return tp_live
+            if d == 'sell' and tp_live < entry:
+                logger.info(f"📐 [V48 TP D1 LIVE] {symbol}: TP={tp_live:.5f}")
+                return tp_live
 
-        tp_json = _f(setup.get('daily_tp_price') or setup.get('daily_target_price'))
-        if tp_json:
-            if d == 'buy' and tp_json > entry:
-                logger.info(f"📐 [V40.8 TP D1 SCAN] {symbol}: TP={tp_json:.5f}")
-                return tp_json
-            if d == 'sell' and tp_json < entry:
-                logger.info(f"📐 [V40.8 TP D1 SCAN] {symbol}: TP={tp_json:.5f}")
-                return tp_json
-
-        # V40.9: pivot structural D1 din scanner (Gate1)
-        swing_key = 'daily_swing_low' if d == 'sell' else 'daily_swing_high'
-        tp_swing = _f(setup.get(swing_key))
-        if tp_swing:
-            if d == 'buy' and tp_swing > entry:
-                logger.info(f"📐 [V40.9 TP D1 SWING] {symbol}: TP={tp_swing:.5f} ({swing_key})")
-                return tp_swing
-            if d == 'sell' and tp_swing < entry:
-                logger.info(f"📐 [V40.9 TP D1 SWING] {symbol}: TP={tp_swing:.5f} ({swing_key})")
-                return tp_swing
-
-        if df_d1 is not None and not df_d1.empty:
-            tp_live = self._calc_structural_tp_d1(
-                direction, entry, df_4h, df_d1, pip_size,
-                symbol=symbol, stop_loss=stop_loss, execute_now=True,
-            )
-            if tp_live:
-                if d == 'buy' and tp_live > entry:
-                    logger.info(f"📐 [V40.8 TP D1 LIVE] {symbol}: TP={tp_live:.5f}")
-                    return tp_live
-                if d == 'sell' and tp_live < entry:
-                    logger.info(f"📐 [V40.8 TP D1 LIVE] {symbol}: TP={tp_live:.5f}")
-                    return tp_live
-
-            tp_last = self._calc_last_d1_structure_tp(
-                direction, entry, df_d1, pip_size, stop_loss=stop_loss, symbol=symbol,
-            )
-            if tp_last:
-                if d == 'buy' and tp_last > entry:
-                    logger.info(f"📐 [V40.9 TP D1 LAST] {symbol}: TP={tp_last:.5f}")
-                    return tp_last
-                if d == 'sell' and tp_last < entry:
-                    logger.info(f"📐 [V40.9 TP D1 LAST] {symbol}: TP={tp_last:.5f}")
-                    return tp_last
+        tp_last = self._calc_last_d1_structure_tp(
+            direction, entry, df_d1, pip_size, stop_loss=stop_loss, symbol=symbol,
+        )
+        if tp_last:
+            if d == 'buy' and tp_last > entry:
+                logger.info(f"📐 [V48 TP D1 LAST] {symbol}: TP={tp_last:.5f}")
+                return tp_last
+            if d == 'sell' and tp_last < entry:
+                logger.info(f"📐 [V48 TP D1 LAST] {symbol}: TP={tp_last:.5f}")
+                return tp_last
 
         return None
 
@@ -2338,7 +2146,7 @@ class SetupExecutorMonitor:
                 f"Guard#2 SL={sl_pips:.1f}p > {_max_sl:.0f}p max for {symbol} (whale stop)"
             )
 
-        # ── Guard 3: Capital Guard — pierderea estimată ≤ 5.1% din balanță ──────
+        # ── Guard 3: Capital Guard — pierderea estimată ≤ 5.1% (toleranță comision) ──
         balance = float(os.getenv('ACCOUNT_BALANCE', 1336))
         try:
             _th_path = Path(__file__).parent / 'trade_history.json'
@@ -2349,23 +2157,20 @@ class SetupExecutorMonitor:
                 if _live_bal > 0:
                     balance = _live_bal
         except Exception as _bal_err:
-            logger.warning(f"[V37.0] Guard#3 balance read failed — using env fallback: {_bal_err}")
+            logger.warning(f"[V37.0] Guard#3 balance read failed: {_bal_err}")
 
-        # pip_value_per_lot — aliniat cu unified_risk_manager (BTC=1.0, JPY=8.33, FX=10)
-        sym_up = symbol.upper()
-        if any(x in sym_up for x in ['BTC', 'ETH', 'LTC', 'XRP', 'ADA', 'DOGE']):
-            pip_value_per_lot = 1.0
-        elif 'JPY' in sym_up:
-            pip_value_per_lot = 8.33
-        else:
-            pip_value_per_lot = 10.0
-        risk_budget = balance * 0.05
-        lots = risk_budget / (sl_pips * pip_value_per_lot) if sl_pips > 0 else 0
-        estimated_loss = lots * sl_pips * pip_value_per_lot
-        estimated_loss_pct = estimated_loss / balance if balance > 0 else 0
-        if estimated_loss_pct > 0.051:
-            return False, (f"Guard#3 Risc estimat={estimated_loss_pct*100:.2f}% > 5.1% "
-                           f"(lots={lots:.3f} sl={sl_pips:.1f}p bal={balance:.0f})")
+        _rm = getattr(self.executor, 'risk_manager', None)
+        if _rm is not None:
+            lots = _rm.compute_lot_size(symbol, entry_price, stop_loss, balance=balance)
+            estimated_loss = _rm.estimate_loss_at_sl(
+                symbol, entry_price, stop_loss, lots,
+            )
+            estimated_loss_pct = estimated_loss / balance if balance > 0 else 0
+            if estimated_loss_pct > 0.051:
+                return False, (
+                    f"Guard#3 Risc estimat={estimated_loss_pct*100:.2f}% > 5.1% "
+                    f"(lots={lots:.3f} sl={sl_pips:.1f}p bal={balance:.0f})"
+                )
 
         # ── Guard 4: D1 Bias → 4H CHoCH aliniere confirmată ────────────────────
         # V17 FIX BUG#9: h4_bias_locked nu există — cheia corectă este h4_structure_locked

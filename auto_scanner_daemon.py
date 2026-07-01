@@ -340,26 +340,11 @@ def save_last_weekly_report_date(report_date: str):
 # ━━━ V38: DAILY CB RATES REFRESH ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 def get_last_cb_rates_refresh_date() -> str:
     try:
-        if LAST_CB_RATES_REFRESH_FILE.exists():
-            with open(LAST_CB_RATES_REFRESH_FILE, 'r') as f:
-                data = json.load(f)
-                return data.get('last_refresh_date', '')
+        from macro_rates import get_last_refresh_date
+        return get_last_refresh_date()
     except Exception:
         pass
     return ''
-
-
-def save_last_cb_rates_refresh_date(refresh_date: str):
-    try:
-        LAST_CB_RATES_REFRESH_FILE.parent.mkdir(parents=True, exist_ok=True)
-        with open(LAST_CB_RATES_REFRESH_FILE, 'w') as f:
-            json.dump({
-                'last_refresh_date': refresh_date,
-                'last_refresh_timestamp': datetime.now().isoformat(),
-                'updated_by': 'auto_scanner_daemon.py',
-            }, f, indent=2)
-    except Exception as e:
-        logger.warning(f"Could not save CB rates refresh date: {e}")
 
 
 def run_daily_cb_rates_refresh():
@@ -596,7 +581,6 @@ def main():
             already_refreshed_cb = (get_last_cb_rates_refresh_date() == today_str)
             if is_cb_rates_time and not already_refreshed_cb:
                 logger.info("[CB_RATES] 08:00 — refresh macro rates cache...")
-                save_last_cb_rates_refresh_date(today_str)
                 run_daily_cb_rates_refresh()
 
             if is_scan_day and is_scan_time and not already_scanned_today and not scan_busy:

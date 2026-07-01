@@ -248,12 +248,16 @@ poi_touched = (candle_high >= poi_bottom and candle_low <= poi_top)
 - `_poi_box_intersects_wick(high, low, poi_bottom, poi_top) -> bool`
 - `_poi_box_contains_price(price, ...) -> bool`
 
-**4b. `multi_tf_radar.py`**
+**4b. `multi_tf_radar.py` (V47)**
 
 - Candle high/low de la cBot, nu doar preț live.
-- `poi_wick_touched` → MONITORING / WAITING_4H_CHOCH.
-- Post-touch: `allow_bos_trigger=False` — CHoCH 4H obligatoriu.
-- EXECUTE_NOW blocat fără CHoCH 4H post-touch.
+- `poi_wick_touched` → MONITORING / WAITING_4H_CHOCH; `radar_panda_active` ON la touch.
+- Reset dedup: `h4_choch_alert_sent`, `h4_bos_alert_sent`, `h1_choch_alert_sent` la intrare POI.
+- Alerte Telegram: doar break **live** (≤3 bare) **post-touch POI** — anti-zombi.
+- **Intrarea 1:** CHoCH 4H → alertă `🔄 INVERSARE STRUCTURĂ`.
+- **Intrarea 2:** BOS 4H post-touch → `allow_bos_trigger=True` → alertă `⚡ STRUCTURĂ CONFIRMATĂ`.
+- Alertă **1H:** exclusiv după `radar_4h_choch_detected` sau `h4_structure_locked`.
+- Execuție: ambele semnale → retrace Premium/Discount 60–80% (V46).
 - P/D ADR = filtru calitate execuție, nu blochează intrarea în pândă.
 
 **4c. `daily_scanner.py`**

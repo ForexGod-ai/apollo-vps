@@ -3,7 +3,7 @@
 macro_rates.py — V38 Live Central Bank Rates Service
 
 Unified source for official CB policy rates (investing.com scrape + JSON cache)
-and IC Markets swap carry via cTrader localhost:8767.
+and IC Markets swap carry via cTrader MarketDataProvider localhost:8010.
 
 Used by: telegram_command_center (/rates), news_calendar_monitor (weekly macro),
          scripts/refresh_cb_rates.py (daily cron).
@@ -448,6 +448,45 @@ def fetch_ic_markets_swaps(symbols: Optional[List[str]] = None) -> List[dict]:
     return results
 
 
+def _write_refresh_meta(
+    *,
+    source: str,
+    fetched_at: Optional[str],
+    rates: Dict[str, float],
+    changes: List,
+    success: bool,
+    updated_by: str = "macro_rates.refresh_rates_daily",
+) -> None:
+    """V48: Single writer for last_cb_rates_refresh.json — unified schema."""
+    now = _now_bucharest()
+    payload = {
+        "last_refresh_date": now.strftime("%Y-%m-%d"),
+        "last_refresh_timestamp": now.isoformat(),
+        "refreshed_at": fetched_at or now.isoformat(),
+        "source": source,
+        "success": success,
+        "rates": rates,
+        "changes": changes,
+        "updated_by": updated_by,
+    }
+    LAST_REFRESH_FILE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = LAST_REFRESH_FILE.with_suffix(".tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2)
+    tmp.replace(LAST_REFRESH_FILE)
+
+
+def get_last_refresh_date() -> str:
+    """Read last_refresh_date from unified meta file (daemon dedup)."""
+    try:
+        if LAST_REFRESH_FILE.exists():
+            with open(LAST_REFRESH_FILE, "r", encoding="utf-8") as f:
+                return str(json.load(f).get("last_refresh_date", "") or "")
+    except Exception:
+        pass
+    return ""
+
+
 def format_rates_telegram_message(
     separator: str = "────────────────",
     include_swaps: bool = True,
@@ -457,6 +496,16 @@ def format_rates_telegram_message(
     """Build compact /rates Telegram HTML card (V38.8)."""
     rates, source, fetched_at, changes = get_effective_rates(force_refresh=force_refresh)
     badge = _source_badge(source, fetched_at)
+
+    if force_refresh:
+        _write_refresh_meta(
+            source=source,
+            fetched_at=fetched_at,
+            rates=rates,
+            changes=[{"ccy": c, "old": o, "new": n} for c, o, n in changes],
+            success=source in ("live", "cache"),
+            updated_by="macro_rates.format_rates_telegram_message",
+        )
 
     if notify_on_change and changes and _should_send_alert(changes):
         _send_rate_change_alert(changes, source, rates)
@@ -614,6 +663,7 @@ def format_weekly_macro_report(local_tz=None) -> str:
 def refresh_rates_daily(notify_telegram: bool = True) -> dict:
     """
     Force refresh cache. Optionally notify Telegram on significant changes.
+    V48: cache persisted before Telegram alert; unified meta schema.
     Returns summary dict for logging/cron.
     """
     cache_before = load_cache()
@@ -621,18 +671,25 @@ def refresh_rates_daily(notify_telegram: bool = True) -> dict:
 
     rates, source, fetched_at, changes = get_effective_rates(force_refresh=True)
 
+    change_rows = [{"ccy": c, "old": o, "new": n} for c, o, n in changes]
     summary = {
         "success": source in ("live", "cache") or bool(cache_before),
         "source": source,
         "fetched_at": fetched_at,
-        "changes": [{"ccy": c, "old": o, "new": n} for c, o, n in changes],
+        "changes": change_rows,
         "rates": rates,
     }
 
-    LAST_REFRESH_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with open(LAST_REFRESH_FILE, "w", encoding="utf-8") as f:
-        json.dump({**summary, "refreshed_at": _now_bucharest().isoformat()}, f, indent=2)
+    _write_refresh_meta(
+        source=source,
+        fetched_at=fetched_at,
+        rates=rates,
+        changes=change_rows,
+        success=summary["success"],
+    )
 
+    # V48 Instant Trigger: cb_rates_cache.json already written inside get_effective_rates
+    # when live scrape succeeds — alert only after persist.
     if notify_telegram and changes and _should_send_alert(changes):
         _send_rate_change_alert(changes, source, rates)
         _mark_alert_sent(changes)
@@ -667,7 +724,7 @@ def _send_rate_change_alert(
     """Professional Telegram alert when a central bank rate moves."""
     now = _now_bucharest().strftime("%d %b %Y · %H:%M EET")
     lines = [
-        "<b>🏦 MACRO PULSE — RATE CHANGE</b>",
+        "<b>[MACRO ALERT] 🏦 MACRO PULSE — RATE CHANGE</b>",
         "────────────────",
         "",
     ]
@@ -683,16 +740,22 @@ def _send_rate_change_alert(
 
     if rates:
         lines.append("")
-        lines.append("<b>📊 Carry impact (top shifts):</b>")
+        lines.append("<b>📊 Carry pairs afectate:</b>")
         old_rates = dict(rates)
-        for ccy, old, new in changes[:3]:
+        for ccy, old, new in changes[:5]:
             old_rates[ccy] = old
+        affected = get_top_carry_pairs(rates, 5)
+        for item in affected[:3]:
+            lines.append(
+                f"  • <b>{item['pair']}</b> carry +{item['spread']:.2f}% "
+                f"({item['base_rate']:.2f}-{item['quote_rate']:.2f})"
+            )
         old_top = get_top_carry_pairs(old_rates, 1)
         new_top = get_top_carry_pairs(rates, 1)
-        if old_top and new_top:
+        if old_top and new_top and old_top[0]['pair'] != new_top[0]['pair']:
             o, n = old_top[0], new_top[0]
             lines.append(
-                f"  • Best carry: {o['pair']} +{o['spread']:.2f}% → "
+                f"  • Best carry shift: {o['pair']} +{o['spread']:.2f}% → "
                 f"{n['pair']} +{n['spread']:.2f}%"
             )
 
