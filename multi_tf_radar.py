@@ -1566,8 +1566,6 @@ class MultiTFRadar:
         # CONTINUATION (Daily BOS): allow_bos=True — 4H BOS in directie = executie imediata
         # REVERSAL (Daily CHoCH): allow_bos=False — asteptam CHoCH de inversare pe 4H
         _strategy_type = str(setup_data.get('strategy_type', 'reversal')).lower()
-        # V45: în pândă post-POI — CHoCH 4H body-close obligatoriu (fără BOS 4H shortcut)
-        _allow_bos_4h = bool(daily_zone_validated)
         # V19.4 FIX #4: prețul live este IMPERATIV — nu existe fallback silențios la daily_entry.
         # Dacă portul 8010 nu răspunde → RuntimeError explicit, prins de run_scan cu `continue`.
         current_price = self.get_current_price(symbol)
@@ -1600,6 +1598,8 @@ class MultiTFRadar:
             d1_wick_high=_d1_wick_high, d1_wick_low=_d1_wick_low,
         )
         daily_zone_validated = _v43_zone['validated']
+        # V45/V47: BOS 4H permis doar când POI validat (panda activă)
+        _allow_bos_4h = bool(daily_zone_validated)
         _track_mitigation_touch(setup_data, _v43_zone)
 
         print(f"\n{'='*80}")
