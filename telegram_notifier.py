@@ -457,14 +457,14 @@ class TelegramNotifier:
             if sig == 'BOS':
                 header = "⚡ <b>4H STRUCTURĂ CONFIRMATĂ (BOS)</b> — Continuare"
                 wait_line = (
-                    "⏳ Așteptăm pullback Premium/Discount 60–80% pe impuls BOS "
-                    "în POI Daily pentru entry final..."
+                    "✅ POI Daily atins — break BOS 4H confirmat post-touch\n"
+                    "⏳ Următorul pas: retrace Premium/Discount 60–80% pe impuls BOS → entry"
                 )
             else:
                 header = "🔄 <b>4H INVERSARE STRUCTURĂ (CHoCH)</b> — Pregătire Entry"
                 wait_line = (
-                    "⏳ Așteptăm pullback Premium/Discount 60–80% în POI Daily "
-                    "pentru entry final..."
+                    "✅ POI Daily atins — CHoCH 4H confirmat post-touch\n"
+                    "⏳ Următorul pas: retrace Premium/Discount 60–80% pe impuls 4H → entry"
                 )
 
             caption = (
@@ -557,12 +557,25 @@ class TelegramNotifier:
             )
             bars_ago = getattr(tf_data, 'choch_bars_ago', None)
             bars_str = f"-{bars_ago}b" if bars_ago is not None else ""
+            retrace_pct = getattr(tf_data, 'retrace_pct', None)
             dir_emoji = "🟢" if direction == 'BUY' else "🔴"
             sep = UNIVERSAL_SEPARATOR
             trade_block = _choch_trade_block(symbol, entry, sl, tp, rr)
 
+            retrace_hint = (
+                f"\n📊 Retrace curent pe impuls 1H: <code>{retrace_pct * 100:.1f}%</code>"
+                if retrace_pct is not None
+                else ""
+            )
+            wait_line = (
+                "✅ POI Daily atins · 4H confirmat · 1H CHoCH live post-touch\n"
+                "⏳ Următorul pas: preț în Premium/Discount 60–80% pe impuls 1H "
+                "→ EXECUTE_NOW sniper"
+                f"{retrace_hint}"
+            )
+
             caption = (
-                f"🎯 <b>SNIPER 1H READY</b> — structură 4H confirmată\n"
+                f"🎯 <b>SNIPER 1H READY</b> — cascadă POI → 4H → 1H completă\n"
                 f"{sep}\n"
                 f"{dir_emoji} <b>{symbol}</b> {direction}\n"
                 f"🎯 Strategy: <code>{strategy}</code>\n"
@@ -570,8 +583,7 @@ class TelegramNotifier:
                 f"{f' | {bars_str} post-POI' if bars_str else ''}\n"
                 f"{trade_block}"
                 f"{sep}\n"
-                f"⏳ Așteptăm pullback Premium/Discount 60–80% în POI Daily "
-                f"(confirmare 1H sniper)..."
+                f"{wait_line}"
             )
 
             chart_1h = None
