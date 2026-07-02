@@ -171,7 +171,7 @@ else
     # Setup Executor Monitor (if exists)
     if [ -f "$WORKSPACE/setup_executor_monitor.py" ]; then
         echo "   ${GREEN}6️⃣ Starting Setup Executor Monitor...${NC}"
-        nohup python3 "$WORKSPACE/setup_executor_monitor.py" --interval 30 --loop > "$WORKSPACE/setup_monitor.log" 2>&1 &
+        nohup python3 "$WORKSPACE/setup_executor_monitor.py" --interval 5 --loop > "$WORKSPACE/setup_monitor.log" 2>&1 &
         echo "      ${CYAN}→ PID: $!${NC}"
         sleep 1
     fi

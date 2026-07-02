@@ -57,7 +57,7 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 echo ""
 
 # Start Setup Executor
-python3 setup_executor_monitor.py --interval 30 --loop > setup_monitor.log 2>&1 &
+python3 setup_executor_monitor.py --interval 5 --loop > setup_monitor.log 2>&1 &
 SETUP_PID=$!
 echo "   ✅ Setup Executor - STARTED (PID $SETUP_PID)"
 

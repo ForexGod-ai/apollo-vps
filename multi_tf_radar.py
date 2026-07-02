@@ -356,28 +356,71 @@ def _resolve_mitigation_touch_anchor(
     return max(candidates) if candidates else None
 
 
+def _d1_bar_open_iso(df_d1) -> Optional[str]:
+    """V47.1: timp deschidere lumânare D1 curentă (ancoră touch POI wick)."""
+    if df_d1 is None or df_d1.empty:
+        return None
+    row = df_d1.iloc[-1]
+    for col in ('time', 'datetime', 'Date', 'date', 'timestamp'):
+        if col in df_d1.columns:
+            dt = _parse_radar_dt(row[col])
+            if dt is not None:
+                return dt.isoformat()
+    try:
+        idx = df_d1.index[-1]
+        dt = _parse_radar_dt(idx)
+        if dt is not None:
+            return dt.isoformat()
+    except Exception:
+        pass
+    return None
+
+
 def _track_mitigation_touch(
     setup_data: dict,
     v43_zone: dict,
     tf_4h: 'TimeframeAnalysis' = None,
+    d1_touch_time: Optional[str] = None,
 ) -> None:
-    """V47: State machine POI — reset dedup la intrare; radar OFF la ieșire."""
+    """V47.1: State machine POI — latch panda post-touch până la alertă 4H."""
     now_ts = datetime.now(timezone.utc).isoformat()
+    touch_anchor = d1_touch_time or now_ts
     in_poi = v43_zone.get('in_poi', False)
     validated = v43_zone.get('validated', False)
     was_occupied = bool(setup_data.get('_poi_occupied'))
+    h4_structural_alerted = bool(
+        setup_data.get('h4_choch_alert_sent') or setup_data.get('h4_bos_alert_sent')
+    )
 
     if not in_poi:
+        # V49: latch ON post-touch — CHoCH + retrace 60–80% pot apărea în afara casetei POI
+        if setup_data.get('poi_touch_latched'):
+            setup_data['_poi_occupied'] = False
+            setup_data['radar_panda_active'] = True
+            if not h4_structural_alerted:
+                print(
+                    f"  [V49 POI LATCH] {setup_data.get('symbol', '?')}: preț ieșit din POI — "
+                    f"panda ON, așteptăm CHoCH/BOS 4H post-touch"
+                )
+            else:
+                print(
+                    f"  [V49 POI LATCH] {setup_data.get('symbol', '?')}: post-alertă 4H — "
+                    f"latch activ pentru entry retrace 60–80%"
+                )
+            sys.stdout.flush()
+            return
         setup_data.pop('poi_first_touch_time', None)
         setup_data.pop('h4_fvg_first_touch_time', None)
         setup_data['_poi_occupied'] = False
         setup_data.pop('_h4_fvg_occupied', None)
         setup_data['radar_panda_active'] = False
+        setup_data.pop('poi_touch_latched', None)
         return
 
     if not was_occupied and validated:
-        setup_data['poi_first_touch_time'] = now_ts
-        setup_data['poi_radar_armed_at'] = now_ts
+        setup_data['poi_first_touch_time'] = touch_anchor
+        setup_data['poi_radar_armed_at'] = touch_anchor
+        setup_data['poi_touch_latched'] = True
         setup_data.pop('h4_fvg_first_touch_time', None)
         setup_data['h4_choch_alert_sent'] = False
         setup_data['h4_bos_alert_sent'] = False
@@ -387,13 +430,14 @@ def _track_mitigation_touch(
         setup_data.pop('radar_1h_choch_detected', None)
         setup_data['radar_panda_active'] = True
         print(
-            f"  [V47 POI ARM] {setup_data.get('symbol', '?')}: radar PANDA ON — "
+            f"  [V47.1 POI ARM] {setup_data.get('symbol', '?')}: radar PANDA ON @ {touch_anchor} — "
             f"dedup alerte resetat, asteptam break LIVE post-touch"
         )
         sys.stdout.flush()
     elif validated and not setup_data.get('poi_first_touch_time'):
-        setup_data['poi_first_touch_time'] = now_ts
-        setup_data['poi_radar_armed_at'] = now_ts
+        setup_data['poi_first_touch_time'] = touch_anchor
+        setup_data['poi_radar_armed_at'] = touch_anchor
+        setup_data['poi_touch_latched'] = True
         setup_data['radar_panda_active'] = True
 
     setup_data['_poi_occupied'] = validated
@@ -421,7 +465,7 @@ def _apply_h1_chronology_guard(
     if not tf_1h.choch_detected:
         return tf_1h, False
 
-    if not daily_zone_validated:
+    if not daily_zone_validated and not setup_data.get('poi_touch_latched'):
         print(
             f"  🛑 [V43.8 H1 STALE] {symbol}: 1H CHoCH respins — POI Daily nevalidat"
         )
@@ -979,10 +1023,11 @@ class MultiTFRadar:
         _bos_bars_ago_val: int,
         _bos_trigger_bars_ago: int,
         daily_in_poi: bool,
+        poi_touch_latched: bool = False,
         latest_fvg=None,
         signal_type: str = 'CHoCH',
     ) -> TimeframeAnalysis:
-        """V46/V47: POI + Premium/Discount 60–80% pe impuls CHoCH sau BOS."""
+        """V49: entry secvențial — touch POI (latch) apoi retrace 60–80% pe CHoCH/BOS."""
         wait_pb = (
             PullbackStatus.WAITING_1H_PULLBACK
             if timeframe == "H1"
@@ -1062,7 +1107,7 @@ class MultiTFRadar:
             zone_bottom <= current_price <= zone_top
             and _RETRACE_ENTRY_MIN <= retrace_pct <= _RETRACE_ENTRY_MAX
         )
-        in_poi_entry = daily_in_poi and in_retrace_band
+        in_poi_entry = in_retrace_band and (daily_in_poi or poi_touch_latched)
 
         status, sniper_note = _v46_entry_status_and_note(
             timeframe_display,
@@ -1099,7 +1144,8 @@ class MultiTFRadar:
         )
         print(
             f"     Zone 60–80%: [{zone_bottom:.5f}–{zone_top:.5f}] | "
-            f"Retrace={retrace_pct * 100:.1f}% | in_poi={daily_in_poi} | {sniper_note}"
+            f"Retrace={retrace_pct * 100:.1f}% | in_poi={daily_in_poi} | "
+            f"latched={poi_touch_latched} | {sniper_note}"
         )
         sys.stdout.flush()
 
@@ -1150,6 +1196,7 @@ class MultiTFRadar:
         smc_detector: SMCDetector,
         allow_bos_trigger: bool = False,  # V30.1: True pt CONTINUATION 4H — BOS = trigger direct
         daily_in_poi: bool = False,  # V46: preț/wick Daily în POI box
+        poi_touch_latched: bool = False,  # V49: touch POI anterior — entry secvențial
     ) -> TimeframeAnalysis:
         """
         Analyze a specific timeframe for CHoCH and FVG
@@ -1448,6 +1495,7 @@ class MultiTFRadar:
                 _bos_bars_ago_val=_bos_bars_ago_val,
                 _bos_trigger_bars_ago=_bos_trigger_bars_ago,
                 daily_in_poi=daily_in_poi,
+                poi_touch_latched=poi_touch_latched,
                 latest_fvg=latest_fvg,
                 signal_type=signal_type,
             )
@@ -1584,11 +1632,14 @@ class MultiTFRadar:
 
         _d1_wick_high = None
         _d1_wick_low = None
+        _d1_touch_time = None
+        _df_d1_touch = None
         try:
             _df_d1_touch = self.get_historical_data(symbol, "D1", 3)
             if _df_d1_touch is not None and not _df_d1_touch.empty:
                 _d1_wick_high = float(_df_d1_touch['high'].iloc[-1])
                 _d1_wick_low = float(_df_d1_touch['low'].iloc[-1])
+                _d1_touch_time = _d1_bar_open_iso(_df_d1_touch)
         except Exception:
             pass
 
@@ -1598,9 +1649,10 @@ class MultiTFRadar:
             d1_wick_high=_d1_wick_high, d1_wick_low=_d1_wick_low,
         )
         daily_zone_validated = _v43_zone['validated']
-        # V45/V47: BOS 4H permis doar când POI validat (panda activă)
-        _allow_bos_4h = bool(daily_zone_validated)
-        _track_mitigation_touch(setup_data, _v43_zone)
+        _track_mitigation_touch(setup_data, _v43_zone, d1_touch_time=_d1_touch_time)
+        # V47.1: scan LTF cât timp panda e latched (inclusiv după ieșirea din POI la respingere)
+        _poi_scan_active = bool(daily_zone_validated or setup_data.get('radar_panda_active'))
+        _allow_bos_4h = bool(_poi_scan_active)
 
         print(f"\n{'='*80}")
         print(f"🔍 [{symbol}] Bias Daily: {direction} | Scanare structurală 4H+1H (V43.2 POI Gate)...")
@@ -1609,20 +1661,27 @@ class MultiTFRadar:
         print(f"{'='*80}")
         print(f"💰 Current Price: {current_price:.5f}")
         print(f"📊 Daily POI: [{daily_fvg_bottom:.5f} - {daily_fvg_top:.5f}]")
-        if daily_zone_validated:
-            _radar_out(
-                f"[🛰️ RADAR ALLOW] Preț în POI (Premium/Discount). Se vânează CHoCH."
-            )
-            _radar_out(
-                f"  [🛰️ RADAR ALLOW] {symbol}: {_v43_zone['reason']}"
-            )
+        if _poi_scan_active:
+            if daily_zone_validated:
+                _radar_out(
+                    f"[🛰️ RADAR ALLOW] Preț în POI (Premium/Discount). Se vânează CHoCH."
+                )
+                _radar_out(
+                    f"  [🛰️ RADAR ALLOW] {symbol}: {_v43_zone['reason']}"
+                )
+            else:
+                _radar_out(
+                    f"[🛰️ V47.1 POI LATCH] {symbol}: panda activ post-touch — "
+                    f"scan 4H/1H continuă ({_v43_zone['reason']})"
+                )
         else:
             print(f"⏳ [V43.2 POI GATE] ÎNCHISĂ — {_v43_zone['reason']}")
             print(f"  LTF CHoCH ignorat până la touch POI + zonă instituțională ADR corectă")
         sys.stdout.flush()
 
-        if daily_zone_validated:
+        if _poi_scan_active:
             _daily_in_poi = bool(_v43_zone.get('in_poi', False))
+            _poi_latched = bool(setup_data.get('poi_touch_latched'))
             # Analyze 1H — doar în POI validat
             print("\n🔎 [1H] SNIPER SCAN (ATR 0.8x)...")
             sys.stdout.flush()
@@ -1634,6 +1693,7 @@ class MultiTFRadar:
                 current_price=current_price,
                 smc_detector=self.smc_1h,
                 daily_in_poi=_daily_in_poi,
+                poi_touch_latched=_poi_latched,
             )
             self._log_scan_done(symbol, tf_1h, _h1_bars)
 
@@ -1651,12 +1711,15 @@ class MultiTFRadar:
                 smc_detector=self.smc_4h,
                 allow_bos_trigger=_allow_bos_4h,  # V30.1
                 daily_in_poi=_daily_in_poi,
+                poi_touch_latched=_poi_latched,
             )
             self._log_scan_done(symbol, tf_4h, _h4_bars)
 
-            _track_mitigation_touch(setup_data, _v43_zone, tf_4h)
+            _track_mitigation_touch(
+                setup_data, _v43_zone, tf_4h, d1_touch_time=_d1_touch_time,
+            )
             tf_1h, _h1_stale = _apply_h1_chronology_guard(
-                symbol, setup_data, tf_4h, tf_1h, daily_zone_validated,
+                symbol, setup_data, tf_4h, tf_1h, _poi_scan_active,
             )
         else:
             tf_1h = _empty_tf_waiting("H1")
@@ -1725,7 +1788,8 @@ class MultiTFRadar:
                   f"EXECUTE blocat")
             sys.stdout.flush()
 
-        if execution_ready and not daily_zone_validated:
+        _poi_entry_gate = daily_zone_validated or bool(setup_data.get('poi_touch_latched'))
+        if execution_ready and not _poi_entry_gate:
             execution_ready = False
             priority_timeframe = None
             _wait_zone = 'Premium' if required_direction == 'bullish' else 'Discount'
@@ -1796,7 +1860,7 @@ class MultiTFRadar:
                 return None
         if not result.pd_guard_passed:
             return None
-        if not result.daily_zone_validated:
+        if not result.daily_zone_validated and not setup.get('poi_touch_latched'):
             return None
 
         setup_type = setup.get('setup_type', setup.get('strategy_type', 'reversal')).upper()
@@ -1866,7 +1930,7 @@ class MultiTFRadar:
         'h4_choch_alert_sent', 'h4_bos_alert_sent', 'h1_choch_alert_sent', 'choch_1h_price',
         'h4_structure_locked_at', 'radar_1h_choch_stale',
         'poi_first_touch_time', 'h4_fvg_first_touch_time',
-        'radar_panda_active', 'poi_radar_armed_at', 'radar_4h_signal_type',
+        'radar_panda_active', 'poi_radar_armed_at', 'poi_touch_latched', 'radar_4h_signal_type',
     )
 
     @staticmethod
@@ -2086,11 +2150,20 @@ class MultiTFRadar:
         tf_1h = result.tf_1h
 
         def _v47_4h_alert_ok() -> bool:
-            if not tf_4h.choch_detected or tf_4h.choch_direction != macro_dir:
-                return False
+            sig_u = (tf_4h.signal_type or 'CHoCH').upper()
+            if sig_u == 'BOS':
+                if not tf_4h.bos_detected or tf_4h.bos_direction != macro_dir:
+                    return False
+                bars_ago = tf_4h.bos_bars_ago
+                rising = bool(tf_4h.bos_detected and not prev_4h_choch)
+            else:
+                if not tf_4h.choch_detected or tf_4h.choch_direction != macro_dir:
+                    return False
+                bars_ago = tf_4h.choch_bars_ago
+                rising = bool(tf_4h.choch_detected and not prev_4h_choch)
             if not _v47_break_post_poi_touch(setup, tf_4h.choch_time):
                 return False
-            if not _v47_live_alert_bars_ok('4H', tf_4h.choch_bars_ago):
+            if not (_v47_live_alert_bars_ok('4H', bars_ago) or rising):
                 return False
             return True
 
@@ -2143,10 +2216,13 @@ class MultiTFRadar:
             and not setup.get('h1_choch_alert_sent')
             and not setup.get('radar_1h_choch_stale')
             and not getattr(result, 'h1_choch_stale', False)
-            and result.daily_zone_validated
+            and (result.daily_zone_validated or setup.get('radar_panda_active'))
             and setup.get('poi_first_touch_time')
             and _v47_break_post_poi_touch(setup, tf_1h.choch_time)
-            and _v47_live_alert_bars_ok('1H', tf_1h.choch_bars_ago)
+            and (
+                _v47_live_alert_bars_ok('1H', tf_1h.choch_bars_ago)
+                or (tf_1h.choch_detected and not prev_1h_choch)
+            )
         ):
             setup['h1_choch_alert_sent'] = True
             if tf_1h.choch_price is not None:
@@ -2164,15 +2240,18 @@ class MultiTFRadar:
     def _arm_execute_now(self, setup: dict, result: 'MultiTFResult', exec_tf: str,
                          source: str = 'trigger') -> None:
         """V37.5/6: Seteaza EXECUTE_NOW, flush instant JSON, Telegram o singura data per setup."""
-        # V42.7 + V43.2: ultimă verificare POI Daily înainte de armare
-        if not result.daily_zone_validated:
+        # V49: armare secvențială — touch POI latched + retrace 60–80% (fără overlap simultan)
+        _poi_arm_ok = bool(
+            result.daily_zone_validated or setup.get('poi_touch_latched')
+        )
+        if not _poi_arm_ok:
             logger.info(
-                f"[V43.2 POI GATE] {setup.get('symbol', '?')}: skip EXECUTE_NOW arm — "
-                f"preț {result.current_price:.5f} nu e în POI Daily + P/D ADR"
+                f"[V49 POI GATE] {setup.get('symbol', '?')}: skip EXECUTE_NOW arm — "
+                f"preț {result.current_price:.5f} fără POI live și fără poi_touch_latched"
             )
             return
         _macro_dir = 'bullish' if result.direction == 'LONG' else 'bearish'
-        _allow_bos = bool(result.daily_zone_validated)
+        _allow_bos = bool(_poi_arm_ok)
         if exec_tf == '1H' and not self._is_4h_aligned_for_1h_entry(
             result.tf_4h, _macro_dir, _allow_bos,
         ):
@@ -2645,12 +2724,18 @@ class MultiTFRadar:
                 if direction == 'buy' and _dsl and _cp < float(_dsl):
                     s['status'] = 'INVALIDATED'
                     s['invalidation_reason'] = f'P1: close {_cp:.5f} < swing_low {_dsl:.5f}'
+                    for _lk in ('poi_touch_latched', 'radar_panda_active', 'poi_first_touch_time',
+                                'poi_radar_armed_at', '_poi_occupied'):
+                        s.pop(_lk, None)
                     logger.warning(f"[V33 POARTA 1] {sym} LONG INVALIDATED: pret {_cp:.5f} < daily_swing_low {_dsl:.5f}")
                     changed = True
                     continue
                 elif direction == 'sell' and _dsh and _cp > float(_dsh):
                     s['status'] = 'INVALIDATED'
                     s['invalidation_reason'] = f'P1: close {_cp:.5f} > swing_high {_dsh:.5f}'
+                    for _lk in ('poi_touch_latched', 'radar_panda_active', 'poi_first_touch_time',
+                                'poi_radar_armed_at', '_poi_occupied'):
+                        s.pop(_lk, None)
                     logger.warning(f"[V33 POARTA 1] {sym} SHORT INVALIDATED: pret {_cp:.5f} > daily_swing_high {_dsh:.5f}")
                     changed = True
                     continue
@@ -2757,20 +2842,16 @@ class MultiTFRadar:
                         for _ek in (
                             'execute_now_alert_sent', 'execute_now_alert_key',
                             'h4_choch_alert_sent', 'h4_bos_alert_sent', 'h1_choch_alert_sent', 'choch_1h_price',
-                            'radar_panda_active', 'poi_radar_armed_at', 'radar_4h_signal_type',
+                            'radar_panda_active', 'poi_radar_armed_at', 'poi_touch_latched', 'radar_4h_signal_type',
                             'h4_structure_locked_at', 'radar_1h_choch_stale',
                             'poi_first_touch_time', 'h4_fvg_first_touch_time',
                             '_poi_occupied', '_h4_fvg_occupied',
                         ):
                             if _original_setup.get(_ek) is not None:
                                 setups[i][_ek] = _original_setup[_ek]
-                        # ── Merge parțial: _update_setup_with_radar scrie DOAR cheile Radarului ──
+                        # V49 P0-A: post-update wins — NU restaura EXECUTE_NOW din snapshot scan-start
                         self._update_setup_with_radar(setups[i], result)
-                        if not setups[i].get('entry1_filled'):
-                            for _ek in self._EXECUTE_NOW_FLUSH_KEYS:
-                                if _ek in _original_setup:
-                                    setups[i][_ek] = _original_setup[_ek]
-                        else:
+                        if setups[i].get('entry1_filled'):
                             for _ek in ('EXECUTE_NOW', 'execute_now_trigger_tf'):
                                 setups[i].pop(_ek, None)
                         matched_count += 1
@@ -2855,6 +2936,7 @@ class MultiTFRadar:
                 if setup.get('symbol') == result.symbol and (matches_sell or matches_buy or matches_direct):
                     for _ek in (
                         'poi_first_touch_time', 'h4_fvg_first_touch_time', 'poi_radar_armed_at',
+                        'poi_touch_latched',
                         '_poi_occupied', '_h4_fvg_occupied', 'radar_panda_active',
                         'h4_choch_alert_sent', 'h4_bos_alert_sent', 'h1_choch_alert_sent',
                         'choch_1h_price', 'radar_4h_signal_type',

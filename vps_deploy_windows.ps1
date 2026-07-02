@@ -191,7 +191,7 @@ echo Starting Glitch in Matrix monitors...
 start "" /B %PYTHON% watchdog_monitor.py --interval 60 > C:\matrix\logs\watchdog.log 2>&1
 timeout /t 3 /nobreak > nul
 
-start "" /B %PYTHON% setup_executor_monitor.py --interval 30 --loop > C:\matrix\logs\setup_monitor.log 2>&1
+start "" /B %PYTHON% setup_executor_monitor.py --interval 5 --loop > C:\matrix\logs\setup_monitor.log 2>&1
 timeout /t 2 /nobreak > nul
 
 start "" /B %PYTHON% position_monitor.py > C:\matrix\logs\position_monitor.log 2>&1

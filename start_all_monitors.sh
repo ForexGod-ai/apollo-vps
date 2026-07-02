@@ -48,7 +48,7 @@ sleep 2
 # 3️⃣ Start Setup Executor Monitor (Entry execution + notifications)
 echo ""
 echo "3️⃣ Starting Setup Executor Monitor..."
-nohup .venv/bin/python setup_executor_monitor.py --interval 30 --loop > logs/setup_monitor.log 2>&1 &
+nohup .venv/bin/python setup_executor_monitor.py --interval 5 --loop > logs/setup_monitor.log 2>&1 &
 EXEC_PID=$!
 echo "   ✅ Setup Executor Monitor started (PID: $EXEC_PID)"
 echo "   ⚡ Aggressive mode: 5s checks for in-zone setups"

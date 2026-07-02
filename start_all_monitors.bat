@@ -35,7 +35,7 @@ start "[2] Position Monitor" /MIN cmd /c "python position_monitor.py --loop >> l
 timeout /t 2 /nobreak >nul
 
 echo [3/7] Starting Setup Executor Monitor [THE COMMANDER]...
-start "[3] THE COMMANDER" /MIN cmd /c "python setup_executor_monitor.py --interval 30 --loop >> logs\setup_executor_monitor.log 2>&1"
+start "[3] THE COMMANDER" /MIN cmd /c "python setup_executor_monitor.py --interval 5 --loop >> logs\setup_executor_monitor.log 2>&1"
 timeout /t 2 /nobreak >nul
 
 echo [4/7] Starting Telegram Command Center...
