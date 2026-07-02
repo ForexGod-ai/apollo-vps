@@ -72,19 +72,27 @@ class ChartGenerator:
             # Daily: 60 candles = ~2 months | 4H: 10 days | 1H: 2.5 days
             df = df.tail(60)
             
-            # Title
-            # Determine direction from CHoCH
-            if hasattr(setup, 'direction'):
-                direction = setup.direction
-            elif setup.daily_choch:
-                # Bearish CHoCH means sell setup
-                direction = 'sell' if setup.daily_choch.direction == 'bearish' else 'buy'
+            # Title — safe attrs (dict, TradeSetup, SimpleNamespace)
+            if setup is None:
+                direction = 'sell'
+            elif getattr(setup, 'direction', None):
+                direction = str(setup.direction).lower()
+            elif getattr(setup, 'daily_choch', None):
+                direction = (
+                    'sell' if setup.daily_choch.direction == 'bearish' else 'buy'
+                )
             else:
-                direction = 'sell'  # Default
-            
-            emoji = '🟢' if direction == 'buy' else '🔴'
-            strategy = setup.strategy_type.upper() if setup else ''
-            rr = f"R:R 1:{setup.risk_reward:.1f}" if setup else ''
+                direction = 'sell'
+
+            emoji = '🟢' if direction in ('buy', 'long', 'bullish') else '🔴'
+            strategy_raw = getattr(setup, 'strategy_type', None) if setup else None
+            if strategy_raw is None and setup is not None and isinstance(setup, dict):
+                strategy_raw = setup.get('strategy_type')
+            strategy = str(strategy_raw or '').upper()
+            rr_val = getattr(setup, 'risk_reward', None) if setup else None
+            if rr_val is None and setup is not None and isinstance(setup, dict):
+                rr_val = setup.get('risk_reward')
+            rr = f"R:R 1:{float(rr_val):.1f}" if rr_val else ''
             
             title = f'{symbol} - {timeframe}'
             if setup:

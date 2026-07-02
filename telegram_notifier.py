@@ -579,11 +579,13 @@ class TelegramNotifier:
                 from types import SimpleNamespace
                 setup_ns = SimpleNamespace(
                     symbol=symbol,
+                    direction=direction.lower(),
                     entry_price=entry,
                     stop_loss=sl,
                     take_profit=tp,
                     risk_reward=rr,
                     status='MONITORING',
+                    strategy_type=strategy.lower(),
                     daily_choch=SimpleNamespace(
                         direction='bullish' if direction == 'BUY' else 'bearish'
                     ),
