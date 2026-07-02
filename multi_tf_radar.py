@@ -137,6 +137,10 @@ _RETRACE_ENTRY_MAX = 0.80
 _V47_ALERT_MAX_BARS_4H = 3
 _V47_ALERT_MAX_BARS_1H = 3
 
+# V50: retrace sanity — extreme values = stale structural anchor
+_RETRACE_ALERT_MAX = 2.0
+_RETRACE_ALERT_MIN = -0.05
+
 
 def _choch_impulse_retrace_pct(
     break_price: float,
@@ -227,6 +231,72 @@ def _v47_live_alert_bars_ok(timeframe_display: str, bars_ago: int) -> bool:
     """V47: alertă Telegram doar pe break proaspăt (≤3 bare TF)."""
     cap = _V47_ALERT_MAX_BARS_1H if timeframe_display == '1H' else _V47_ALERT_MAX_BARS_4H
     return bars_ago <= cap
+
+
+def _structural_event_dt(structural) -> Optional[datetime]:
+    """V50: timestamp eveniment CHoCH/BOS."""
+    if structural is None:
+        return None
+    ct = getattr(structural, 'candle_time', None)
+    if ct is not None:
+        return _parse_radar_dt(ct)
+    return None
+
+
+def _filter_structural_post_poi(events: list, anchor: Optional[datetime]) -> list:
+    """V50: păstrează doar evenimente structurale DUPĂ primul touch POI."""
+    if anchor is None or not events:
+        return events
+    filtered = []
+    for ev in events:
+        edt = _structural_event_dt(ev)
+        if edt is not None and edt > anchor:
+            filtered.append(ev)
+    return filtered
+
+
+def _is_structural_break_valid(latest, direction: str, df) -> bool:
+    """
+    V50: respinge CHoCH/BOS invalidat de structură opusă după break.
+    SELL: invalid dacă close > swing_broken (HH după rejection bearish).
+    BUY: invalid dacă close < swing_broken (LL după rejection bullish).
+    """
+    try:
+        break_idx = int(latest.index)
+        swing_broken_price = float(latest.swing_broken.price)
+    except Exception:
+        return False
+    if break_idx >= len(df) - 1:
+        return True
+    after = df.iloc[break_idx + 1:]
+    if after.empty:
+        return True
+    closes = after['close'].astype(float)
+    if direction == 'bearish':
+        if (closes > swing_broken_price).any():
+            return False
+    else:
+        if (closes < swing_broken_price).any():
+            return False
+    return True
+
+
+def _retrace_implies_stale_anchor(retrace_pct: float, impulse: float) -> bool:
+    """V50: retrace extrem → anchor structural invalid (respinge detectarea)."""
+    if impulse <= 0:
+        return True
+    if retrace_pct < _RETRACE_ALERT_MIN or retrace_pct > _RETRACE_ALERT_MAX:
+        return True
+    return False
+
+
+def _retrace_is_alert_valid(retrace_pct: Optional[float]) -> bool:
+    """V50: retrace în interval rezonabil pentru alertă Telegram."""
+    if retrace_pct is None:
+        return True
+    if retrace_pct < _RETRACE_ALERT_MIN or retrace_pct > _RETRACE_ALERT_MAX:
+        return False
+    return True
 
 
 def _v47_panda_active(setup_data: dict, v43_zone: dict) -> bool:
@@ -425,13 +495,14 @@ def _track_mitigation_touch(
         setup_data['h4_choch_alert_sent'] = False
         setup_data['h4_bos_alert_sent'] = False
         setup_data['h1_choch_alert_sent'] = False
+        setup_data['h4_structure_locked'] = False
+        setup_data.pop('h4_structure_locked_at', None)
         setup_data.pop('choch_1h_price', None)
-        setup_data.pop('radar_4h_choch_detected', None)
-        setup_data.pop('radar_1h_choch_detected', None)
+        # V50: nu resetăm radar_*_choch_detected — evită rising-edge zombi pe CHoCH vechi
         setup_data['radar_panda_active'] = True
         print(
-            f"  [V47.1 POI ARM] {setup_data.get('symbol', '?')}: radar PANDA ON @ {touch_anchor} — "
-            f"dedup alerte resetat, asteptam break LIVE post-touch"
+            f"  [V50 POI ARM] {setup_data.get('symbol', '?')}: radar PANDA ON @ {touch_anchor} — "
+            f"dedup alerte resetat, asteptam break LIVE ≤3b post-touch"
         )
         sys.stdout.flush()
     elif validated and not setup_data.get('poi_first_touch_time'):
@@ -1057,6 +1128,32 @@ class MultiTFRadar:
         )
         pip_size = self._get_pip_size(symbol)
 
+        if _retrace_implies_stale_anchor(retrace_pct, impulse_size):
+            print(
+                f"  🛑 [V50 RETRACE INVALID] {symbol} {timeframe_display}: "
+                f"retrace={retrace_pct * 100:.1f}% impulse={impulse_size:.5f} — structură stale"
+            )
+            sys.stdout.flush()
+            wait_choch = (
+                PullbackStatus.WAITING_1H_CHOCH if timeframe == "H1"
+                else PullbackStatus.WAITING_4H_CHOCH
+            )
+            return TimeframeAnalysis(
+                timeframe=timeframe_display,
+                choch_detected=False,
+                choch_direction=None,
+                choch_time=None,
+                choch_price=None,
+                fvg_detected=False,
+                status=wait_choch,
+                equilibrium=choch_equilibrium,
+                h4_sl_price=h4_sl_price,
+                choch_bars_ago=_choch_bars_ago,
+                bos_detected=_bos_detected_val,
+                bos_direction=_bos_direction_val,
+                bos_bars_ago=_bos_bars_ago_val,
+            )
+
         if impulse_size <= 0:
             print(f"  ⚠️ [V46 GUARD] {symbol}: impuls 0 pips — WAITING")
             sys.stdout.flush()
@@ -1197,6 +1294,7 @@ class MultiTFRadar:
         allow_bos_trigger: bool = False,  # V30.1: True pt CONTINUATION 4H — BOS = trigger direct
         daily_in_poi: bool = False,  # V46: preț/wick Daily în POI box
         poi_touch_latched: bool = False,  # V49: touch POI anterior — entry secvențial
+        poi_first_touch_time: Optional[str] = None,  # V50: ancoră post-POI pentru selecție structurală
     ) -> TimeframeAnalysis:
         """
         Analyze a specific timeframe for CHoCH and FVG
@@ -1292,6 +1390,30 @@ class MultiTFRadar:
                     f"{rejected_count} CHoCH(uri) contrare ({required_direction.upper()} opus) — IGNORATE"
                 )
                 sys.stdout.flush()
+
+            # V50: post-POI — doar structură DUPĂ primul touch POI Daily
+            _poi_anchor = _parse_radar_dt(poi_first_touch_time)
+            if _poi_anchor and (poi_touch_latched or daily_in_poi):
+                _pre = len(aligned_chochs)
+                aligned_chochs = _filter_structural_post_poi(aligned_chochs, _poi_anchor)
+                _all_aligned_bos_for_lock = _filter_structural_post_poi(
+                    _all_aligned_bos_for_lock, _poi_anchor,
+                )
+                _bos_detected_val = bool(_all_aligned_bos_for_lock)
+                _bos_direction_val = (
+                    _all_aligned_bos_for_lock[-1].direction if _all_aligned_bos_for_lock else None
+                )
+                _bos_bars_ago_val = (
+                    (len(df) - _all_aligned_bos_for_lock[-1].index)
+                    if _all_aligned_bos_for_lock else 9999
+                )
+                if _pre > len(aligned_chochs):
+                    print(
+                        f"  🛑 [{timeframe_display} V50 POST-POI] {symbol}: "
+                        f"{_pre - len(aligned_chochs)} CHoCH(uri) pre-POI eliminate"
+                    )
+                    sys.stdout.flush()
+
             # V47: CHoCH prioritar; BOS valid ca intrare 2 (allow_bos_trigger)
             latest_structural, signal_type = self._v47_pick_structural_signal(
                 aligned_chochs, _all_aligned_bos_for_lock, allow_bos_trigger,
@@ -1320,6 +1442,32 @@ class MultiTFRadar:
             latest_choch = latest_structural
             _choch_bars_ago = len(df) - latest_choch.index
             choch_direction = latest_choch.direction
+
+            # V50: respinge break invalidat de structură opusă ulterioară
+            if not _is_structural_break_valid(latest_choch, choch_direction, df):
+                print(
+                    f"  🛑 [{timeframe_display} V50 STRUCT INVALID] {symbol}: "
+                    f"{choch_direction.upper()} break invalidat de structură ulterioară — WAITING"
+                )
+                sys.stdout.flush()
+                return TimeframeAnalysis(
+                    timeframe=timeframe_display,
+                    choch_detected=False,
+                    choch_direction=None,
+                    choch_time=None,
+                    choch_price=None,
+                    fvg_detected=False,
+                    fvg_top=None,
+                    fvg_bottom=None,
+                    fvg_entry=None,
+                    in_fvg=False,
+                    distance_to_fvg_pips=0.0,
+                    status=(
+                        PullbackStatus.WAITING_1H_CHOCH if timeframe == "H1"
+                        else PullbackStatus.WAITING_4H_CHOCH
+                    ),
+                )
+
             if signal_type == 'CHoCH':
                 print(
                     f"  ✅ [{timeframe_display} V47 CHoCH] {symbol} | "
@@ -1682,6 +1830,7 @@ class MultiTFRadar:
         if _poi_scan_active:
             _daily_in_poi = bool(_v43_zone.get('in_poi', False))
             _poi_latched = bool(setup_data.get('poi_touch_latched'))
+            _poi_touch_ts = setup_data.get('poi_first_touch_time')
             # Analyze 1H — doar în POI validat
             print("\n🔎 [1H] SNIPER SCAN (ATR 0.8x)...")
             sys.stdout.flush()
@@ -1694,6 +1843,7 @@ class MultiTFRadar:
                 smc_detector=self.smc_1h,
                 daily_in_poi=_daily_in_poi,
                 poi_touch_latched=_poi_latched,
+                poi_first_touch_time=_poi_touch_ts,
             )
             self._log_scan_done(symbol, tf_1h, _h1_bars)
 
@@ -1712,6 +1862,7 @@ class MultiTFRadar:
                 allow_bos_trigger=_allow_bos_4h,  # V30.1
                 daily_in_poi=_daily_in_poi,
                 poi_touch_latched=_poi_latched,
+                poi_first_touch_time=_poi_touch_ts,
             )
             self._log_scan_done(symbol, tf_4h, _h4_bars)
 
@@ -2155,15 +2306,17 @@ class MultiTFRadar:
                 if not tf_4h.bos_detected or tf_4h.bos_direction != macro_dir:
                     return False
                 bars_ago = tf_4h.bos_bars_ago
-                rising = bool(tf_4h.bos_detected and not prev_4h_choch)
+                break_time = tf_4h.choch_time
             else:
                 if not tf_4h.choch_detected or tf_4h.choch_direction != macro_dir:
                     return False
                 bars_ago = tf_4h.choch_bars_ago
-                rising = bool(tf_4h.choch_detected and not prev_4h_choch)
-            if not _v47_break_post_poi_touch(setup, tf_4h.choch_time):
+                break_time = tf_4h.choch_time
+            if not _v47_break_post_poi_touch(setup, break_time):
                 return False
-            if not (_v47_live_alert_bars_ok('4H', bars_ago) or rising):
+            if not _v47_live_alert_bars_ok('4H', bars_ago):
+                return False
+            if not _retrace_is_alert_valid(getattr(tf_4h, 'retrace_pct', None)):
                 return False
             return True
 
@@ -2193,9 +2346,9 @@ class MultiTFRadar:
             except Exception as e:
                 logger.warning(f"[V47] 4H CHoCH Telegram alert failed for {sym}: {e}")
 
-        h4_gate_open = (
-            setup.get('radar_4h_choch_detected') is True
-            or setup.get('h4_structure_locked') is True
+        # V50: poarta 1H = alertă 4H trimisă pe ciclul POI curent (nu lock stale din istoric)
+        h4_gate_open = bool(
+            setup.get('h4_choch_alert_sent') or setup.get('h4_bos_alert_sent')
         )
         if not h4_gate_open:
             if (
@@ -2204,7 +2357,7 @@ class MultiTFRadar:
                 and not setup.get('h1_choch_alert_sent')
             ):
                 print(
-                    f"  [V47 H1 GATE] {sym}: 1H alert blocat — asteptam confirmare 4H"
+                    f"  [V50 H1 GATE] {sym}: 1H alert blocat — asteptam alertă 4H LIVE post-POI"
                 )
                 sys.stdout.flush()
             return
@@ -2219,10 +2372,8 @@ class MultiTFRadar:
             and (result.daily_zone_validated or setup.get('radar_panda_active'))
             and setup.get('poi_first_touch_time')
             and _v47_break_post_poi_touch(setup, tf_1h.choch_time)
-            and (
-                _v47_live_alert_bars_ok('1H', tf_1h.choch_bars_ago)
-                or (tf_1h.choch_detected and not prev_1h_choch)
-            )
+            and _v47_live_alert_bars_ok('1H', tf_1h.choch_bars_ago)
+            and _retrace_is_alert_valid(getattr(tf_1h, 'retrace_pct', None))
         ):
             setup['h1_choch_alert_sent'] = True
             if tf_1h.choch_price is not None:
@@ -2468,45 +2619,36 @@ class MultiTFRadar:
         if result.tf_1h.in_fvg or result.tf_4h.in_fvg:
             setup['last_in_fvg_time'] = datetime.now().isoformat()
 
-        # ── V25.1: h4_structure_locked — CHoCH PROASPĂT *SAU* BOS RECENT ALINIAT ────────────
-        # ARHITECTURĂ SMC CORECTĂ (observație Colonel):
-        #   CHoCH = schimbare de caracter, apare O SINGURĂ DATĂ la inversarea trendului.
-        #   BOS   = confirmare continuare trend, apare REPETAT pe tot parcursul trendului.
-        # PROBLEMA V25.0: limita de 30 bare pe CHoCH invalida trenduri 4H perfect sănătoase
-        #   unde CHoCH-ul s-a format acum 60+ bare dar piața face BOS-uri recente aliniate.
-        # FIX V25.1: Lacătul se pune dacă ORICARE din condiții e adevărată:
-        #   A) CHoCH 4H PROASPĂT (≤72 bare) + ALINIAT — debut trend, confirmare inițială
-        #   B) BOS 4H RECENT   (≤72 bare) + ALINIAT — trend stabilit, continuare confirmată
-        # Direcția rămâne OBLIGATORIE în ambele cazuri (V25.0 Direction Guard intact).
-        # V25.2: 30→72 bare — pullback pe Daily poate dura 4-14 zile, aliniat cu V25.0 din smc_detector
-        _4H_STRUCT_MAX_BARS = 72   # 72 × 4H = 288h = 12 zile — fereastra extinsă (V25.2)
+        # ── V50: h4_structure_locked — doar CHoCH/BOS 4H LIVE post-POI sau alertă 4H trimisă ──
         _setup_direction_lower = 'bullish' if result.direction == 'LONG' else 'bearish'
         _prev_h4_locked = bool(setup.get('h4_structure_locked'))
 
-        # — Condiția A: CHoCH proaspăt + aliniat ——————————————————————————————
         _4h_choch_direction_ok = (
             result.tf_4h.choch_direction is not None
             and result.tf_4h.choch_direction == _setup_direction_lower
         )
-        _4h_choch_is_fresh_and_aligned = (
-            result.tf_4h.choch_detected
-            and result.tf_4h.choch_bars_ago <= _4H_STRUCT_MAX_BARS
-            and _4h_choch_direction_ok
-        )
-
-        # — Condiția B: BOS recent + aliniat (trend deja stabilit, CHoCH poate fi mai vechi) ——
         _4h_bos_direction_ok = (
             result.tf_4h.bos_direction is not None
             and result.tf_4h.bos_direction == _setup_direction_lower
         )
-        _4h_bos_is_fresh_and_aligned = (
+        _h4_post_poi = _v47_break_post_poi_touch(setup, result.tf_4h.choch_time)
+        _4h_live_choch = (
+            result.tf_4h.choch_detected
+            and _4h_choch_direction_ok
+            and _v47_live_alert_bars_ok('4H', result.tf_4h.choch_bars_ago)
+            and _h4_post_poi
+        )
+        _4h_live_bos = (
             result.tf_4h.bos_detected
-            and result.tf_4h.bos_bars_ago <= _4H_STRUCT_MAX_BARS
             and _4h_bos_direction_ok
+            and _v47_live_alert_bars_ok('4H', result.tf_4h.bos_bars_ago)
+            and _h4_post_poi
+        )
+        _h4_alerted_this_poi = bool(
+            setup.get('h4_choch_alert_sent') or setup.get('h4_bos_alert_sent')
         )
 
-        # — Decizia lacătului ————————————————————————————————————————————————
-        if _4h_choch_is_fresh_and_aligned or _4h_bos_is_fresh_and_aligned:
+        if _h4_alerted_this_poi or _4h_live_choch or _4h_live_bos:
             setup['h4_locked'] = True
             setup['h4_structure_locked'] = True
             if not _prev_h4_locked:
@@ -2516,44 +2658,43 @@ class MultiTFRadar:
                     else datetime.now(timezone.utc).isoformat()
                 )
                 setup['h4_structure_locked_at'] = _lock_ts
-            if _4h_choch_is_fresh_and_aligned:
+            if _4h_live_choch:
                 _lock_trigger = (
-                    f"CHoCH 4H PROASPĂT (la -{result.tf_4h.choch_bars_ago} bare = "
-                    f"~{result.tf_4h.choch_bars_ago * 4}h | dir={result.tf_4h.choch_direction} ✅)"
+                    f"CHoCH 4H LIVE (la -{result.tf_4h.choch_bars_ago} bare | "
+                    f"dir={result.tf_4h.choch_direction} ✅)"
+                )
+            elif _4h_live_bos:
+                _lock_trigger = (
+                    f"BOS 4H LIVE (la -{result.tf_4h.bos_bars_ago} bare | "
+                    f"dir={result.tf_4h.bos_direction} ✅)"
                 )
             else:
-                _lock_trigger = (
-                    f"BOS 4H RECENT (la -{result.tf_4h.bos_bars_ago} bare = "
-                    f"~{result.tf_4h.bos_bars_ago * 4}h | dir={result.tf_4h.bos_direction} ✅) "
-                    f"[CHoCH la -{result.tf_4h.choch_bars_ago} bare — trend stabilit]"
-                )
+                _lock_trigger = "4H alertă trimisă pe ciclul POI curent"
             logger.info(
-                f"🔒 [V25.1 H4 LOCK] {result.symbol}: {_lock_trigger} "
+                f"🔒 [V50 H4 LOCK] {result.symbol}: {_lock_trigger} "
                 f"→ h4_structure_locked=True"
             )
         elif result.tf_4h.choch_detected and not _4h_choch_direction_ok:
             logger.warning(
-                f"🚫 [V25.1 H4 DIRECTION MISMATCH] {result.symbol}: "
+                f"🚫 [V50 H4 DIRECTION MISMATCH] {result.symbol}: "
                 f"CHoCH 4H dir={result.tf_4h.choch_direction} != setup={_setup_direction_lower} "
-                f"— h4_structure_locked NESETAT (CHoCH contrar = zgomot structural)"
+                f"— h4_structure_locked NESETAT"
             )
             setup['h4_structure_locked'] = False
             self._v423_force_disarm_execute_now(
                 setup, result, 'H4 DIRECTION MISMATCH vs Daily bias',
             )
-        elif result.tf_4h.choch_detected and result.tf_4h.choch_bars_ago > _4H_STRUCT_MAX_BARS \
-                and not _4h_bos_is_fresh_and_aligned:
-            # CHoCH vechi ȘI fără BOS recent aliniat — structura poate fi stale
-            logger.warning(
-                f"⚠️  [V25.1 H4 STALE] {result.symbol}: CHoCH 4H la -{result.tf_4h.choch_bars_ago} bare "
-                f"(>{_4H_STRUCT_MAX_BARS} max) + NICIUN BOS recent aliniat "
-                f"— h4_structure_locked NESETAT (structură neconfirmată)"
-            )
+        elif setup.get('poi_first_touch_time') and not _h4_alerted_this_poi:
+            if _prev_h4_locked:
+                logger.warning(
+                    f"⚠️  [V50 H4 STALE] {result.symbol}: fără CHoCH/BOS 4H LIVE post-POI "
+                    f"— h4_structure_locked NESETAT"
+                )
             setup['h4_structure_locked'] = False
             self._v423_force_disarm_execute_now(
-                setup, result, 'H4 stale — pierdere aliniere structurală',
+                setup, result, 'H4 stale — asteptam break LIVE post-POI',
             )
-        # else: nicio structură → rămâne cum era (nu atingem flagul)
+        # else: în afara POI — păstrăm starea existentă
 
         # V42.3: 1H CHoCH contrar bias-ului Daily → dezarmare EXECUTE_NOW
         if (

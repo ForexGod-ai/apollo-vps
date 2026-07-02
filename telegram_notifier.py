@@ -452,18 +452,24 @@ class TelegramNotifier:
             )
             bars_ago = getattr(tf_data, 'choch_bars_ago', None) or setup_data.get('radar_4h_choch_bars_ago')
             bars_str = f"-{bars_ago}b" if bars_ago is not None else "?b"
+            struct_dir = (
+                getattr(tf_data, 'choch_direction', None)
+                or setup_data.get('radar_4h_choch_direction')
+                or ('bearish' if direction == 'SELL' else 'bullish')
+            )
+            struct_dir_u = str(struct_dir).upper()
             d1_line = f"\n📊 D1 signal: <code>{d1_sig}</code>" if d1_sig else ""
 
             if sig == 'BOS':
                 header = "⚡ <b>4H STRUCTURĂ CONFIRMATĂ (BOS)</b> — Continuare"
                 wait_line = (
-                    "✅ POI Daily atins — break BOS 4H confirmat post-touch\n"
+                    f"✅ POI Daily atins — BOS 4H {struct_dir_u} LIVE ≤3b post-touch\n"
                     "⏳ Următorul pas: retrace Premium/Discount 60–80% pe impuls BOS → entry"
                 )
             else:
                 header = "🔄 <b>4H INVERSARE STRUCTURĂ (CHoCH)</b> — Pregătire Entry"
                 wait_line = (
-                    "✅ POI Daily atins — CHoCH 4H confirmat post-touch\n"
+                    f"✅ POI Daily atins — CHoCH 4H {struct_dir_u} LIVE ≤3b post-touch\n"
                     "⏳ Următorul pas: retrace Premium/Discount 60–80% pe impuls 4H → entry"
                 )
 
@@ -473,8 +479,8 @@ class TelegramNotifier:
                 f"{dir_emoji} <b>{symbol}</b> {direction}\n"
                 f"🎯 Strategy: <code>{strategy}</code>{d1_line}\n"
                 f"📅 W1 Bias: <b>{w1_bias}</b> {w1_emoji}\n"
-                f"📍 Break @ <code>{format_telegram_price(symbol, break_px)}</code> | "
-                f"{sig} {bars_str} post-POI touch\n"
+                f"📍 4H {sig} {struct_dir_u} @ <code>{format_telegram_price(symbol, break_px)}</code> | "
+                f"{bars_str} post-POI\n"
                 f"{trade_block}"
                 f"{sep}\n"
                 f"{wait_line}"
@@ -558,17 +564,36 @@ class TelegramNotifier:
             bars_ago = getattr(tf_data, 'choch_bars_ago', None)
             bars_str = f"-{bars_ago}b" if bars_ago is not None else ""
             retrace_pct = getattr(tf_data, 'retrace_pct', None)
+            struct_dir = (
+                getattr(tf_data, 'choch_direction', None)
+                or setup_data.get('radar_1h_choch_direction')
+                or ('bearish' if direction == 'SELL' else 'bullish')
+            )
+            struct_dir_u = str(struct_dir).upper()
+            h4_confirmed = bool(
+                setup_data.get('h4_choch_alert_sent') or setup_data.get('h4_bos_alert_sent')
+            )
             dir_emoji = "🟢" if direction == 'BUY' else "🔴"
             sep = UNIVERSAL_SEPARATOR
             trade_block = _choch_trade_block(symbol, entry, sl, tp, rr)
 
-            retrace_hint = (
-                f"\n📊 Retrace curent pe impuls 1H: <code>{retrace_pct * 100:.1f}%</code>"
-                if retrace_pct is not None
-                else ""
+            retrace_hint = ""
+            if retrace_pct is not None:
+                if 0 <= retrace_pct <= 2.0:
+                    retrace_hint = (
+                        f"\n📊 Retrace curent pe impuls 1H: <code>{retrace_pct * 100:.1f}%</code>"
+                    )
+                else:
+                    retrace_hint = "\n⚠️ Retrace invalid — structură stale, așteptăm CHoCH LIVE"
+
+            h4_line = (
+                "✅ 4H confirmat (alertă LIVE trimisă)"
+                if h4_confirmed
+                else "⏳ Așteptăm confirmare 4H LIVE"
             )
             wait_line = (
-                "✅ POI Daily atins · 4H confirmat · 1H CHoCH live post-touch\n"
+                f"✅ POI Daily atins · {h4_line}\n"
+                f"📍 1H {sig} {struct_dir_u} LIVE ≤3b post-POI\n"
                 "⏳ Următorul pas: preț în Premium/Discount 60–80% pe impuls 1H "
                 "→ EXECUTE_NOW sniper"
                 f"{retrace_hint}"
@@ -579,7 +604,7 @@ class TelegramNotifier:
                 f"{sep}\n"
                 f"{dir_emoji} <b>{symbol}</b> {direction}\n"
                 f"🎯 Strategy: <code>{strategy}</code>\n"
-                f"📍 1H {sig} @ <code>{format_telegram_price(symbol, choch_1h_price)}</code>"
+                f"📍 1H {sig} {struct_dir_u} @ <code>{format_telegram_price(symbol, choch_1h_price)}</code>"
                 f"{f' | {bars_str} post-POI' if bars_str else ''}\n"
                 f"{trade_block}"
                 f"{sep}\n"
