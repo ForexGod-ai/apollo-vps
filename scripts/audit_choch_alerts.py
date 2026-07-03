@@ -10,15 +10,17 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from radar_gates import (
+    parse_radar_dt as _parse_radar_dt,
+    v47_break_post_poi_touch as _v47_break_post_poi_touch,
+    v47_live_alert_bars_ok as _v47_live_alert_bars_ok,
+)
 from multi_tf_radar import (
     MultiTFRadar,
     _filter_structural_post_poi,
     _is_structural_break_valid,
-    _parse_radar_dt,
     _retrace_is_alert_valid,
     _structural_event_dt,
-    _v47_break_post_poi_touch,
-    _v47_live_alert_bars_ok,
 )
 
 

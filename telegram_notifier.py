@@ -18,6 +18,7 @@ from dotenv import load_dotenv
 from smc_detector import TradeSetup, CHoCH, FVG
 from chart_generator import ChartGenerator
 from pip_utils import format_telegram_price, format_telegram_fvg_range, format_swap_line
+from radar_gates import ltf_choch_confirmed_for_card, ltf_choch_price_for_card
 
 load_dotenv()
 
@@ -33,10 +34,13 @@ _MONITORING_JSON = Path(__file__).resolve().parent / 'monitoring_setups.json'
 
 _RADAR_LIVE_KEYS = (
     'h4_structure_locked', 'h4_locked', 'h4_structure_locked_at',
-    'radar_4h_choch_detected', 'radar_4h_choch_direction', 'radar_4h_choch_price',
+    'h4_choch_alert_sent', 'h4_bos_alert_sent', 'h1_choch_alert_sent',
+    'radar_panda_active', 'radar_4h_choch_detected', 'radar_4h_choch_direction',
+    'radar_4h_choch_price', 'radar_4h_choch_time', 'radar_4h_choch_bars_ago',
     'radar_4h_status', 'radar_1h_choch_detected', 'radar_1h_choch_direction',
-    'radar_1h_choch_price', 'radar_1h_status', 'radar_1h_choch_stale', 'EXECUTE_NOW',
-    'poi_first_touch_time', 'h4_fvg_first_touch_time',
+    'radar_1h_choch_price', 'radar_1h_choch_time', 'radar_1h_choch_bars_ago',
+    'radar_1h_status', 'radar_1h_choch_stale', 'EXECUTE_NOW', 'execute_now_trigger_tf',
+    'poi_first_touch_time', 'h4_fvg_first_touch_time', 'choch_1h_price',
 )
 
 
@@ -91,58 +95,39 @@ def _radar_field(setup: Any, snap: Dict, key: str, default=None):
     return default
 
 
+def _merge_radar_state(setup: Any, snap: Dict) -> Dict:
+    """Merge monitoring JSON snapshot with setup dict fields for V51 gate evaluation."""
+    merged = dict(snap) if snap else {}
+    if isinstance(setup, dict):
+        source = setup
+    else:
+        source = {}
+        for key in _RADAR_LIVE_KEYS:
+            val = getattr(setup, key, None)
+            if val not in (None, False, ''):
+                source[key] = val
+    for key in _RADAR_LIVE_KEYS:
+        val = source.get(key)
+        if val not in (None, False, '') and key not in merged:
+            merged[key] = val
+    return merged
+
+
 def _ltf_choch_confirmed(
     setup: Any,
     snap: Dict,
     tf: str,
     macro_dir: str,
 ) -> bool:
-    prefix = 'radar_4h' if tf == '4H' else 'radar_1h'
-    detected = bool(_radar_field(setup, snap, f'{prefix}_choch_detected', False))
-    direction = _radar_field(setup, snap, f'{prefix}_choch_direction')
-    status = str(_radar_field(setup, snap, f'{prefix}_status', '') or '').upper()
-    aligned = direction is None or direction == macro_dir
-
-    if tf == '4H':
-        h4_locked = bool(
-            _radar_field(setup, snap, 'h4_structure_locked', False)
-            or _radar_field(setup, snap, 'h4_locked', False)
-        )
-        h4_choch = _setup_attr(setup, 'h4_choch', None)
-        return bool(
-            h4_locked
-            or (detected and aligned)
-            or h4_choch is not None
-            or 'EXECUTE_NOW_4H' in status
-            or 'WAITING_4H_PULLBACK' in status
-            or ('PULLBACK' in status and detected)
-        )
-
-    h1_choch = _setup_attr(setup, 'h1_choch', None)
-    choch_1h_flag = bool(_setup_attr(setup, 'choch_1h_detected', False))
-    if bool(_radar_field(setup, snap, 'radar_1h_choch_stale', False)):
-        return False
-    return bool(
-        (detected and aligned)
-        or h1_choch is not None
-        or choch_1h_flag
-        or 'EXECUTE_NOW_1H' in status
-        or 'WAITING_1H_PULLBACK' in status
-        or ('PULLBACK' in status and detected)
-    )
+    """V51: live interconectat cu radar — fără artefacte scanner (h4_choch/h1_choch)."""
+    merged = _merge_radar_state(setup, snap)
+    return ltf_choch_confirmed_for_card(merged, tf, macro_dir)
 
 
-def _ltf_choch_price(setup: Any, snap: Dict, tf: str):
-    prefix = 'radar_4h' if tf == '4H' else 'radar_1h'
-    price = _radar_field(setup, snap, f'{prefix}_choch_price')
-    if price is not None:
-        return price
-    obj = _setup_attr(setup, 'h4_choch' if tf == '4H' else 'h1_choch', None)
-    if obj is not None and hasattr(obj, 'break_price'):
-        return obj.break_price
-    if tf == '1H':
-        return _setup_attr(setup, 'choch_1h_price', None)
-    return None
+def _ltf_choch_price(setup: Any, snap: Dict, tf: str, macro_dir: str):
+    merged = _merge_radar_state(setup, snap)
+    confirmed = ltf_choch_confirmed_for_card(merged, tf, macro_dir)
+    return ltf_choch_price_for_card(merged, tf, confirmed)
 
 
 def _format_radar_exec_lines(
@@ -154,7 +139,7 @@ def _format_radar_exec_lines(
     snap = _load_monitoring_radar_snapshot(symbol, macro_dir)
 
     if _ltf_choch_confirmed(setup, snap, '4H', macro_dir):
-        price_4h = _ltf_choch_price(setup, snap, '4H')
+        price_4h = _ltf_choch_price(setup, snap, '4H', macro_dir)
         if price_4h is not None:
             h4_line = (
                 f"📡 ✅ 4H CHoCH Confirmat — "
@@ -166,7 +151,7 @@ def _format_radar_exec_lines(
         h4_line = f"📡 4H: ⏳ {wait_hint}"
 
     if _ltf_choch_confirmed(setup, snap, '1H', macro_dir):
-        price_1h = _ltf_choch_price(setup, snap, '1H')
+        price_1h = _ltf_choch_price(setup, snap, '1H', macro_dir)
         if price_1h is not None:
             h1_line = (
                 f"🔭 ✅ 1H CHoCH Confirmat — "

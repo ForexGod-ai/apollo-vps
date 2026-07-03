@@ -64,6 +64,16 @@ from poi_utils import (
     poi_box_intersects_wick as _poi_box_intersects_wick,
     price_in_poi_box as _price_in_poi_box,
 )
+from radar_gates import (
+    V47_ALERT_MAX_BARS_4H as _V47_ALERT_MAX_BARS_4H,
+    V47_ALERT_MAX_BARS_1H as _V47_ALERT_MAX_BARS_1H,
+    ltf_choch_confirmed_for_card,
+    ltf_choch_price_for_card,
+    parse_radar_dt as _parse_radar_dt,
+    resolve_mitigation_touch_anchor as _resolve_mitigation_touch_anchor,
+    v47_break_post_poi_touch as _v47_break_post_poi_touch,
+    v47_live_alert_bars_ok as _v47_live_alert_bars_ok,
+)
 
 try:
     from ctrader_cbot_client import CTraderCBotClient
@@ -134,8 +144,7 @@ _RETRACE_ENTRY_MIN = 0.60
 _RETRACE_ENTRY_MAX = 0.80
 
 # V47: max bars for Telegram structural alerts (NOT an EXECUTE gate — V46 unchanged)
-_V47_ALERT_MAX_BARS_4H = 3
-_V47_ALERT_MAX_BARS_1H = 3
+# Constants imported from radar_gates
 
 # V50: retrace sanity — extreme values = stale structural anchor
 _RETRACE_ALERT_MAX = 2.0
@@ -214,23 +223,6 @@ def _v46_entry_status_and_note(
     else:
         note = f"⏳ retrace {retrace_pct * 100:.1f}% — asteptam POI + 60–80%"
     return wait_st, note
-
-
-def _v47_break_post_poi_touch(setup_data: dict, break_time_str: Optional[str]) -> bool:
-    """V47: break structural trebuie să fie DUPĂ primul touch POI (anti-zombi)."""
-    anchor = _resolve_mitigation_touch_anchor(setup_data)
-    if anchor is None:
-        return False
-    break_dt = _parse_radar_dt(break_time_str)
-    if break_dt is None:
-        return True
-    return break_dt > anchor
-
-
-def _v47_live_alert_bars_ok(timeframe_display: str, bars_ago: int) -> bool:
-    """V47: alertă Telegram doar pe break proaspăt (≤3 bare TF)."""
-    cap = _V47_ALERT_MAX_BARS_1H if timeframe_display == '1H' else _V47_ALERT_MAX_BARS_4H
-    return bars_ago <= cap
 
 
 def _structural_event_dt(structural) -> Optional[datetime]:
@@ -388,33 +380,6 @@ def _empty_tf_waiting(timeframe: str) -> 'TimeframeAnalysis':
         distance_to_fvg_pips=0.0,
         status=PullbackStatus.WAITING_1H_CHOCH if is_h1 else PullbackStatus.WAITING_4H_CHOCH,
     )
-
-
-def _parse_radar_dt(ts) -> Optional[datetime]:
-    """Parse ISO choch_time from TimeframeAnalysis or JSON."""
-    if ts is None:
-        return None
-    try:
-        s = str(ts).replace('Z', '+00:00')
-        dt = datetime.fromisoformat(s)
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        return dt
-    except Exception:
-        return None
-
-
-def _resolve_mitigation_touch_anchor(
-    setup_data: dict,
-    tf_4h: 'TimeframeAnalysis' = None,
-) -> Optional[datetime]:
-    """V43.8: Ancoră cronologie 1H = primul touch POI/FVG din pullback curent."""
-    candidates = []
-    for key in ('poi_first_touch_time', 'h4_fvg_first_touch_time'):
-        dt = _parse_radar_dt(setup_data.get(key))
-        if dt is not None:
-            candidates.append(dt)
-    return max(candidates) if candidates else None
 
 
 def _d1_bar_open_iso(df_d1) -> Optional[str]:
@@ -2509,6 +2474,7 @@ class MultiTFRadar:
             setup['radar_1h_choch_direction'] = result.tf_1h.choch_direction
             setup['radar_1h_choch_time'] = result.tf_1h.choch_time
             setup['radar_1h_choch_price'] = result.tf_1h.choch_price
+            setup['radar_1h_choch_bars_ago'] = result.tf_1h.choch_bars_ago
             setup['radar_1h_choch_stale'] = False
         else:
             setup['radar_1h_choch_detected'] = False
