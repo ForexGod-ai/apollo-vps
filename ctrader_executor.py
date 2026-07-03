@@ -21,10 +21,6 @@ from pathlib import Path
 from loguru import logger
 from typing import Optional, Dict
 from unified_risk_manager import UnifiedRiskManager
-import requests
-from dotenv import load_dotenv
-
-load_dotenv()
 
 # ━━━ V8.0 VPS-READY: Force UTC timezone ━━━
 os.environ['TZ'] = 'UTC'
@@ -39,10 +35,9 @@ class SignalQueue:
     V5.0 ZERO-LATENCY: Thread-safe signal queue
     Prevents signal loss during simultaneous detections
     """
-    def __init__(self, signals_file: str, confirmation_file: str, executor=None):
+    def __init__(self, signals_file: str, confirmation_file: str):
         self.signals_file = signals_file
         self.confirmation_file = confirmation_file
-        self.executor = executor  # Reference to CTraderExecutor for Telegram notifications
         self.queue = queue.Queue(maxsize=20)  # Max 20 pending signals
         self.worker_thread = threading.Thread(
             target=self._process_queue,
@@ -241,22 +236,7 @@ class SignalQueue:
                 logger.success(f"✅ Signal successfully written to apollo. Bypass confirmation active.")
                 logger.info(f"   🚀 {symbol} {direction} deployed → cBot will execute on next poll (~10s)")
                 
-                # 3. DISABLED V8.1: Duplicate alert removed by ФорексГод
-                # telegram_notifier.py already sends MARKET DOMINATION MODE alert
-                # via setup_executor_monitor.py → TelegramNotifier.send_execution_confirmation()
-                # Keeping this would cause DOUBLE notifications per trade.
-                # if self.executor:
-                #     self.executor._send_telegram_notification(
-                #         symbol=symbol,
-                #         direction=direction,
-                #         status='DEPLOYED',
-                #         entry_price=signal.get('EntryPrice', 0),
-                #         stop_loss=signal.get('StopLoss', 0),
-                #         take_profit=signal.get('TakeProfit', 0),
-                #         volume=signal.get('LotSize', 0)
-                #     )
-                
-                # 4. Rate limiting between signals (cTrader polling = 10s)
+                # 3. Rate limiting between signals (cTrader polling = 10s)
                 self.queue.task_done()
                 time.sleep(12)  # 12s between signals
                 
@@ -323,8 +303,8 @@ class CTraderExecutor:
         logger.success(f"✅ Signal path verified: {self.signals_file}")
         logger.info(f"✅ Confirmation path: {self.confirmation_file}")
         
-        # V5.0: Initialize signal queue (pass self reference for Telegram notifications)
-        self.signal_queue = SignalQueue(self.signals_file, self.confirmation_file, executor=self)
+        # V5.0: Initialize signal queue
+        self.signal_queue = SignalQueue(self.signals_file, self.confirmation_file)
         
         # Initialize Unified Risk Manager
         try:
@@ -336,117 +316,9 @@ class CTraderExecutor:
         
         logger.success(f"🔥 CTraderExecutor V6.0 initialized (FIRE-AND-FORGET)")
     
-    def _send_telegram_notification(self, symbol: str, direction: str, status: str, 
-                                    order_id: str = None, volume: float = None, 
-                                    entry_price: float = None, stop_loss: float = None,
-                                    take_profit: float = None, reason: str = None):
-        """
-        Send execution status to Telegram with proper formatting
-        
-        V6.0 FIRE-AND-FORGET PROTOCOL:
-        - DEPLOYED: Signal written to apollo folder (cBot will execute)
-        - SUCCESS: cTrader confirmed execution (if handshake active)
-        - REJECTED: cTrader rejected signal (BadVolume, etc.)
-        - UNKNOWN: Unexpected status
-        """
-        try:
-            telegram_token = os.getenv('TELEGRAM_BOT_TOKEN')
-            telegram_chat_id = os.getenv('TELEGRAM_CHAT_ID')
-            
-            if not telegram_token or not telegram_chat_id:
-                logger.warning("⚠️  Telegram credentials missing - notification skipped")
-                return
-            
-            # Build message based on status
-            # V9.1 BRANDING — Correct V8.4 footer (ФорексГод)
-            sep = "────────────────"  # 16 chars — compact symmetric
-
-            if status == 'SUCCESS':
-                message = (
-                    f"✅ <b>EXECUTION SUCCESS</b>\n\n"
-                    f"Symbol: <b>{symbol}</b>\n"
-                    f"Direction: <b>{direction}</b>\n"
-                    f"Order ID: <code>{order_id}</code>\n"
-                    f"Entry: <b>{entry_price:.5f}</b>\n"
-                    f"Volume: <b>{volume:.2f}</b> lots\n"
-                    f"SL: <b>{stop_loss:.5f}</b>\n"
-                    f"TP: <b>{take_profit:.5f}</b>\n\n"
-                    f"🎯 <i>Trade confirmed by cTrader</i>\n\n"
-                    f"  {sep}\n"
-                    f"  🔱 <b>AUTHORED BY ФорексГод</b> 🔱\n"
-                    f"  {sep}\n"
-                    f"  🏛️  <b>Глитч Ин Матрикс</b>  🏛️"
-                )
-            
-            elif status == 'REJECTED':
-                message = (
-                    f"❌ <b>EXECUTION REJECTED</b>\n\n"
-                    f"Symbol: <b>{symbol}</b>\n"
-                    f"Direction: <b>{direction}</b>\n"
-                    f"Reason: <i>{reason}</i>\n\n"
-                    f"⚠️ <i>Signal rejected by cTrader</i>\n\n"
-                    f"  {sep}\n"
-                    f"  🔱 <b>AUTHORED BY ФорексГод</b> 🔱\n"
-                    f"  {sep}\n"
-                    f"  🏛️  <b>Глитч Ин Матрикс</b>  🏛️"
-                )
-            
-            elif status == 'DEPLOYED':
-                message = (
-                    f"🚀 <b>SIGNAL DEPLOYED</b>\n\n"
-                    f"Symbol: <b>{symbol}</b>\n"
-                    f"Direction: <b>{direction}</b>\n"
-                    f"Entry: <b>{entry_price}</b>\n"
-                    f"SL: <b>{stop_loss}</b>\n"
-                    f"TP: <b>{take_profit}</b>\n"
-                    f"Volume: <b>{volume}</b> lots\n\n"
-                    f"✅ Signal written to apollo folder\n"
-                    f"⏳ cBot will execute on next poll (~10s)\n\n"
-                    f"  {sep}\n"
-                    f"  🔱 <b>AUTHORED BY ФорексГод</b> 🔱\n"
-                    f"  {sep}\n"
-                    f"  🏛️  <b>Глитч Ин Матрикс</b>  🏛️"
-                )
-            
-            elif status == 'UNKNOWN':
-                message = (
-                    f"⚠️ <b>UNKNOWN STATUS</b>\n\n"
-                    f"Symbol: <b>{symbol}</b>\n"
-                    f"Direction: <b>{direction}</b>\n"
-                    f"Details: <i>{reason}</i>\n\n"
-                    f"🔍 <i>Unexpected response from cTrader</i>\n\n"
-                    f"  {sep}\n"
-                    f"  🔱 <b>AUTHORED BY ФорексГод</b> 🔱\n"
-                    f"  {sep}\n"
-                    f"  🏛️  <b>Глитч Ин Матрикс</b>  🏛️"
-                )
-            
-            else:
-                logger.warning(f"⚠️  Unknown notification status: {status}")
-                return
-            
-            # Send to Telegram
-            url = f"https://api.telegram.org/bot{telegram_token}/sendMessage"
-            payload = {
-                'chat_id': telegram_chat_id,
-                'text': message,
-                'parse_mode': 'HTML',
-                'disable_web_page_preview': True
-            }
-            
-            response = requests.post(url, json=payload, timeout=10)
-            
-            if response.status_code == 200:
-                logger.success(f"📱 Telegram notification sent: {status}")
-            else:
-                logger.error(f"❌ Telegram failed: {response.status_code}")
-        
-        except Exception as e:
-            logger.error(f"❌ Telegram notification error: {e}")
-    
     def execute_trade(self, symbol: str, direction: str, entry_price: float, 
                      stop_loss: float, take_profit: float, lot_size: float = 0.01,
-                     comment: str = "", status: str = "READY", setup=None,
+                     comment: str = "", status: str = "READY",
                      risk_override_percent: float = None):
         """
         Write a trade signal to signals.json for PythonSignalExecutor to execute
@@ -456,22 +328,8 @@ class CTraderExecutor:
         - Enforces position limits
         - Checks daily loss limits
         
-        V4.0: FULL SMC INTELLIGENCE SYNC!
-        - Extracts liquidity_sweep from setup
-        - Extracts order_block data from setup
-        - Extracts premium_discount from setup
-        - Populates all V4.0 fields for C# executor
-        
         Args:
             symbol: Trading pair (e.g., 'EURUSD')
-            direction: 'BUY' or 'SELL'
-            entry_price: Entry price
-            stop_loss: Stop loss price
-            take_profit: Take profit price
-            lot_size: Position size in lots (will be recalculated by risk manager)
-            comment: Optional comment for the trade
-            status: Setup status - MUST be 'READY' to execute (V3.0)
-            setup: TradeSetup object from scanner (V4.0 - for metadata extraction)
             direction: 'BUY' or 'SELL'
             entry_price: Entry price
             stop_loss: Stop loss price
@@ -611,38 +469,13 @@ class CTraderExecutor:
                 logger.info(f"   Entry: {entry_price:.2f} | SL: {stop_loss:.2f} | TP: {take_profit:.2f}")
                 logger.info(f"   SL Pips: {sl_pips} | TP Pips: {tp_pips} (INTEGER)")
             
-            # ──────────────────
-            # V4.0 SMC LEVEL UP - POPULATE NEW FIELDS
-            # ──────────────────
-            # Extract V4.0 intelligence from setup object (if available)
-            
-            # 💧 Liquidity Sweep Detection
             liquidity_sweep = False
             sweep_type = ""
             confidence_boost = 0
-            
-            if hasattr(setup, 'liquidity_sweep') and setup.liquidity_sweep:
-                liquidity_sweep = setup.liquidity_sweep.get('sweep_detected', False)
-                sweep_type = setup.liquidity_sweep.get('sweep_type', '')
-                confidence_boost = getattr(setup, 'confidence_boost', 0)
-            
-            # 📦 Order Block Activation
             order_block_used = False
             order_block_score = 0
-            
-            if hasattr(setup, 'order_block') and setup.order_block:
-                order_block_score = setup.order_block.ob_score
-                order_block_used = order_block_score >= 7  # Activated if score ≥7
-            
-            # 📊 Premium/Discount Filter
             premium_discount_zone = "UNKNOWN"
             daily_range_percentage = 0.0
-            
-            if hasattr(setup, 'premium_discount') and setup.premium_discount:
-                premium_discount_zone = setup.premium_discount.get('zone', 'UNKNOWN')
-                daily_range_percentage = setup.premium_discount.get('percentage', 0.0)
-            
-            # ──────────────────
             
             # 🚨 V5.5 BRUTE FORCE: Calculate RawUnits for direct volume control
             raw_units = None
@@ -747,73 +580,6 @@ class CTraderExecutor:
             logger.error(f"❌ Failed to write signal: {e}")
             return False
     
-    def close_position(self, symbol: str, direction: str, reason: str = "CLOSE_ENTRY1") -> bool:
-        """
-        V8.0 CLOSE POSITION: Write a CLOSE signal to signals.json for cBot to close position
-        
-        cBot will find the matching position (symbol + direction) and call ClosePosition()
-        
-        Args:
-            symbol: Trading pair (e.g., 'EURJPY')
-            direction: Original direction of the position ('BUY' or 'SELL')
-            reason: Close reason for logging (default: 'CLOSE_ENTRY1')
-        
-        Returns:
-            bool: True if close signal written, False on error
-        """
-        try:
-            signal_id = f"CLOSE_{symbol}_{direction}_{int(datetime.now().timestamp())}"
-            
-            close_signal = {
-                "SignalId": signal_id,
-                "Symbol": symbol,
-                "Direction": direction.lower(),
-                "Action": "CLOSE",
-                "StrategyType": "CLOSE_POSITION",
-                "EntryPrice": 0,
-                "StopLoss": 0,
-                "TakeProfit": 0,
-                "StopLossPips": 0,
-                "TakeProfitPips": 0,
-                "RiskReward": 0,
-                "Timestamp": datetime.now().isoformat(),
-                "LotSize": 0,
-                "RawUnits": None,
-                "CloseReason": reason,
-                
-                # V4.0 fields (required by TradeSignal schema)
-                "LiquiditySweep": False,
-                "SweepType": "",
-                "ConfidenceBoost": 0,
-                "OrderBlockUsed": False,
-                "OrderBlockScore": 0,
-                "PremiumDiscountZone": "CLOSE",
-                "DailyRangePercentage": 0.0
-            }
-            
-            success = self.signal_queue.enqueue(close_signal)
-            
-            if success:
-                logger.success(f"🔴 CLOSE SIGNAL QUEUED: {symbol} {direction} (reason: {reason})")
-                logger.info(f"   Signal ID: {signal_id}")
-                logger.info(f"   cBot will close matching position on next poll (~10s)")
-                
-                # Telegram notification
-                self._send_telegram_notification(
-                    symbol=symbol,
-                    direction=direction,
-                    status='CLOSE_DEPLOYED',
-                    reason=f'CLOSE POSITION: {reason}'
-                )
-            else:
-                logger.error(f"❌ Failed to queue close signal for {symbol}")
-            
-            return success
-            
-        except Exception as e:
-            logger.error(f"❌ Failed to write close signal for {symbol}: {e}")
-            return False
-
     def _build_modify_sl_signal(
         self,
         symbol: str,
@@ -847,37 +613,6 @@ class CTraderExecutor:
             "DailyRangePercentage": 0.0,
         }
         return signal_id, modify_signal
-
-    def modify_stop_loss(
-        self,
-        symbol: str,
-        direction: str,
-        new_stop_loss: float,
-        reason: str = "MODIFY_SL",
-    ) -> bool:
-        """
-        V39.5 MODIFY SL: Write MODIFY_SL signal for cBot to update stop loss in-place.
-
-        Used by Liquidity Sniper BE protection — keeps position open, zero risk.
-        """
-        try:
-            signal_id, modify_signal = self._build_modify_sl_signal(
-                symbol, direction, new_stop_loss, reason,
-            )
-            success = self.signal_queue.enqueue(modify_signal)
-
-            if success:
-                logger.success(
-                    f"🔒 MODIFY SL QUEUED: {symbol} {direction} → SL={new_stop_loss:.5f} ({reason})"
-                )
-            else:
-                logger.error(f"❌ Failed to queue MODIFY SL for {symbol}")
-
-            return success
-
-        except Exception as e:
-            logger.error(f"❌ Failed to write MODIFY SL signal for {symbol}: {e}")
-            return False
 
     def modify_stop_loss_confirmed(
         self,
@@ -937,41 +672,6 @@ class CTraderExecutor:
             logger.error(f"❌ V43.9 MODIFY SL error for {symbol}: {e}")
             return {'ok': False, 'status': 'ERROR', 'reason': str(e)}
     
-    def clear_signals(self):
-        """Clear all signals from signals.json (write empty array)"""
-        try:
-            # V7.0: Write empty array (not empty dict)
-            dir_path = os.path.dirname(self.signals_file)
-            fd, temp_path = tempfile.mkstemp(suffix='.json.tmp', dir=dir_path, text=True)
-            
-            with os.fdopen(fd, 'w', encoding='utf-8') as f:
-                json.dump([], f)
-                f.flush()
-                os.fsync(f.fileno())
-            
-            os.replace(temp_path, self.signals_file)
-            logger.info("🗑️  Signals cleared (empty array)")
-            return True
-        except Exception as e:
-            logger.error(f"❌ Failed to clear signals: {e}")
-            if 'temp_path' in locals() and os.path.exists(temp_path):
-                os.unlink(temp_path)
-            return False
-    
-    def get_pending_signals(self):
-        """Get list of pending signals"""
-        try:
-            if not os.path.exists(self.signals_file):
-                return []
-            
-            with open(self.signals_file, 'r', encoding='utf-8') as f:
-                signals = json.load(f)
-                if not isinstance(signals, list):
-                    return []
-                return signals
-        except:
-            return []
-    
     def _should_log_rejection(self, symbol: str, reason: str) -> bool:
         """
         V4.3 FIX-015: Determine if rejection should be logged
@@ -1030,15 +730,15 @@ class CTraderExecutor:
 if __name__ == "__main__":
     executor = CTraderExecutor()
     
-    # Example signal
-    executor.execute_trade(
+    success = executor.execute_trade(
         symbol="EURUSD",
         direction="BUY",
         entry_price=1.0850,
         stop_loss=1.0800,
         take_profit=1.0950,
         lot_size=0.01,
-        comment="Test signal from morning scanner"
+        comment="Test signal from morning scanner",
+        status="READY",
     )
     
-    print(f"\n📋 Pending signals: {len(executor.get_pending_signals())}")
+    print(f"\nSignal queued: {success}")

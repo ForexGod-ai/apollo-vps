@@ -1976,7 +1976,7 @@ class MultiTFRadar:
         
         # 🔥 V8.3 SYNC: Write radar results to monitoring_setups.json
         if save_to_json:
-            self._sync_to_monitoring_setups(setup_data, result)
+            self._batch_sync_to_monitoring_setups([(setup_data, result)])
         
         return result
 
@@ -2494,7 +2494,7 @@ class MultiTFRadar:
     def _update_setup_with_radar(self, setup: Dict, result: 'MultiTFResult') -> None:
         """
         V19.4: Pure in-memory update of a single setup dict with radar results.
-        Shared by both _sync_to_monitoring_setups (single) and _batch_sync (batch).
+        Shared by _batch_sync_to_monitoring_setups (batch path).
         FIX #3: scan_error guard — nu suprascrie FVG valid cu None dacă analiza a crapat.
         FIX #5: Direction matching non-case-sensitive.
         """
@@ -3032,92 +3032,6 @@ class MultiTFRadar:
         except Exception as e:
             logger.error(f"⚠️ _batch_sync_to_monitoring_setups V22 error: {e}")
 
-    def _sync_to_monitoring_setups(self, original_setup: Dict, result: MultiTFResult):
-        """
-        🔥 CRITICAL: Write radar analysis back to monitoring_setups.json
-        
-        This enables setup_executor_monitor.py to use 1H/4H FVG zones
-        instead of just Fibonacci 50%.
-        """
-        try:
-            # Load monitoring_setups.json
-            with open(_MONITORING_FILE, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            
-            if isinstance(data, dict):
-                setups = data.get("setups", [])
-            elif isinstance(data, list):
-                setups = data
-            else:
-                return
-            
-            # Find matching setup
-            setup_key = f"{result.symbol}_{result.direction}_{result.daily_entry}"
-            logger.debug(f"🔍 Looking for setup: {result.symbol} {result.direction}")
-            
-            for i, setup in enumerate(setups):
-                logger.debug(f"  Checking setup {i}: {setup.get('symbol')} {setup.get('direction')}")
-
-                # V19.4 FIX #5: direction matching non-case-sensitive (.upper() pe ambele)
-                setup_direction = setup.get('direction', '').upper()
-                result_direction = result.direction.upper()
-                matches_sell   = (result_direction == 'SHORT' and setup_direction == 'SELL')
-                matches_buy    = (result_direction == 'LONG'  and setup_direction == 'BUY')
-                matches_direct = (result_direction == setup_direction)
-
-                if setup.get('symbol') == result.symbol and (matches_sell or matches_buy or matches_direct):
-                    for _ek in (
-                        'poi_first_touch_time', 'h4_fvg_first_touch_time', 'poi_radar_armed_at',
-                        'poi_touch_latched',
-                        '_poi_occupied', '_h4_fvg_occupied', 'radar_panda_active',
-                        'h4_choch_alert_sent', 'h4_bos_alert_sent', 'h1_choch_alert_sent',
-                        'choch_1h_price', 'radar_4h_signal_type',
-                        'h4_structure_locked_at', 'radar_1h_choch_stale',
-                    ):
-                        if original_setup.get(_ek) is not None:
-                            setup[_ek] = original_setup[_ek]
-                        elif _ek in ('poi_first_touch_time', 'h4_fvg_first_touch_time'):
-                            setup.pop(_ek, None)
-                    # V19.4: logica de update delegată la helper partajat cu batch sync
-                    self._update_setup_with_radar(setup, result)
-                    setups[i] = setup
-                    logger.success(f"✅ Synced radar data to monitoring_setups.json for {result.symbol}")
-                    break
-            
-            # Save updated data
-            if isinstance(data, dict):
-                data['setups'] = setups
-                data['last_updated'] = datetime.now().isoformat()
-            else:
-                data = setups
-            
-            # Atomic write: scrie în fișier temporar, apoi rename
-            # Previne coruperea JSON-ului dacă două procese scriu simultan
-            import numpy as _np
-
-            def _json_safe(obj):
-                """Convertește numpy types și alte tipuri non-serializabile la Python native."""
-                if isinstance(obj, (_np.bool_,)):
-                    return bool(obj)
-                if isinstance(obj, (_np.integer,)):
-                    return int(obj)
-                if isinstance(obj, (_np.floating,)):
-                    return float(obj)
-                if isinstance(obj, (_np.ndarray,)):
-                    return obj.tolist()
-                raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
-
-            tmp_path = _MONITORING_TMP
-            with open(tmp_path, 'w', encoding='utf-8') as f:
-                json.dump(data, f, indent=2, default=_json_safe)
-            import os as _os
-            _os.replace(tmp_path, _MONITORING_FILE)
-            
-            logger.debug(f"💾 monitoring_setups.json updated with radar data")
-        
-        except Exception as e:
-            logger.error(f"⚠️  Failed to sync radar data to monitoring_setups.json: {e}")
-    
     def print_result(self, result: MultiTFResult):
         """Print formatted multi-timeframe analysis — V37.1 ASCII lizibil pe Windows VPS."""
         sep = "=" * 72
