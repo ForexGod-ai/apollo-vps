@@ -299,15 +299,6 @@ def _retrace_is_alert_valid(retrace_pct: Optional[float]) -> bool:
     return True
 
 
-def _v47_panda_active(setup_data: dict, v43_zone: dict) -> bool:
-    """V47: radar LTF aprins doar în POI Daily validat."""
-    return bool(
-        setup_data.get('radar_panda_active')
-        and v43_zone.get('in_poi')
-        and v43_zone.get('validated')
-    )
-
-
 def _evaluate_v43_daily_zone(
     setup_data: dict,
     direction: str,

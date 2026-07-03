@@ -13,7 +13,7 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() != 'utf-8':
 
 import requests
 import pandas as pd
-from datetime import datetime, timedelta
+from datetime import datetime
 import json
 import os
 import time
@@ -746,8 +746,6 @@ class DailyScanner:
             pass
         
         # Include ALL open positions from trade_history.json as active setups
-        active_setups_count = len(monitoring_setups)
-        executed_positions = []
         all_open_positions = []
         open_position_symbols = set()  # Track which symbols have open positions
         try:
@@ -757,7 +755,6 @@ class DailyScanner:
                 # V8.2: If IGNORE_OPEN_POSITIONS is True, treat as if no positions exist
                 if not IGNORE_OPEN_POSITIONS:
                     open_position_symbols = {p.get('symbol') for p in all_open_positions}
-                    active_setups_count += len(all_open_positions)
                     logger.info(f"📊 Found {len(all_open_positions)} open positions: {[p.get('symbol') for p in all_open_positions]}")
                 else:
                     logger.info(f"⚠️  AUDIT MODE: Ignoring {len(all_open_positions)} open positions for full analysis")
@@ -794,10 +791,6 @@ class DailyScanner:
 
         # Use filtered setups (no conflicts with open positions)
         all_active_setups = filtered_setups
-
-        # Breakdown: setups cu vs fără poziție deschisă (pentru summary report)
-        truly_new_setups   = [s for s in all_active_setups if s.symbol not in open_position_symbols]
-        active_with_position = [s for s in all_active_setups if s.symbol in open_position_symbols]
 
         # V15.2 Option A: Breakdown corect — brand_new vs re_evaluated (era deja in monitoring)
         brand_new_setups   = [s for s in all_active_setups if s.symbol not in monitoring_symbols]
@@ -1025,22 +1018,6 @@ def _d1_wick_from_df(df_d1: Optional[pd.DataFrame]) -> tuple[Optional[float], Op
     return float(df_d1['high'].iloc[-1]), float(df_d1['low'].iloc[-1])
 
 
-def _price_at_d1_poi_for_direction(price: float, stored: dict) -> bool:
-    """V42.7: LONG valid ≤ POI top; SHORT valid ≥ POI bottom (POI sau Discount/Premium corect)."""
-    top = stored.get('poi_top') if stored.get('poi_top') is not None else stored.get('fvg_top')
-    bottom = stored.get('poi_bottom') if stored.get('poi_bottom') is not None else stored.get('fvg_bottom')
-    if top is None or bottom is None:
-        return True
-    p = float(price)
-    direction = (stored.get('direction') or stored.get('daily_bias') or '').lower()
-    if direction in ('buy', 'long', 'bullish'):
-        return p <= float(top)
-    if direction in ('sell', 'short', 'bearish'):
-        return p >= float(bottom)
-    lo, hi = min(float(top), float(bottom)), max(float(top), float(bottom))
-    return lo <= p <= hi
-
-
 def _v43_fields_from_setup(setup: TradeSetup) -> dict:
     """Extract V43 ADR / POI metadata from TradeSetup for JSON persistence."""
     return {
@@ -1080,11 +1057,6 @@ def _adr_container_shift_detected(
         if _adr_level_shift(old.get(key), new.get(key), threshold_pct):
             return True
     return False
-
-
-def _adr_shift_detected(old: dict, new: dict, threshold_pct: float = 0.2) -> bool:
-    """Backward-compatible alias — checks full ADR container, not LH only."""
-    return _adr_container_shift_detected(old, new, threshold_pct)
 
 
 def _bos_new_range_detected(old: dict, new_macro: dict, threshold_pct: float = 0.2) -> bool:
@@ -1915,11 +1887,6 @@ def main():
         '--ignore-open-positions',
         action='store_true',
         help='Force scan all pairs even if they have open positions (for testing/audit)'
-    )
-    parser.add_argument(
-        '--live',
-        action='store_true',
-        help='Run in live mode (connects to cTrader on port 8010)'
     )
     args = parser.parse_args()
     

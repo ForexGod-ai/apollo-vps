@@ -162,29 +162,20 @@ def release_pid_lock(lock_file: Path):
     except Exception as e:
         logger.error(f"⚠️  Failed to release lock: {e}")
 
-from ctrader_cbot_client import CTraderCBotClient
 from ctrader_executor import CTraderExecutor
 from telegram_notifier import TelegramNotifier
 from daily_scanner import CTraderDataProvider
 from smc_detector import SMCDetector
 from pip_utils import get_pip_size, get_max_sl_pips, MIN_SL_PIPS, sl_pips_between
 from news_calendar_utils import (
-    load_high_impact_events,
-    get_affected_currencies,
-    parse_event_datetime,
     liquidity_sniper_blocks_new_entry,
     liquidity_sniper_be_candidates,
-    NEW_ENTRY_BLOCK_BEFORE_MIN,
-    BE_PROTECT_BEFORE_MIN,
 )
 
 # 🛡️ V3.8 ANTI-SPAM SYSTEM by ФорексГод
 from signal_cache import (
-    SignalCache,
-    TelegramDebouncer,
     cleanup_old_signals_file,
     get_signal_cache,
-    get_telegram_debouncer
 )
 
 
@@ -357,8 +348,6 @@ class SetupExecutorMonitor:
         self.monitoring_file = _script_root / "monitoring_setups.json"
         self.config_file = _script_root / "pairs_config.json"
         
-        self.ctrader_client = CTraderCBotClient()
-        
         # V7.0 FIX: Use apollo folder (where cBot actually reads signals.json)
         # Previously pointed to ~/GlitchMatrix/ which was WRONG
         script_dir = Path(__file__).parent.resolve()
@@ -370,7 +359,6 @@ class SetupExecutorMonitor:
         
         # 🛡️ V3.8 ANTI-SPAM SYSTEM by ФорексГод
         self.signal_cache = get_signal_cache()
-        self.telegram_debouncer = get_telegram_debouncer()
         
         # 🧹 STARTUP CLEANUP: Remove old signals from signals.json
         cleanup_old_signals_file(Path(signals_path), max_age_hours=1)
