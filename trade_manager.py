@@ -97,6 +97,173 @@ class TradeManager:
         except Exception:
             return []
 
+    @staticmethod
+    def _close_date_yyyy_mm_dd(close_time: str) -> Optional[str]:
+        """Normalize close_time to YYYY-MM-DD for window filters (ISO, display, DD/MM)."""
+        if not close_time:
+            return None
+        raw = str(close_time).strip()
+        if len(raw) >= 10 and raw[4] == '-' and raw[7] == '-':
+            return raw[:10]
+        if len(raw) >= 10 and raw[2] == '/' and raw[5] == '/':
+            try:
+                return datetime.strptime(raw[:10], '%d/%m/%Y').strftime('%Y-%m-%d')
+            except ValueError:
+                pass
+        try:
+            from dashboard_time_utils import _parse_utc
+            utc_dt = _parse_utc(raw)
+            if utc_dt is not None:
+                return utc_dt.strftime('%Y-%m-%d')
+        except Exception:
+            pass
+        return None
+
+    def _calc_weekly_stats(self, closed_trades: List[dict], week_ago: str) -> Dict[str, Any]:
+        """Aggregate closed trades since week_ago (YYYY-MM-DD, inclusive)."""
+        total = wins = losses = 0
+        total_pnl = 0.0
+        best_trade: Optional[float] = None
+        worst_trade: Optional[float] = None
+        for trade in closed_trades:
+            close_date = self._close_date_yyyy_mm_dd(
+                trade.get('close_time') or trade.get('closeTime') or ''
+            )
+            if not close_date or close_date < week_ago:
+                continue
+            profit = float(trade.get('profit', 0) or 0)
+            total += 1
+            total_pnl += profit
+            if profit > 0:
+                wins += 1
+            else:
+                losses += 1
+            if best_trade is None or profit > best_trade:
+                best_trade = profit
+            if worst_trade is None or profit < worst_trade:
+                worst_trade = profit
+        return {
+            'total': total,
+            'wins': wins,
+            'losses': losses,
+            'total_pnl': total_pnl,
+            'best_trade': best_trade,
+            'worst_trade': worst_trade,
+        }
+
+    def _read_sqlite_weekly_stats(self, week_ago: str) -> Dict[str, Any]:
+        empty = {
+            'total': 0, 'wins': 0, 'losses': 0, 'total_pnl': 0.0,
+            'best_trade': None, 'worst_trade': None,
+        }
+        if not self.db_path.exists():
+            return empty
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT
+                    COUNT(*),
+                    SUM(CASE WHEN profit > 0 THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN profit < 0 THEN 1 ELSE 0 END),
+                    SUM(profit),
+                    MAX(profit),
+                    MIN(profit)
+                FROM closed_trades
+                WHERE DATE(close_time, 'localtime') >= ?
+                """,
+                (week_ago,),
+            )
+            row = cursor.fetchone()
+            conn.close()
+            if not row or not row[0]:
+                return empty
+            return {
+                'total': int(row[0] or 0),
+                'wins': int(row[1] or 0),
+                'losses': int(row[2] or 0),
+                'total_pnl': float(row[3] or 0.0),
+                'best_trade': row[4],
+                'worst_trade': row[5],
+            }
+        except Exception as exc:
+            logger.warning(f"[V40.4] SQLite weekly read failed: {exc}")
+            return empty
+
+    def _persist_broker_payload(self, data: Dict[str, Any]) -> bool:
+        """Write broker snapshot to trade_history.json + SQLite (cache only)."""
+        try:
+            from ctrader_sync_daemon import TradeDatabase, write_trade_history
+            db = TradeDatabase(str(self.db_path))
+            return bool(write_trade_history(data, db))
+        except Exception as exc:
+            logger.error(f"[V40.4] persist broker payload failed: {exc}")
+            return False
+
+    def fetch_broker_live(self) -> Optional[Dict[str, Any]]:
+        """
+        Live IC Markets feed via TradeHistorySyncer (localhost:8767).
+
+        Returns in-memory broker payload; persists locally as side-effect cache.
+        """
+        data = self.client.get_history_deals()
+        if not data:
+            return None
+        self._persist_broker_payload(data)
+        return data
+
+    def refresh_account_balance(self) -> bool:
+        """
+        State Recovery: pull fresh deals from cTrader and persist locally.
+        Returns True if trade_history.json was updated.
+        """
+        data = self.fetch_broker_live()
+        if data:
+            logger.info("[V40.4] refresh_account_balance — broker → local sync OK")
+            return True
+        return False
+
+    def get_weekly_pnl(self, week_ago: str) -> Dict[str, Any]:
+        """
+        Weekly stats from live cTrader broker (8767).
+
+        Aggregates closed_trades directly from the HTTP response — not from stale JSON.
+        Local JSON/SQLite used only when cBot is offline.
+        """
+        broker_data = self.fetch_broker_live()
+
+        if broker_data:
+            broker_trades = broker_data.get('closed_trades', []) or []
+            stats = self._calc_weekly_stats(broker_trades, week_ago)
+            balance = float(broker_data.get('account', {}).get('balance', 0) or 0)
+            return {
+                **stats,
+                'broker_synced': True,
+                'source': 'ctrader_broker:8767',
+                'balance': balance,
+                'week_ago': week_ago,
+            }
+
+        logger.warning("[V40.4] cTrader offline — weekly report using local cache")
+        local_stats = self._calc_weekly_stats(self._read_local_closed_trades(), week_ago)
+        source = 'trade_history.json(offline)'
+        stats = local_stats
+
+        if stats['total'] == 0:
+            sqlite_stats = self._read_sqlite_weekly_stats(week_ago)
+            if sqlite_stats['total'] > 0:
+                stats = sqlite_stats
+                source = 'trades.db(offline)'
+
+        return {
+            **stats,
+            'broker_synced': False,
+            'source': source,
+            'balance': 0.0,
+            'week_ago': week_ago,
+        }
+
     def _read_sqlite_closed_trades(self, today: str, reset_cutoff: Optional[str]) -> Tuple[float, int]:
         if not self.db_path.exists():
             return 0.0, 0
@@ -129,25 +296,6 @@ class TradeManager:
             logger.warning(f"[V40.4] SQLite read failed: {exc}")
             return 0.0, 0
 
-    def refresh_account_balance(self) -> bool:
-        """
-        State Recovery: pull fresh deals from cTrader and persist locally.
-        Returns True if trade_history.json was updated.
-        """
-        data = self.client.get_history_deals()
-        if not data:
-            return False
-        try:
-            from ctrader_sync_daemon import TradeDatabase, write_trade_history
-            db = TradeDatabase(str(self.db_path))
-            ok = write_trade_history(data, db)
-            if ok:
-                logger.info("[V40.4] refresh_account_balance — broker → local sync OK")
-            return ok
-        except Exception as exc:
-            logger.error(f"[V40.4] refresh_account_balance failed: {exc}")
-            return False
-
     def get_today_pnl(
         self,
         today: str,
@@ -166,14 +314,8 @@ class TradeManager:
             local_trades, today, reset_cutoff=None, calendar_day_only=True
         )
 
-        synced = self.refresh_account_balance()
-        broker_data = None
-        if self.trade_history_file.exists():
-            try:
-                with open(self.trade_history_file, 'r', encoding='utf-8') as f:
-                    broker_data = json.load(f)
-            except Exception:
-                broker_data = None
+        broker_data = self.fetch_broker_live()
+        synced = broker_data is not None
 
         if broker_data:
             broker_trades = broker_data.get('closed_trades', []) or []

@@ -314,59 +314,19 @@ class TelegramCommandCenter:
     def handle_weekly_command(self):
         """📈 Handle /weekly command - Show full weekly trading report (last 7 days)"""
         try:
+            from trade_manager import TradeManager
+
             week_ago = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
             week_start = (datetime.now() - timedelta(days=7)).strftime('%d %b')
             week_end = datetime.now().strftime('%d %b %Y')
 
-            total = wins = losses = 0
-            total_pnl = 0.0
-            best_trade = worst_trade = None
-
-            # ── Sursa 1: trade_history.json (live cBot data) ──
-            trade_history_file = Path(__file__).parent.resolve() / 'trade_history.json'
-            if trade_history_file.exists():
-                with open(trade_history_file, 'r', encoding='utf-8') as f:
-                    th = json.load(f)
-                for trade in th.get('closed_trades', []):
-                    ct = trade.get('close_time', '')
-                    if not ct or ct[:10] < week_ago:
-                        continue
-                    profit = float(trade.get('profit', 0))
-                    total += 1
-                    total_pnl += profit
-                    if profit > 0:
-                        wins += 1
-                    else:
-                        losses += 1
-                    if best_trade is None or profit > best_trade:
-                        best_trade = profit
-                    if worst_trade is None or profit < worst_trade:
-                        worst_trade = profit
-            else:
-                # ── Sursa 2: SQLite fallback ──
-                if self.db_path.exists():
-                    conn = sqlite3.connect(self.db_path)
-                    cursor = conn.cursor()
-                    cursor.execute("""
-                        SELECT
-                            COUNT(*),
-                            SUM(CASE WHEN profit > 0 THEN 1 ELSE 0 END),
-                            SUM(CASE WHEN profit < 0 THEN 1 ELSE 0 END),
-                            SUM(profit),
-                            MAX(profit),
-                            MIN(profit)
-                        FROM closed_trades
-                        WHERE DATE(close_time, 'localtime') >= ?
-                    """, (week_ago,))
-                    row = cursor.fetchone()
-                    conn.close()
-                    if row and row[0]:
-                        total = row[0] or 0
-                        wins = row[1] or 0
-                        losses = row[2] or 0
-                        total_pnl = row[3] or 0.0
-                        best_trade = row[4]
-                        worst_trade = row[5]
+            weekly = TradeManager(Path(__file__).parent.resolve()).get_weekly_pnl(week_ago)
+            total = weekly['total']
+            wins = weekly['wins']
+            losses = weekly['losses']
+            total_pnl = weekly['total_pnl']
+            best_trade = weekly['best_trade']
+            worst_trade = weekly['worst_trade']
 
             win_rate = (wins / total * 100) if total > 0 else 0
             avg_pnl = (total_pnl / total) if total > 0 else 0.0
