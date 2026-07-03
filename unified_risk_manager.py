@@ -107,6 +107,7 @@ class UnifiedRiskManager:
                     self._reset_timestamp = state.get('reset_timestamp')
                     self._force_bypass_loss_limit = bool(state.get('force_bypass_loss_limit', False))
                     print(f"✅ Daily state loaded: {today} (Starting: ${self.starting_balance_today:.2f})")
+                    self._correct_stale_daily_starting()
                 else:
                     # NEW DAY - reset everything
                     print(f"🔄 NEW DAY DETECTED: {last_date} → {today}")
@@ -207,6 +208,31 @@ class UnifiedRiskManager:
             print("🏛️ SYSTEM RESET alert sent to Telegram (EET)")
         except Exception as e:
             print(f"⚠️ Could not send reset alert: {e}")
+
+    def _correct_stale_daily_starting(self):
+        """Fix daily_state when midnight reset used stale trade_history.json cache."""
+        try:
+            from trade_manager import TradeManager
+            data = TradeManager(Path(__file__).parent.resolve()).fetch_broker_live()
+            if not data:
+                return
+            acct = data.get('account', {})
+            live_equity = float(acct.get('equity', 0) or 0)
+            live_balance = float(acct.get('balance', 0) or 0)
+            ref = live_balance if live_balance > 0 else live_equity
+            stored = float(self.starting_balance_today or 0)
+            if ref <= 0 or stored <= 0:
+                return
+            if stored < ref * 0.75 or stored > ref * 1.25:
+                corrected = live_equity if live_equity > 0 else ref
+                print(
+                    f"⚠️  Stale daily starting ${stored:.2f} vs broker ${ref:.2f} "
+                    f"— correcting to ${corrected:.2f}"
+                )
+                self.starting_balance_today = corrected
+                self._save_daily_state()
+        except Exception as e:
+            print(f"⚠️  Could not correct stale daily starting: {e}")
     
     def _save_daily_state(self):
         """Save current daily state to JSON — V14.0: EET date, preserve reset_timestamp."""
@@ -308,8 +334,20 @@ class UnifiedRiskManager:
             raise
     
     def get_account_balance(self):
-        """Get current account balance — reads trade_history.json (live) first, SQLite fallback"""
-        # PRIMARY: trade_history.json written by ctrader_sync_daemon every 30s
+        """Get current account equity/balance — live cTrader broker (8767) first."""
+        try:
+            from trade_manager import TradeManager
+            broker_data = TradeManager(Path(__file__).parent.resolve()).fetch_broker_live()
+            if broker_data:
+                account = broker_data.get('account', {})
+                equity = float(account.get('equity', 0) or 0)
+                balance = float(account.get('balance', 0) or 0)
+                if equity > 0 or balance > 0:
+                    return equity, balance
+        except Exception as e:
+            print(f"⚠️  cTrader broker fetch error: {e}")
+
+        # OFFLINE FALLBACK: trade_history.json cache
         try:
             th_path = Path(__file__).parent / 'trade_history.json'
             if th_path.exists():
@@ -319,6 +357,7 @@ class UnifiedRiskManager:
                 equity = float(account.get('equity', 0))
                 balance = float(account.get('balance', 0))
                 if equity > 0 or balance > 0:
+                    print("⚠️  Using cached trade_history.json (broker offline)")
                     return equity, balance
         except Exception as e:
             print(f"⚠️  trade_history.json read error: {e}")
