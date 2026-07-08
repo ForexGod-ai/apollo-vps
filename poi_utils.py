@@ -1,5 +1,8 @@
 """Shared POI box helpers — daily_scanner lifecycle + multi_tf_radar gate (V45 wick)."""
-from typing import Optional
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from typing import Any, Optional
 
 
 def price_in_poi_box(
@@ -66,3 +69,89 @@ def poi_bounds_from_stored(stored: dict) -> tuple[Optional[float], Optional[floa
     if top is None or bottom is None:
         return None, None
     return float(bottom), float(top)
+
+
+def _parse_iso_ts(ts: Optional[str]) -> Optional[datetime]:
+    if ts is None:
+        return None
+    try:
+        s = str(ts).replace('Z', '+00:00')
+        dt = datetime.fromisoformat(s)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+    except Exception:
+        return None
+
+
+def _bar_open_iso(df: Any, row_idx: int) -> Optional[str]:
+    """ISO timestamp for bar open (matches multi_tf_radar D1 anchor convention)."""
+    if df is None or getattr(df, 'empty', True):
+        return None
+    try:
+        row = df.iloc[row_idx]
+        for col in ('time', 'datetime', 'Date', 'date', 'timestamp'):
+            if col in df.columns:
+                dt = _parse_iso_ts(row[col])
+                if dt is not None:
+                    return dt.isoformat()
+        idx = df.index[row_idx]
+        dt = _parse_iso_ts(idx)
+        if dt is not None:
+            return dt.isoformat()
+    except Exception:
+        pass
+    return None
+
+
+def find_first_poi_touch_time(
+    df_d1: Any,
+    df_h4: Any,
+    poi_bottom: Optional[float],
+    poi_top: Optional[float],
+) -> Optional[str]:
+    """
+    V52.2: Prima bară (cronologic) unde high/low intersectează caseta POI.
+    Scanează D1 apoi H4 — returnează timestamp deschidere bară.
+    """
+    if poi_bottom is None or poi_top is None:
+        return None
+    for df in (df_d1, df_h4):
+        if df is None or getattr(df, 'empty', True):
+            continue
+        if 'high' not in df.columns or 'low' not in df.columns:
+            continue
+        for i in range(len(df)):
+            try:
+                hi = float(df.iloc[i]['high'])
+                lo = float(df.iloc[i]['low'])
+            except Exception:
+                continue
+            if poi_box_intersects_wick(hi, lo, poi_bottom, poi_top):
+                ts = _bar_open_iso(df, i)
+                if ts:
+                    return ts
+    return None
+
+
+def resolve_poi_touch_anchor(
+    *,
+    d1_touch_time: Optional[str],
+    now_ts: str,
+    historical_touch: Optional[str] = None,
+    existing: Optional[str] = None,
+) -> str:
+    """
+    V52.2: Ancoră POI = cel mai devreme timestamp valid.
+    Nu avansează ancoră în viitor față de `existing`.
+    """
+    candidates: list[tuple[str, datetime]] = []
+    for raw in (existing, historical_touch, d1_touch_time):
+        if not raw:
+            continue
+        dt = _parse_iso_ts(raw)
+        if dt is not None:
+            candidates.append((raw, dt))
+    if not candidates:
+        return now_ts
+    return min(candidates, key=lambda x: x[1])[0]

@@ -61,8 +61,11 @@ from loguru import logger
 
 from pip_utils import get_pip_size, get_max_sl_pips
 from poi_utils import (
+    find_first_poi_touch_time as _find_first_poi_touch_time,
     poi_box_intersects_wick as _poi_box_intersects_wick,
+    poi_bounds_from_stored as _poi_bounds_from_stored,
     price_in_poi_box as _price_in_poi_box,
+    resolve_poi_touch_anchor as _resolve_poi_touch_anchor,
 )
 from radar_gates import (
     V47_ALERT_MAX_BARS_4H as _V47_ALERT_MAX_BARS_4H,
@@ -245,6 +248,42 @@ def _filter_structural_post_poi(events: list, anchor: Optional[datetime]) -> lis
         if edt is not None and edt > anchor:
             filtered.append(ev)
     return filtered
+
+
+def _log_choch_wait_diag(
+    symbol: str,
+    timeframe_display: str,
+    required_direction: str,
+    poi_first_touch_time: Optional[str],
+    aligned_before_poi: list,
+    choch_list: list,
+    df,
+) -> None:
+    """V52.2: De ce WAITING — ultim CHoCH aliniat vs ancoră POI."""
+    anchor = poi_first_touch_time or 'none'
+    poi_dt = _parse_radar_dt(poi_first_touch_time)
+    if aligned_before_poi:
+        last = aligned_before_poi[-1]
+        bars_ago = len(df) - last.index
+        edt = _structural_event_dt(last)
+        post_poi = edt is not None and poi_dt is not None and edt > poi_dt
+        valid = _is_structural_break_valid(last, last.direction, df)
+        ts = edt.isoformat() if edt else '?'
+        print(
+            f"  [V52 DIAG {timeframe_display}] {symbol}: anchor={anchor} | "
+            f"ultim {required_direction}: {ts} -{bars_ago}b "
+            f"post_poi={'YES' if post_poi else 'NO'} valid={'YES' if valid else 'NO'}"
+        )
+    contrary = [c for c in choch_list if c.direction != required_direction]
+    if contrary:
+        last_c = contrary[-1]
+        edt_c = _structural_event_dt(last_c)
+        ts_c = edt_c.isoformat() if edt_c else '?'
+        print(
+            f"  [V52 DIAG {timeframe_display}] {symbol}: ultim {last_c.direction} "
+            f"ignorat (contrary {required_direction}): {ts_c}"
+        )
+    sys.stdout.flush()
 
 
 def _is_structural_break_valid(latest, direction: str, df) -> bool:
@@ -438,10 +477,16 @@ def _track_mitigation_touch(
     v43_zone: dict,
     tf_4h: 'TimeframeAnalysis' = None,
     d1_touch_time: Optional[str] = None,
+    df_d1=None,
+    df_h4=None,
+    poi_bottom: Optional[float] = None,
+    poi_top: Optional[float] = None,
 ) -> None:
     """V47.1: State machine POI — latch panda post-touch până la alertă 4H."""
     now_ts = datetime.now(timezone.utc).isoformat()
-    touch_anchor = d1_touch_time or now_ts
+    if poi_bottom is None or poi_top is None:
+        poi_bottom, poi_top = _poi_bounds_from_stored(setup_data)
+    historical_touch = _find_first_poi_touch_time(df_d1, df_h4, poi_bottom, poi_top)
     in_poi = v43_zone.get('in_poi', False)
     validated = v43_zone.get('validated', False)
     was_occupied = bool(setup_data.get('_poi_occupied'))
@@ -475,6 +520,12 @@ def _track_mitigation_touch(
         return
 
     if not was_occupied and validated:
+        touch_anchor = _resolve_poi_touch_anchor(
+            d1_touch_time=d1_touch_time,
+            now_ts=now_ts,
+            historical_touch=historical_touch,
+            existing=None,
+        )
         setup_data['poi_first_touch_time'] = touch_anchor
         setup_data['poi_radar_armed_at'] = touch_anchor
         setup_data['poi_touch_latched'] = True
@@ -493,10 +544,31 @@ def _track_mitigation_touch(
         )
         sys.stdout.flush()
     elif validated and not setup_data.get('poi_first_touch_time'):
+        touch_anchor = _resolve_poi_touch_anchor(
+            d1_touch_time=d1_touch_time,
+            now_ts=now_ts,
+            historical_touch=historical_touch,
+            existing=None,
+        )
         setup_data['poi_first_touch_time'] = touch_anchor
         setup_data['poi_radar_armed_at'] = touch_anchor
         setup_data['poi_touch_latched'] = True
         setup_data['radar_panda_active'] = True
+    elif validated and setup_data.get('poi_touch_latched'):
+        old_anchor = setup_data.get('poi_first_touch_time')
+        touch_anchor = _resolve_poi_touch_anchor(
+            d1_touch_time=d1_touch_time,
+            now_ts=now_ts,
+            historical_touch=historical_touch,
+            existing=old_anchor,
+        )
+        if touch_anchor != old_anchor:
+            setup_data['poi_first_touch_time'] = touch_anchor
+            print(
+                f"  [V52.2 POI ANCHOR] {setup_data.get('symbol', '?')}: "
+                f"{old_anchor} → {touch_anchor} (retroactive first touch)"
+            )
+            sys.stdout.flush()
 
     setup_data['_poi_occupied'] = validated
 
@@ -668,6 +740,7 @@ class MultiTFResult:
     pd_guard_reason: str = ""
     # V43.7: 1H CHoCH respins — anterior ancorii 4H (ghost trigger)
     h1_choch_stale: bool = False
+    poi_first_touch_time: Optional[str] = None
 
 
 class MultiTFRadar:
@@ -1380,6 +1453,7 @@ class MultiTFRadar:
 
             # V50: post-POI — doar structură DUPĂ primul touch POI Daily
             _poi_anchor = _parse_radar_dt(poi_first_touch_time)
+            _aligned_before_poi = list(aligned_chochs)
             if _poi_anchor and (poi_touch_latched or daily_in_poi):
                 _pre = len(aligned_chochs)
                 aligned_chochs = _filter_structural_post_poi(aligned_chochs, _poi_anchor)
@@ -1409,6 +1483,15 @@ class MultiTFRadar:
                 print(
                     f"  ⏳ [{timeframe_display} V47] {symbol}: Zero CHoCH/BOS "
                     f"{required_direction.upper()} — WAITING"
+                )
+                _log_choch_wait_diag(
+                    symbol,
+                    timeframe_display,
+                    required_direction,
+                    poi_first_touch_time,
+                    _aligned_before_poi,
+                    choch_list,
+                    df,
                 )
                 sys.stdout.flush()
                 return TimeframeAnalysis(
@@ -1769,14 +1852,16 @@ class MultiTFRadar:
         _d1_wick_low = None
         _d1_touch_time = None
         _df_d1_touch = None
+        _df_h4_touch = None
         try:
-            _df_d1_touch = self.get_historical_data(symbol, "D1", 3)
+            _df_d1_touch = self.get_historical_data(symbol, "D1", 60)
             if _df_d1_touch is not None and not _df_d1_touch.empty:
                 _d1_wick_high = float(_df_d1_touch['high'].iloc[-1])
                 _d1_wick_low = float(_df_d1_touch['low'].iloc[-1])
                 _d1_touch_time = _d1_bar_open_iso(_df_d1_touch)
+            _df_h4_touch = self.get_historical_data(symbol, "H4", 300)
         except Exception as _wick_err:
-            logger.warning(f"[V52] {symbol}: D1 wick fetch failed — POI touch anchor degraded: {_wick_err}")
+            logger.warning(f"[V52] {symbol}: D1/H4 wick fetch failed — POI touch anchor degraded: {_wick_err}")
 
         # V45: wick Daily ∩ POI → pândă radar; P/D = filtru execuție, nu gate scan
         _v43_zone = _evaluate_v43_daily_zone(
@@ -1784,7 +1869,11 @@ class MultiTFRadar:
             d1_wick_high=_d1_wick_high, d1_wick_low=_d1_wick_low,
         )
         daily_zone_validated = _v43_zone['validated']
-        _track_mitigation_touch(setup_data, _v43_zone, d1_touch_time=_d1_touch_time)
+        _track_mitigation_touch(
+            setup_data, _v43_zone, d1_touch_time=_d1_touch_time,
+            df_d1=_df_d1_touch, df_h4=_df_h4_touch,
+            poi_bottom=daily_fvg_bottom, poi_top=daily_fvg_top,
+        )
         # V47.1: scan LTF cât timp panda e latched (inclusiv după ieșirea din POI la respingere)
         _poi_scan_active = bool(daily_zone_validated or setup_data.get('radar_panda_active'))
         _allow_bos_4h = bool(_poi_scan_active)
@@ -1855,6 +1944,8 @@ class MultiTFRadar:
 
             _track_mitigation_touch(
                 setup_data, _v43_zone, tf_4h, d1_touch_time=_d1_touch_time,
+                df_d1=_df_d1_touch, df_h4=_df_h4_touch,
+                poi_bottom=daily_fvg_bottom, poi_top=daily_fvg_top,
             )
             tf_1h, _h1_stale = _apply_h1_chronology_guard(
                 symbol, setup_data, tf_4h, tf_1h, _poi_scan_active,
@@ -1982,6 +2073,7 @@ class MultiTFRadar:
             pd_guard_passed=_pd_guard_passed,
             pd_guard_reason=_pd_guard_reason,
             h1_choch_stale=_h1_stale,
+            poi_first_touch_time=setup_data.get('poi_first_touch_time'),
         )
         
         # 🔥 V8.3 SYNC: Write radar results to monitoring_setups.json
@@ -3072,6 +3164,8 @@ class MultiTFRadar:
         _radar_out(f"DAILY  | Status: VALIDATED (Always-On V36.5)")
         _radar_out(f"       | FVG ref: {daily_zone_txt}")
         _radar_out(f"       | Entry ref: {_fmt_price(result.daily_entry)}")
+        if result.poi_first_touch_time:
+            _radar_out(f"       | POI anchor: {result.poi_first_touch_time}")
         _radar_out(f"PRICE  | Live: {_fmt_price(result.current_price)}")
         _radar_out("-" * 72)
 
