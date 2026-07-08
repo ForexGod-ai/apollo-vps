@@ -15,6 +15,7 @@ Activates KILL SWITCH on 10% daily loss
 import json
 import sqlite3
 import os
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from dotenv import load_dotenv
@@ -141,7 +142,17 @@ class UnifiedRiskManager:
         Reset daily state for new day.
         V14.0: Uses Europe/Bucharest. Sends minimalist SYSTEM RESET alert.
         """
-        equity, balance = self.get_account_balance()
+        # V52.1: Retry broker at startup — watchdog restart often races cBot on 8767.
+        equity, balance = self.get_account_balance(broker_retries=5, broker_delay_s=2.0)
+        live = self._fetch_broker_balance()
+        if live:
+            live_eq, live_bal = live
+            if abs(live_eq - equity) > 0.5 or abs(live_bal - balance) > 0.5:
+                print(
+                    f"⚠️  SYSTEM RESET pre-alert correction: "
+                    f"${equity:.2f} → ${live_eq:.2f} (live 8767)"
+                )
+                equity, balance = live_eq, live_bal
         self.starting_balance_today = equity
         self.daily_trades_count = 0
 
@@ -333,19 +344,36 @@ class UnifiedRiskManager:
             print(f"❌ Error loading config: {e}")
             raise
     
-    def get_account_balance(self):
-        """Get current account equity/balance — live cTrader broker (8767) first."""
+    def _fetch_broker_balance(self):
+        """Live equity/balance from TradeHistorySyncer (8767). None if offline."""
         try:
             from trade_manager import TradeManager
             broker_data = TradeManager(Path(__file__).parent.resolve()).fetch_broker_live()
-            if broker_data:
-                account = broker_data.get('account', {})
-                equity = float(account.get('equity', 0) or 0)
-                balance = float(account.get('balance', 0) or 0)
-                if equity > 0 or balance > 0:
-                    return equity, balance
+            if not broker_data:
+                return None
+            account = broker_data.get('account', {})
+            equity = float(account.get('equity', 0) or 0)
+            balance = float(account.get('balance', 0) or 0)
+            if equity > 0 or balance > 0:
+                return equity, balance
         except Exception as e:
             print(f"⚠️  cTrader broker fetch error: {e}")
+        return None
+
+    def get_account_balance(self, broker_retries: int = 1, broker_delay_s: float = 0.0):
+        """Get current account equity/balance — live cTrader broker (8767) first."""
+        retries = max(1, int(broker_retries))
+        delay = max(0.0, float(broker_delay_s))
+        for attempt in range(retries):
+            live = self._fetch_broker_balance()
+            if live:
+                return live
+            if attempt < retries - 1 and delay > 0:
+                print(
+                    f"⚠️  Broker 8767 unavailable "
+                    f"(attempt {attempt + 1}/{retries}), retrying in {delay:.0f}s..."
+                )
+                time.sleep(delay)
 
         # OFFLINE FALLBACK: trade_history.json cache
         try:
