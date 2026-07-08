@@ -399,11 +399,54 @@ def _format_two_columns(
     return "\n".join(lines)
 
 
-def get_top_carry_pairs(rates: Dict[str, float], top_n: int = 3) -> List[dict]:
+def _parse_symbol_to_carry_pair(symbol: str) -> Optional[Tuple[str, str]]:
+    """Parse 6-char FX symbol into (base, quote) when both legs have CB rates."""
+    s = symbol.upper().replace("/", "").strip()
+    if len(s) != 6:
+        return None
+    base, quote = s[:3], s[3:]
+    fx_ccys = frozenset(FALLBACK_RATES.keys())
+    if base in fx_ccys and quote in fx_ccys:
+        return base, quote
+    return None
+
+
+def _carry_pairs_for_currency(currency: str) -> List[Tuple[str, str]]:
+    """Matrix portfolio pairs that contain `currency` (base or quote)."""
+    currency = currency.upper()
+    pairs: List[Tuple[str, str]] = []
+    seen: set = set()
+    for sym in load_project_symbols():
+        parsed = _parse_symbol_to_carry_pair(sym)
+        if not parsed or currency not in parsed:
+            continue
+        if parsed in seen:
+            continue
+        seen.add(parsed)
+        pairs.append(parsed)
+    return pairs
+
+
+def get_top_carry_pairs(
+    rates: Dict[str, float],
+    top_n: int = 3,
+    triggered_currency: Optional[str] = None,
+) -> List[dict]:
+    """
+    Top carry spreads (base CB rate − quote CB rate).
+
+    triggered_currency: when set (macro alert), only pairs from pairs_config.json
+    that physically contain that currency — never unrelated global top carry.
+    """
+    if triggered_currency:
+        pair_list = _carry_pairs_for_currency(triggered_currency)
+    else:
+        pair_list = list(CARRY_PAIRS)
+
     spreads = []
-    for base, quote in CARRY_PAIRS:
-        b = rates.get(base, 0.0)
-        q = rates.get(quote, 0.0)
+    for base, quote in pair_list:
+        b = float(rates.get(base, 0.0))
+        q = float(rates.get(quote, 0.0))
         spread = round(b - q, 2)
         spreads.append({
             "pair": f"{base}/{quote}",
@@ -739,25 +782,38 @@ def _send_rate_change_alert(
         )
 
     if rates:
-        lines.append("")
-        lines.append("<b>📊 Carry pairs afectate:</b>")
         old_rates = dict(rates)
-        for ccy, old, new in changes[:5]:
+        for ccy, old, new in changes:
             old_rates[ccy] = old
-        affected = get_top_carry_pairs(rates, 5)
-        for item in affected[:3]:
-            lines.append(
-                f"  • <b>{item['pair']}</b> carry +{item['spread']:.2f}% "
-                f"({item['base_rate']:.2f}-{item['quote_rate']:.2f})"
-            )
-        old_top = get_top_carry_pairs(old_rates, 1)
-        new_top = get_top_carry_pairs(rates, 1)
-        if old_top and new_top and old_top[0]['pair'] != new_top[0]['pair']:
-            o, n = old_top[0], new_top[0]
-            lines.append(
-                f"  • Best carry shift: {o['pair']} +{o['spread']:.2f}% → "
-                f"{n['pair']} +{n['spread']:.2f}%"
-            )
+
+        for ccy, old, new in changes:
+            lines.append("")
+            lines.append(f"<b>📊 Carry pairs afectate ({ccy}):</b>")
+            affected = get_top_carry_pairs(rates, top_n=5, triggered_currency=ccy)
+            if not affected:
+                lines.append(
+                    f"  • <i>Nicio perechă Matrix cu {ccy} în pairs_config.</i>"
+                )
+                continue
+            for item in affected[:3]:
+                sign = "+" if item["spread"] >= 0 else ""
+                lines.append(
+                    f"  • <b>{item['pair']}</b> carry {sign}{item['spread']:.2f}% "
+                    f"({item['base_rate']:.2f}-{item['quote_rate']:.2f})"
+                )
+            old_top = get_top_carry_pairs(old_rates, 1, triggered_currency=ccy)
+            new_top = get_top_carry_pairs(rates, 1, triggered_currency=ccy)
+            if (
+                old_top
+                and new_top
+                and len(affected) > 1
+                and old_top[0]["pair"] != new_top[0]["pair"]
+            ):
+                o, n = old_top[0], new_top[0]
+                lines.append(
+                    f"  • Best carry shift ({ccy}): {o['pair']} +{o['spread']:.2f}% → "
+                    f"{n['pair']} +{n['spread']:.2f}%"
+                )
 
     lines.extend([
         "",
