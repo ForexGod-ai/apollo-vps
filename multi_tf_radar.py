@@ -363,6 +363,37 @@ def _evaluate_v43_daily_zone(
     }
 
 
+def _compute_pd_guard_for_execute(
+    v43_zone: dict,
+    pd_fallback: dict,
+    daily_zone_validated: bool,
+    poi_sequential_active: bool,
+) -> tuple:
+    """
+    V52: După touch POI (latch/panda), P/D gate nu mai cere preț în caseta POI acum —
+    permite entry secvențial V46 (retrace 60–80% în afara POI Daily).
+    """
+    if v43_zone.get('equilibrium') is not None:
+        pd_ok = bool(v43_zone.get('pd_passed'))
+        if poi_sequential_active:
+            passed = pd_ok
+        else:
+            passed = pd_ok and bool(v43_zone.get('in_poi'))
+        reason = '' if passed else v43_zone.get('reason', '')
+        return passed, reason
+
+    if pd_fallback.get('skipped'):
+        return True, ''
+
+    pd_ok = bool(pd_fallback.get('passed', True))
+    if poi_sequential_active:
+        passed = pd_ok
+    else:
+        passed = pd_ok and daily_zone_validated
+    reason = '' if passed else pd_fallback.get('reason', '')
+    return passed, reason
+
+
 def _empty_tf_waiting(timeframe: str) -> 'TimeframeAnalysis':
     """V43.2: TF placeholder când POI Daily nu e validat — fără CHoCH în aer."""
     is_h1 = timeframe.upper() in ('H1', '1H')
@@ -1744,8 +1775,8 @@ class MultiTFRadar:
                 _d1_wick_high = float(_df_d1_touch['high'].iloc[-1])
                 _d1_wick_low = float(_df_d1_touch['low'].iloc[-1])
                 _d1_touch_time = _d1_bar_open_iso(_df_d1_touch)
-        except Exception:
-            pass
+        except Exception as _wick_err:
+            logger.warning(f"[V52] {symbol}: D1 wick fetch failed — POI touch anchor degraded: {_wick_err}")
 
         # V45: wick Daily ∩ POI → pândă radar; P/D = filtru execuție, nu gate scan
         _v43_zone = _evaluate_v43_daily_zone(
@@ -1834,13 +1865,16 @@ class MultiTFRadar:
             _h1_stale = False
 
         # V43.2: P/D guard aliniat la validarea ADR (înlocuiește D1 midpoint când ADR disponibil)
+        _poi_sequential = bool(
+            setup_data.get('poi_touch_latched') or setup_data.get('radar_panda_active')
+        )
         if _v43_zone.get('equilibrium') is not None:
-            _pd_guard_passed = _v43_zone['pd_passed'] and _v43_zone['in_poi']
-            _pd_guard_reason = '' if _pd_guard_passed else _v43_zone['reason']
+            _pd = {'passed': True, 'reason': '', 'skipped': False}
         else:
             _pd = self._evaluate_pd_guard(symbol, required_direction, current_price)
-            _pd_guard_passed = _pd['passed'] and daily_zone_validated
-            _pd_guard_reason = _pd['reason'] if not _pd_guard_passed else ''
+        _pd_guard_passed, _pd_guard_reason = _compute_pd_guard_for_execute(
+            _v43_zone, _pd, daily_zone_validated, _poi_sequential,
+        )
 
         # ━━━ V19.5: Determină execution_ready — FĂRĂ nicio poartă Daily ━━━
         # Radarul validează EXCLUSIV alinierea fractală 4H/1H cu biasul Daily.
@@ -1886,6 +1920,7 @@ class MultiTFRadar:
             print(f"  ⏳ [V43.2 POI BLOCK EXECUTE] {symbol}: {_pd_guard_reason}")
             sys.stdout.flush()
         elif not _pd_guard_passed and _pd_guard_reason:
+            _had_execute_trigger = execution_ready
             if execution_ready:
                 execution_ready = False
                 priority_timeframe = None
@@ -1894,6 +1929,16 @@ class MultiTFRadar:
             print(f"  ⏳ [V36.5 P/D BLOCK EXECUTE] {symbol}: {_pd_guard_reason} — "
                   f"EXECUTE blocat")
             sys.stdout.flush()
+            if _had_execute_trigger and (tf_4h.choch_detected or tf_1h.choch_detected):
+                try:
+                    from telegram_notifier import TelegramNotifier
+                    TelegramNotifier().send_execute_now_blocked_alert(
+                        symbol,
+                        setup_data.get('direction', '?'),
+                        f"[Radar P/D] {_pd_guard_reason}",
+                    )
+                except Exception as _pd_tg_err:
+                    logger.warning(f"[V52] P/D block Telegram failed {symbol}: {_pd_tg_err}")
 
         _poi_entry_gate = daily_zone_validated or bool(setup_data.get('poi_touch_latched'))
         if execution_ready and not _poi_entry_gate:
@@ -2026,7 +2071,10 @@ class MultiTFRadar:
                 return True
             logger.info(f"[V37.7 RR SHIELD] {result.symbol}: RR={_rr_val:.2f} >= 2.0 OK")
         except Exception as _rr_err:
-            logger.debug(f"[V37.7 RR SHIELD] {result.symbol}: calcul RR esuat ({_rr_err})")
+            logger.warning(
+                f"[V37.7 RR SHIELD] {result.symbol}: calcul RR eșuat ({_rr_err}) — EXECUTE BLOCAT (fail-closed)"
+            )
+            return True
         return False
 
     _EXECUTE_NOW_FLUSH_KEYS = (
@@ -2910,12 +2958,20 @@ class MultiTFRadar:
                 raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
 
             # ── Re-citire LIVE: starea ACTUALĂ a fișierului, nu snapshot-ul de la startul ciclului ──
-            try:
-                with open(_MONITORING_FILE, 'r', encoding='utf-8') as _f:
-                    fresh_data = json.load(_f)
-            except Exception as _je:
-                logger.error(f"⚠️ _batch_sync V22: Nu pot re-citi monitoring_setups.json: {_je}")
-                return
+            fresh_data = None
+            for _read_attempt in range(3):
+                try:
+                    with open(_MONITORING_FILE, 'r', encoding='utf-8') as _f:
+                        fresh_data = json.load(_f)
+                    break
+                except Exception as _je:
+                    if _read_attempt >= 2:
+                        logger.error(
+                            f"⚠️ _batch_sync V22: Nu pot re-citi monitoring_setups.json "
+                            f"după 3 încercări: {_je}"
+                        )
+                        return
+                    time.sleep(0.15)
 
             if isinstance(fresh_data, dict):
                 setups = fresh_data.get("setups", [])

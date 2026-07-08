@@ -1429,6 +1429,12 @@ class SetupExecutorMonitor:
                                 setups[i]['v42_3_alignment_block_at'] = (
                                     datetime.now(timezone.utc).isoformat()
                                 )
+                                self._notify_execute_now_blocked(
+                                    symbol,
+                                    setup.get('direction', '?'),
+                                    f"V42.3 alignment: LTF {_ltf_mismatch} vs Daily",
+                                    setup=setups[i],
+                                )
                                 updated = True
                                 continue
 
