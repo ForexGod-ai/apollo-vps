@@ -51,12 +51,12 @@ def audit_setup(setup: dict) -> dict:
     retrace_ok = _retrace_is_alert_valid(retrace_1h)
 
     h4_choch_ok = (
-        panda and dir_4h_ok and post_poi_4h and live_4h
+        panda and dir_4h_ok and post_poi_4h
         and sig == 'CHoCH' and not setup.get('h4_choch_alert_sent')
         and setup.get('radar_4h_choch_detected')
     )
     h4_bos_ok = (
-        panda and dir_4h_ok and post_poi_4h and live_4h
+        panda and dir_4h_ok and post_poi_4h
         and sig == 'BOS' and not setup.get('h4_bos_alert_sent')
     )
     h1_ok = (
@@ -65,7 +65,7 @@ def audit_setup(setup: dict) -> dict:
         and dir_1h_ok
         and not setup.get('h1_choch_alert_sent')
         and setup.get('poi_first_touch_time')
-        and post_poi_1h and live_1h and retrace_ok
+        and post_poi_1h and retrace_ok
         and not setup.get('radar_1h_choch_stale')
     )
 
@@ -73,8 +73,6 @@ def audit_setup(setup: dict) -> dict:
     if panda and setup.get('radar_1h_choch_detected') and not h1_ok:
         if not h4_gate_v50:
             block_reasons.append('no_h4_alert_this_poi')
-        if not live_1h:
-            block_reasons.append(f'1h_stale_{bars_1h}b')
         if not post_poi_1h:
             block_reasons.append('1h_pre_poi')
         if not retrace_ok:

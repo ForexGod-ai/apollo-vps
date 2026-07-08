@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """
-Clean Chart Generator - ONLY dark theme + cyan/purple candles
-NO annotations, NO FVG, NO CHoCH, NO Entry/SL/TP
+Clean Chart Generator - dark theme + cyan/purple candles + CHoCH break line (V52 Strat 3)
 """
 import mplfinance as mpf
 import pandas as pd
@@ -122,10 +121,31 @@ class ChartGenerator:
             # Set tick colors and ylabel color to light gray for visibility
             ax.tick_params(axis='both', colors='#d1d4dc', labelsize=9)
             ax.set_ylabel('Price', color='#d1d4dc', fontsize=10)
-            
-            # NO annotations - clean chart with only candles!
-            # Removed: FVG zones, CHoCH markers, Entry/SL/TP lines
-            
+
+            break_px = None
+            if setup is not None:
+                if isinstance(setup, dict):
+                    break_px = setup.get('choch_break_price')
+                else:
+                    break_px = getattr(setup, 'choch_break_price', None)
+            if break_px is not None:
+                try:
+                    ax.axhline(
+                        float(break_px),
+                        color='#ff9800',
+                        linestyle='--',
+                        linewidth=1.2,
+                        label='CHoCH',
+                    )
+                    ax.legend(
+                        loc='upper left',
+                        fontsize=8,
+                        facecolor='#1e222d',
+                        labelcolor='#d1d4dc',
+                    )
+                except (TypeError, ValueError):
+                    pass
+
             # Save
             if save_path:
                 if not os.path.isabs(save_path):

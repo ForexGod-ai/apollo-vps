@@ -81,10 +81,7 @@ def ltf_choch_confirmed_for_card(merged: Dict, tf: str, macro_dir: str) -> bool:
             return False
         if not v47_break_post_poi_touch(merged, merged.get('radar_4h_choch_time')):
             return False
-        bars = merged.get('radar_4h_choch_bars_ago', 9999)
-        if not v47_live_alert_bars_ok('4H', bars):
-            return False
-        return bool(merged.get('h4_structure_locked') or merged.get('h4_locked'))
+        return True
 
     if bool(merged.get('radar_1h_choch_stale')):
         return False
@@ -101,9 +98,6 @@ def ltf_choch_confirmed_for_card(merged: Dict, tf: str, macro_dir: str) -> bool:
     if merged.get('radar_1h_choch_direction') != macro_dir:
         return False
     if not v47_break_post_poi_touch(merged, merged.get('radar_1h_choch_time')):
-        return False
-    bars = merged.get('radar_1h_choch_bars_ago', 9999)
-    if not v47_live_alert_bars_ok('1H', bars):
         return False
     return True
 

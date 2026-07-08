@@ -2375,38 +2375,84 @@ class MultiTFRadar:
         result: 'MultiTFResult',
         macro_dir: str,
     ) -> None:
-        """V47: Telegram structural alerts — live post-POI, 4H before 1H, CHoCH/BOS distinct."""
+        """V52: Telegram structural alerts — post-POI (V52 anchor), 4H before 1H, CHoCH/BOS."""
         if setup.get('status') == 'TRADE_OPEN':
-            return
-        if not setup.get('radar_panda_active'):
             return
 
         sym = result.symbol
         tf_4h = result.tf_4h
         tf_1h = result.tf_1h
 
-        def _v47_4h_alert_ok() -> bool:
+        def _log_alert_skip(tf_label: str, post_poi, bars, retrace, reason: str) -> None:
+            msg = (
+                f"[V52 ALERT SKIP] {sym} {tf_label}: post_poi={post_poi} bars={bars} "
+                f"retrace={retrace} reason={reason}"
+            )
+            print(f"  {msg}")
+            sys.stdout.flush()
+            logger.info(msg)
+
+        if not setup.get('radar_panda_active'):
+            if tf_4h.choch_detected or tf_4h.bos_detected:
+                _log_alert_skip(
+                    '4H', 'N/A', getattr(tf_4h, 'choch_bars_ago', None),
+                    getattr(tf_4h, 'retrace_pct', None), 'panda_inactive',
+                )
+            return
+
+        def _v47_4h_alert_check() -> tuple:
             sig_u = (tf_4h.signal_type or 'CHoCH').upper()
             if sig_u == 'BOS':
-                if not tf_4h.bos_detected or tf_4h.bos_direction != macro_dir:
-                    return False
+                if not tf_4h.bos_detected:
+                    return False, 'bos_not_detected', tf_4h.choch_time, tf_4h.bos_bars_ago
+                if tf_4h.bos_direction != macro_dir:
+                    return False, 'bos_direction_mismatch', tf_4h.choch_time, tf_4h.bos_bars_ago
+                break_time = tf_4h.choch_time
                 bars_ago = tf_4h.bos_bars_ago
-                break_time = tf_4h.choch_time
             else:
-                if not tf_4h.choch_detected or tf_4h.choch_direction != macro_dir:
-                    return False
-                bars_ago = tf_4h.choch_bars_ago
+                if not tf_4h.choch_detected:
+                    return False, 'choch_not_detected', tf_4h.choch_time, tf_4h.choch_bars_ago
+                if tf_4h.choch_direction != macro_dir:
+                    return False, 'choch_direction_mismatch', tf_4h.choch_time, tf_4h.choch_bars_ago
                 break_time = tf_4h.choch_time
-            if not _v47_break_post_poi_touch(setup, break_time):
-                return False
-            if not _v47_live_alert_bars_ok('4H', bars_ago):
-                return False
-            if not _retrace_is_alert_valid(getattr(tf_4h, 'retrace_pct', None)):
-                return False
-            return True
+                bars_ago = tf_4h.choch_bars_ago
+            post_poi = _v47_break_post_poi_touch(setup, break_time)
+            if not post_poi:
+                return False, 'pre_poi_or_no_anchor', break_time, bars_ago
+            retrace = getattr(tf_4h, 'retrace_pct', None)
+            if not _retrace_is_alert_valid(retrace):
+                return False, 'retrace_invalid', break_time, bars_ago
+            return True, '', break_time, bars_ago
+
+        def _v47_1h_alert_check() -> tuple:
+            if not tf_1h.choch_detected:
+                return False, 'choch_not_detected'
+            if tf_1h.choch_direction != macro_dir:
+                return False, 'choch_direction_mismatch'
+            if setup.get('h1_choch_alert_sent'):
+                return False, 'already_sent'
+            if setup.get('radar_1h_choch_stale') or getattr(result, 'h1_choch_stale', False):
+                return False, 'h1_stale'
+            if not (result.daily_zone_validated or setup.get('radar_panda_active')):
+                return False, 'poi_not_active'
+            if not setup.get('poi_first_touch_time'):
+                return False, 'no_poi_anchor'
+            if not _v47_break_post_poi_touch(setup, tf_1h.choch_time):
+                return False, 'pre_poi_or_no_anchor'
+            retrace = getattr(tf_1h, 'retrace_pct', None)
+            if not _retrace_is_alert_valid(retrace):
+                return False, 'retrace_invalid'
+            h4_gate = bool(setup.get('h4_choch_alert_sent') or setup.get('h4_bos_alert_sent'))
+            if not h4_gate:
+                return False, 'no_h4_alert_this_poi'
+            return True, ''
 
         sig = (tf_4h.signal_type or 'CHoCH').upper()
-        if sig == 'BOS' and _v47_4h_alert_ok() and not setup.get('h4_bos_alert_sent'):
+        ok_4h, reason_4h, _bt_4h, bars_4h = _v47_4h_alert_check()
+        post_poi_4h = _v47_break_post_poi_touch(setup, _bt_4h)
+        retrace_4h = getattr(tf_4h, 'retrace_pct', None)
+
+        if sig == 'BOS' and ok_4h and not setup.get('h4_bos_alert_sent'):
             setup['h4_bos_alert_sent'] = True
             setup['radar_4h_signal_type'] = 'BOS'
             self._flush_choch_alerts_to_json(setup)
@@ -2418,7 +2464,7 @@ class MultiTFRadar:
                 logger.success(f"[V47] 4H BOS alert trimis: {sym}")
             except Exception as e:
                 logger.warning(f"[V47] 4H BOS Telegram alert failed for {sym}: {e}")
-        elif sig == 'CHoCH' and _v47_4h_alert_ok() and not setup.get('h4_choch_alert_sent'):
+        elif sig == 'CHoCH' and ok_4h and not setup.get('h4_choch_alert_sent'):
             setup['h4_choch_alert_sent'] = True
             setup['radar_4h_signal_type'] = 'CHoCH'
             self._flush_choch_alerts_to_json(setup)
@@ -2430,48 +2476,41 @@ class MultiTFRadar:
                 logger.success(f"[V47] 4H CHoCH alert trimis: {sym}")
             except Exception as e:
                 logger.warning(f"[V47] 4H CHoCH Telegram alert failed for {sym}: {e}")
+        elif sig == 'BOS' and tf_4h.bos_detected and not setup.get('h4_bos_alert_sent') and not ok_4h:
+            _log_alert_skip('4H', post_poi_4h, bars_4h, retrace_4h, reason_4h)
+        elif sig == 'CHoCH' and tf_4h.choch_detected and not setup.get('h4_choch_alert_sent') and not ok_4h:
+            _log_alert_skip('4H', post_poi_4h, bars_4h, retrace_4h, reason_4h)
 
-        # V50: poarta 1H = alertă 4H trimisă pe ciclul POI curent (nu lock stale din istoric)
+        # V50: poarta 1H = alertă 4H trimisă pe ciclul POI curent
         h4_gate_open = bool(
             setup.get('h4_choch_alert_sent') or setup.get('h4_bos_alert_sent')
         )
-        if not h4_gate_open:
-            if (
-                tf_1h.choch_detected
-                and tf_1h.choch_direction == macro_dir
-                and not setup.get('h1_choch_alert_sent')
-            ):
-                print(
-                    f"  [V50 H1 GATE] {sym}: 1H alert blocat — asteptam alertă 4H LIVE post-POI"
+        ok_1h, reason_1h = _v47_1h_alert_check()
+        if tf_1h.choch_detected and not setup.get('h1_choch_alert_sent'):
+            if ok_1h:
+                setup['h1_choch_alert_sent'] = True
+                if tf_1h.choch_price is not None:
+                    setup['choch_1h_price'] = tf_1h.choch_price
+                self._flush_choch_alerts_to_json(setup)
+                try:
+                    from telegram_notifier import TelegramNotifier
+                    tn = TelegramNotifier()
+                    df_1h = self.get_historical_data(sym, 'H1', 400)
+                    tn.send_1h_choch_alert(setup, df_1h, tf_data=tf_1h)
+                    logger.success(f"[V47] 1H alert trimis: {sym}")
+                except Exception as e:
+                    logger.warning(f"[V47] 1H Telegram alert failed for {sym}: {e}")
+            else:
+                post_poi_1h = _v47_break_post_poi_touch(setup, tf_1h.choch_time)
+                _log_alert_skip(
+                    '1H', post_poi_1h, tf_1h.choch_bars_ago,
+                    getattr(tf_1h, 'retrace_pct', None), reason_1h,
                 )
-                sys.stdout.flush()
-            return
-
-        dir_1h_ok = tf_1h.choch_direction == macro_dir
-        if (
-            tf_1h.choch_detected
-            and dir_1h_ok
-            and not setup.get('h1_choch_alert_sent')
-            and not setup.get('radar_1h_choch_stale')
-            and not getattr(result, 'h1_choch_stale', False)
-            and (result.daily_zone_validated or setup.get('radar_panda_active'))
-            and setup.get('poi_first_touch_time')
-            and _v47_break_post_poi_touch(setup, tf_1h.choch_time)
-            and _v47_live_alert_bars_ok('1H', tf_1h.choch_bars_ago)
-            and _retrace_is_alert_valid(getattr(tf_1h, 'retrace_pct', None))
-        ):
-            setup['h1_choch_alert_sent'] = True
-            if tf_1h.choch_price is not None:
-                setup['choch_1h_price'] = tf_1h.choch_price
-            self._flush_choch_alerts_to_json(setup)
-            try:
-                from telegram_notifier import TelegramNotifier
-                tn = TelegramNotifier()
-                df_1h = self.get_historical_data(sym, 'H1', 400)
-                tn.send_1h_choch_alert(setup, df_1h, tf_data=tf_1h)
-                logger.success(f"[V47] 1H alert trimis: {sym}")
-            except Exception as e:
-                logger.warning(f"[V47] 1H Telegram alert failed for {sym}: {e}")
+                if reason_1h == 'no_h4_alert_this_poi':
+                    print(
+                        f"  [V50 H1 GATE] {sym}: 1H alert blocat — asteptam alertă 4H post-POI"
+                    )
+                    sys.stdout.flush()
 
     def _arm_execute_now(self, setup: dict, result: 'MultiTFResult', exec_tf: str,
                          source: str = 'trigger') -> None:

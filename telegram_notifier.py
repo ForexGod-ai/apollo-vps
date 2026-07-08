@@ -448,13 +448,13 @@ class TelegramNotifier:
             if sig == 'BOS':
                 header = "⚡ <b>4H STRUCTURĂ CONFIRMATĂ (BOS)</b> — Continuare"
                 wait_line = (
-                    f"✅ POI Daily atins — BOS 4H {struct_dir_u} LIVE ≤3b post-touch\n"
+                    f"✅ POI Daily atins — BOS 4H {struct_dir_u} {bars_str} post-POI\n"
                     "⏳ Următorul pas: retrace Premium/Discount 60–80% pe impuls BOS → entry"
                 )
             else:
                 header = "🔄 <b>4H INVERSARE STRUCTURĂ (CHoCH)</b> — Pregătire Entry"
                 wait_line = (
-                    f"✅ POI Daily atins — CHoCH 4H {struct_dir_u} LIVE ≤3b post-touch\n"
+                    f"✅ POI Daily atins — CHoCH 4H {struct_dir_u} {bars_str} post-POI\n"
                     "⏳ Următorul pas: retrace Premium/Discount 60–80% pe impuls 4H → entry"
                 )
 
@@ -488,6 +488,7 @@ class TelegramNotifier:
                         ),
                         h4_choch=None,
                         fvg=SimpleNamespace(bottom=sl, top=tp),
+                        choch_break_price=break_px,
                     )
                     chart_4h = self.chart_generator.create_4h_chart(
                         symbol=symbol,
@@ -576,9 +577,10 @@ class TelegramNotifier:
                 if h4_confirmed
                 else "⏳ Așteptăm confirmare 4H LIVE"
             )
+            bars_post_poi = f" {bars_str} post-POI" if bars_str else " post-POI"
             wait_line = (
                 f"✅ POI Daily atins · {h4_line}\n"
-                f"📍 1H {sig} {struct_dir_u} LIVE ≤3b post-POI\n"
+                f"📍 1H {sig} {struct_dir_u}{bars_post_poi}\n"
                 "⏳ Următorul pas: preț în Premium/Discount 60–80% pe impuls 1H "
                 "→ EXECUTE_NOW sniper"
                 f"{retrace_hint}"
@@ -613,6 +615,7 @@ class TelegramNotifier:
                     ),
                     h4_choch=None,
                     fvg=SimpleNamespace(bottom=sl, top=tp),
+                    choch_break_price=choch_1h_price,
                 )
                 chart_1h = self._create_1h_chart(setup_ns, df_1h)
 

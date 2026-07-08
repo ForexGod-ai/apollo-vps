@@ -90,6 +90,20 @@ def test_h1_blocked_without_h4_gate():
     assert ltf_choch_confirmed_for_card(merged, '1H', 'bearish') is False
 
 
+def test_post_poi_26b_confirms_without_lock():
+    """V52: post-POI CHoCH beyond 3 bars — card confirms (bars are informational only)."""
+    merged = {
+        'radar_4h_choch_detected': True,
+        'radar_4h_choch_direction': 'bearish',
+        'poi_first_touch_time': '2026-07-03T10:00:00+00:00',
+        'radar_panda_active': True,
+        'radar_4h_choch_time': '2026-07-05T14:00:00+00:00',
+        'radar_4h_choch_bars_ago': 26,
+        'h4_structure_locked': False,
+    }
+    assert ltf_choch_confirmed_for_card(merged, '4H', 'bearish') is True
+
+
 def test_gbpusd_card_shows_waiting_lines():
     setup = _GbpusdScanSetup()
     h4_line, h1_line = _format_radar_exec_lines(
@@ -108,5 +122,6 @@ if __name__ == '__main__':
     test_bullish_ltf_against_bearish_daily_not_confirmed()
     test_h4_alert_sent_confirms()
     test_h1_blocked_without_h4_gate()
+    test_post_poi_26b_confirms_without_lock()
     test_gbpusd_card_shows_waiting_lines()
     print('tests/test_ltf_choch_card.py: all passed')
