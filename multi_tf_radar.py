@@ -68,10 +68,6 @@ from poi_utils import (
     resolve_poi_touch_anchor as _resolve_poi_touch_anchor,
 )
 from radar_gates import (
-    V47_ALERT_MAX_BARS_4H as _V47_ALERT_MAX_BARS_4H,
-    V47_ALERT_MAX_BARS_1H as _V47_ALERT_MAX_BARS_1H,
-    ltf_choch_confirmed_for_card,
-    ltf_choch_price_for_card,
     parse_radar_dt as _parse_radar_dt,
     resolve_mitigation_touch_anchor as _resolve_mitigation_touch_anchor,
     v47_break_post_poi_touch as _v47_break_post_poi_touch,
@@ -1670,8 +1666,7 @@ class MultiTFRadar:
             try:
                 latest_fvg = smc_detector.detect_fvg(
                     df,
-                    choch=latest_choch if signal_type == 'CHoCH' else None,
-                    current_price=current_price
+                    latest_choch if signal_type == 'CHoCH' else None,
                 )
             except Exception as fvg_err:
                 print(f"  ⚠️ [PATCH RADAR] detect_fvg structural crash caught: {fvg_err}")
@@ -1828,10 +1823,6 @@ class MultiTFRadar:
         # V24.6 PERMISSIVE DAILY FLOW: Setup cu FVG sintetic (zona Equilibrium) — niciun FVG corp natural
         # Radarul 4H TREBUIE să găsească un CHoCH real înainte de EXECUTE_NOW
         _daily_bias_active = bool(setup_data.get('daily_bias_active', False))
-        # V30.1: strategy_type din JSON — determina trigaci diferentiat pe 4H
-        # CONTINUATION (Daily BOS): allow_bos=True — 4H BOS in directie = executie imediata
-        # REVERSAL (Daily CHoCH): allow_bos=False — asteptam CHoCH de inversare pe 4H
-        _strategy_type = str(setup_data.get('strategy_type', 'reversal')).lower()
         # V19.4 FIX #4: prețul live este IMPERATIV — nu existe fallback silențios la daily_entry.
         # Dacă portul 8010 nu răspunde → RuntimeError explicit, prins de run_scan cu `continue`.
         current_price = self.get_current_price(symbol)
@@ -2382,8 +2373,6 @@ class MultiTFRadar:
         self,
         setup: dict,
         result: 'MultiTFResult',
-        prev_4h_choch: bool,
-        prev_1h_choch: bool,
         macro_dir: str,
     ) -> None:
         """V47: Telegram structural alerts — live post-POI, 4H before 1H, CHoCH/BOS distinct."""
@@ -2550,7 +2539,6 @@ class MultiTFRadar:
             ):
                 setup['h4_sl_price'] = _live_sl
 
-        exec_fvg_src = getattr(exec_tf_data, 'fvg_source', 'structural')
         exec_zone = (
             f"[{exec_tf_data.fvg_bottom:.5f} - {exec_tf_data.fvg_top:.5f}]"
             if exec_tf_data.fvg_top and exec_tf_data.fvg_bottom else "zona necunoscuta"
@@ -2604,8 +2592,6 @@ class MultiTFRadar:
         FIX #5: Direction matching non-case-sensitive.
         """
         _macro_dir = 'bullish' if result.direction == 'LONG' else 'bearish'
-        _prev_4h_choch = bool(setup.get('radar_4h_choch_detected'))
-        _prev_1h_choch = bool(setup.get('radar_1h_choch_detected'))
 
         # 🎯 1H RADAR DATA
         setup['radar_1h_choch_stale'] = bool(getattr(result, 'h1_choch_stale', False))
@@ -2911,7 +2897,7 @@ class MultiTFRadar:
         if setup.get('daily_target_price') and not setup.get('daily_tp_price'):
             setup['daily_tp_price'] = setup['daily_target_price']
 
-        self._maybe_send_choch_alerts(setup, result, _prev_4h_choch, _prev_1h_choch, _macro_dir)
+        self._maybe_send_choch_alerts(setup, result, _macro_dir)
 
     def _apply_lifecycle_gates(self, setups: list) -> list:
         """V33: Cele 3 Porti de Invalidare — singura responsabilitate a Radarului

@@ -164,7 +164,6 @@ class SMCDetector:
         # Clear la fiecare scan_for_setup() nou pentru a evita date stale
         self._swing_highs_cache: dict = {}  # {(id, len): List[SwingPoint]}
         self._swing_lows_cache:  dict = {}  # {(id, len): List[SwingPoint]}
-        self._choch_bos_cache:   dict = {}  # {(id, len): (List[CHoCH], List[BOS])}
 
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     # V15.0 WEEKLY ANCHOR — W1 BIAS CALCULATOR (Body Close Rule)
@@ -298,7 +297,7 @@ class SMCDetector:
             print(f"❌ ATR calculation error: {e}")
             return 0.0
 
-    def calculate_equilibrium_reversal(self, df: pd.DataFrame, choch: CHoCH, 
+    def calculate_equilibrium_reversal(self, choch: CHoCH,
                                        swing_highs: List[SwingPoint], swing_lows: List[SwingPoint]) -> Optional[float]:
         """🔄 V8.2: Calculate Equilibrium for REVERSAL (CHoCH) - Uses PRE-CHoCH Macro Leg
         
@@ -313,7 +312,6 @@ class SMCDetector:
         - Example: Downtrend ends at LL (CHoCH), price retraces 50% back to old highs
         
         Args:
-            df: DataFrame with OHLC data
             choch: CHoCH signal object
             swing_highs: List of detected swing highs
             swing_lows: List of detected swing lows
@@ -362,7 +360,7 @@ class SMCDetector:
             print(f"❌ Reversal equilibrium calculation error: {e}")
             return None
     
-    def calculate_equilibrium_continuity(self, df: pd.DataFrame, bos: BOS, last_choch: Optional[CHoCH],
+    def calculate_equilibrium_continuity(self, bos: BOS, last_choch: Optional[CHoCH],
                                         swing_highs: List[SwingPoint], swing_lows: List[SwingPoint]) -> Optional[float]:
         """➡️ V8.2: Calculate Equilibrium for CONTINUITY (BOS) - Uses POST-CHoCH Impulse Leg
         
@@ -930,7 +928,6 @@ class SMCDetector:
         self,
         df: pd.DataFrame,
         choch,
-        current_price,
         audit_out: Optional[dict] = None,
         strategy_type: Optional[str] = None,
         dealing_range: Optional[ActiveDealingRange] = None,
@@ -1386,11 +1383,6 @@ class SMCDetector:
         sparge ultimul LH format acum o lună — este CHoCH Bullish VALID.
         Algoritmul citește piața ca un om: poveste a extremelor, nu fereastră de timp."
         """
-        # ⚡ V13.1 CACHE CHECK
-        _cache_key = (id(df), len(df))
-        if _cache_key in self._choch_bos_cache:
-            return self._choch_bos_cache[_cache_key]
-
         chochs = []
         bos_list = []
 
@@ -1924,7 +1916,6 @@ class SMCDetector:
         selected = self.detect_fvg(
             df,
             latest_signal,
-            current_price,
             audit_out=fvg_audit,
             strategy_type=strategy_type,
             dealing_range=adr,
@@ -2075,8 +2066,6 @@ class SMCDetector:
                 df, signal.index, range_state.macro_range_high
             ):
                 return False
-        if range_state.locked_bias == 'bullish':
-            return signal.direction == 'bearish' and signal.index >= range_state.macro_range_high_bar
         level = self._range_signal_level(df, signal)
         close = float(df['close'].iloc[-1])
         if range_state.macro_range_low < level < range_state.macro_range_high:
@@ -3353,7 +3342,7 @@ class SMCDetector:
         chochs, bos_list, rs = self.filter_internal_range_signals(
             symbol or '', df_daily, chochs, bos_list, rs
         )
-        latest_signal, strategy, current_trend, _leg = self._resolve_d1_leg(
+        latest_signal, strategy, current_trend, _ = self._resolve_d1_leg(
             df_daily, chochs, bos_list, range_state=rs
         )
         if latest_signal:
@@ -3476,7 +3465,6 @@ class SMCDetector:
         # ⚡ V13.1 PERFORMANCE: Re-init cache la fiecare pair nou (defensiv — nu .clear())
         self._swing_highs_cache = {}
         self._swing_lows_cache = {}
-        self._choch_bos_cache = {}
         
         # V4.0: Initialize variables early to avoid UnboundLocalError
         order_block = None  # Will be populated later with detect_order_block()
@@ -3565,7 +3553,6 @@ class SMCDetector:
                 print(f"❌ REJECTED: No Daily CHoCH or BOS found")
             return None
 
-        latest_choch = leg_choch if leg_choch else (daily_chochs[-1] if daily_chochs else None)
         _signal_label = 'CHoCH' if isinstance(latest_signal, CHoCH) else 'BOS'
 
         if debug:
@@ -3767,7 +3754,7 @@ class SMCDetector:
         # V8.2: Use different equilibrium calculation based on strategy
         if strategy_type == 'reversal':
             # REVERSAL: Use PRE-CHoCH Macro Leg
-            equilibrium = self.calculate_equilibrium_reversal(df_daily, latest_signal, swing_highs, swing_lows)
+            equilibrium = self.calculate_equilibrium_reversal(latest_signal, swing_highs, swing_lows)
             
             if debug and equilibrium:
                 print(f"\n🔄 REVERSAL Macro Leg (Pre-CHoCH):")
@@ -3777,7 +3764,7 @@ class SMCDetector:
             # CONTINUITY: Use POST-CHoCH Impulse Leg
             # Find last CHoCH before this BOS
             last_choch = daily_chochs[-1] if daily_chochs else None
-            equilibrium = self.calculate_equilibrium_continuity(df_daily, latest_signal, last_choch, swing_highs, swing_lows)
+            equilibrium = self.calculate_equilibrium_continuity(latest_signal, last_choch, swing_highs, swing_lows)
             
             if debug and equilibrium:
                 print(f"\n➡️ CONTINUITY Macro Leg (Post-CHoCH Impulse):")
@@ -3956,40 +3943,14 @@ class SMCDetector:
                     print(f"⚠️ [V29.0 {symbol}] FVG score {fvg_score}/100 < {min_score} min — WAITING_D1_PULLBACK (nu rejected)")
                     fvg._is_daily_bias_zone = True
             
-            # XAUUSD ADDITIONAL FILTERS: FVG quality + ATR volatility (NO ADX - Gold moves differently)
-            if is_gold and not skip_fvg_quality:
-                # Skip ADX check for Gold - momentum works differently than forex
-                # Gold can have strong directional moves even with lower ADX
-                
-                # Calculate ATR ratio (current ATR / 20-period average)
-                current_atr = self.calculate_atr(df_daily, period=14)
-                avg_atr_20 = current_atr  # Fallback
-                
-                # Calculate 20-period average ATR more safely
-                if len(df_daily) >= 35:
-                    atr_values = []
-                    for i in range(len(df_daily) - 20, len(df_daily)):
-                        if i >= 15:
-                            atr_val = self.calculate_atr(df_daily.iloc[max(0, i-14):i+1], period=14)
-                            if atr_val > 0:
-                                atr_values.append(atr_val)
-                    if atr_values:
-                        avg_atr_20 = np.mean(atr_values)
-                
-                atr_ratio = current_atr / avg_atr_20 if avg_atr_20 > 0 else 1.0
-                
-                # V24.4: Filtrul ATR ratio > 3.0 ELIMINAT — volatilitatea mare pe XAU
-                # NU înseamnă setup invalid. Structura SMC (CHoCH + FVG) este singurul judecător.
-                # Un ATR x4 pe Gold = mișcare instituțională, nu zgomot.
-                if debug:
-                    print(f"\n✅ XAUUSD FILTERS PASSED:")
-                    print(f"   FVG Quality: {fvg_score}/100 ✓")
-                    print(f"   ATR Ratio: {atr_ratio:.2f} (filtru eliminat V24.4 — structura decide)")
-                    print(f"   (ADX check skipped - Gold momentum patterns differ from forex)")
+            # XAUUSD ADDITIONAL FILTERS: FVG quality (NO ADX - Gold moves differently)
+            if is_gold and not skip_fvg_quality and debug:
+                print(f"\n✅ XAUUSD FILTERS PASSED:")
+                print(f"   FVG Quality: {fvg_score}/100 ✓")
+                print(f"   (ADX check skipped - Gold momentum patterns differ from forex)")
         else:
             # Skip quality check for backtest - accept all FVGs
             fvg.quality_score = 100  # Default high score when skipped
-            is_gbp = 'GBP' in symbol
         
         # FVG direction must match current trend
         fvg.direction = current_trend
@@ -4001,32 +3962,24 @@ class SMCDetector:
             print(f"\n📍 Current Price: {current_price:.5f}")
         
         # NEW: More flexible - accept setups even if price not perfectly in FVG yet
-        price_approaching_fvg = False
         price_in_fvg = self.is_price_in_fvg(current_price, fvg)
         
         # 🔥 V8.0: Skip price proximity check for MOMENTUM entries (breakout, not pullback)
         # For backtesting: skip price proximity check
         if skip_fvg_quality or (hasattr(fvg, 'is_momentum_entry') and fvg.is_momentum_entry):
-            price_approaching_fvg = True  # Accept all price positions for backtest/momentum
             if debug and hasattr(fvg, 'is_momentum_entry') and fvg.is_momentum_entry:
                 print(f"\n⚡ MOMENTUM ENTRY: Skipping price proximity check (breakout entry, not pullback wait)")
-        else:
+        elif debug:
             # V42.7: approaching = preț pe partea corectă spre POI (nu Premium pentru LONG)
-            if current_trend == 'bullish':
-                price_approaching_fvg = current_price <= fvg.top
-            else:
-                price_approaching_fvg = current_price >= fvg.bottom
-            if debug:
-                if current_trend == 'bullish' and current_price > fvg.top:
-                    print(f"   ⏳ [V42.7 POI] BULLISH: preț {current_price:.5f} în Premium peste POI top {fvg.top:.5f} — așteptăm pullback")
-                elif current_trend == 'bearish' and current_price < fvg.bottom:
-                    print(f"   ⏳ [V42.7 POI] BEARISH: preț {current_price:.5f} în Discount sub POI bottom {fvg.bottom:.5f} — așteptăm pullback")
-                elif not price_in_fvg:
-                    print(f"   ℹ️  [V42.7 POI] Preț pe traseu spre POI [{fvg.bottom:.5f}–{fvg.top:.5f}]")
+            if current_trend == 'bullish' and current_price > fvg.top:
+                print(f"   ⏳ [V42.7 POI] BULLISH: preț {current_price:.5f} în Premium peste POI top {fvg.top:.5f} — așteptăm pullback")
+            elif current_trend == 'bearish' and current_price < fvg.bottom:
+                print(f"   ⏳ [V42.7 POI] BEARISH: preț {current_price:.5f} în Discount sub POI bottom {fvg.bottom:.5f} — așteptăm pullback")
+            elif not price_in_fvg:
+                print(f"   ℹ️  [V42.7 POI] Preț pe traseu spre POI [{fvg.bottom:.5f}–{fvg.top:.5f}]")
         
         if debug:
             print(f"   In FVG: {price_in_fvg}")
-            print(f"   Approaching FVG: {price_approaching_fvg}")
             if current_trend == 'bullish':
                 distance = current_price - fvg.top
                 print(f"   Distance from FVG top: {distance:.5f} ({(distance/current_price)*100:.2f}%)")
@@ -4041,7 +3994,7 @@ class SMCDetector:
             print(f"\n📋 Strategy Type: {strategy_type.upper()}")
         
         # Step 6: Check 4H for confirmation (CHoCH FROM FVG zone)
-        h4_chochs, h4_bos_list = self.detect_choch_and_bos(df_4h)
+        h4_chochs, _ = self.detect_choch_and_bos(df_4h)
         
         if debug:
             print(f"\n🔍 H4 Analysis:")
@@ -4113,7 +4066,7 @@ class SMCDetector:
             # After 4H CHoCH confirmed, find the FVG generated by that 4H impulse move.
             # This is the ENTRY ZONE — not the Daily FVG (which is the POI zone).
             if valid_h4_choch:
-                h4_sync_fvg = self.detect_fvg(df_4h, valid_h4_choch, current_price)
+                h4_sync_fvg = self.detect_fvg(df_4h, valid_h4_choch)
                 if h4_sync_fvg:
                     h4_sync_fvg.direction = current_trend  # Align with D1 bias
                     if debug:
@@ -4235,19 +4188,7 @@ class SMCDetector:
         # 2. Multiple BOS (any age) = strong continuation
         # REVERSAL setups (Daily CHoCH) skip this - trend just changed
         # 🔥 V8.0: MOMENTUM entries skip this (3+ consecutive BOS by definition = strong continuation)
-        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        # V25.0: CONTINUITY FILTER ELIMINAT — ORICE D1 BREAK INTRĂ ÎN WAITING
-        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        # Motivul: BOS age > 100 bare ucidea trend-uri consacrate (5-6 luni valide).
-        # Un BOS din Ianuarie rămâne valid în Iulie dacă trendul nu s-a inversat.
-        # Body Close Rule din detect_choch_and_bos() este singurul gardian al calității.
-        # Radarul 4H filtrează execuția — scanner-ul Daily e plasa largă de bias.
-        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        continuity_validated = True  # V25.0: întotdeauna valid — Body Close Rule e suficient
-        if not skip_fvg_quality and strategy_type == 'continuation' and not (hasattr(fvg, 'is_momentum_entry') and fvg.is_momentum_entry):
-            bos_age = len(df_daily) - latest_signal.index
-            if debug:
-                print(f"\n✅ [V25.0 CONTINUITY] BOS vârstă: {bos_age} bare — acceptat fără limită (WAITING_D1_PULLBACK)")
+        # V25.0: continuity filter removed — Body Close Rule is sufficient (see block comment above).
         
         # V28.0: GBP 2-TF FILTER ELIMINAT DIN DAILY SCAN — multi_tf_radar verifică 1H la execuție
 
@@ -4731,10 +4672,6 @@ class SMCDetector:
                 sl = order_block.top * 1.0005  # 5 pips above OB top
 
             # ✅ V14.3 FIX: Recalculează TP din structura D1 când OB overrideaza entry/SL
-            # Bug: entry vine din OB (212.94) dar tp rămânea din else-branch (fvg.top*1.015=206.90)
-            # Fix: extragem TP direct din swing highs/lows D1 deasupra/sub prețul curent
-            _current_price_ob = df_daily['close'].iloc[-1]
-            _pip_size_ob = 0.01 if 'JPY' in symbol else 0.0001
             if current_trend == 'bullish':
                 _swing_highs_ob = self.detect_swing_highs(df_daily)
                 _highs_above = [sh for sh in _swing_highs_ob if df_daily['high'].iloc[sh.index] > entry]
@@ -4789,7 +4726,7 @@ class SMCDetector:
         self.store_fvg_magnet(symbol, '4H', fvg)  # Store from 4H timeframe
         if df_1h is not None and valid_1h_choch:
             # If we have 1H data, detect and store 1H FVG magnets
-            h1_fvg = self.detect_fvg(df_1h, valid_1h_choch, current_price)
+            h1_fvg = self.detect_fvg(df_1h, valid_1h_choch)
             if h1_fvg:
                 self.store_fvg_magnet(symbol, '1H', h1_fvg)
         

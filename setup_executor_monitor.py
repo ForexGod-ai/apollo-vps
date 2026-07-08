@@ -23,8 +23,6 @@ from datetime import datetime, timedelta, timezone
 import sys
 import os
 import psutil
-import pandas as pd
-
 # ━━━ Fix #5a: UTC via datetime.now(timezone.utc) — os.environ TZ eliminat ━━━
 # Toate timestamp-urile folosesc datetime.now(timezone.utc) explicit.
 # os.environ['TZ'] + time.tzset() eliminat: afecta procesul global și nu era portabil.
@@ -168,7 +166,6 @@ from daily_scanner import CTraderDataProvider
 from smc_detector import SMCDetector
 from pip_utils import get_pip_size, get_max_sl_pips, MIN_SL_PIPS, sl_pips_between
 from news_calendar_utils import (
-    liquidity_sniper_blocks_new_entry,
     liquidity_sniper_be_candidates,
 )
 
@@ -409,12 +406,6 @@ class SetupExecutorMonitor:
         # Cache D1 (4h TTL) and H4 (30m TTL) to reduce redundant HTTP calls to cBot
         # Format: {"EURUSD_D1": {"data": DataFrame, "fetched_at": datetime}}
         self._data_cache = {}
-        self._cache_ttl = {
-            'D1': 14400,  # 4 hours (D1 candles don't change between 4H closes)
-            'H4': 1800,   # 30 minutes
-            'H1': 300,    # 5 minutes
-            'W1': 86400,  # V15.0: 24 hours (W1 se schimbă o dată/săptămână)
-        }
         
         # Telegram config for Deep Sleep alerts
         self._telegram_token = os.getenv('TELEGRAM_BOT_TOKEN', '')
@@ -834,17 +825,6 @@ class SetupExecutorMonitor:
         """
         cache_key = f"{symbol}_{timeframe}"
         now_ts = time.time()
-        ttl = self._cache_ttl.get(timeframe, 300)
-
-        if not require_live:
-            if cache_key in self._data_cache:
-                entry = self._data_cache[cache_key]
-                age = now_ts - entry['fetched_at']
-                if age < ttl:
-                    logger.debug(f"📦 CACHE HIT: {cache_key} (age: {age:.0f}s / TTL: {ttl}s)")
-                    return entry['data']
-                else:
-                    logger.debug(f"📦 CACHE EXPIRED: {cache_key} (age: {age:.0f}s > TTL: {ttl}s)")
 
         try:
             df = self.data_provider.get_historical_data(symbol, timeframe, count)
@@ -867,9 +847,6 @@ class SetupExecutorMonitor:
             )
             return None
 
-        if cache_key in self._data_cache:
-            logger.warning(f"📦 CACHE STALE FALLBACK: {cache_key} (fetch failed, using old data)")
-            return self._data_cache[cache_key]['data']
         return None
     
     # ━━━ V10.3 PILLAR 4: NEWS GUARD ENGINE (Information Only) ━━━
@@ -969,33 +946,6 @@ class SetupExecutorMonitor:
                 self._execute_now_block_alert_keys.update(data)
         except Exception as e:
             logger.debug(f"V41 block alert state load skipped: {e}")
-
-    def _save_execute_now_block_alert_state(self):
-        try:
-            self._execute_now_block_alert_file.parent.mkdir(parents=True, exist_ok=True)
-            now = datetime.now(timezone.utc).isoformat()
-            payload = {k: now for k in sorted(self._execute_now_block_alert_keys)}
-            with open(self._execute_now_block_alert_file, "w", encoding="utf-8") as f:
-                json.dump(payload, f, indent=2)
-        except Exception as e:
-            logger.debug(f"V41 block alert state save skipped: {e}")
-
-    def _check_news_guard(self, symbol: str) -> str:
-        """
-        V39.5 LIQUIDITY SNIPER — NEW ENTRY GUARD.
-
-        Blocks NEW positions 15 min before HIGH impact (spread/slippage protection).
-        Scanner stays active — no total shutdown.
-        Returns block reason string, or empty if clear.
-        """
-        try:
-            block = liquidity_sniper_blocks_new_entry(symbol)
-            if block:
-                logger.warning(f"   🎯 V39.5 LIQUIDITY SNIPER: {block}")
-            return block
-        except Exception as e:
-            logger.debug(f"V39.5 News Guard check error: {e}")
-            return ""
 
     def _liquidity_sniper_be_protect_open_positions(self):
         """
@@ -1767,12 +1717,9 @@ class SetupExecutorMonitor:
         df_4h,
         pip_size: float,
         min_sl_pips: float = MIN_SL_PIPS,
-        nearest: bool = False,
     ):
         """
-        SL structural pe TF (4H sau 1H) — ultimul pivot valid in interval sniper.
-        V42.6: nearest=False (default) = ultimul swing 4H/1H in [30p, max_pips].
-        nearest=True = cel mai apropiat de entry (legacy sniper strict).
+        SL structural pe TF (4H sau 1H) — pivot cel mai apropiat de entry in interval sniper.
         """
         if df_4h is None or df_4h.empty or not entry:
             return None
@@ -1796,18 +1743,11 @@ class SetupExecutorMonitor:
                 and min_dist <= (entry - float(df_4h['low'].iloc[s.index])) <= max_dist
             ]
             if candidates:
-                if nearest:
-                    best = min(
-                        candidates,
-                        key=lambda s: entry - float(df_4h['low'].iloc[s.index]),
-                    )
-                else:
-                    best = sorted(candidates, key=lambda s: s.index, reverse=True)[0]
+                best = min(
+                    candidates,
+                    key=lambda s: entry - float(df_4h['low'].iloc[s.index]),
+                )
                 return float(df_4h['low'].iloc[best.index]) - sl_buffer
-            if not nearest:
-                window_low = float(df_4h['low'].iloc[-40:].min())
-                if entry - window_low >= min_dist:
-                    return window_low - sl_buffer
         else:
             swings = self.smc_detector.detect_swing_highs(df_4h)
             candidates = [
@@ -1816,18 +1756,11 @@ class SetupExecutorMonitor:
                 and min_dist <= (float(df_4h['high'].iloc[s.index]) - entry) <= max_dist
             ]
             if candidates:
-                if nearest:
-                    best = min(
-                        candidates,
-                        key=lambda s: float(df_4h['high'].iloc[s.index]) - entry,
-                    )
-                else:
-                    best = sorted(candidates, key=lambda s: s.index, reverse=True)[0]
+                best = min(
+                    candidates,
+                    key=lambda s: float(df_4h['high'].iloc[s.index]) - entry,
+                )
                 return float(df_4h['high'].iloc[best.index]) + sl_buffer
-            if not nearest:
-                window_high = float(df_4h['high'].iloc[-40:].max())
-                if window_high - entry >= min_dist:
-                    return window_high + sl_buffer
         return None
 
     def _sl_valid_for_execute(
@@ -1867,7 +1800,6 @@ class SetupExecutorMonitor:
         trigger_tf = (trigger_tf or '1H').upper()
         sl = self._calc_structural_sl_4h(
             symbol, direction, entry, df_sl, pip_size, MIN_SL_PIPS,
-            nearest=True,
         )
         if self._sl_valid_for_execute(symbol, direction, entry, sl):
             sl_pips = sl_pips_between(symbol, entry, sl)
@@ -1892,52 +1824,7 @@ class SetupExecutorMonitor:
         """
         V48 TP: D1 live structural only when d1_live_only=True (EXECUTE_NOW path).
         """
-        def _f(v):
-            try:
-                return float(v) if v not in (None, 0, '0', '') else None
-            except (TypeError, ValueError):
-                return None
-
         d = str(direction).lower()
-
-        if not d1_live_only:
-            if d == 'sell':
-                tp_adr = _f(setup.get('adr_lh'))
-                if tp_adr is not None and tp_adr < entry:
-                    logger.info(
-                        f"[V43.3 EXEC TP] {symbol}: ADR SHORT target adr_lh={tp_adr:.5f}"
-                    )
-                    return tp_adr
-            elif d == 'buy':
-                tp_adr = _f(setup.get('adr_ll'))
-                if tp_adr is not None and tp_adr > entry:
-                    logger.info(
-                        f"[V43.3 EXEC TP] {symbol}: ADR LONG target adr_ll={tp_adr:.5f}"
-                    )
-                    return tp_adr
-
-            logger.debug(
-                f"[V43.3 EXEC TP] {symbol}: ADR TP indisponibil — fallback V40.8"
-            )
-
-            tp_json = _f(setup.get('daily_tp_price') or setup.get('daily_target_price'))
-            if tp_json:
-                if d == 'buy' and tp_json > entry:
-                    logger.info(f"📐 [V40.8 TP D1 SCAN] {symbol}: TP={tp_json:.5f}")
-                    return tp_json
-                if d == 'sell' and tp_json < entry:
-                    logger.info(f"📐 [V40.8 TP D1 SCAN] {symbol}: TP={tp_json:.5f}")
-                    return tp_json
-
-            swing_key = 'daily_swing_low' if d == 'sell' else 'daily_swing_high'
-            tp_swing = _f(setup.get(swing_key))
-            if tp_swing:
-                if d == 'buy' and tp_swing > entry:
-                    logger.info(f"📐 [V40.9 TP D1 SWING] {symbol}: TP={tp_swing:.5f} ({swing_key})")
-                    return tp_swing
-                if d == 'sell' and tp_swing < entry:
-                    logger.info(f"📐 [V40.9 TP D1 SWING] {symbol}: TP={tp_swing:.5f} ({swing_key})")
-                    return tp_swing
 
         if df_d1 is None or df_d1.empty:
             return None
