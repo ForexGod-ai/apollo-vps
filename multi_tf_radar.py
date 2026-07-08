@@ -71,7 +71,6 @@ from radar_gates import (
     parse_radar_dt as _parse_radar_dt,
     resolve_mitigation_touch_anchor as _resolve_mitigation_touch_anchor,
     v47_break_post_poi_touch as _v47_break_post_poi_touch,
-    v47_live_alert_bars_ok as _v47_live_alert_bars_ok,
 )
 
 try:
@@ -224,23 +223,32 @@ def _v46_entry_status_and_note(
     return wait_st, note
 
 
-def _structural_event_dt(structural) -> Optional[datetime]:
-    """V50: timestamp eveniment CHoCH/BOS."""
+def _structural_event_dt(structural, df=None) -> Optional[datetime]:
+    """V50/V53: timestamp eveniment CHoCH/BOS — fallback pe df.iloc[index]['time']."""
     if structural is None:
         return None
     ct = getattr(structural, 'candle_time', None)
     if ct is not None:
         return _parse_radar_dt(ct)
+    if df is not None:
+        try:
+            idx = int(structural.index)
+            if 0 <= idx < len(df):
+                return _parse_radar_dt(df.iloc[idx]['time'])
+        except Exception:
+            pass
     return None
 
 
-def _filter_structural_post_poi(events: list, anchor: Optional[datetime]) -> list:
-    """V50: păstrează doar evenimente structurale DUPĂ primul touch POI."""
+def _filter_structural_post_poi(
+    events: list, anchor: Optional[datetime], df=None,
+) -> list:
+    """V50/V53: păstrează doar evenimente structurale DUPĂ primul touch POI."""
     if anchor is None or not events:
         return events
     filtered = []
     for ev in events:
-        edt = _structural_event_dt(ev)
+        edt = _structural_event_dt(ev, df)
         if edt is not None and edt > anchor:
             filtered.append(ev)
     return filtered
@@ -261,7 +269,7 @@ def _log_choch_wait_diag(
     if aligned_before_poi:
         last = aligned_before_poi[-1]
         bars_ago = len(df) - last.index
-        edt = _structural_event_dt(last)
+        edt = _structural_event_dt(last, df)
         post_poi = edt is not None and poi_dt is not None and edt > poi_dt
         valid = _is_structural_break_valid(last, last.direction, df)
         ts = edt.isoformat() if edt else '?'
@@ -273,7 +281,7 @@ def _log_choch_wait_diag(
     contrary = [c for c in choch_list if c.direction != required_direction]
     if contrary:
         last_c = contrary[-1]
-        edt_c = _structural_event_dt(last_c)
+        edt_c = _structural_event_dt(last_c, df)
         ts_c = edt_c.isoformat() if edt_c else '?'
         print(
             f"  [V52 DIAG {timeframe_display}] {symbol}: ultim {last_c.direction} "
@@ -309,12 +317,19 @@ def _is_structural_break_valid(latest, direction: str, df) -> bool:
 
 
 def _retrace_implies_stale_anchor(retrace_pct: float, impulse: float) -> bool:
-    """V50: retrace extrem → anchor structural invalid (respinge detectarea)."""
+    """V53: impuls invalid sau retrace sub prag — overshoot >200% NU kill detectare."""
     if impulse <= 0:
         return True
-    if retrace_pct < _RETRACE_ALERT_MIN or retrace_pct > _RETRACE_ALERT_MAX:
+    if retrace_pct < _RETRACE_ALERT_MIN:
         return True
     return False
+
+
+def _retrace_is_overshoot(retrace_pct: float, impulse: float) -> bool:
+    """V53: retrace >200% — degradare la WAITING pullback, păstrează choch_detected."""
+    if impulse <= 0:
+        return False
+    return retrace_pct > _RETRACE_ALERT_MAX
 
 
 def _retrace_is_alert_valid(retrace_pct: Optional[float]) -> bool:
@@ -324,6 +339,30 @@ def _retrace_is_alert_valid(retrace_pct: Optional[float]) -> bool:
     if retrace_pct < _RETRACE_ALERT_MIN or retrace_pct > _RETRACE_ALERT_MAX:
         return False
     return True
+
+
+# V53: chei latch — copy când prezente in-memory; pop din JSON când absente (bidirectional)
+_LATCH_MERGE_COPY_KEYS = (
+    'execute_now_alert_sent', 'execute_now_alert_key',
+    'h4_choch_alert_sent', 'h4_bos_alert_sent', 'h1_choch_alert_sent', 'choch_1h_price',
+    'radar_panda_active', 'poi_radar_armed_at', 'poi_touch_latched', 'radar_4h_signal_type',
+    'h4_structure_locked_at', 'radar_1h_choch_stale',
+    'poi_first_touch_time', 'h4_fvg_first_touch_time',
+    '_poi_occupied', '_h4_fvg_occupied',
+)
+_LATCH_MERGE_POP_IF_ABSENT = (
+    'poi_touch_latched', 'poi_first_touch_time', 'poi_radar_armed_at',
+    'h4_fvg_first_touch_time', '_poi_occupied', '_h4_fvg_occupied',
+)
+
+
+def _merge_in_memory_latch_to_json(target: dict, source: dict) -> None:
+    """V53: sync bidirectional — absența cheii in-memory șterge flag zombie din JSON."""
+    for _ek in _LATCH_MERGE_COPY_KEYS:
+        if _ek in source:
+            target[_ek] = source[_ek]
+        elif _ek in _LATCH_MERGE_POP_IF_ABSENT:
+            target.pop(_ek, None)
 
 
 def _evaluate_v43_daily_zone(
@@ -704,6 +743,8 @@ class TimeframeAnalysis:
     in_poi_entry_zone: bool = False
     # V47: CHoCH vs BOS cascaded entry
     signal_type: Optional[str] = None  # 'CHoCH' | 'BOS'
+    # V53: retrace >200% — CHoCH valid, entry așteaptă re-intrare în bandă 60–80%
+    overshoot_stale: bool = False
 
 
 @dataclass
@@ -1186,8 +1227,8 @@ class MultiTFRadar:
 
         if _retrace_implies_stale_anchor(retrace_pct, impulse_size):
             print(
-                f"  🛑 [V50 RETRACE INVALID] {symbol} {timeframe_display}: "
-                f"retrace={retrace_pct * 100:.1f}% impulse={impulse_size:.5f} — structură stale"
+                f"  🛑 [V53 RETRACE INVALID] {symbol} {timeframe_display}: "
+                f"retrace={retrace_pct * 100:.1f}% impulse={impulse_size:.5f} — anchor invalid"
             )
             sys.stdout.flush()
             wait_choch = (
@@ -1208,6 +1249,32 @@ class MultiTFRadar:
                 bos_detected=_bos_detected_val,
                 bos_direction=_bos_direction_val,
                 bos_bars_ago=_bos_bars_ago_val,
+            )
+
+        if _retrace_is_overshoot(retrace_pct, impulse_size):
+            print(
+                f"  ⚠️ [V53 RETRACE OVERSHOOT] {symbol} {timeframe_display}: "
+                f"retrace={retrace_pct * 100:.1f}% > {_RETRACE_ALERT_MAX * 100:.0f}% — "
+                f"CHoCH păstrat, așteptăm re-intrare 60–80%"
+            )
+            sys.stdout.flush()
+            return TimeframeAnalysis(
+                timeframe=timeframe_display,
+                choch_detected=True,
+                choch_direction=choch_direction,
+                choch_time=choch_time_str,
+                choch_price=choch_price,
+                fvg_detected=False,
+                status=wait_pb,
+                equilibrium=choch_equilibrium,
+                h4_sl_price=h4_sl_price,
+                choch_bars_ago=_choch_bars_ago,
+                retrace_pct=retrace_pct,
+                overshoot_stale=True,
+                bos_detected=_bos_detected_val,
+                bos_direction=_bos_direction_val,
+                bos_bars_ago=_bos_bars_ago_val,
+                signal_type=signal_type,
             )
 
         if impulse_size <= 0:
@@ -1452,9 +1519,11 @@ class MultiTFRadar:
             _aligned_before_poi = list(aligned_chochs)
             if _poi_anchor and (poi_touch_latched or daily_in_poi):
                 _pre = len(aligned_chochs)
-                aligned_chochs = _filter_structural_post_poi(aligned_chochs, _poi_anchor)
+                aligned_chochs = _filter_structural_post_poi(
+                    aligned_chochs, _poi_anchor, df,
+                )
                 _all_aligned_bos_for_lock = _filter_structural_post_poi(
-                    _all_aligned_bos_for_lock, _poi_anchor,
+                    _all_aligned_bos_for_lock, _poi_anchor, df,
                 )
                 _bos_detected_val = bool(_all_aligned_bos_for_lock)
                 _bos_direction_val = (
@@ -2646,6 +2715,11 @@ class MultiTFRadar:
             if getattr(result, 'h1_choch_stale', False):
                 setup['radar_1h_choch_stale'] = True
 
+        if getattr(result.tf_1h, 'overshoot_stale', False):
+            setup['radar_1h_overshoot_stale'] = True
+        else:
+            setup.pop('radar_1h_overshoot_stale', None)
+
         if result.tf_1h.scan_error:
             setup['radar_1h_scan_error'] = True
             setup['radar_1h_scan_error_msg'] = result.tf_1h.scan_error_msg
@@ -2687,6 +2761,11 @@ class MultiTFRadar:
             setup['radar_4h_choch_bars_ago'] = result.tf_4h.choch_bars_ago
         else:
             setup['radar_4h_choch_detected'] = False
+
+        if getattr(result.tf_4h, 'overshoot_stale', False):
+            setup['radar_4h_overshoot_stale'] = True
+        else:
+            setup.pop('radar_4h_overshoot_stale', None)
 
         if result.tf_4h.scan_error:
             setup['radar_4h_scan_error'] = True
@@ -2741,9 +2820,10 @@ class MultiTFRadar:
         if result.tf_1h.in_fvg or result.tf_4h.in_fvg:
             setup['last_in_fvg_time'] = datetime.now().isoformat()
 
-        # ── V50: h4_structure_locked — doar CHoCH/BOS 4H LIVE post-POI sau alertă 4H trimisă ──
+        # ── V53: h4_structure_locked — post-POI + panda (aliniat V52, fără gate ≤3b) ──
         _setup_direction_lower = 'bullish' if result.direction == 'LONG' else 'bearish'
         _prev_h4_locked = bool(setup.get('h4_structure_locked'))
+        _panda_active = bool(setup.get('radar_panda_active'))
 
         _4h_choch_direction_ok = (
             result.tf_4h.choch_direction is not None
@@ -2757,14 +2837,14 @@ class MultiTFRadar:
         _4h_live_choch = (
             result.tf_4h.choch_detected
             and _4h_choch_direction_ok
-            and _v47_live_alert_bars_ok('4H', result.tf_4h.choch_bars_ago)
             and _h4_post_poi
+            and _panda_active
         )
         _4h_live_bos = (
             result.tf_4h.bos_detected
             and _4h_bos_direction_ok
-            and _v47_live_alert_bars_ok('4H', result.tf_4h.bos_bars_ago)
             and _h4_post_poi
+            and _panda_active
         )
         _h4_alerted_this_poi = bool(
             setup.get('h4_choch_alert_sent') or setup.get('h4_bos_alert_sent')
@@ -2782,12 +2862,12 @@ class MultiTFRadar:
                 setup['h4_structure_locked_at'] = _lock_ts
             if _4h_live_choch:
                 _lock_trigger = (
-                    f"CHoCH 4H LIVE (la -{result.tf_4h.choch_bars_ago} bare | "
+                    f"CHoCH 4H post-POI (la -{result.tf_4h.choch_bars_ago} bare | "
                     f"dir={result.tf_4h.choch_direction} ✅)"
                 )
             elif _4h_live_bos:
                 _lock_trigger = (
-                    f"BOS 4H LIVE (la -{result.tf_4h.bos_bars_ago} bare | "
+                    f"BOS 4H post-POI (la -{result.tf_4h.bos_bars_ago} bare | "
                     f"dir={result.tf_4h.bos_direction} ✅)"
                 )
             else:
@@ -2809,7 +2889,7 @@ class MultiTFRadar:
         elif setup.get('poi_first_touch_time') and not _h4_alerted_this_poi:
             if _prev_h4_locked:
                 logger.warning(
-                    f"⚠️  [V50 H4 STALE] {result.symbol}: fără CHoCH/BOS 4H LIVE post-POI "
+                    f"⚠️  [V53 H4 STALE] {result.symbol}: fără CHoCH/BOS 4H post-POI/panda "
                     f"— h4_structure_locked NESETAT"
                 )
             setup['h4_structure_locked'] = False
@@ -3108,18 +3188,8 @@ class MultiTFRadar:
                     matches_buy    = (result_dir == 'LONG'  and setup_dir == 'BUY')
                     matches_direct = (result_dir == setup_dir)
                     if setup.get('symbol') == result.symbol and (matches_sell or matches_buy or matches_direct):
-                        # V37.9: pastreaza dedup alerta din ciclul analyze (in-memory)
-                        # inainte de re-run _update_setup_with_radar pe fresh JSON
-                        for _ek in (
-                            'execute_now_alert_sent', 'execute_now_alert_key',
-                            'h4_choch_alert_sent', 'h4_bos_alert_sent', 'h1_choch_alert_sent', 'choch_1h_price',
-                            'radar_panda_active', 'poi_radar_armed_at', 'poi_touch_latched', 'radar_4h_signal_type',
-                            'h4_structure_locked_at', 'radar_1h_choch_stale',
-                            'poi_first_touch_time', 'h4_fvg_first_touch_time',
-                            '_poi_occupied', '_h4_fvg_occupied',
-                        ):
-                            if _original_setup.get(_ek) is not None:
-                                setups[i][_ek] = _original_setup[_ek]
+                        # V37.9 + V53: latch in-memory → JSON (bidirectional pop pentru chei zombie)
+                        _merge_in_memory_latch_to_json(setups[i], _original_setup)
                         # V49 P0-A: post-update wins — NU restaura EXECUTE_NOW din snapshot scan-start
                         self._update_setup_with_radar(setups[i], result)
                         if setups[i].get('entry1_filled'):
