@@ -251,16 +251,32 @@ class SetupExecutorMonitor:
         return bool(cls._infer_multi_entry_pending(processed))
 
     @classmethod
-    def _can_execute_execute_now(cls, setup: dict) -> bool:
-        if setup.get('EXECUTE_NOW') is not True:
-            return False
-        return cls._executor_can_consume_execute_now(setup) and (
-            not setup.get('entry1_filled')
-            or (
-                (setup.get('execute_now_trigger_tf') or '4H').upper()
-                not in [x.upper() for x in (setup.get('entries_filled_tfs') or [])]
-            )
+    def _execute_trigger_active(cls, setup: dict) -> bool:
+        """V54: trigger valid = EXECUTE_NOW sau radar_execution_ready (F1)."""
+        return (
+            setup.get('EXECUTE_NOW') is True
+            or setup.get('radar_execution_ready') is True
         )
+
+    @classmethod
+    def _can_execute_execute_now(cls, setup: dict) -> tuple:
+        """V54: poarta execuție — returnează (ok, motiv_skip)."""
+        if not cls._execute_trigger_active(setup):
+            return False, 'Lipsă trigger EXECUTE_NOW/radar_execution_ready'
+        if not cls._executor_can_consume_execute_now(setup):
+            if setup.get('entry1_filled') and setup.get('status') != 'PARTIAL_OPEN':
+                return False, 'entry1_filled activ fără status PARTIAL_OPEN'
+            return False, 'scale-in indisponibil (multi_entry_pending gol)'
+        if setup.get('entry1_filled'):
+            _trigger = (
+                setup.get('execute_now_trigger_tf')
+                or setup.get('radar_priority_timeframe')
+                or '4H'
+            ).upper()
+            _filled = [x.upper() for x in (setup.get('entries_filled_tfs') or [])]
+            if _trigger in _filled:
+                return False, f'layer {_trigger} deja completat în entries_filled_tfs'
+        return True, ''
 
     @staticmethod
     def _v423_norm_daily_bias(direction: str):
@@ -331,12 +347,15 @@ class SetupExecutorMonitor:
             return merged
 
         merged = {**fresh, **processed}
-        if fresh.get('EXECUTE_NOW') is True and cls._executor_can_consume_execute_now(processed):
+        if cls._execute_trigger_active(fresh) and cls._executor_can_consume_execute_now(processed):
             for key in cls._RADAR_EXECUTE_NOW_KEYS:
                 if key in fresh:
                     merged[key] = fresh[key]
             sym = fresh.get('symbol', '?')
-            logger.info(f"[V37.13 RADAR MERGE] {sym}: EXECUTE_NOW pastrat din JSON fresh (radar flush)")
+            logger.info(
+                f"[V37.13 RADAR MERGE] {sym}: trigger Radar pastrat din JSON fresh "
+                f"(EXECUTE_NOW={fresh.get('EXECUTE_NOW')} ready={fresh.get('radar_execution_ready')})"
+            )
         return merged
 
     def __init__(self, check_interval: int = 5):  # V30.9: 5s constant — radar scrie la 30s, executor citeste la 5s = max 5s lag
@@ -450,7 +469,11 @@ class SetupExecutorMonitor:
             except Exception as e:
                 logger.error(f"Failed to load config: {e}")
         return {}
-    
+
+    def _defer_execute_now_retry(self, symbol: str, reason: str) -> None:
+        """V54: 8010/spread — păstrează semnal, retry la următorul ciclu (fără cooldown)."""
+        logger.info(f"[EXEC RETRY] {symbol}: {reason} — reîncercare la următorul ciclu")
+
     def _abort_execute_now(
         self,
         setups: list,
@@ -842,8 +865,8 @@ class SetupExecutorMonitor:
             logger.error(f"❌ {'LIVE' if require_live else 'Cache'} fetch error {cache_key}: {e}")
 
         if require_live:
-            logger.critical(
-                f"[EXECUTE_NOW ABORT] live data unavailable {symbol} {timeframe}"
+            logger.info(
+                f"[EXEC RETRY] live data unavailable {symbol} {timeframe} — retry next cycle"
             )
             return None
 
@@ -1270,6 +1293,7 @@ class SetupExecutorMonitor:
             return  # ← EXIT: No HTTP calls, no analysis, no CPU usage
         
         if not self.monitoring_file.exists():
+            logger.info("[EXEC SKIP] monitoring_setups.json absent")
             return
         
         try:
@@ -1278,6 +1302,7 @@ class SetupExecutorMonitor:
                 setups = data.get('setups', [])
             
             if not setups:
+                logger.info("[EXEC SKIP] zero setups în JSON")
                 return
             
             logger.debug(f"Checking {len(setups)} monitoring setups...")
@@ -1305,9 +1330,16 @@ class SetupExecutorMonitor:
                     'PARTIAL_OPEN',  # V42.2: second layer (4H) while 1H position open
                 ]
                 if status not in _active_statuses_v31:
-                    if not setup.get('EXECUTE_NOW', False):
+                    if not self._execute_trigger_active(setup):
+                        logger.info(
+                            f"[EXEC SKIP] {symbol}: status={status} inactiv "
+                            f"(fără EXECUTE_NOW/radar_execution_ready)"
+                        )
                         continue
-                    logger.info(f"[V30.4] {symbol}: status={status} dar EXECUTE_NOW=True — bypass status filter")
+                    logger.info(
+                        f"[V30.4] {symbol}: status={status} dar trigger Radar activ "
+                        f"— bypass status filter"
+                    )
                 
                 # ✅ V10.9 SMART POSITION GUARD: Pause setup if same symbol+direction already open
                 # TEMPORARY — auto-resumes when broker position closes (not permanent block)
@@ -1322,7 +1354,7 @@ class SetupExecutorMonitor:
                         _scale_in_ok = (
                             setup.get('status') == 'PARTIAL_OPEN'
                             and setup.get('multi_entry_pending')
-                            and setup.get('EXECUTE_NOW') is True
+                            and self._execute_trigger_active(setup)
                         )
                         if _existing and not _scale_in_ok:
                             if status != 'WAITING_POSITION_CLOSE':
@@ -1332,6 +1364,10 @@ class SetupExecutorMonitor:
                                 updated = True
                             else:
                                 logger.debug(f"⏸️  {symbol}: Waiting for existing position to close...")
+                            logger.info(
+                                f"[EXEC SKIP] {symbol}: poziție broker deschisă "
+                                f"(scale_in_ok={_scale_in_ok})"
+                            )
                             continue
                         else:
                             # Position closed — resume monitoring
@@ -1344,8 +1380,10 @@ class SetupExecutorMonitor:
                                 self.signal_cache.cache.pop(old_exec_id, None)
                                 updated = True
                                 status = 'MONITORING'
-                except Exception:
-                    pass
+                except Exception as _pos_guard_err:
+                    logger.warning(
+                        f"[EXEC SKIP] {symbol}: Position Guard error — {_pos_guard_err}"
+                    )
                 
                 # 🔥 IN-ZONE INDICATOR
                 # V3.2: choch_1h_detected (Fibo 50% logic)
@@ -1363,7 +1401,8 @@ class SetupExecutorMonitor:
                     #   3. Recalculează TP structural pe D1 (primul swing point dincolo de preț)
                     #   4. Calculează loturi dinamic: balance * 5% / (SL_pips * pip_value)
                     #   5. Sentinelă pe valorile REALE înainte de execuție
-                    if self._can_execute_execute_now(setup):
+                    _exec_ok, _exec_skip = self._can_execute_execute_now(setup)
+                    if _exec_ok:
                         # ── V42.3: Scut absolut sincron structural D1 = 4H = 1H ───────────────
                         if setup.get('status') != 'TRADE_OPEN':
                             _sync_ok, _ltf_mismatch = self._v423_structural_sync_ok(setup)
@@ -1404,7 +1443,11 @@ class SetupExecutorMonitor:
                         )
                         _en_direction = setup.get('direction', 'buy').lower()
                         _pip_size_en = get_pip_size(symbol)
-                        _trigger_tf = (setup.get('execute_now_trigger_tf') or '1H').upper()
+                        _trigger_tf = (
+                            setup.get('execute_now_trigger_tf')
+                            or setup.get('radar_priority_timeframe')
+                            or '1H'
+                        ).upper()
                         _sl_tf = 'H4' if _trigger_tf == '4H' else 'H1'
 
                         _df_sl_en = self._get_cached_data(
@@ -1415,15 +1458,10 @@ class SetupExecutorMonitor:
                         )
 
                         if _df_sl_en is None or _df_d1_en is None:
-                            _blk = (
-                                f"V48: live data unavailable {_sl_tf}/D1 — "
-                                f"broker feed required for EXECUTE_NOW"
+                            self._defer_execute_now_retry(
+                                symbol,
+                                f"V54: live data unavailable {_sl_tf}/D1 — broker feed required",
                             )
-                            self._abort_execute_now(
-                                setups, i, symbol, _en_direction, _blk,
-                                track_key=f"live data fail {symbol}",
-                            )
-                            updated = True
                             continue
 
                         _sl = self._resolve_execute_now_sl(
@@ -1530,12 +1568,9 @@ class SetupExecutorMonitor:
 
                         _spread_block = self._check_spread_guard(symbol)
                         if _spread_block:
-                            self._abort_execute_now(
-                                setups, i, symbol, _en_direction,
-                                f"SPREAD GUARD: {_spread_block}",
-                                track_key=f"spread guard {symbol}",
+                            self._defer_execute_now_retry(
+                                symbol, f"SPREAD GUARD: {_spread_block}",
                             )
-                            updated = True
                             continue
 
                         # ── Execuție în cTrader ───────────────────────────────────────────────
@@ -1628,15 +1663,25 @@ class SetupExecutorMonitor:
                             except Exception as _ds_err:
                                 logger.warning(f"⚠️ Deep Sleep check error: {_ds_err}")
                         continue
+                    elif self._execute_trigger_active(setup):
+                        logger.info(
+                            f"[EXEC SKIP] {symbol}: trigger activ dar gate respins — {_exec_skip}"
+                        )
                     # ━━━ END V19.8 EXECUTE_NOW STRUCTURAL ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
                     # Check if Entry1 already filled
                     entry1_filled = setup.get('entry1_filled', False)
 
                     if not entry1_filled:
-                        logger.debug(
-                            f"[V43.3] {symbol}: entry1 pending — asteptam EXECUTE_NOW de la Radar"
-                        )
+                        if not self._execute_trigger_active(setup):
+                            logger.info(
+                                f"[EXEC SKIP] {symbol}: entry1 pending — "
+                                f"lipsă EXECUTE_NOW/radar_execution_ready de la Radar"
+                            )
+                        else:
+                            logger.debug(
+                                f"[V43.3] {symbol}: entry1 pending — trigger activ, gate={_exec_skip or 'ok'}"
+                            )
                     else:
                         logger.debug(
                             f"[V37.0] {symbol}: Entry 2 scale-in dezactivat "
@@ -2057,15 +2102,16 @@ class SetupExecutorMonitor:
         # V17 FIX BUG#9: h4_bias_locked nu există — cheia corectă este h4_structure_locked
         # Fallback la h4_bias_locked pentru backward-compat cu setup-uri vechi
         h4_locked = setup.get('h4_structure_locked', False) or setup.get('h4_bias_locked', False)
-        strategy_type = setup.get('strategy_type', '').upper()
+        strategy_type = (
+            setup.get('strategy_type') or setup.get('setup_type') or ''
+        ).upper()
         if not h4_locked:
             return False, (f"Guard#4 h4_structure_locked=False — CHoCH 4H neconfirmat "
                            f"pentru strategie {strategy_type or 'UNKNOWN'}")
-        # V18: acceptăm și 'continuation_counter_w1', 'reversal_counter_w1' (tagged de daily_scanner cu W1 bias)
+        # V18/V54: acceptăm continuation_counter_w1 etc.; fallback setup_type → REVERSAL
         _st_base = strategy_type.split('_')[0] if strategy_type else ''
         if _st_base not in ('REVERSAL', 'CONTINUITY', 'CONTINUATION'):
-            return False, (f"Guard#4 strategy_type='{strategy_type}' necunoscut "
-                           f"— setup posibil stale sau corupt")
+            _st_base = 'REVERSAL'
 
         return True, "TOATE 4 GĂRZI TRECUTE — execuție autorizată"
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

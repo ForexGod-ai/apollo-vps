@@ -341,6 +341,24 @@ def _retrace_is_alert_valid(retrace_pct: Optional[float]) -> bool:
     return True
 
 
+# V54: erori tranzitorie executor — fără cooldown re-arm 30 min (F5)
+_TRANSIENT_BLOCK_PREFIXES = (
+    'V48: live data', 'V54: live data', 'SPREAD GUARD', '8010', 'broker feed',
+    '[EXEC RETRY]', 'ROLLOVER',
+)
+
+
+def _preserve_execute_latch(setup: dict, result) -> bool:
+    """V54: nu dezarma EXECUTE_NOW când panda/retrace/semnal activ (F2)."""
+    return bool(
+        setup.get('radar_panda_active')
+        or result.tf_4h.in_poi_entry_zone
+        or result.tf_1h.in_poi_entry_zone
+        or setup.get('EXECUTE_NOW') is True
+        or result.execution_ready
+    )
+
+
 # V53: chei latch — copy când prezente in-memory; pop din JSON când absente (bidirectional)
 _LATCH_MERGE_COPY_KEYS = (
     'execute_now_alert_sent', 'execute_now_alert_key',
@@ -2612,19 +2630,22 @@ class MultiTFRadar:
                     setup, result, f"arm blocked — {_detail} vs D1 {_macro}",
                 )
                 return
-        # V40.9: nu re-arma daca executorul a respins recent (Radar latch = spam Telegram)
+        # V40.9/V54: cooldown 30 min — skip pentru erori tranzitorie rețea/spread
         _blocked_at = setup.get('execute_now_blocked_at')
         if _blocked_at:
-            try:
-                _bt = datetime.fromisoformat(str(_blocked_at).replace('Z', '+00:00'))
-                if datetime.now(timezone.utc) - _bt < timedelta(minutes=30):
-                    logger.debug(
-                        f"[V40.9] {setup.get('symbol', '?')}: skip EXECUTE_NOW re-arm — "
-                        f"executor block cooldown ({setup.get('last_rejection_reason', '')[:60]})"
-                    )
-                    return
-            except Exception:
-                pass
+            _rej = setup.get('last_rejection_reason') or ''
+            _transient = any(p in _rej for p in _TRANSIENT_BLOCK_PREFIXES)
+            if not _transient:
+                try:
+                    _bt = datetime.fromisoformat(str(_blocked_at).replace('Z', '+00:00'))
+                    if datetime.now(timezone.utc) - _bt < timedelta(minutes=30):
+                        logger.debug(
+                            f"[V40.9] {setup.get('symbol', '?')}: skip EXECUTE_NOW re-arm — "
+                            f"executor block cooldown ({_rej[:60]})"
+                        )
+                        return
+                except Exception:
+                    pass
 
         was_already = setup.get('EXECUTE_NOW') is True
         setup['EXECUTE_NOW'] = True
@@ -2886,16 +2907,7 @@ class MultiTFRadar:
             self._v423_force_disarm_execute_now(
                 setup, result, 'H4 DIRECTION MISMATCH vs Daily bias',
             )
-        elif setup.get('poi_first_touch_time') and not _h4_alerted_this_poi:
-            if _prev_h4_locked:
-                logger.warning(
-                    f"⚠️  [V53 H4 STALE] {result.symbol}: fără CHoCH/BOS 4H post-POI/panda "
-                    f"— h4_structure_locked NESETAT"
-                )
-            setup['h4_structure_locked'] = False
-            self._v423_force_disarm_execute_now(
-                setup, result, 'H4 stale — asteptam break LIVE post-POI',
-            )
+        # V54: H4 stale dezarmare mutată DUPĂ latch EXECUTE_NOW (vezi final secțiune)
         # else: în afara POI — păstrăm starea existentă
 
         # V42.3: 1H CHoCH contrar bias-ului Daily → dezarmare EXECUTE_NOW
@@ -3011,6 +3023,20 @@ class MultiTFRadar:
                     setup['radar_verdict'] = (
                         f"🔥 EXECUTE NOW ({latch_tf} LATCH — reconectat executor)"
                     )
+
+        # V54: H4 stale deferred — lock reset fără dezarmare EXECUTE_NOW dacă latch activ
+        if (
+            setup.get('poi_first_touch_time')
+            and not _h4_alerted_this_poi
+            and not (_4h_live_choch or _4h_live_bos)
+            and not _preserve_execute_latch(setup, result)
+        ):
+            if _prev_h4_locked or setup.get('h4_structure_locked'):
+                logger.info(
+                    f"[V54 H4 STALE] {result.symbol}: lock reset — "
+                    f"fără CHoCH/BOS 4H post-POI; EXECUTE_NOW păstrat"
+                )
+            setup['h4_structure_locked'] = False
 
         # V31.0: Propagam daily_target_price ca daily_tp_price pentru backward compat cu Executor
         if setup.get('daily_target_price') and not setup.get('daily_tp_price'):
