@@ -100,3 +100,25 @@ def test_retroactive_anchor_corrects_stored_json_anchor():
         existing=stored,
     )
     assert _parse_radar_dt(corrected) == _parse_radar_dt(historical)
+
+
+def test_v55_structural_dt_int_candle_time_df_fallback():
+    """V55 B2: int candle_time (RangeIndex SMC) → fallback df.iloc[index]['time']."""
+    df = _make_ohlc([
+        ('2026-07-06T12:00:00+00:00', 185.0, 184.0),
+        ('2026-07-07T12:00:00+00:00', 186.0, 185.0),
+    ])
+    ev = type('E', (), {'index': 0, 'candle_time': 999})()
+    dt = _structural_event_dt(ev, df)
+    assert dt == _parse_radar_dt('2026-07-06T12:00:00+00:00')
+
+
+def test_v55_same_bar_post_poi_inclusive():
+    """V55 B8: CHoCH pe aceeași lumânărică ca POI touch → post_poi valid (>=)."""
+    anchor = datetime(2026, 7, 6, 12, 0, tzinfo=timezone.utc)
+    choch = _FakeCHoCH(0, 'bearish', anchor.isoformat())
+    df = _make_ohlc([
+        (anchor.isoformat(), 185.0, 184.0),
+    ])
+    filtered = _filter_structural_post_poi([choch], anchor, df)
+    assert len(filtered) == 1

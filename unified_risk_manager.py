@@ -122,7 +122,7 @@ class UnifiedRiskManager:
         
         except Exception as e:
             print(f"⚠️  Error loading daily state: {e}")
-            self._reset_daily_state(today)
+            self._reset_daily_state(today, send_alert=False)
     
     def _today_ro(self) -> str:
         """Return current date string in Europe/Bucharest timezone."""
@@ -137,22 +137,51 @@ class UnifiedRiskManager:
             return datetime.now(TZ_RO).replace(tzinfo=None)
         return datetime.utcnow() + timedelta(hours=3)
 
-    def _reset_daily_state(self, date):
+    def _trade_history_cache_age_s(self) -> float | None:
+        """Seconds since trade_history.json was last written; None if missing."""
+        try:
+            th_path = Path(__file__).parent / 'trade_history.json'
+            if not th_path.exists():
+                return None
+            return max(0.0, time.time() - th_path.stat().st_mtime)
+        except Exception:
+            return None
+
+    def _reset_daily_state(self, date, send_alert=True):
         """
         Reset daily state for new day.
         V14.0: Uses Europe/Bucharest. Sends minimalist SYSTEM RESET alert.
         """
-        # V52.1: Retry broker at startup — watchdog restart often races cBot on 8767.
-        equity, balance = self.get_account_balance(broker_retries=5, broker_delay_s=2.0)
-        live = self._fetch_broker_balance()
-        if live:
-            live_eq, live_bal = live
-            if abs(live_eq - equity) > 0.5 or abs(live_bal - balance) > 0.5:
+        # V55: Longer broker wait at boot — cBot 8767 often lags watchdog restart.
+        equity, balance, source = self.get_account_balance(
+            broker_retries=15, broker_delay_s=3.0, return_source=True,
+        )
+        if source != 'broker':
+            for attempt in range(10):
+                live = self._fetch_broker_balance()
+                if live:
+                    live_eq, live_bal = live
+                    print(
+                        f"✅ SYSTEM RESET broker online after cache wait "
+                        f"(attempt {attempt + 1}/10): ${live_eq:.2f}"
+                    )
+                    equity, balance, source = live_eq, live_bal, 'broker'
+                    break
                 print(
-                    f"⚠️  SYSTEM RESET pre-alert correction: "
-                    f"${equity:.2f} → ${live_eq:.2f} (live 8767)"
+                    f"⚠️  SYSTEM RESET waiting for broker 8767 "
+                    f"({attempt + 1}/10, source={source})..."
                 )
-                equity, balance = live_eq, live_bal
+                time.sleep(3.0)
+        else:
+            live = self._fetch_broker_balance()
+            if live:
+                live_eq, live_bal = live
+                if abs(live_eq - equity) > 0.5 or abs(live_bal - balance) > 0.5:
+                    print(
+                        f"⚠️  SYSTEM RESET pre-alert correction: "
+                        f"${equity:.2f} → ${live_eq:.2f} (live 8767)"
+                    )
+                    equity, balance = live_eq, live_bal
         self.starting_balance_today = equity
         self.daily_trades_count = 0
 
@@ -188,7 +217,16 @@ class UnifiedRiskManager:
             json.dump(state, f, indent=2)
 
         print(f"✅ Daily state RESET: Starting EQUITY = ${equity:.2f} (balance=${balance:.2f})")
-        self._send_daily_awakened_alert(equity, balance)
+        if send_alert:
+            if source == 'broker':
+                self._send_daily_awakened_alert(equity, balance)
+            else:
+                cache_age = self._trade_history_cache_age_s()
+                age_note = f"{cache_age:.0f}s old" if cache_age is not None else "unknown age"
+                print(
+                    f"⚠️  SYSTEM RESET alert skipped — broker offline, "
+                    f"cache-only equity ${equity:.2f} ({age_note})"
+                )
 
     def _send_daily_awakened_alert(self, equity: float, balance: float):
         """
@@ -360,13 +398,15 @@ class UnifiedRiskManager:
             print(f"⚠️  cTrader broker fetch error: {e}")
         return None
 
-    def get_account_balance(self, broker_retries: int = 1, broker_delay_s: float = 0.0):
+    def get_account_balance(self, broker_retries: int = 1, broker_delay_s: float = 0.0, return_source: bool = False):
         """Get current account equity/balance — live cTrader broker (8767) first."""
         retries = max(1, int(broker_retries))
         delay = max(0.0, float(broker_delay_s))
         for attempt in range(retries):
             live = self._fetch_broker_balance()
             if live:
+                if return_source:
+                    return live[0], live[1], 'broker'
                 return live
             if attempt < retries - 1 and delay > 0:
                 print(
@@ -386,6 +426,8 @@ class UnifiedRiskManager:
                 balance = float(account.get('balance', 0))
                 if equity > 0 or balance > 0:
                     print("⚠️  Using cached trade_history.json (broker offline)")
+                    if return_source:
+                        return equity, balance, 'trade_history_cache'
                     return equity, balance
         except Exception as e:
             print(f"⚠️  trade_history.json read error: {e}")
@@ -404,12 +446,16 @@ class UnifiedRiskManager:
             conn.close()
             if result:
                 equity, balance = result
+                if return_source:
+                    return float(equity), float(balance), 'sqlite_snapshot'
                 return float(equity), float(balance)
         except Exception as e:
             print(f"⚠️  Error reading balance from SQLite: {e}")
 
         # LAST RESORT: env variable
         balance = float(os.getenv('ACCOUNT_BALANCE', 1000))
+        if return_source:
+            return balance, balance, 'env_default'
         return balance, balance
 
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

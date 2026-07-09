@@ -43,7 +43,7 @@ def v47_break_post_poi_touch(setup_data: dict, break_time_str: Optional[str]) ->
     break_dt = parse_radar_dt(break_time_str)
     if break_dt is None:
         return True
-    return break_dt > anchor
+    return break_dt >= anchor
 
 
 def v47_live_alert_bars_ok(timeframe_display: str, bars_ago: int) -> bool:

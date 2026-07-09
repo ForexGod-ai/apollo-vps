@@ -115,12 +115,12 @@ def replay_symbol(symbol: str) -> None:
         det = radar.smc_1h if tf == 'H1' else radar.smc_4h
         chochs, bos = det.detect_choch_and_bos(df)
         aligned = [c for c in chochs if c.direction == macro]
-        post_poi = _filter_structural_post_poi(aligned, anchor) if anchor else aligned
+        post_poi = _filter_structural_post_poi(aligned, anchor, df) if anchor else aligned
         print(f"  [{tf}] aligned={len(aligned)} post_poi={len(post_poi)} (anchor={anchor})")
         for c in aligned[-5:]:
             ba = len(df) - c.index
-            edt = _structural_event_dt(c)
-            post = edt is not None and anchor is not None and edt > anchor
+            edt = _structural_event_dt(c, df)
+            post = edt is not None and anchor is not None and edt >= anchor
             valid = _is_structural_break_valid(c, c.direction, df)
             live = _v47_live_alert_bars_ok('1H' if tf == 'H1' else '4H', ba)
             print(

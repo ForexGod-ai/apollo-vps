@@ -81,9 +81,17 @@ def is_port_free(port, host='0.0.0.0'):
 def load_localized_trade_history() -> dict:
     if not TRADE_HISTORY_FILE.exists():
         raise FileNotFoundError('trade_history.json not found')
-    with open(TRADE_HISTORY_FILE, 'r', encoding='utf-8') as f:
-        data = json.load(f)
-    return localize_dashboard_payload(data)
+    last_err = None
+    for attempt in range(3):
+        try:
+            with open(TRADE_HISTORY_FILE, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            return localize_dashboard_payload(data)
+        except json.JSONDecodeError as exc:
+            last_err = exc
+            if attempt < 2:
+                time.sleep(0.2)
+    raise last_err
 
 
 class DashboardHTTPHandler(http.server.SimpleHTTPRequestHandler):

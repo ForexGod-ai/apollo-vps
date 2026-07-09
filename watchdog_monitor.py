@@ -79,6 +79,12 @@ logger.add(
 
 class WatchdogMonitor:
     """System guardian - monitors and restarts critical processes"""
+
+    # Broker sync + dashboard before executor/risk (8767 + trade_history.json warm-up)
+    STARTUP_PRIORITY = (
+        'ctrader_sync_daemon.py',
+        'dashboard_server.py',
+    )
     
     def __init__(self, check_interval: int = 60):
         self.check_interval = check_interval
@@ -344,13 +350,24 @@ class WatchdogMonitor:
         """Update last notification timestamp"""
         self.processes[process_name]['last_notification'] = time.time()
     
+    def _iter_processes_priority(self):
+        """Yield processes with broker sync + dashboard first on cold start."""
+        seen = set()
+        for name in self.STARTUP_PRIORITY:
+            if name in self.processes:
+                seen.add(name)
+                yield name, self.processes[name]
+        for name, info in self.processes.items():
+            if name not in seen:
+                yield name, info
+
     def check_and_restart(self):
         """
         🔍 STATE TRACKING (Smart Notifications)
         Check all processes and restart if needed.
         Send notification ONLY when state changes (stopped → running)
         """
-        for process_name, process_info in self.processes.items():
+        for process_name, process_info in self._iter_processes_priority():
             is_running = self.is_process_running(process_name)
             old_state = process_info['state']
             new_state = 'running' if is_running else 'stopped'

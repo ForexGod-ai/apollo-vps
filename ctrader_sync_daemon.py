@@ -275,9 +275,11 @@ def write_trade_history(data, db: TradeDatabase):
         closed_trades.sort(key=lambda t: t.get('close_time', ''), reverse=False)
         data['closed_trades'] = closed_trades
         
-        # Write to JSON (for dashboard compatibility)
-        with open(TRADE_HISTORY_FILE, 'w', encoding='utf-8') as f:
+        # Write to JSON atomically (prevents dashboard reading partial file mid-write)
+        tmp_path = TRADE_HISTORY_FILE.with_suffix('.json.tmp')
+        with open(tmp_path, 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=2)
+        tmp_path.replace(TRADE_HISTORY_FILE)
         
         # Extract data
         account = data.get('account', {})

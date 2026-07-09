@@ -223,34 +223,105 @@ def _v46_entry_status_and_note(
     return wait_st, note
 
 
+def _normalize_structural_dt(raw) -> Optional[datetime]:
+    """V55: normalize candle_time / df cell to UTC-aware datetime."""
+    if raw is None:
+        return None
+    parsed = _parse_radar_dt(raw)
+    if parsed is not None:
+        return parsed
+    if isinstance(raw, datetime):
+        return raw if raw.tzinfo else raw.replace(tzinfo=timezone.utc)
+    if hasattr(raw, 'to_pydatetime'):
+        dt = raw.to_pydatetime()
+        return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+    return None
+
+
+def _dt_from_df_row(df, idx: int) -> Optional[datetime]:
+    """V55: timestamp from df.iloc[idx]['time'] or temporal index."""
+    try:
+        if df is None or idx < 0 or idx >= len(df):
+            return None
+        if 'time' in df.columns:
+            dt = _normalize_structural_dt(df.iloc[idx]['time'])
+            if dt is not None:
+                return dt
+        if not isinstance(df.index, pd.RangeIndex):
+            return _normalize_structural_dt(df.index[idx])
+    except Exception:
+        pass
+    return None
+
+
 def _structural_event_dt(structural, df=None) -> Optional[datetime]:
-    """V50/V53: timestamp eveniment CHoCH/BOS — fallback pe df.iloc[index]['time']."""
+    """V55: timestamp CHoCH/BOS — candle_time parse + fallback obligatoriu pe df."""
     if structural is None:
         return None
+    idx = int(structural.index)
     ct = getattr(structural, 'candle_time', None)
     if ct is not None:
-        return _parse_radar_dt(ct)
-    if df is not None:
-        try:
-            idx = int(structural.index)
-            if 0 <= idx < len(df):
-                return _parse_radar_dt(df.iloc[idx]['time'])
-        except Exception:
-            pass
+        dt = _normalize_structural_dt(ct)
+        if dt is not None:
+            return dt
+    dt = _dt_from_df_row(df, idx)
+    if dt is not None:
+        return dt
+    print(
+        f"  [V55 STRUCT DT] idx={idx} candle_time={ct!r} — fallback df eșuat"
+    )
+    sys.stdout.flush()
+    return None
+
+
+def _poi_anchor_bar_index(df, anchor: datetime) -> Optional[int]:
+    """V55: prima bară cu time >= anchor POI (fallback când edt lipsește)."""
+    if df is None or anchor is None:
+        return None
+    try:
+        if 'time' in df.columns:
+            for i in range(len(df)):
+                bar_dt = _normalize_structural_dt(df.iloc[i]['time'])
+                if bar_dt is not None and bar_dt >= anchor:
+                    return i
+            return len(df) - 1
+        if not isinstance(df.index, pd.RangeIndex):
+            for i in range(len(df)):
+                bar_dt = _normalize_structural_dt(df.index[i])
+                if bar_dt is not None and bar_dt >= anchor:
+                    return i
+            return len(df) - 1
+    except Exception:
+        pass
     return None
 
 
 def _filter_structural_post_poi(
     events: list, anchor: Optional[datetime], df=None,
 ) -> list:
-    """V50/V53: păstrează doar evenimente structurale DUPĂ primul touch POI."""
+    """V55: păstrează evenimente structurale la/ după primul touch POI (>= anchor)."""
     if anchor is None or not events:
         return events
+    poi_bar_idx = _poi_anchor_bar_index(df, anchor)
     filtered = []
     for ev in events:
         edt = _structural_event_dt(ev, df)
-        if edt is not None and edt > anchor:
+        ev_idx = int(ev.index)
+        if edt is not None and edt >= anchor:
             filtered.append(ev)
+        elif edt is None and poi_bar_idx is not None and ev_idx >= poi_bar_idx:
+            print(
+                f"  [V55 POST-POI] idx={ev_idx} edt=None — păstrat via bar-index "
+                f"(>= poi_bar={poi_bar_idx})"
+            )
+            filtered.append(ev)
+        else:
+            reason = 'before_poi' if edt is not None else 'edt_unresolved_before_poi'
+            print(
+                f"  [V55 POST-POI DROP] idx={ev_idx} edt={edt} anchor={anchor} "
+                f"reason={reason}"
+            )
+    sys.stdout.flush()
     return filtered
 
 
@@ -270,7 +341,7 @@ def _log_choch_wait_diag(
         last = aligned_before_poi[-1]
         bars_ago = len(df) - last.index
         edt = _structural_event_dt(last, df)
-        post_poi = edt is not None and poi_dt is not None and edt > poi_dt
+        post_poi = edt is not None and poi_dt is not None and edt >= poi_dt
         valid = _is_structural_break_valid(last, last.direction, df)
         ts = edt.isoformat() if edt else '?'
         print(
@@ -1596,30 +1667,7 @@ class MultiTFRadar:
             _choch_bars_ago = len(df) - latest_choch.index
             choch_direction = latest_choch.direction
 
-            # V50: respinge break invalidat de structură opusă ulterioară
-            if not _is_structural_break_valid(latest_choch, choch_direction, df):
-                print(
-                    f"  🛑 [{timeframe_display} V50 STRUCT INVALID] {symbol}: "
-                    f"{choch_direction.upper()} break invalidat de structură ulterioară — WAITING"
-                )
-                sys.stdout.flush()
-                return TimeframeAnalysis(
-                    timeframe=timeframe_display,
-                    choch_detected=False,
-                    choch_direction=None,
-                    choch_time=None,
-                    choch_price=None,
-                    fvg_detected=False,
-                    fvg_top=None,
-                    fvg_bottom=None,
-                    fvg_entry=None,
-                    in_fvg=False,
-                    distance_to_fvg_pips=0.0,
-                    status=(
-                        PullbackStatus.WAITING_1H_CHOCH if timeframe == "H1"
-                        else PullbackStatus.WAITING_4H_CHOCH
-                    ),
-                )
+            # V55: gate _is_structural_break_valid eliminat — V46/V53 gestionează retrace 60–80%.
 
             if signal_type == 'CHoCH':
                 print(
