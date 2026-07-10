@@ -2181,6 +2181,58 @@ class SMCDetector:
         lh = min(post_highs, key=lambda h: self._swing_body_high(df, h.index))
         return float(lh.price) > float(latest_bos.break_price)
 
+    def _resolve_post_leg_flip(
+        self,
+        df: pd.DataFrame,
+        chochs: List[CHoCH],
+        bos_list: List,
+        dead_leg: CHoCH,
+        debug: bool = False,
+    ) -> Tuple[Optional[object], str, str, Optional[CHoCH]]:
+        """V57: invalidated leg — authority passes to opposite CHoCH/BOS after leg bar."""
+        opposite = 'bearish' if dead_leg.direction == 'bullish' else 'bullish'
+        post_chochs = [
+            c for c in chochs
+            if c.index > dead_leg.index and c.direction == opposite
+        ]
+        post_bos = [
+            b for b in bos_list
+            if b.index > dead_leg.index and b.direction == opposite
+        ]
+        if post_bos:
+            new_leg = post_chochs[-1] if post_chochs else None
+            latest_signal = post_bos[-1]
+            if debug:
+                print(
+                    f"   🔄 [V57 LEG FLIP] dead {dead_leg.direction.upper()} leg @bar{dead_leg.index} "
+                    f"→ {opposite.upper()} CONTINUATION BOS @bar{latest_signal.index}"
+                )
+            else:
+                print(
+                    f"   🔄 [V57 LEG FLIP] dead {dead_leg.direction.upper()} leg @bar{dead_leg.index} "
+                    f"→ {opposite.upper()} CONTINUATION @bar{latest_signal.index}"
+                )
+            return latest_signal, 'continuation', opposite, new_leg
+        if post_chochs:
+            new_leg = post_chochs[-1]
+            if debug:
+                print(
+                    f"   🔄 [V57 LEG FLIP] dead {dead_leg.direction.upper()} leg @bar{dead_leg.index} "
+                    f"→ {opposite.upper()} REVERSAL CHoCH @bar{new_leg.index}"
+                )
+            else:
+                print(
+                    f"   🔄 [V57 LEG FLIP] dead {dead_leg.direction.upper()} leg @bar{dead_leg.index} "
+                    f"→ {opposite.upper()} REVERSAL @bar{new_leg.index}"
+                )
+            return new_leg, 'reversal', opposite, new_leg
+        if debug:
+            print(
+                f"   ⛔ [V57 LEG FLIP] dead {dead_leg.direction.upper()} leg @bar{dead_leg.index} "
+                f"— no opposite structure post-leg"
+            )
+        return None, 'continuation', 'neutral', None
+
     def _resolve_d1_leg(
         self,
         df: pd.DataFrame,
@@ -2275,8 +2327,12 @@ class SMCDetector:
                 c for c in chochs
                 if c.index > leg_choch.index and c.direction == 'bearish'
             ]
+            leg_invalid = not self._leg_choch_still_valid(df, leg_choch, bos_list)
             aggressive_distribution = False
-            if (
+            # V57: invalid bullish leg + any bearish CHoCH post-leg → flip (forex-sized drops)
+            if leg_invalid and len(bearish_after_leg) >= 1:
+                aggressive_distribution = True
+            elif (
                 range_state is not None
                 and range_state.locked
                 and range_state.locked_bias == 'bearish'
@@ -2310,6 +2366,31 @@ class SMCDetector:
                         )
                     )
                     return latest_signal, strategy_type, 'bearish', new_leg
+
+        # V57: symmetric — invalid bearish leg + bullish CHoCH post-leg
+        if leg_choch.direction == 'bearish':
+            bullish_after_leg = [
+                c for c in chochs
+                if c.index > leg_choch.index and c.direction == 'bullish'
+            ]
+            if (
+                not self._leg_choch_still_valid(df, leg_choch, bos_list)
+                and len(bullish_after_leg) >= 1
+            ):
+                flipped = self._resolve_post_leg_flip(
+                    df, chochs, bos_list, leg_choch, debug=debug,
+                )
+                if flipped[0] is not None:
+                    return flipped
+
+        # V57: leg must be live before continuation/reversal on same direction
+        if not self._leg_choch_still_valid(df, leg_choch, bos_list):
+            flipped = self._resolve_post_leg_flip(
+                df, chochs, bos_list, leg_choch, debug=debug,
+            )
+            if flipped[0] is not None:
+                return flipped
+            return None, 'continuation', 'neutral', leg_choch
 
         # V42.6: ≥1 BOS aligned with D1 leg bias → CONTINUATION (V42.5 required ≥2)
         if len(same_dir_bos) >= 1:
@@ -3548,9 +3629,21 @@ class SMCDetector:
         latest_signal, strategy_type, current_trend, leg_choch = self._resolve_d1_leg(
             df_daily, daily_chochs, daily_bos_list, debug=debug, range_state=_range_state
         )
-        if latest_signal is None:
+        if latest_signal is None or current_trend == 'neutral':
             if debug:
                 print(f"❌ REJECTED: No Daily CHoCH or BOS found")
+            return None
+
+        if (
+            leg_choch is not None
+            and not self._leg_choch_still_valid(df_daily, leg_choch, daily_bos_list)
+            and strategy_type == 'reversal'
+            and current_trend == 'bullish'
+        ):
+            print(
+                f"⛔ [V57 LEG INVALID] {symbol}: bullish REVERSAL rejected — "
+                f"close below leg CHoCH break @bar{leg_choch.index}"
+            )
             return None
 
         _signal_label = 'CHoCH' if isinstance(latest_signal, CHoCH) else 'BOS'

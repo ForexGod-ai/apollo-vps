@@ -24,6 +24,8 @@ namespace cAlgo.Robots
 
         private DateTime _lastUpdate = DateTime.MinValue;
         private DateTime _lastTickSyncAttempt = DateTime.MinValue;
+        private bool _lastSyncOk = true;
+        private string _lastSyncError = "";
         private HttpListener _httpListener;
         private Thread _httpThread;
         private string _lastJson = "{}";
@@ -34,7 +36,7 @@ namespace cAlgo.Robots
         {
             if (_lastUpdate == DateTime.MinValue)
                 return true;
-            return (DateTime.Now - _lastUpdate).TotalSeconds > Math.Max(UpdateInterval * 3, 90);
+            return (DateTime.UtcNow - _lastUpdate).TotalSeconds > Math.Max(UpdateInterval * 3, 90);
         }
 
         protected override void OnStart()
@@ -110,7 +112,7 @@ namespace cAlgo.Robots
         {
             if (_lastUpdate == DateTime.MinValue)
                 return double.MaxValue;
-            return (DateTime.Now - _lastUpdate).TotalSeconds;
+            return (DateTime.UtcNow - _lastUpdate).TotalSeconds;
         }
 
         private void ForceSyncOnMainThread()
@@ -123,7 +125,7 @@ namespace cAlgo.Robots
                     try { SyncTradeHistory(); }
                     finally { done.Set(); }
                 });
-                done.Wait(TimeSpan.FromSeconds(8));
+                done.Wait(TimeSpan.FromSeconds(15));
             }
             catch (Exception ex)
             {
@@ -140,9 +142,9 @@ namespace cAlgo.Robots
         {
             if (!IsDataStale())
                 return;
-            if ((DateTime.Now - _lastTickSyncAttempt).TotalSeconds < 10)
+            if ((DateTime.UtcNow - _lastTickSyncAttempt).TotalSeconds < 10)
                 return;
-            _lastTickSyncAttempt = DateTime.Now;
+            _lastTickSyncAttempt = DateTime.UtcNow;
             Print($"⚠️ OnTick stale recovery ({StaleAgeSeconds():F0}s since last sync)");
             SyncTradeHistory();
         }
@@ -175,7 +177,7 @@ namespace cAlgo.Robots
                 double currentBalance = Account.Balance;
                 double openPL = openPositions.Sum(p => p.NetProfit);
                 double equity = Account.Equity;
-                string lastUpdateStr = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+                string lastUpdateStr = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
 
                 var json = new StringBuilder();
                 json.AppendLine("{");
@@ -186,7 +188,9 @@ namespace cAlgo.Robots
                 json.AppendLine($"        \"equity\": {equity.ToString("F2", CultureInfo.InvariantCulture)},");
                 json.AppendLine($"        \"open_pl\": {openPL.ToString("F2", CultureInfo.InvariantCulture)},");
                 json.AppendLine($"        \"currency\": \"USD\",");
-                json.AppendLine($"        \"last_update\": \"{lastUpdateStr}\"");
+                json.AppendLine($"        \"last_update\": \"{lastUpdateStr}\",");
+                json.AppendLine($"        \"sync_healthy\": {(_lastSyncOk ? "true" : "false")},");
+                json.AppendLine($"        \"sync_error\": \"{_lastSyncError.Replace("\"", "'")}\"");
                 json.AppendLine("    },");
 
                 json.AppendLine("    \"open_positions\": [");
@@ -255,7 +259,7 @@ namespace cAlgo.Robots
                 json.AppendLine("}");
 
                 var jsonString = json.ToString();
-                File.WriteAllText(JsonFilePath, jsonString);
+                System.IO.File.WriteAllText(JsonFilePath, jsonString);
 
                 lock (_jsonLock)
                     _lastJson = jsonString;
@@ -265,10 +269,14 @@ namespace cAlgo.Robots
                 Print($"🕒 last_update: {lastUpdateStr}");
                 Print($"🌐 HTTP: http://localhost:{HttpPort}/ — response updated");
 
-                _lastUpdate = DateTime.Now;
+                _lastUpdate = DateTime.UtcNow;
+                _lastSyncOk = true;
+                _lastSyncError = "";
             }
             catch (Exception ex)
             {
+                _lastSyncOk = false;
+                _lastSyncError = ex.Message;
                 Print($"❌ Sync error: {ex.Message}");
             }
         }

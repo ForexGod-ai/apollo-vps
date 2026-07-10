@@ -20,7 +20,7 @@ def parse_last_update(ts: Any) -> Optional[datetime]:
         s = str(ts).strip()
         if not s:
             return None
-        # cBot format: yyyy-MM-dd HH:mm:ss (local, no TZ)
+        # cBot format: yyyy-MM-dd HH:mm:ss UTC (TradeHistorySyncer V57+ uses DateTime.UtcNow)
         if 'T' in s:
             s = s.replace('Z', '+00:00')
             dt = datetime.fromisoformat(s)

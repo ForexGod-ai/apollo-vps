@@ -41,3 +41,11 @@ def test_payload_age_seconds_non_negative():
     age = payload_age_seconds(_payload(now))
     assert age is not None
     assert age >= 0
+
+
+def test_stale_payload_three_hours_old():
+    old = (datetime.now(timezone.utc) - timedelta(hours=3)).strftime('%Y-%m-%d %H:%M:%S')
+    assert is_payload_fresh(_payload(old)) is False
+    age = payload_age_seconds(_payload(old))
+    assert age is not None
+    assert age >= 10800 - 5

@@ -2,7 +2,7 @@
 """
 cTrader Sync Daemon - Continuous synchronization from cTrader API to trade_history.json + SQLite
 
-Sources data from MarketDataProvider API (localhost:8767) every 30 seconds
+Sources data from TradeHistorySyncer (localhost:8767) every 30 seconds
 Updates trade_history.json automatically so dashboard and Telegram stay current
 Saves to SQLite for permanent storage (Problem #2 Solution)
 
@@ -28,6 +28,7 @@ from broker_data_freshness import (
     incoming_is_newer_or_equal,
     is_payload_fresh,
     load_local_trade_history,
+    payload_age_seconds,
 )
 
 # Configure logger
@@ -55,9 +56,11 @@ TRADE_HISTORY_FILE = Path(__file__).parent / "trade_history.json"
 SYNC_INTERVAL = 30  # seconds
 SQLITE_DB_PATH = "data/trades.db"
 STALE_ALERT_AFTER_S = 300  # 5 min consecutive broker failures → Telegram
-STALE_ALERT_COOLDOWN_S = 3600  # max one alert per hour
+STALE_ALERT_COOLDOWN_S = 3600  # first repeat after 1h
+STALE_ALERT_ESCALATION_S = 21600  # subsequent alerts at most every 6h
 
 _last_fetch_failure: Optional[str] = None  # stale | offline | invalid | error
+_last_stale_payload: Optional[dict] = None
 
 
 def convert_volume_to_lots(symbol: str, volume_units: float) -> float:
@@ -225,15 +228,23 @@ class TradeDatabase:
             return False
 
 
+def _load_fresh_from_disk() -> Optional[dict]:
+    """V57: HTTP cache zombie but cBot may have written trade_history.json on disk."""
+    data = load_local_trade_history(TRADE_HISTORY_FILE)
+    if data and is_payload_fresh(data):
+        return data
+    return None
+
+
 def fetch_ctrader_data():
     """Fetch live account data from TradeHistorySyncer HTTP server on localhost:8767.
 
     TradeHistorySyncer.cs runs an HTTP server on port 8767 and serves:
       { "account": { "balance", "equity", ... }, "open_positions": [...], "closed_trades": [...] }
 
-    Port 8000 = MarketDataProvider (OHLCV bars only — different bot, different port).
+    Port 8010 = MarketDataProvider (OHLCV bars only — different bot, different port).
     """
-    global _last_fetch_failure
+    global _last_fetch_failure, _last_stale_payload
     try:
         logger.debug(f"📡 Fetching from {CTRADER_API_URL}")
         response = requests.get(CTRADER_API_URL, timeout=10)
@@ -252,6 +263,15 @@ def fetch_ctrader_data():
 
         if not is_payload_fresh(data):
             _last_fetch_failure = 'stale'
+            _last_stale_payload = data
+            disk_fresh = _load_fresh_from_disk()
+            if disk_fresh is not None:
+                logger.warning(
+                    f"⚠️ HTTP stale ({format_stale_reason(data)}) — using fresh trade_history.json from disk"
+                )
+                _last_fetch_failure = None
+                _last_stale_payload = None
+                return disk_fresh
             logger.error(
                 f"❌ STALE broker payload rejected — {format_stale_reason(data)} "
                 f"(restart TradeHistorySyncer cBot in cTrader)"
@@ -259,6 +279,7 @@ def fetch_ctrader_data():
             return None
 
         _last_fetch_failure = None
+        _last_stale_payload = None
         logger.success(
             f"✅ API Response: Balance ${balance:.2f}, Equity ${equity:.2f} "
             f"(last_update={(account.get('last_update'))})"
@@ -283,14 +304,25 @@ def fetch_ctrader_data():
         return None
 
 
-def _send_broker_stale_telegram(failure_kind: str, consecutive_failures: int) -> None:
-    """V56: one Telegram alert when broker 8767 unavailable/stale >5 min."""
+def _send_broker_stale_telegram(
+    failure_kind: str,
+    consecutive_failures: int,
+    stale_payload: Optional[dict] = None,
+) -> None:
+    """V56/V57: Telegram alert when broker 8767 unavailable/stale >5 min."""
     kind_note = {
         'stale': 'TradeHistorySyncer răspunde dar datele sunt STALE (last_update vechi)',
         'offline': 'TradeHistorySyncer offline — port 8767 inaccesibil',
         'invalid': 'Răspuns JSON invalid sau fără balance/equity',
         'error': 'Eroare HTTP la citirea brokerului',
     }.get(failure_kind, failure_kind or 'necunoscut')
+    age_line = ''
+    lu = '?'
+    if stale_payload:
+        lu = (stale_payload.get('account') or {}).get('last_update', '?')
+        age = payload_age_seconds(stale_payload)
+        if age is not None:
+            age_line = f"\n<code>last_update</code>: {lu} (<b>{age:.0f}s</b> vechi, max {MAX_BROKER_AGE_SECONDS:.0f}s)"
     try:
         from telegram_notifier import TelegramNotifier
         tn = TelegramNotifier()
@@ -300,18 +332,34 @@ def _send_broker_stale_telegram(failure_kind: str, consecutive_failures: int) ->
             f"Broker feed <code>localhost:8767</code> indisponibil "
             f"<b>{STALE_ALERT_AFTER_S // 60} min</b> consecutive.\n"
             f"Cauză: {kind_note}\n"
-            f"Eșecuri consecutive: <code>{consecutive_failures}</code>\n"
+            f"Cicluri sync eșuate: <code>{consecutive_failures}</code> "
+            f"(≈{consecutive_failures * SYNC_INTERVAL // 60} min @ {SYNC_INTERVAL}s)"
+            f"{age_line}\n"
             "────────────────\n"
             "<b>Acțiune:</b> în cTrader → Stop + Start <b>TradeHistorySyncer</b>, "
             "apoi verifică:\n"
             "<code>Invoke-RestMethod http://localhost:8767/</code>"
         )
         if tn.send_message(msg, parse_mode='HTML'):
-            logger.warning("[V56] Broker stale Telegram alert sent")
+            logger.warning("[V57] Broker stale Telegram alert sent")
         else:
-            logger.warning("[V56] Broker stale Telegram alert failed to send")
+            logger.warning("[V57] Broker stale Telegram alert failed to send")
     except Exception as exc:
-        logger.warning(f"[V56] Broker stale Telegram alert error: {exc}")
+        logger.warning(f"[V57] Broker stale Telegram alert error: {exc}")
+
+
+def _send_broker_recovered_telegram() -> None:
+    try:
+        from telegram_notifier import TelegramNotifier
+        tn = TelegramNotifier()
+        msg = (
+            "✅ <b>BROKER SYNC RECOVERED</b>\n"
+            "────────────────\n"
+            f"<code>localhost:8767</code> — TradeHistorySyncer date proaspete din nou."
+        )
+        tn.send_message(msg, parse_mode='HTML')
+    except Exception as exc:
+        logger.debug(f"[V57] Recovery Telegram skipped: {exc}")
 
 
 def write_trade_history(data, db: TradeDatabase):
@@ -423,16 +471,22 @@ def sync_loop(interval=SYNC_INTERVAL):
     consecutive_failures = 0
     failure_started_at: Optional[float] = None
     last_stale_alert_at: Optional[float] = None
+    stale_alert_count = 0
+    was_failing = False
     
     while True:
         try:
             success = sync_once(db)
             
             if success:
+                if was_failing and consecutive_failures >= STALE_ALERT_AFTER_S // SYNC_INTERVAL:
+                    _send_broker_recovered_telegram()
                 consecutive_failures = 0
                 failure_started_at = None
+                was_failing = False
             else:
                 consecutive_failures += 1
+                was_failing = True
                 now = time.time()
                 if failure_started_at is None:
                     failure_started_at = now
@@ -441,15 +495,23 @@ def sync_loop(interval=SYNC_INTERVAL):
                     f"⚠️ Sync skipped/failed ({consecutive_failures} consecutive, "
                     f"{elapsed:.0f}s) — daemon stays alive (max age {MAX_BROKER_AGE_SECONDS:.0f}s)"
                 )
-                if (
-                    elapsed >= STALE_ALERT_AFTER_S
-                    and (
-                        last_stale_alert_at is None
-                        or (now - last_stale_alert_at) >= STALE_ALERT_COOLDOWN_S
+                if elapsed >= STALE_ALERT_AFTER_S:
+                    cooldown = (
+                        STALE_ALERT_ESCALATION_S
+                        if stale_alert_count >= 1
+                        else STALE_ALERT_COOLDOWN_S
                     )
-                ):
-                    _send_broker_stale_telegram(_last_fetch_failure or 'error', consecutive_failures)
-                    last_stale_alert_at = now
+                    if (
+                        last_stale_alert_at is None
+                        or (now - last_stale_alert_at) >= cooldown
+                    ):
+                        _send_broker_stale_telegram(
+                            _last_fetch_failure or 'error',
+                            consecutive_failures,
+                            _last_stale_payload,
+                        )
+                        last_stale_alert_at = now
+                        stale_alert_count += 1
             
             logger.debug(f"💤 Sleeping {interval}s until next sync...")
             time.sleep(interval)

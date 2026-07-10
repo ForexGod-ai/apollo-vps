@@ -1,14 +1,11 @@
 #!/usr/bin/env python3
 """
-Audit V44.2 — CONTINUATION vs REVERSAL + D1 lookback + body-close CHoCH/BOS.
-
-Module map (fișierele din brief → cod real):
-  structural_analyzer / daily_bias → smc_detector.py (_resolve_d1_leg)
-  h4_radar                         → multi_tf_radar.py (4H/1H structure + JSON merge)
+Audit V57 — CONTINUATION vs REVERSAL + D1 lookback + leg validity.
 
 Usage:
   python scripts/audit_structural_classification.py
   python scripts/audit_structural_classification.py --symbol BTCUSD EURUSD
+  python scripts/audit_structural_classification.py --symbol EURUSD --cache
   python scripts/audit_structural_classification.py --symbol BTCUSD --debug
 """
 from __future__ import annotations
@@ -18,28 +15,92 @@ import json
 import sys
 from pathlib import Path
 
+import pandas as pd
+
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from smc_detector import SMCDetector, CHoCH, BOS  # noqa: E402
 
 
-def _load_daily(symbol: str, bars: int):
+def _load_daily_from_cache(symbol: str, bars: int) -> pd.DataFrame | None:
+    cache_dir = ROOT / "data" / "historical_cache"
+    if not cache_dir.exists():
+        return None
+    matches = sorted(cache_dir.glob(f"{symbol}_D1_*.csv"), key=lambda p: p.stat().st_mtime)
+    if not matches:
+        return None
+    df = pd.read_csv(matches[-1])
+    if "time" in df.columns:
+        df["time"] = pd.to_datetime(df["time"])
+        df = df.set_index("time")
+    elif "datetime" in df.columns:
+        df["datetime"] = pd.to_datetime(df["datetime"])
+        df = df.set_index("datetime")
+    for col in ("open", "high", "low", "close"):
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+    df = df.dropna(subset=["close"])
+    if bars and len(df) > bars:
+        df = df.iloc[-bars:]
+    return df
+
+
+def _load_daily(symbol: str, bars: int, use_cache: bool):
+    if use_cache:
+        df = _load_daily_from_cache(symbol, bars)
+        if df is not None and not df.empty:
+            return df
     from daily_scanner import CTraderDataProvider
 
     dp = CTraderDataProvider()
     if not dp.connect():
-        print("WARN: cBot offline — skip live audit or use cache CSV")
+        df = _load_daily_from_cache(symbol, bars)
+        if df is not None and not df.empty:
+            return df
         return None
     return dp.get_historical_data(symbol, "D1", bars)
 
 
-def audit_symbol(detector: SMCDetector, symbol: str, d1_bars: int, debug: bool) -> dict:
-    df = _load_daily(symbol, d1_bars)
+def _macro_trend_swings(detector: SMCDetector, df: pd.DataFrame) -> str:
+    sh = detector.detect_swing_highs(df)
+    sl = detector.detect_swing_lows(df)
+    if len(sh) < 3 or len(sl) < 3:
+        return "neutral"
+    recent_highs = sh[-3:]
+    recent_lows = sl[-3:]
+    hh = sum(
+        1 for i in range(1, len(recent_highs))
+        if recent_highs[i].price > recent_highs[i - 1].price
+    )
+    lh = sum(
+        1 for i in range(1, len(recent_highs))
+        if recent_highs[i].price < recent_highs[i - 1].price
+    )
+    hl = sum(
+        1 for i in range(1, len(recent_lows))
+        if recent_lows[i].price > recent_lows[i - 1].price
+    )
+    ll = sum(
+        1 for i in range(1, len(recent_lows))
+        if recent_lows[i].price < recent_lows[i - 1].price
+    )
+    if hh >= 2 and hl >= 2:
+        return "bullish"
+    if ll >= 2 and lh >= 2:
+        return "bearish"
+    return "neutral"
+
+
+def audit_symbol(
+    detector: SMCDetector, symbol: str, d1_bars: int, debug: bool, use_cache: bool,
+) -> dict:
+    df = _load_daily(symbol, d1_bars, use_cache)
     if df is None or df.empty:
         return {"symbol": symbol, "error": "no_d1_data", "bars": 0}
 
     n = len(df)
+    close = float(df["close"].iloc[-1])
     chochs, bos_list = detector.detect_choch_and_bos(df)
     sh = detector.detect_swing_highs(df)
     sl = detector.detect_swing_lows(df)
@@ -53,11 +114,34 @@ def audit_symbol(detector: SMCDetector, symbol: str, d1_bars: int, debug: bool) 
     reason = f"{strategy}_via_resolve_d1_leg"
     bias = detector.determine_daily_trend(df, debug=debug, symbol=symbol)
 
+    leg_still_valid = None
+    leg_break_price = None
+    if leg is not None:
+        leg_still_valid = detector._leg_choch_still_valid(df, leg, bos_list)
+        leg_break_price = float(leg.break_price)
+
+    bearish_after_leg = []
+    v434_would_trigger = False
+    if leg is not None and leg.direction == "bullish":
+        bearish_after_leg = [
+            c for c in chochs
+            if c.index > leg.index and c.direction == "bearish"
+        ]
+        drop_pct = 0.0
+        if rs and rs.macro_range_high:
+            drop_pct = (float(rs.macro_range_high) - close) / float(rs.macro_range_high) * 100.0
+        leg_invalid = leg_still_valid is False
+        if leg_invalid and len(bearish_after_leg) >= 1:
+            v434_would_trigger = True
+        elif rs and rs.locked and rs.locked_bias == "bearish":
+            v434_would_trigger = drop_pct >= 5.0 or len(bearish_after_leg) > 2
+        elif drop_pct >= 10.0 and len(bearish_after_leg) > 2:
+            v434_would_trigger = True
+
     signal_kind = None
     if latest is not None:
         signal_kind = "CHoCH" if isinstance(latest, CHoCH) else "BOS"
 
-    # JSON radar fields (stale check)
     json_path = ROOT / "monitoring_setups.json"
     json_row = {}
     if json_path.exists():
@@ -75,10 +159,11 @@ def audit_symbol(detector: SMCDetector, symbol: str, d1_bars: int, debug: bool) 
                 }
                 break
 
-    report = {
+    return {
         "symbol": symbol,
         "d1_bars_loaded": n,
         "d1_lookback_ok": n >= 200,
+        "data_source": "cache" if use_cache else "live_or_cache_fallback",
         "daily_bias": bias,
         "strategy_type": strategy,
         "current_trend": trend,
@@ -86,36 +171,47 @@ def audit_symbol(detector: SMCDetector, symbol: str, d1_bars: int, debug: bool) 
         "latest_signal": signal_kind,
         "latest_signal_bar": getattr(latest, "index", None),
         "leg_choch_bar": getattr(leg, "index", None) if leg else None,
+        "leg_still_valid": leg_still_valid,
+        "leg_break_price": leg_break_price,
+        "close": close,
+        "macro_trend_swings": _macro_trend_swings(detector, df),
+        "bearish_choch_post_leg": len(bearish_after_leg),
+        "v434_would_trigger": v434_would_trigger,
         "choch_count": len(chochs),
         "bos_count": len(bos_list),
         "json_snapshot": json_row,
     }
-    return report
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Audit structural classification V44.2")
+    parser = argparse.ArgumentParser(description="Audit structural classification V57")
     parser.add_argument("--symbol", nargs="+", default=["BTCUSD", "EURUSD"])
     parser.add_argument("--d1-bars", type=int, default=300)
+    parser.add_argument("--cache", action="store_true", help="Use local historical_cache CSV")
     parser.add_argument("--debug", action="store_true")
     args = parser.parse_args()
 
     detector = SMCDetector(swing_lookback=5, atr_multiplier=0.5)
     print("=" * 70)
-    print("  V44.2 STRUCTURAL CLASSIFICATION AUDIT")
+    print("  V57 STRUCTURAL CLASSIFICATION AUDIT")
     print("=" * 70)
 
     for sym in args.symbol:
         print(f"\n--- {sym} ---")
-        r = audit_symbol(detector, sym, args.d1_bars, args.debug)
+        r = audit_symbol(detector, sym, args.d1_bars, args.debug, args.cache)
         if r.get("error"):
             print(f"  ERROR: {r['error']}")
             continue
         print(f"  D1 bars: {r['d1_bars_loaded']} (lookback OK: {r['d1_lookback_ok']})")
         print(f"  daily_bias: {r['daily_bias']}")
         print(f"  strategy_type: {r['strategy_type'].upper()} ({r['classify_reason']})")
+        print(f"  current_trend: {r['current_trend']}")
         print(f"  latest: {r['latest_signal']} @ bar {r['latest_signal_bar']}")
-        print(f"  leg CHoCH @ bar {r['leg_choch_bar']} | CHoCH={r['choch_count']} BOS={r['bos_count']}")
+        print(f"  leg CHoCH @ bar {r['leg_choch_bar']} | valid={r['leg_still_valid']} "
+              f"break={r['leg_break_price']} close={r['close']:.5f}")
+        print(f"  macro_swings: {r['macro_trend_swings']} | bearish post-leg: {r['bearish_choch_post_leg']}")
+        print(f"  v434_would_trigger: {r['v434_would_trigger']}")
+        print(f"  CHoCH={r['choch_count']} BOS={r['bos_count']}")
         if r["json_snapshot"]:
             print(f"  JSON: {json.dumps(r['json_snapshot'], default=str)}")
         else:
