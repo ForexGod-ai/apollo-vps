@@ -475,6 +475,12 @@ class TelegramNotifier:
             if df_4h is not None and not df_4h.empty and len(df_4h) >= 50:
                 try:
                     from types import SimpleNamespace
+                    struct_dir_l = str(struct_dir).lower()
+                    h4_choch_ns = SimpleNamespace(
+                        direction=struct_dir_l,
+                        break_price=break_px,
+                        index=getattr(tf_data, 'choch_bars_ago', None),
+                    )
                     setup_ns = SimpleNamespace(
                         symbol=symbol,
                         entry_price=entry,
@@ -486,7 +492,7 @@ class TelegramNotifier:
                         daily_choch=SimpleNamespace(
                             direction='bullish' if direction == 'BUY' else 'bearish'
                         ),
-                        h4_choch=None,
+                        h4_choch=h4_choch_ns,
                         fvg=SimpleNamespace(bottom=sl, top=tp),
                         choch_break_price=break_px,
                     )
@@ -496,10 +502,19 @@ class TelegramNotifier:
                         setup=setup_ns,
                         save_path=None,
                     )
+                    if chart_4h is None:
+                        print(f"[WARNING] 4H chart render returned None for {symbol} — retry once")
+                        chart_4h = self.chart_generator.create_4h_chart(
+                            symbol=symbol,
+                            df=df_4h,
+                            setup=setup_ns,
+                            save_path=None,
+                        )
                 except Exception as chart_err:
                     print(f"[WARNING] 4H chart render failed for {symbol}: {chart_err}")
             else:
-                print(f"[WARNING] 4H chart skipped for {symbol}: df gol sau prea scurt")
+                df_len = len(df_4h) if df_4h is not None else 0
+                print(f"[WARNING] 4H chart skipped for {symbol}: df len={df_len} (need >=50)")
 
             if chart_4h:
                 if not self.send_photo(chart_4h, caption=caption):

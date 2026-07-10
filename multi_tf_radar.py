@@ -2554,9 +2554,6 @@ class MultiTFRadar:
             post_poi = _v47_break_post_poi_touch(setup, break_time)
             if not post_poi:
                 return False, 'pre_poi_or_no_anchor', break_time, bars_ago
-            retrace = getattr(tf_4h, 'retrace_pct', None)
-            if not _retrace_is_alert_valid(retrace):
-                return False, 'retrace_invalid', break_time, bars_ago
             return True, '', break_time, bars_ago
 
         def _v47_1h_alert_check() -> tuple:
@@ -2599,7 +2596,7 @@ class MultiTFRadar:
                 logger.success(f"[V47] 4H BOS alert trimis: {sym}")
             except Exception as e:
                 logger.warning(f"[V47] 4H BOS Telegram alert failed for {sym}: {e}")
-        elif sig == 'CHoCH' and ok_4h and not setup.get('h4_choch_alert_sent'):
+        elif sig == 'CHOCH' and ok_4h and not setup.get('h4_choch_alert_sent'):
             setup['h4_choch_alert_sent'] = True
             setup['radar_4h_signal_type'] = 'CHoCH'
             self._flush_choch_alerts_to_json(setup)
@@ -2613,7 +2610,7 @@ class MultiTFRadar:
                 logger.warning(f"[V47] 4H CHoCH Telegram alert failed for {sym}: {e}")
         elif sig == 'BOS' and tf_4h.bos_detected and not setup.get('h4_bos_alert_sent') and not ok_4h:
             _log_alert_skip('4H', post_poi_4h, bars_4h, retrace_4h, reason_4h)
-        elif sig == 'CHoCH' and tf_4h.choch_detected and not setup.get('h4_choch_alert_sent') and not ok_4h:
+        elif sig == 'CHOCH' and tf_4h.choch_detected and not setup.get('h4_choch_alert_sent') and not ok_4h:
             _log_alert_skip('4H', post_poi_4h, bars_4h, retrace_4h, reason_4h)
 
         # V50: poarta 1H = alertă 4H trimisă pe ciclul POI curent

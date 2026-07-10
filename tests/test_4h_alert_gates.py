@@ -1,0 +1,44 @@
+"""V56: 4H structural alert gates — no retrace block on confirmation alert."""
+from types import SimpleNamespace
+from unittest.mock import patch
+
+import multi_tf_radar as mtr
+
+
+def _make_radar():
+    radar = mtr.MultiTFRadar.__new__(mtr.MultiTFRadar)
+    return radar
+
+
+def test_4h_alert_passes_with_high_retrace_post_poi():
+    """Alert path must not block on retrace >200% — that's EXECUTE_NOW only."""
+    radar = _make_radar()
+    setup = {
+        'symbol': 'EURJPY',
+        'radar_panda_active': True,
+        'poi_first_touch_time': '2026-07-01T08:00:00+00:00',
+        'h4_choch_alert_sent': False,
+    }
+    tf_4h = SimpleNamespace(
+        signal_type='CHoCH',
+        choch_detected=True,
+        choch_direction='bearish',
+        choch_time='2026-07-01T12:00:00+00:00',
+        choch_bars_ago=5,
+        choch_price=165.0,
+        bos_detected=False,
+        bos_direction=None,
+        bos_bars_ago=9999,
+        retrace_pct=2.5,  # 250% — would fail _retrace_is_alert_valid
+    )
+    tf_1h = SimpleNamespace(choch_detected=False)
+    result = SimpleNamespace(symbol='EURJPY', tf_4h=tf_4h, tf_1h=tf_1h)
+
+    with patch.object(mtr, '_v47_break_post_poi_touch', return_value=True):
+        with patch.object(radar, '_flush_choch_alerts_to_json'):
+            with patch('telegram_notifier.TelegramNotifier') as mock_tn:
+                mock_tn.return_value.send_4h_structural_alert.return_value = True
+                with patch.object(radar, 'get_historical_data', return_value=None):
+                    radar._maybe_send_choch_alerts(setup, result, 'bearish')
+
+    assert setup.get('h4_choch_alert_sent') is True

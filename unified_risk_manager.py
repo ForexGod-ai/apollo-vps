@@ -27,6 +27,8 @@ except ImportError:
     pytz = None
     TZ_RO = None
 
+from broker_data_freshness import format_stale_reason, is_payload_fresh
+
 load_dotenv()
 
 class UnifiedRiskManager:
@@ -415,20 +417,26 @@ class UnifiedRiskManager:
                 )
                 time.sleep(delay)
 
-        # OFFLINE FALLBACK: trade_history.json cache
+        # OFFLINE FALLBACK: trade_history.json cache (only if payload is fresh)
         try:
             th_path = Path(__file__).parent / 'trade_history.json'
             if th_path.exists():
                 with open(th_path, 'r', encoding='utf-8') as f:
                     data = json.load(f)
-                account = data.get('account', {})
-                equity = float(account.get('equity', 0))
-                balance = float(account.get('balance', 0))
-                if equity > 0 or balance > 0:
-                    print("⚠️  Using cached trade_history.json (broker offline)")
-                    if return_source:
-                        return equity, balance, 'trade_history_cache'
-                    return equity, balance
+                if not is_payload_fresh(data):
+                    print(
+                        f"⚠️  trade_history.json STALE — {format_stale_reason(data)} "
+                        f"(not used for balance)"
+                    )
+                else:
+                    account = data.get('account', {})
+                    equity = float(account.get('equity', 0))
+                    balance = float(account.get('balance', 0))
+                    if equity > 0 or balance > 0:
+                        print("⚠️  Using cached trade_history.json (broker offline, payload fresh)")
+                        if return_source:
+                            return equity, balance, 'trade_history_cache'
+                        return equity, balance
         except Exception as e:
             print(f"⚠️  trade_history.json read error: {e}")
 

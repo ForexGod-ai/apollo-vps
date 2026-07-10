@@ -16,6 +16,8 @@ from typing import Any, Dict, List, Optional, Tuple
 import requests
 from loguru import logger
 
+from broker_data_freshness import format_stale_reason, is_payload_fresh
+
 CTRADER_API_URL = "http://localhost:8767/"
 DESYNC_THRESHOLD_USD = 5.0
 
@@ -39,6 +41,11 @@ class AccountClient:
             account = data.get('account', {})
             if account.get('balance') is None and account.get('equity') is None:
                 logger.warning("[V40.4] API response missing account balance/equity")
+                return None
+            if not is_payload_fresh(data):
+                logger.warning(
+                    f"[V56] STALE broker payload rejected — {format_stale_reason(data)}"
+                )
                 return None
             return data
         except requests.exceptions.ConnectionError:
