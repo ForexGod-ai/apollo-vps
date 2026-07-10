@@ -2181,6 +2181,100 @@ class SMCDetector:
         lh = min(post_highs, key=lambda h: self._swing_body_high(df, h.index))
         return float(lh.price) > float(latest_bos.break_price)
 
+    def macro_trend_from_swings(self, df: pd.DataFrame) -> str:
+        """V58: HH+HL vs LH+LL from last 3 swing highs/lows."""
+        swing_highs = self.detect_swing_highs(df)
+        swing_lows = self.detect_swing_lows(df)
+        if len(swing_highs) < 3 or len(swing_lows) < 3:
+            return 'neutral'
+        recent_highs = swing_highs[-3:]
+        recent_lows = swing_lows[-3:]
+        hh_count = sum(
+            1 for i in range(1, len(recent_highs))
+            if recent_highs[i].price > recent_highs[i - 1].price
+        )
+        lh_count = sum(
+            1 for i in range(1, len(recent_highs))
+            if recent_highs[i].price < recent_highs[i - 1].price
+        )
+        hl_count = sum(
+            1 for i in range(1, len(recent_lows))
+            if recent_lows[i].price > recent_lows[i - 1].price
+        )
+        ll_count = sum(
+            1 for i in range(1, len(recent_lows))
+            if recent_lows[i].price < recent_lows[i - 1].price
+        )
+        if hh_count >= 2 and hl_count >= 1:
+            return 'bullish'
+        if lh_count >= 2 and ll_count >= 1:
+            return 'bearish'
+        return 'neutral'
+
+    def resolve_structural_bias_fallback(
+        self,
+        df: pd.DataFrame,
+        chochs: List[CHoCH],
+        bos_list: List,
+        range_state: Optional[StructuralRangeState] = None,
+    ) -> str:
+        """V58: when leg resolve is neutral — infer bias from range + last valid BOS/CHoCH."""
+        macro = self.macro_trend_from_swings(df)
+        if macro != 'neutral':
+            return macro
+        close = float(df['close'].iloc[-1])
+        if range_state is not None and range_state.locked:
+            _ll = float(range_state.macro_range_low)
+            _lh = float(range_state.macro_range_high)
+            if close <= _ll:
+                bearish_bos = [b for b in bos_list if b.direction == 'bearish']
+                bearish_chochs = [c for c in chochs if c.direction == 'bearish']
+                if bearish_bos or bearish_chochs:
+                    return 'bearish'
+            elif close > _lh:
+                bullish_bos = [b for b in bos_list if b.direction == 'bullish']
+                bullish_chochs = [c for c in chochs if c.direction == 'bullish']
+                if bullish_bos or bullish_chochs:
+                    return 'bullish'
+        return 'neutral'
+
+    def _resolve_historical_opposite_bias(
+        self,
+        df: pd.DataFrame,
+        chochs: List[CHoCH],
+        bos_list: List,
+        dead_leg: CHoCH,
+        debug: bool = False,
+    ) -> Tuple[Optional[object], str, str, Optional[CHoCH]]:
+        """V58: last opposite CHoCH/BOS in full series when post-leg flip finds nothing."""
+        opposite = 'bearish' if dead_leg.direction == 'bullish' else 'bullish'
+        hist_bos = [b for b in bos_list if b.direction == opposite]
+        hist_chochs = [c for c in chochs if c.direction == opposite]
+        if hist_bos:
+            latest_signal = hist_bos[-1]
+            new_leg = hist_chochs[-1] if hist_chochs else None
+            msg = (
+                f"   🔄 [V58 HIST FLIP] dead {dead_leg.direction.upper()} leg @bar{dead_leg.index} "
+                f"→ {opposite.upper()} CONTINUATION BOS @bar{latest_signal.index} (historical)"
+            )
+            if debug:
+                print(msg)
+            else:
+                print(msg)
+            return latest_signal, 'continuation', opposite, new_leg
+        if hist_chochs:
+            new_leg = hist_chochs[-1]
+            msg = (
+                f"   🔄 [V58 HIST FLIP] dead {dead_leg.direction.upper()} leg @bar{dead_leg.index} "
+                f"→ {opposite.upper()} REVERSAL CHoCH @bar{new_leg.index} (historical)"
+            )
+            if debug:
+                print(msg)
+            else:
+                print(msg)
+            return new_leg, 'reversal', opposite, new_leg
+        return None, 'continuation', 'neutral', None
+
     def _resolve_post_leg_flip(
         self,
         df: pd.DataFrame,
@@ -2226,6 +2320,11 @@ class SMCDetector:
                     f"→ {opposite.upper()} REVERSAL @bar{new_leg.index}"
                 )
             return new_leg, 'reversal', opposite, new_leg
+        hist = self._resolve_historical_opposite_bias(
+            df, chochs, bos_list, dead_leg, debug=debug,
+        )
+        if hist[0] is not None:
+            return hist
         if debug:
             print(
                 f"   ⛔ [V57 LEG FLIP] dead {dead_leg.direction.upper()} leg @bar{dead_leg.index} "
@@ -2258,7 +2357,8 @@ class SMCDetector:
             _bullish_flip = (
                 _last_choch is not None
                 and _last_choch.direction == 'bullish'
-                and _last_choch.index >= range_state.macro_range_low_bar
+                and close > _ll
+                and self._bar_body_close_above(df, _last_choch.index, _ll)
             )
             if close <= _ll and not _bullish_flip:
                 bearish_bos = [b for b in bos_list if b.direction == 'bearish']
@@ -2284,9 +2384,36 @@ class SMCDetector:
                     return leg_choch, 'reversal', 'bearish', leg_choch
             elif _bullish_flip and close <= _ll:
                 print(
-                    f"   📐 [V45 FLIP] bullish CHoCH @bar{_last_choch.index} post-LL {_ll:.2f} "
+                    f"   📐 [V45 FLIP] bullish CHoCH @bar{_last_choch.index} reclaimed LL {_ll:.2f} "
                     f"— V40 bearish lock superseded"
                 )
+            elif (
+                _last_choch is not None
+                and _last_choch.direction == 'bullish'
+                and _last_choch.index >= range_state.macro_range_low_bar
+                and close <= _ll
+            ):
+                print(
+                    f"   ⛔ [V58] micro bullish CHoCH @bar{_last_choch.index} below LL {_ll:.2f} "
+                    f"— dead-cat bounce ignored, bearish lock holds"
+                )
+                bearish_bos = [b for b in bos_list if b.direction == 'bearish']
+                bearish_chochs = [c for c in chochs if c.direction == 'bearish']
+                if bearish_bos:
+                    latest_signal = bearish_bos[-1]
+                    leg_choch = bearish_chochs[-1] if bearish_chochs else None
+                    print(
+                        f"   🔒 [V40→V58] breakdown below LL {_ll:.2f} — "
+                        f"BOS @bar{latest_signal.index}"
+                    )
+                    return latest_signal, 'continuation', 'bearish', leg_choch
+                if bearish_chochs:
+                    leg_choch = bearish_chochs[-1]
+                    print(
+                        f"   🔒 [V40→V58] breakdown below LL {_ll:.2f} — "
+                        f"CHoCH @bar{leg_choch.index}"
+                    )
+                    return leg_choch, 'reversal', 'bearish', leg_choch
 
         leg_choch = self._find_leg_choch(df, chochs, bos_list)
 
@@ -2516,26 +2643,18 @@ class SMCDetector:
             print(f"   Swing Lows detected: {len(swing_lows)}")
         
         # LAYER 1: Swing structure analysis (HH+HL vs LL+LH)
-        macro_trend_swings = 'neutral'
+        macro_trend_swings = self.macro_trend_from_swings(df)
         
-        if len(swing_highs) >= 3 and len(swing_lows) >= 3:
-            # Analyze last 3 swing highs
-            recent_highs = swing_highs[-3:]
-            hh_count = sum(1 for i in range(1, len(recent_highs)) if recent_highs[i].price > recent_highs[i-1].price)
-            lh_count = sum(1 for i in range(1, len(recent_highs)) if recent_highs[i].price < recent_highs[i-1].price)
-            
-            # Analyze last 3 swing lows
-            recent_lows = swing_lows[-3:]
-            hl_count = sum(1 for i in range(1, len(recent_lows)) if recent_lows[i].price > recent_lows[i-1].price)
-            ll_count = sum(1 for i in range(1, len(recent_lows)) if recent_lows[i].price < recent_lows[i-1].price)
-            
-            # Determine macro trend from swing pattern
-            if hh_count >= 2 and hl_count >= 1:
-                macro_trend_swings = 'bullish'  # HH + HL pattern
-            elif lh_count >= 2 and ll_count >= 1:
-                macro_trend_swings = 'bearish'  # LH + LL pattern
-            
-            if debug:
+        if debug and macro_trend_swings != 'neutral':
+            swing_highs = self.detect_swing_highs(df)
+            swing_lows = self.detect_swing_lows(df)
+            if len(swing_highs) >= 3 and len(swing_lows) >= 3:
+                recent_highs = swing_highs[-3:]
+                recent_lows = swing_lows[-3:]
+                hh_count = sum(1 for i in range(1, len(recent_highs)) if recent_highs[i].price > recent_highs[i-1].price)
+                lh_count = sum(1 for i in range(1, len(recent_highs)) if recent_highs[i].price < recent_highs[i-1].price)
+                hl_count = sum(1 for i in range(1, len(recent_lows)) if recent_lows[i].price > recent_lows[i-1].price)
+                ll_count = sum(1 for i in range(1, len(recent_lows)) if recent_lows[i].price < recent_lows[i-1].price)
                 print(f"\n   📈 Swing Analysis:")
                 print(f"      Last 3 Highs: HH={hh_count}, LH={lh_count}")
                 print(f"      Last 3 Lows:  HL={hl_count}, LL={ll_count}")
@@ -2620,9 +2739,15 @@ class SMCDetector:
             confidence = "LOW (Swing pattern only — niciun BOS/CHoCH body-close confirmat)"
 
         else:
-            # Niciun semnal, nicio structură clară
-            final_bias = 'neutral'
-            confidence = "NONE (Choppy/Ranging)"
+            _fb = self.resolve_structural_bias_fallback(
+                df, daily_chochs, daily_bos_list, _v39_rs if symbol else None,
+            )
+            if _fb != 'neutral':
+                final_bias = _fb
+                confidence = "LOW (V58 structural fallback — range + historical BOS/CHoCH)"
+            else:
+                final_bias = 'neutral'
+                confidence = "NONE (Choppy/Ranging)"
         
         if debug:
             print(f"\n   ✅ FINAL VERDICT (V7.1 - BOS/SWING HIERARCHY):")
@@ -3632,6 +3757,45 @@ class SMCDetector:
         if latest_signal is None or current_trend == 'neutral':
             if debug:
                 print(f"❌ REJECTED: No Daily CHoCH or BOS found")
+            return None
+
+        _close = float(df_daily['close'].iloc[-1])
+        _macro_swings = self.macro_trend_from_swings(df_daily)
+        if (
+            strategy_type == 'reversal'
+            and current_trend == 'bullish'
+            and _range_state
+            and _range_state.locked_bias == 'bearish'
+            and _close <= float(_range_state.macro_range_low)
+        ):
+            print(
+                f"⛔ [V58 MACRO GATE] {symbol}: REVERSAL LONG rejected — "
+                f"close {_close:.5f} below LL {_range_state.macro_range_low:.5f}"
+            )
+            return None
+        if (
+            strategy_type == 'reversal'
+            and current_trend == 'bullish'
+            and _macro_swings == 'bearish'
+            and _range_state
+            and _close <= float(_range_state.macro_range_low)
+        ):
+            print(
+                f"⛔ [V58 MACRO GATE] {symbol}: REVERSAL LONG rejected — "
+                f"macro swings BEARISH + close below LL"
+            )
+            return None
+        if (
+            strategy_type == 'reversal'
+            and current_trend == 'bearish'
+            and _macro_swings == 'bullish'
+            and _range_state
+            and _close > float(_range_state.macro_range_high)
+        ):
+            print(
+                f"⛔ [V58 MACRO GATE] {symbol}: REVERSAL SHORT rejected — "
+                f"macro swings BULLISH + close above LH"
+            )
             return None
 
         if (

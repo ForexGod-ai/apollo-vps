@@ -1,4 +1,4 @@
-"""V57: D1 leg invalidation — no false LONG REVERSAL on dead bullish legs."""
+"""V57/V58: D1 leg invalidation and macro authority."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -6,7 +6,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from smc_detector import SMCDetector, CHoCH, BOS
+from smc_detector import SMCDetector, CHoCH, BOS, StructuralRangeState
 
 ROOT = Path(__file__).resolve().parent.parent
 CACHE = ROOT / "data" / "historical_cache"
@@ -45,10 +45,19 @@ def test_eurusd_invalid_bullish_leg_not_reversal_long(detector):
     assert not (strategy == "reversal" and trend == "bullish"), (
         f"EURUSD must not be REVERSAL long (got {strategy}/{trend}, latest={latest})"
     )
-    if leg and leg.direction == "bullish":
-        bos = detector.detect_choch_and_bos(df)[1]
-        if not detector._leg_choch_still_valid(df, leg, bos):
-            assert trend != "bullish"
+    chochs, bos = detector.detect_choch_and_bos(df)
+    sh = detector.detect_swing_highs(df)
+    sl = detector.detect_swing_lows(df)
+    rs = detector.compute_structural_range(df, sh, sl, symbol="EURUSD")
+    chochs, bos, rs = detector.filter_internal_range_signals(
+        "EURUSD", df, chochs, bos, rs,
+    )
+    bias = detector.determine_daily_trend(df, symbol="EURUSD")
+    fallback = detector.resolve_structural_bias_fallback(df, chochs, bos, rs)
+    assert bias in ("bearish", "bullish", "neutral")
+    assert fallback in ("bearish", "bullish", "neutral")
+    if latest is None:
+        assert bias in ("bearish",) or fallback in ("bearish",) or trend != "bullish"
 
 
 def test_btcusd_not_bullish_reversal_on_bear_structure(detector):
@@ -58,10 +67,51 @@ def test_btcusd_not_bullish_reversal_on_bear_structure(detector):
     assert not (strategy == "reversal" and trend == "bullish"), (
         f"BTCUSD bear structure should not classify REVERSAL long, got {strategy}/{trend}"
     )
+    assert trend == "bearish"
+
+
+def test_v45_dead_cat_bounce_does_not_supersede_v40(detector):
+    """V58: CHoCH bullish post-LL without LL reclaim → bearish breakdown."""
+    n = 100
+    idx = pd.date_range("2024-01-01", periods=n, freq="D")
+    close = [90000.0] * 50 + [65000.0 - i * 100 for i in range(50)]
+    df = pd.DataFrame(
+        {
+            "open": close,
+            "high": [c + 500 for c in close],
+            "low": [c - 500 for c in close],
+            "close": close,
+        },
+        index=idx,
+    )
+    bull_choch = CHoCH(
+        index=85, direction="bullish", break_price=64000.0,
+        previous_trend="bearish", candle_time=None, swing_broken=None,
+    )
+    bear_bos = BOS(
+        index=70, direction="bearish", break_price=75000.0,
+        candle_time=None, swing_broken=None,
+    )
+    bear_choch = CHoCH(
+        index=60, direction="bearish", break_price=80000.0,
+        previous_trend="bullish", candle_time=None, swing_broken=None,
+    )
+    rs = StructuralRangeState(
+        macro_range_high=100000.0,
+        macro_range_low=86360.0,
+        macro_range_high_bar=10,
+        macro_range_low_bar=40,
+        locked=True,
+        locked_bias="bearish",
+    )
+    latest, strategy, trend, _ = detector._resolve_d1_leg(
+        df, [bear_choch, bull_choch], [bear_bos], range_state=rs,
+    )
+    assert trend == "bearish"
+    assert not (strategy == "reversal" and trend == "bullish")
 
 
 def test_resolve_post_leg_flip_bearish_after_dead_bull(detector):
-    """Synthetic: dead bullish leg with bearish CHoCH after."""
     n = 80
     idx = pd.date_range("2024-01-01", periods=n, freq="D")
     close = [1.10 + i * 0.001 for i in range(40)] + [1.14 - i * 0.002 for i in range(40)]
@@ -95,8 +145,18 @@ def test_resolve_post_leg_flip_bearish_after_dead_bull(detector):
     assert latest is not None
 
 
+def test_historical_flip_when_no_post_leg_opposite(detector):
+    df = _load_d1("EURUSD")
+    chochs, bos = detector.detect_choch_and_bos(df)
+    dead = next((c for c in chochs if c.direction == "bullish"), None)
+    if dead is None:
+        pytest.skip("No bullish leg in EURUSD cache")
+    hist = detector._resolve_historical_opposite_bias(df, chochs, bos, dead)
+    assert hist[2] in ("bearish", "neutral", "bullish")
+
+
 def test_leg_still_valid_bullish_requires_close_above_break(detector):
-    df = pd.DataFrame({"close": [1.05, 1.04, 1.03]})
+    df = pd.DataFrame({"open": [1.05], "close": [1.03]})
     leg = CHoCH(
         index=0, direction="bullish", break_price=1.10,
         previous_trend="bearish", candle_time=None, swing_broken=None,

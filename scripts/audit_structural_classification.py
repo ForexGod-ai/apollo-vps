@@ -92,6 +92,43 @@ def _macro_trend_swings(detector: SMCDetector, df: pd.DataFrame) -> str:
     return "neutral"
 
 
+def _v45_v40_diagnostics(
+    detector: SMCDetector,
+    df: pd.DataFrame,
+    chochs: list,
+    rs,
+) -> dict:
+    close = float(df["close"].iloc[-1])
+    out = {
+        "v40_breakdown_eligible": False,
+        "v45_would_supersede": False,
+        "v40_breakdown_blocked_by_v58": False,
+        "below_ll": False,
+    }
+    if rs is None or not rs.locked or rs.locked_bias != "bearish":
+        return out
+    _ll = float(rs.macro_range_low)
+    out["below_ll"] = close <= _ll
+    if not out["below_ll"]:
+        return out
+    out["v40_breakdown_eligible"] = True
+    _last = chochs[-1] if chochs else None
+    if _last is None:
+        return out
+    old_v45 = (
+        _last.direction == "bullish"
+        and _last.index >= rs.macro_range_low_bar
+    )
+    new_v45 = (
+        _last.direction == "bullish"
+        and close > _ll
+        and detector._bar_body_close_above(df, _last.index, _ll)
+    )
+    out["v45_would_supersede"] = old_v45
+    out["v40_breakdown_blocked_by_v58"] = old_v45 and not new_v45
+    return out
+
+
 def audit_symbol(
     detector: SMCDetector, symbol: str, d1_bars: int, debug: bool, use_cache: bool,
 ) -> dict:
@@ -174,9 +211,13 @@ def audit_symbol(
         "leg_still_valid": leg_still_valid,
         "leg_break_price": leg_break_price,
         "close": close,
-        "macro_trend_swings": _macro_trend_swings(detector, df),
+        "macro_trend_swings": detector.macro_trend_from_swings(df),
+        "structural_fallback_bias": detector.resolve_structural_bias_fallback(
+            df, chochs, bos_list, rs,
+        ),
         "bearish_choch_post_leg": len(bearish_after_leg),
         "v434_would_trigger": v434_would_trigger,
+        **(_v45_v40_diagnostics(detector, df, chochs, rs)),
         "choch_count": len(chochs),
         "bos_count": len(bos_list),
         "json_snapshot": json_row,
@@ -184,7 +225,7 @@ def audit_symbol(
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Audit structural classification V57")
+    parser = argparse.ArgumentParser(description="Audit structural classification V58")
     parser.add_argument("--symbol", nargs="+", default=["BTCUSD", "EURUSD"])
     parser.add_argument("--d1-bars", type=int, default=300)
     parser.add_argument("--cache", action="store_true", help="Use local historical_cache CSV")
@@ -193,7 +234,7 @@ def main():
 
     detector = SMCDetector(swing_lookback=5, atr_multiplier=0.5)
     print("=" * 70)
-    print("  V57 STRUCTURAL CLASSIFICATION AUDIT")
+    print("  V58 STRUCTURAL CLASSIFICATION AUDIT")
     print("=" * 70)
 
     for sym in args.symbol:
@@ -210,7 +251,10 @@ def main():
         print(f"  leg CHoCH @ bar {r['leg_choch_bar']} | valid={r['leg_still_valid']} "
               f"break={r['leg_break_price']} close={r['close']:.5f}")
         print(f"  macro_swings: {r['macro_trend_swings']} | bearish post-leg: {r['bearish_choch_post_leg']}")
+        print(f"  structural_fallback: {r['structural_fallback_bias']}")
         print(f"  v434_would_trigger: {r['v434_would_trigger']}")
+        print(f"  v40_breakdown: eligible={r['v40_breakdown_eligible']} "
+              f"v58_blocked={r['v40_breakdown_blocked_by_v58']} below_ll={r['below_ll']}")
         print(f"  CHoCH={r['choch_count']} BOS={r['bos_count']}")
         if r["json_snapshot"]:
             print(f"  JSON: {json.dumps(r['json_snapshot'], default=str)}")

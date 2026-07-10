@@ -670,6 +670,21 @@ class DailyScanner:
                     # save_monitoring_setups() face WIPE&OVERWRITE la final cu tot.
                     try:
                         _bias_dir = self.smc_detector.determine_daily_trend(df_daily, symbol=symbol)
+                        if _bias_dir not in ('bullish', 'bearish'):
+                            _bias_dir = self.smc_detector.macro_trend_from_swings(df_daily)
+                        if _bias_dir not in ('bullish', 'bearish'):
+                            _sh = self.smc_detector.detect_swing_highs(df_daily)
+                            _sl = self.smc_detector.detect_swing_lows(df_daily)
+                            _ch, _bo = self.smc_detector.detect_choch_and_bos(df_daily)
+                            _rs = self.smc_detector.compute_structural_range(
+                                df_daily, _sh, _sl, symbol=symbol,
+                            )
+                            _ch, _bo, _rs = self.smc_detector.filter_internal_range_signals(
+                                symbol, df_daily, _ch, _bo, _rs,
+                            )
+                            _bias_dir = self.smc_detector.resolve_structural_bias_fallback(
+                                df_daily, _ch, _bo, _rs,
+                            )
                         if _bias_dir in ('bullish', 'bearish'):
                             _w1 = w1_bias_map.get(symbol, 'NEUTRAL')
                             _bias_trade_dir = 'buy' if _bias_dir == 'bullish' else 'sell'
