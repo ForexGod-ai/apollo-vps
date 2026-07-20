@@ -2100,19 +2100,91 @@ class SMCDetector:
             return close < leg_choch.break_price
         return close > leg_choch.break_price
 
+    @staticmethod
+    def _dedupe_chochs_by_bar(chochs: List[CHoCH]) -> List[CHoCH]:
+        """Un singur CHoCH per bar — evită bullish+bearish pe același index."""
+        by_bar: dict = {}
+        for c in chochs:
+            prev = by_bar.get(c.index)
+            if prev is None:
+                by_bar[c.index] = c
+                continue
+            # Păstrează flip-ul cu previous_trend explicit (CHoCH real vs bootstrap)
+            if c.previous_trend and c.previous_trend != c.direction:
+                by_bar[c.index] = c
+        return sorted(by_bar.values(), key=lambda x: x.index)
+
+    @staticmethod
+    def _true_choch_flips(chochs: List[CHoCH]) -> List[CHoCH]:
+        return [
+            c for c in chochs
+            if c.previous_trend and c.previous_trend != c.direction
+        ]
+
+    def _demote_post_leg_choch_to_bos(
+        self,
+        leg_choch: CHoCH,
+        chochs: List[CHoCH],
+        bos_list: List,
+    ) -> Tuple[List[CHoCH], List]:
+        """CHoCH o dată per leg — orice break same-direction după leg = BOS."""
+        if leg_choch is None:
+            return chochs, bos_list
+        kept: List[CHoCH] = []
+        extra_bos: List = []
+        for c in chochs:
+            if c.index > leg_choch.index and c.direction == leg_choch.direction:
+                extra_bos.append(BOS(
+                    index=c.index,
+                    direction=c.direction,
+                    break_price=c.break_price,
+                    candle_time=c.candle_time,
+                    swing_broken=getattr(c, 'swing_broken', None),
+                ))
+            else:
+                kept.append(c)
+        merged = list(bos_list) + extra_bos
+        merged.sort(key=lambda x: x.index)
+        return kept, merged
+
     def _find_leg_choch(
         self,
         df: pd.DataFrame,
         chochs: List[CHoCH],
         bos_list: List,
     ) -> Optional[CHoCH]:
-        """Faza A: leg = ultimul CHoCH major încă valid structural (fix sticky leg)."""
+        """
+        Leg = CHoCH-ul care a pornit direcția curentă (flip real), încă valid.
+        Nu ultimul micro-CHoCH — primul flip same-dir după ultimul opposite,
+        atâta timp cât close nu a invalidat leg-ul.
+        """
         if not chochs:
             return None
-        for c in reversed(chochs):
-            if self._leg_choch_still_valid(df, c, bos_list):
-                return c
-        return chochs[-1]
+        chochs = self._dedupe_chochs_by_bar(chochs)
+        flips = self._true_choch_flips(chochs)
+        if not flips:
+            for c in reversed(chochs):
+                if self._leg_choch_still_valid(df, c, bos_list):
+                    return c
+            return chochs[-1]
+
+        active_dir = None
+        for f in reversed(flips):
+            if self._leg_choch_still_valid(df, f, bos_list):
+                active_dir = f.direction
+                break
+        if not active_dir:
+            return flips[-1]
+
+        # Cel mai recent flip în active_dir care încă e leg valid (pullback CHoCH ≠ leg nou)
+        for f in reversed(flips):
+            if f.direction != active_dir:
+                continue
+            if not self._leg_choch_still_valid(df, f, bos_list):
+                continue
+            return f
+
+        return flips[-1]
 
     def _expansion_bos_confirms_new_range(
         self,
@@ -2325,12 +2397,14 @@ class SMCDetector:
         range_state: Optional[StructuralRangeState] = None,
     ) -> Tuple[Optional[object], str, str, Optional[CHoCH]]:
         """
-        Faza A — Leg authority pur pe pivoți majori + V42.6 (≥1 BOS post-leg = CONTINUITY).
+        SMC leg authority — CHoCH o dată per leg, restul BOS (V42.6).
 
-        Returns: (latest_signal, strategy_type, current_trend, leg_choch)
+        REVERSAL  = leg CHoCH fără BOS same-direction după leg.
+        CONTINUATION = ≥1 BOS (inclusiv CHoCH post-leg re-etichetat BOS) după leg.
         """
-        _ = range_state  # V40.1 range hint kept at filter_internal_range_signals layer
+        chochs = self._dedupe_chochs_by_bar(chochs)
         leg_choch = self._find_leg_choch(df, chochs, bos_list)
+        chochs, bos_list = self._demote_post_leg_choch_to_bos(leg_choch, chochs, bos_list)
 
         if leg_choch is None:
             if not bos_list:
@@ -2351,6 +2425,28 @@ class SMCDetector:
                     f"@bar{leg_choch.index}, BOS @bar{latest_signal.index}"
                 )
             return latest_signal, 'continuation', leg_choch.direction, leg_choch
+
+        # Expansiune peste range lock — leg CHoCH valid, structură în CONTINUATION (fără BOS încă)
+        if (
+            range_state is not None
+            and range_state.locked
+            and leg_choch.direction == range_state.locked_bias
+        ):
+            close = float(df['close'].iloc[-1])
+            if (
+                leg_choch.direction == 'bullish'
+                and close > float(range_state.macro_range_high)
+            ) or (
+                leg_choch.direction == 'bearish'
+                and close < float(range_state.macro_range_low)
+            ):
+                if debug:
+                    print(
+                        f"   📐 [V40 EXPANSION] continuation — leg CHoCH "
+                        f"{leg_choch.direction.upper()} @bar{leg_choch.index}, "
+                        f"close beyond locked range"
+                    )
+                return leg_choch, 'continuation', leg_choch.direction, leg_choch
 
         if debug:
             print(
