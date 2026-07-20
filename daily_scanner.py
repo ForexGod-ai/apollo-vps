@@ -18,7 +18,7 @@ import json
 import os
 import time
 import argparse
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Tuple
 from dotenv import load_dotenv
 from loguru import logger
 
@@ -1041,8 +1041,179 @@ def _v43_fields_from_setup(setup: TradeSetup) -> dict:
         "adr_hl": getattr(setup, 'adr_hl', None),
         "poi_v43_source": getattr(setup, 'poi_v43_source', None),
         "structural_breach": bool(getattr(setup, 'structural_breach', False)),
-        "preserve_stored_poi": bool(getattr(setup, 'preserve_stored_poi', False)),
     }
+
+
+def _identity_direction(entry: dict) -> str:
+    """Normalize JSON direction to bullish/bearish."""
+    raw = (
+        entry.get('d1_bias_direction')
+        or entry.get('daily_bias')
+        or entry.get('direction')
+        or ''
+    )
+    d = str(raw).lower()
+    if d in ('buy', 'long', 'bullish'):
+        return 'bullish'
+    if d in ('sell', 'short', 'bearish'):
+        return 'bearish'
+    return ''
+
+
+def _d1_identity_snapshot(
+    detector: SMCDetector,
+    df_daily: pd.DataFrame,
+    symbol: str,
+) -> dict:
+    """Faza B — leg CHoCH + podea/plafon structural pentru setup_identity_lock."""
+    if df_daily is None or df_daily.empty:
+        return {}
+    sym = symbol or '?'
+    swing_h = detector.detect_swing_highs(df_daily)
+    swing_l = detector.detect_swing_lows(df_daily)
+    chochs, bos_list = detector.detect_choch_and_bos(df_daily)
+    range_state = detector.compute_structural_range(df_daily, swing_h, swing_l, symbol=sym)
+    chochs, bos_list, range_state = detector.filter_internal_range_signals(
+        sym, df_daily, chochs, bos_list, range_state,
+    )
+    _latest, _strategy, current_trend, leg_choch = detector._resolve_d1_leg(
+        df_daily, chochs, bos_list, debug=False, range_state=range_state,
+    )
+    if leg_choch is None:
+        return {}
+
+    leg_price = float(leg_choch.break_price)
+    floor = ceiling = None
+    if leg_choch.direction == 'bullish':
+        floor = leg_price
+        if range_state is not None and range_state.macro_range_high:
+            ceiling = float(range_state.macro_range_high)
+        elif swing_h:
+            ceiling = float(max(s.price for s in swing_h[-5:]))
+    else:
+        ceiling = leg_price
+        if range_state is not None and range_state.macro_range_low:
+            floor = float(range_state.macro_range_low)
+        elif swing_l:
+            floor = float(min(s.price for s in swing_l[-5:]))
+
+    return {
+        'leg_choch_bar': int(leg_choch.index),
+        'leg_choch_price': leg_price,
+        'leg_choch_direction': leg_choch.direction,
+        'major_structure_floor': floor,
+        'major_structure_ceiling': ceiling,
+        'setup_identity_locked': True,
+    }
+
+
+def _structure_identity_breached(df_daily: Optional[pd.DataFrame], locked: dict) -> bool:
+    """True when daily close breaks the locked leg invalidation bound."""
+    if df_daily is None or df_daily.empty or not locked.get('setup_identity_locked'):
+        return False
+    close = float(df_daily['close'].iloc[-1])
+    trend = _identity_direction(locked)
+    floor = locked.get('major_structure_floor')
+    ceiling = locked.get('major_structure_ceiling')
+    leg_price = locked.get('leg_choch_price')
+    if trend == 'bullish':
+        inv = floor if floor is not None else leg_price
+        return inv is not None and close <= float(inv)
+    if trend == 'bearish':
+        inv = ceiling if ceiling is not None else leg_price
+        return inv is not None and close >= float(inv)
+    return False
+
+
+def _live_contradicts_locked_identity(old: dict, new_macro: dict) -> bool:
+    old_dir = _identity_direction(old)
+    new_dir = _identity_direction(new_macro)
+    if old_dir and new_dir and old_dir != new_dir:
+        return True
+    return _norm_strategy_type(old.get('strategy_type')) != _norm_strategy_type(
+        new_macro.get('strategy_type')
+    )
+
+
+_IDENTITY_MACRO_KEYS = (
+    'direction', 'daily_bias', 'd1_bias_direction', 'setup_type',
+    'strategy_type', 'd1_signal_type', 'd1_signal_bar', 'd1_signal_price',
+)
+_IDENTITY_BOUND_KEYS = (
+    'leg_choch_bar', 'leg_choch_price', 'leg_choch_direction',
+    'major_structure_floor', 'major_structure_ceiling',
+)
+_IDENTITY_STALE_LEVEL_KEYS = (
+    'poi_top', 'poi_bottom', 'fvg_top', 'fvg_bottom',
+    'entry_price', 'stop_loss', 'take_profit', 'risk_reward',
+    'adr_lh', 'adr_hl', 'adr_ll', 'poi_v43_source', 'daily_target_price',
+)
+
+
+def _apply_setup_identity_lock(
+    old: dict,
+    new_macro: dict,
+    df_daily: Optional[pd.DataFrame],
+    detector: SMCDetector,
+    symbol: Optional[str] = None,
+) -> dict:
+    """Faza B — blocare identitate setup până la spargerea podelei/plafonului major."""
+    sym = symbol or new_macro.get('symbol') or old.get('symbol') or '?'
+    out = dict(new_macro)
+
+    if old.get('entry1_filled') or old.get('status') in ('TRADE_OPEN', 'PARTIAL_OPEN'):
+        for key in _IDENTITY_BOUND_KEYS + _IDENTITY_MACRO_KEYS:
+            if key in old and old.get(key) is not None:
+                out[key] = old[key]
+        out['setup_identity_locked'] = bool(old.get('setup_identity_locked'))
+        return out
+
+    def _snapshot() -> dict:
+        if df_daily is None:
+            return {}
+        try:
+            return _d1_identity_snapshot(detector, df_daily, sym)
+        except Exception:
+            return {}
+
+    if not old.get('setup_identity_locked'):
+        out.update(_snapshot())
+        if out.get('setup_identity_locked'):
+            print(
+                f"  🔒 [Faza B] {sym}: identity locked "
+                f"floor={out.get('major_structure_floor')} "
+                f"ceiling={out.get('major_structure_ceiling')} "
+                f"leg@bar{out.get('leg_choch_bar')}"
+            )
+        return out
+
+    breached = _structure_identity_breached(df_daily, old)
+    contradicts = _live_contradicts_locked_identity(old, new_macro)
+
+    if breached:
+        out.update(_snapshot())
+        if contradicts:
+            print(f"  🔓 [Faza B] {sym}: structure breached — new identity from live D1")
+        return out
+
+    if contradicts:
+        for key in _IDENTITY_MACRO_KEYS + _IDENTITY_BOUND_KEYS:
+            if key in old and old.get(key) is not None:
+                out[key] = old[key]
+        for key in _IDENTITY_STALE_LEVEL_KEYS:
+            if key in old and old.get(key) is not None:
+                out[key] = old[key]
+        out['setup_identity_locked'] = True
+        print(
+            f"  🔒 [Faza B] {sym}: live D1 flip blocked — "
+            f"identity {old.get('direction', '').upper()}/"
+            f"{_norm_strategy_type(old.get('strategy_type'))} held (pullback noise)"
+        )
+        return out
+
+    out.update(_snapshot())
+    out['setup_identity_locked'] = True
+    return out
 
 
 def _adr_level_shift(
@@ -1116,7 +1287,7 @@ def _bos_new_range_detected(old: dict, new_macro: dict, threshold_pct: float = 0
 
 
 def _apply_v43_poi_persistence(old: dict, new_macro: dict) -> dict:
-    """V43.1 E2-T3: preserve stored POI or rehydrate on ADR shift."""
+    """Faza B — BOS new range + ADR shift rehydrate only (no POI preserve)."""
     out = dict(new_macro)
     sym = out.get('symbol', '?')
 
@@ -1134,15 +1305,6 @@ def _apply_v43_poi_persistence(old: dict, new_macro: dict) -> dict:
         )
         return out
 
-    # V44.1.1: preserve only when LIVE scan requests it — old JSON sticky flag alone must not revert POI
-    if new_macro.get('preserve_stored_poi'):
-        for key in ('poi_top', 'poi_bottom', 'fvg_top', 'fvg_bottom'):
-            if old.get(key) is not None:
-                out[key] = old[key]
-        out['poi_v43_source'] = 'V43 preserved stored POI'
-        out['preserve_stored_poi'] = True
-        print(f"  [V43.1 LIFECYCLE] {sym}: POI preserved (price inside ADR, anti-noise)")
-        return out
     if _adr_container_shift_detected(old, new_macro):
         out['poi_v43_source'] = new_macro.get('poi_v43_source') or 'V43 ADR shift rehydrate'
         print(
@@ -1784,9 +1946,12 @@ def save_monitoring_setups(
                 monitoring_setup = _trade_setup_to_monitoring_dict(setup, setup_time_str)
                 _live_price = symbol_price_map.get(setup.symbol) if symbol_price_map else None
                 monitoring_setup = _apply_v427_poi_status_gate(monitoring_setup, _live_price)
+                df_d1 = symbol_df_daily_map.get(setup.symbol)
+                monitoring_setup = _apply_setup_identity_lock(
+                    _old, monitoring_setup, df_d1, detector, setup.symbol,
+                )
                 merged = _apply_v42_macro_override(_old, monitoring_setup)
                 merged = _apply_v43_poi_persistence(_old, merged)
-                df_d1 = symbol_df_daily_map.get(setup.symbol)
                 if df_d1 is not None:
                     merged = _try_bos_new_range_evolution(detector, df_d1, merged, setup.symbol)
                     merged = _try_post_tp_evolution(detector, df_d1, merged, setup.symbol)
@@ -1811,6 +1976,9 @@ def save_monitoring_setups(
             _live_price = symbol_price_map.get(setup.symbol) if symbol_price_map else None
             monitoring_setup = _apply_v427_poi_status_gate(monitoring_setup, _live_price)
             df_d1 = symbol_df_daily_map.get(setup.symbol)
+            monitoring_setup = _apply_setup_identity_lock(
+                {}, monitoring_setup, df_d1, detector, setup.symbol,
+            )
             if df_d1 is not None:
                 monitoring_setup = _try_bos_new_range_evolution(detector, df_d1, monitoring_setup, setup.symbol)
                 monitoring_setup = _try_post_tp_evolution(detector, df_d1, monitoring_setup, setup.symbol)
@@ -1842,9 +2010,10 @@ def save_monitoring_setups(
                         )
                         continue
                     merged_fb = _apply_v42_macro_override(_old, _new_fb)
+                    _df_fb = symbol_df_daily_map.get(sym)
+                    merged_fb = _apply_setup_identity_lock(_old, merged_fb, _df_fb, detector, sym)
                     merged_fb = _apply_v43_poi_persistence(_old, merged_fb)
                     _live_fb = symbol_price_map.get(sym)
-                    _df_fb = symbol_df_daily_map.get(sym)
                     _fb_h, _fb_l = _d1_wick_from_df(_df_fb)
                     merged_fb = _apply_v431_lifecycle_gates(merged_fb, _live_fb, _fb_h, _fb_l)
                     df_d1 = _df_fb
@@ -1871,8 +2040,8 @@ def save_monitoring_setups(
                 continue
             _live_fb = symbol_price_map.get(sym)
             _df_fb = symbol_df_daily_map.get(sym)
-            _fb_h, _fb_l = _d1_wick_from_df(_df_fb)
-            entry = _apply_v431_lifecycle_gates(entry, _live_fb, _fb_h, _fb_l)
+            entry = _apply_v431_lifecycle_gates(entry, _live_fb, *_d1_wick_from_df(_df_fb))
+            entry = _apply_setup_identity_lock({}, entry, _df_fb, detector, sym)
             if entry.get('status') in _DEAD_STATUSES:
                 continue
             monitoring_setups.append(entry)

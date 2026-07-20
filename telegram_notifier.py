@@ -175,6 +175,16 @@ def _trade_levels_valid(entry, sl) -> bool:
         return False
 
 
+def _choch_monitoring_levels_line() -> str:
+    """P0: faza MONITORING — fără Entry/SL/TP stale din JSON."""
+    sep = UNIVERSAL_SEPARATOR
+    return (
+        f"{sep}\n"
+        f"📐 <i>Niveluri Entry/SL/TP calculate LIVE la EXECUTE_NOW</i>\n"
+        f"<i>(valorile din scan D1 nu se afișează — evită nivele fantomă)</i>\n"
+    )
+
+
 def _choch_trade_block(symbol: str, entry, sl, tp, rr) -> str:
     """Bloc Entry/SL/TP pentru alerte CHoCH — omit dacă prețuri lipsă (MONITORING)."""
     if not _trade_levels_valid(entry, sl):
@@ -414,10 +424,10 @@ class TelegramNotifier:
         sig = (signal_type or 'CHoCH').upper()
         try:
             direction = setup_data.get('direction', 'buy').upper()
-            entry = setup_data.get('entry_price', 0)
-            sl = setup_data.get('stop_loss', 0)
-            tp = setup_data.get('take_profit', 0)
-            rr = setup_data.get('risk_reward', 0)
+            if direction in ('LONG',):
+                direction = 'BUY'
+            elif direction in ('SHORT',):
+                direction = 'SELL'
             strategy = str(setup_data.get('strategy_type', 'reversal')).upper()
             d1_sig = setup_data.get('d1_signal_type', '')
             w1_bias = setup_data.get('w1_bias', 'NEUTRAL')
@@ -428,12 +438,13 @@ class TelegramNotifier:
                 else "⚠️ COUNTER" if w1_bias != 'NEUTRAL' else "⏳ NEUTRAL"
             )
             sep = UNIVERSAL_SEPARATOR
-            trade_block = _choch_trade_block(symbol, entry, sl, tp, rr)
+            trade_block = _choch_monitoring_levels_line()
 
             break_px = (
                 getattr(tf_data, 'choch_price', None)
                 or setup_data.get('radar_4h_choch_price')
-                or entry
+                or setup_data.get('entry_price')
+                or 0
             )
             bars_ago = getattr(tf_data, 'choch_bars_ago', None) or setup_data.get('radar_4h_choch_bars_ago')
             bars_str = f"-{bars_ago}b" if bars_ago is not None else "?b"
@@ -483,17 +494,17 @@ class TelegramNotifier:
                     )
                     setup_ns = SimpleNamespace(
                         symbol=symbol,
-                        entry_price=entry,
-                        stop_loss=sl,
-                        take_profit=tp,
-                        risk_reward=rr,
+                        entry_price=break_px,
+                        stop_loss=None,
+                        take_profit=None,
+                        risk_reward=0,
                         status='MONITORING',
                         strategy_type=strategy.lower(),
                         daily_choch=SimpleNamespace(
                             direction='bullish' if direction == 'BUY' else 'bearish'
                         ),
                         h4_choch=h4_choch_ns,
-                        fvg=SimpleNamespace(bottom=sl, top=tp),
+                        fvg=None,
                         choch_break_price=break_px,
                     )
                     chart_4h = self.chart_generator.create_4h_chart(
@@ -550,17 +561,18 @@ class TelegramNotifier:
                 return False
 
             direction = setup_data.get('direction', 'buy').upper()
-            entry = setup_data.get('entry_price', 0)
-            sl = setup_data.get('stop_loss', 0)
-            tp = setup_data.get('take_profit', 0)
-            rr = setup_data.get('risk_reward', 0)
+            if direction in ('LONG',):
+                direction = 'BUY'
+            elif direction in ('SHORT',):
+                direction = 'SELL'
             strategy = str(setup_data.get('strategy_type', 'reversal')).upper()
             sig = (getattr(tf_data, 'signal_type', None) or 'CHoCH').upper()
             choch_1h_price = (
                 setup_data.get('choch_1h_price')
                 or setup_data.get('radar_1h_choch_price')
                 or getattr(tf_data, 'choch_price', None)
-                or entry
+                or setup_data.get('entry_price')
+                or 0
             )
             bars_ago = getattr(tf_data, 'choch_bars_ago', None)
             bars_str = f"-{bars_ago}b" if bars_ago is not None else ""
@@ -576,7 +588,7 @@ class TelegramNotifier:
             )
             dir_emoji = "🟢" if direction == 'BUY' else "🔴"
             sep = UNIVERSAL_SEPARATOR
-            trade_block = _choch_trade_block(symbol, entry, sl, tp, rr)
+            trade_block = _choch_monitoring_levels_line()
 
             retrace_hint = ""
             if retrace_pct is not None:
@@ -619,10 +631,10 @@ class TelegramNotifier:
                 setup_ns = SimpleNamespace(
                     symbol=symbol,
                     direction=direction.lower(),
-                    entry_price=entry,
-                    stop_loss=sl,
-                    take_profit=tp,
-                    risk_reward=rr,
+                    entry_price=choch_1h_price,
+                    stop_loss=None,
+                    take_profit=None,
+                    risk_reward=0,
                     status='MONITORING',
                     strategy_type=strategy.lower(),
                     daily_choch=SimpleNamespace(

@@ -1951,11 +1951,10 @@ class SetupExecutorMonitor:
         reason: str,
         setup: dict = None,
     ) -> None:
-        """V41.1: delegare dedup la telegram_notifier (file lock — anti 15 procese paralele)."""
-        try:
-            self.telegram.send_execute_now_blocked_alert(symbol, direction, reason)
-        except Exception as exc:
-            logger.warning(f"[V40.7] blocked alert failed: {exc}")
+        """P0: log only — zero Telegram EXECUTE NOW BLOCAT (hygiene producție)."""
+        logger.warning(
+            f"[P0 EXECUTE BLOCKED] {symbol} {direction}: {reason[:200]}"
+        )
 
     def _calc_structural_tp_d1(
         self,

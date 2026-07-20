@@ -641,6 +641,7 @@ def _track_mitigation_touch(
         setup_data.pop('_h4_fvg_occupied', None)
         setup_data['radar_panda_active'] = False
         setup_data.pop('poi_touch_latched', None)
+        setup_data.pop('poi_cycle_anchor', None)
         return
 
     if not was_occupied and validated:
@@ -654,18 +655,32 @@ def _track_mitigation_touch(
         setup_data['poi_radar_armed_at'] = touch_anchor
         setup_data['poi_touch_latched'] = True
         setup_data.pop('h4_fvg_first_touch_time', None)
-        setup_data['h4_choch_alert_sent'] = False
-        setup_data['h4_bos_alert_sent'] = False
-        setup_data['h1_choch_alert_sent'] = False
-        setup_data['h4_structure_locked'] = False
-        setup_data.pop('h4_structure_locked_at', None)
-        setup_data.pop('choch_1h_price', None)
+        # P0: dedup alerte 4H — reset doar la ciclu POI nou (fără flicker re-intrare)
+        _prev_cycle = setup_data.get('poi_cycle_anchor')
+        if touch_anchor != _prev_cycle:
+            setup_data['poi_cycle_anchor'] = touch_anchor
+            setup_data['h4_choch_alert_sent'] = False
+            setup_data['h4_bos_alert_sent'] = False
+            setup_data['h1_choch_alert_sent'] = False
+            setup_data.pop('h4_alert_break_key', None)
+            setup_data['h4_structure_locked'] = False
+            setup_data.pop('h4_structure_locked_at', None)
+            setup_data.pop('choch_1h_price', None)
+            _dedup_reset = True
+        else:
+            _dedup_reset = False
         # V50: nu resetăm radar_*_choch_detected — evită rising-edge zombi pe CHoCH vechi
         setup_data['radar_panda_active'] = True
-        print(
-            f"  [V50 POI ARM] {setup_data.get('symbol', '?')}: radar PANDA ON @ {touch_anchor} — "
-            f"dedup alerte resetat, asteptam break LIVE ≤3b post-touch"
-        )
+        if _dedup_reset:
+            print(
+                f"  [V50 POI ARM] {setup_data.get('symbol', '?')}: radar PANDA ON @ {touch_anchor} — "
+                f"dedup alerte resetat, asteptam break LIVE ≤3b post-touch"
+            )
+        else:
+            print(
+                f"  [P0 POI FLICKER] {setup_data.get('symbol', '?')}: re-intrare POI același ciclu "
+                f"@ {touch_anchor} — dedup alerte păstrat"
+            )
         sys.stdout.flush()
     elif validated and not setup_data.get('poi_first_touch_time'):
         touch_anchor = _resolve_poi_touch_anchor(
@@ -2137,7 +2152,6 @@ class MultiTFRadar:
             print(f"  ⏳ [V43.2 POI BLOCK EXECUTE] {symbol}: {_pd_guard_reason}")
             sys.stdout.flush()
         elif not _pd_guard_passed and _pd_guard_reason:
-            _had_execute_trigger = execution_ready
             if execution_ready:
                 execution_ready = False
                 priority_timeframe = None
@@ -2146,16 +2160,6 @@ class MultiTFRadar:
             print(f"  ⏳ [V36.5 P/D BLOCK EXECUTE] {symbol}: {_pd_guard_reason} — "
                   f"EXECUTE blocat")
             sys.stdout.flush()
-            if _had_execute_trigger and (tf_4h.choch_detected or tf_1h.choch_detected):
-                try:
-                    from telegram_notifier import TelegramNotifier
-                    TelegramNotifier().send_execute_now_blocked_alert(
-                        symbol,
-                        setup_data.get('direction', '?'),
-                        f"[Radar P/D] {_pd_guard_reason}",
-                    )
-                except Exception as _pd_tg_err:
-                    logger.warning(f"[V52] P/D block Telegram failed {symbol}: {_pd_tg_err}")
 
         _poi_entry_gate = daily_zone_validated or bool(setup_data.get('poi_touch_latched'))
         if execution_ready and not _poi_entry_gate:
@@ -2587,6 +2591,9 @@ class MultiTFRadar:
         if sig == 'BOS' and ok_4h and not setup.get('h4_bos_alert_sent'):
             setup['h4_bos_alert_sent'] = True
             setup['radar_4h_signal_type'] = 'BOS'
+            setup['h4_alert_break_key'] = (
+                f"BOS|{tf_4h.choch_time}|{tf_4h.choch_price}"
+            )
             self._flush_choch_alerts_to_json(setup)
             try:
                 from telegram_notifier import TelegramNotifier
@@ -2599,6 +2606,9 @@ class MultiTFRadar:
         elif sig == 'CHOCH' and ok_4h and not setup.get('h4_choch_alert_sent'):
             setup['h4_choch_alert_sent'] = True
             setup['radar_4h_signal_type'] = 'CHoCH'
+            setup['h4_alert_break_key'] = (
+                f"CHOCH|{tf_4h.choch_time}|{tf_4h.choch_price}"
+            )
             self._flush_choch_alerts_to_json(setup)
             try:
                 from telegram_notifier import TelegramNotifier
@@ -2991,7 +3001,16 @@ class MultiTFRadar:
             self._v423_force_disarm_execute_now(
                 setup, result, f"LTF misalignment ({_detail} vs D1 {_v423_macro})",
             )
-        elif result.execution_ready:
+        elif (
+            not result.pd_guard_passed
+            and setup.get('status') != 'TRADE_OPEN'
+            and (setup.get('EXECUTE_NOW') or setup.get('radar_execution_ready'))
+        ):
+            self._v423_force_disarm_execute_now(
+                setup, result,
+                result.pd_guard_reason or 'P/D guard failed',
+            )
+        elif result.execution_ready and result.pd_guard_passed:
             # V31.0 REVERSAL vs CONTINUATION TRIGGER GUARD
             # REVERSAL: accepta NUMAI CHoCH ca trigger (BOS = continuarea trendului anterior — invalid pt reversal)
             # CONTINUATION: accepta si BOS (trend in desfasurare, BOS = confirmare continuare)
@@ -3031,36 +3050,47 @@ class MultiTFRadar:
         elif setup.get('entry1_filled') and setup.get('status') != 'PARTIAL_OPEN':
             self._clear_execute_now_signal(setup, 'entry1_filled')
         elif setup.get('EXECUTE_NOW') and setup.get('status') == 'PARTIAL_OPEN':
-            still_in_fvg = result.tf_1h.in_fvg or result.tf_4h.in_fvg
-            if still_in_fvg:
-                setup['radar_execution_ready'] = True
-                _ltf = setup.get('execute_now_trigger_tf') or '4H'
-                setup['radar_verdict'] = (
-                    f"🔥 EXECUTE NOW ({_ltf} LAYER-2 — asteptam executor scale-in)"
+            if not result.pd_guard_passed:
+                self._v423_force_disarm_execute_now(
+                    setup, result,
+                    result.pd_guard_reason or 'P/D guard partial disarm',
                 )
+            else:
+                still_in_fvg = result.tf_1h.in_fvg or result.tf_4h.in_fvg
+                if still_in_fvg:
+                    setup['radar_execution_ready'] = True
+                    _ltf = setup.get('execute_now_trigger_tf') or '4H'
+                    setup['radar_verdict'] = (
+                        f"🔥 EXECUTE NOW ({_ltf} LAYER-2 — asteptam executor scale-in)"
+                    )
         elif setup.get('EXECUTE_NOW') and not setup.get('entry1_filled'):
             # V37.5: Reset DOAR cand pretul paraseste FVG — NU cand CHoCH trece de 3 bare.
-            # Bug V31: `not execution_ready` stergea semnalul desi pretul era inca in FVG.
-            still_in_fvg = result.tf_1h.in_fvg or result.tf_4h.in_fvg
-            if not still_in_fvg:
-                self._clear_execute_now_only(setup, 'pretul a iesit din FVG')
-                self._flush_execute_now_to_json(setup)
+            if not result.pd_guard_passed:
+                self._v423_force_disarm_execute_now(
+                    setup, result,
+                    result.pd_guard_reason or 'P/D guard latch disarm',
+                )
             else:
-                setup['radar_execution_ready'] = True
-                _ltf = setup.get('execute_now_trigger_tf') or (
-                    '1H' if result.tf_1h.in_fvg else '4H'
-                )
-                setup['radar_verdict'] = (
-                    f"🔥 EXECUTE NOW ({_ltf} LATCH — CHoCH confirmat, asteptam executor)"
-                )
-                logger.debug(
-                    f"[V37.5 LATCH] {result.symbol}: EXECUTE_NOW pastrat — "
-                    f"in FVG, CHoCH confirmat (trigger >3b OK)"
-                )
+                still_in_fvg = result.tf_1h.in_fvg or result.tf_4h.in_fvg
+                if not still_in_fvg:
+                    self._clear_execute_now_only(setup, 'pretul a iesit din FVG')
+                    self._flush_execute_now_to_json(setup)
+                else:
+                    setup['radar_execution_ready'] = True
+                    _ltf = setup.get('execute_now_trigger_tf') or (
+                        '1H' if result.tf_1h.in_fvg else '4H'
+                    )
+                    setup['radar_verdict'] = (
+                        f"🔥 EXECUTE NOW ({_ltf} LATCH — CHoCH confirmat, asteptam executor)"
+                    )
+                    logger.debug(
+                        f"[V37.5 LATCH] {result.symbol}: EXECUTE_NOW pastrat — "
+                        f"in FVG, CHoCH confirmat (trigger >3b OK)"
+                    )
         elif not setup.get('entry1_filled'):
             # V37.5: CHoCH confirmat + in FVG dar EXECUTE_NOW pierdut → re-arm pentru executor
             latch_tf = self._evaluate_confirmed_pullback_latch(setup, result)
-            if latch_tf:
+            if latch_tf and result.pd_guard_passed:
                 _ltf_data = result.tf_1h if latch_tf == '1H' else result.tf_4h
                 if not self._rr_shield_blocks_execute(setup, result, _ltf_data):
                     self._arm_execute_now(setup, result, latch_tf, source='latch')

@@ -1368,6 +1368,60 @@ class SMCDetector:
         self._swing_lows_cache[_cache_key] = swing_lows
         return swing_lows
 
+    def _body_close_below_after(
+        self, df: pd.DataFrame, after_index: int, level: float,
+    ) -> bool:
+        """True dacă vreun close după after_index sparge sub level (body-close)."""
+        for i in range(max(after_index + 1, 0), len(df)):
+            if float(df['close'].iloc[i]) < level:
+                return True
+        return False
+
+    def _body_close_above_after(
+        self, df: pd.DataFrame, after_index: int, level: float,
+    ) -> bool:
+        """True dacă vreun close după after_index sparge peste level (body-close)."""
+        for i in range(max(after_index + 1, 0), len(df)):
+            if float(df['close'].iloc[i]) > level:
+                return True
+        return False
+
+    def filter_major_swings(
+        self,
+        df: pd.DataFrame,
+        swing_highs: List[SwingPoint],
+        swing_lows: List[SwingPoint],
+    ) -> Tuple[List[SwingPoint], List[SwingPoint]]:
+        """
+        Faza A — Leg authority: pivot major confirmat cu impuls LL/HH (body-close).
+
+        Swing High major = impuls descendent cu close sub ultimul Swing Low anterior.
+        Swing Low major = impuls ascendent cu close peste ultimul Swing High anterior.
+        """
+        if not swing_highs or not swing_lows:
+            return [], []
+
+        major_highs: List[SwingPoint] = []
+        major_lows: List[SwingPoint] = []
+
+        for sh in swing_highs:
+            prior_lows = [sl for sl in swing_lows if sl.index < sh.index]
+            if not prior_lows:
+                continue
+            ref_level = self._swing_body_low(df, prior_lows[-1].index)
+            if self._body_close_below_after(df, sh.index, ref_level):
+                major_highs.append(sh)
+
+        for sl in swing_lows:
+            prior_highs = [sh for sh in swing_highs if sh.index < sl.index]
+            if not prior_highs:
+                continue
+            ref_level = self._swing_body_high(df, prior_highs[-1].index)
+            if self._body_close_above_after(df, sl.index, ref_level):
+                major_lows.append(sl)
+
+        return major_highs, major_lows
+
     def detect_choch_and_bos(self, df: pd.DataFrame) -> Tuple[List[CHoCH], List[BOS]]:
         """🎯 GLITCH IN MATRIX - CHoCH & BOS DETECTION V24.0 (ORGANIC HH/HL/LH/LL)
 
@@ -1388,6 +1442,7 @@ class SMCDetector:
 
         swing_highs = self.detect_swing_highs(df)
         swing_lows = self.detect_swing_lows(df)
+        swing_highs, swing_lows = self.filter_major_swings(df, swing_highs, swing_lows)
 
         if len(swing_highs) < 2 or len(swing_lows) < 2:
             return chochs, bos_list
@@ -1842,7 +1897,8 @@ class SMCDetector:
         stored_poi_bottom: Optional[float] = None,
         audit_out: Optional[dict] = None,
     ) -> POIResolution:
-        """V43.0 stateless POI resolver — preserve, detect, rescan, synthetic clip."""
+        """Faza A — POI organic only; no JSON preserve, no synthetic Equilibrium clip."""
+        _ = (current_price, stored_poi_top, stored_poi_bottom)
         meta: dict = {
             'adr': None,
             'preserve_stored_poi': False,
@@ -1862,56 +1918,6 @@ class SMCDetector:
                 'price_inside': adr.price_inside,
             }
 
-        # V44.1: expansion BOS anchor — never preserve stale POI from pre-range JSON
-        _force_rescan = (
-            isinstance(latest_signal, BOS)
-            and (strategy_type or '').lower() == 'continuation'
-        )
-
-        if (
-            adr is not None
-            and not _force_rescan
-            and self.should_preserve_stored_poi(
-            stored_poi_top,
-            stored_poi_bottom,
-            current_trend,
-            strategy_type,
-            adr,
-            current_price,
-        )
-        ):
-            top = float(stored_poi_top)
-            bottom = float(stored_poi_bottom)
-            preserved = FVG(
-                index=latest_signal.index if hasattr(latest_signal, 'index') else 0,
-                direction=current_trend,
-                top=top,
-                bottom=bottom,
-                middle=(top + bottom) / 2.0,
-                candle_time=getattr(latest_signal, 'candle_time', None),
-                is_filled=False,
-            )
-            preserved._v43_preserved = True
-            meta['preserve_stored_poi'] = True
-            meta['poi_source'] = 'V43 preserved stored POI'
-            print(
-                f"   🔒 [V43.0 ADR] {symbol}: preserve stored POI "
-                f"[{bottom:.5f} – {top:.5f}] — price inside ADR, no LH/LL sweep"
-            )
-            return POIResolution(
-                fvg=preserved,
-                adr=adr,
-                preserve_stored_poi=True,
-                poi_source='V43 preserved stored POI',
-            )
-
-        if _force_rescan and stored_poi_top is not None:
-            print(
-                f"   🔄 [V44.1 NEW RANGE] {symbol}: expansion BOS — force POI rescan "
-                f"(archiving stored [{float(stored_poi_bottom):.5f} – {float(stored_poi_top):.5f}])"
-            )
-            meta['poi_source'] = 'V44.1 BOS new range rescan'
-
         fvg_audit: dict = {}
         selected = self.detect_fvg(
             df,
@@ -1923,11 +1929,10 @@ class SMCDetector:
         if audit_out is not None:
             audit_out.update(fvg_audit)
 
-        if selected is None and (strategy_type or '').lower() == 'continuation':
-            selected = self._build_v246_synthetic_fvg(
-                df, latest_signal, current_trend, symbol=symbol, dealing_range=adr,
-            )
-            meta['poi_source'] = 'V43 synthetic ADR clip'
+        if selected is None:
+            meta['poi_source'] = 'no organic FVG'
+            if symbol:
+                print(f"   ⏸️ [Faza A] {symbol}: no organic FVG in P/D — WAITING_D1_PULLBACK")
 
         poi_zombie = bool(fvg_audit.get('v43', {}).get('poi_zombie'))
         rejected = fvg_audit.get('v43', {}).get('rejected')
@@ -2101,35 +2106,13 @@ class SMCDetector:
         chochs: List[CHoCH],
         bos_list: List,
     ) -> Optional[CHoCH]:
-        """V45: authoritative leg = last CHoCH unless opposite micro-CHoCH is pullback noise."""
+        """Faza A: leg = ultimul CHoCH major încă valid structural (fix sticky leg)."""
         if not chochs:
             return None
-        if len(chochs) == 1:
-            return chochs[0]
-
-        last = chochs[-1]
-
-        for i in range(len(chochs) - 2, -1, -1):
-            candidate = chochs[i]
-            if candidate.direction == last.direction:
-                continue
-            if last.index <= candidate.index:
-                continue
-            if not self._leg_choch_still_valid(df, candidate, bos_list):
-                return last
-            bos_on_candidate_after_last = [
-                b for b in bos_list
-                if b.index > last.index and b.direction == candidate.direction
-            ]
-            bos_on_last_dir = [
-                b for b in bos_list
-                if b.index > last.index and b.direction == last.direction
-            ]
-            if bos_on_candidate_after_last and not bos_on_last_dir:
-                return candidate
-            return last
-
-        return last
+        for c in reversed(chochs):
+            if self._leg_choch_still_valid(df, c, bos_list):
+                return c
+        return chochs[-1]
 
     def _expansion_bos_confirms_new_range(
         self,
@@ -2182,9 +2165,10 @@ class SMCDetector:
         return float(lh.price) > float(latest_bos.break_price)
 
     def macro_trend_from_swings(self, df: pd.DataFrame) -> str:
-        """V58: HH+HL vs LH+LL from last 3 swing highs/lows."""
+        """HH+HL vs LH+LL pe pivoți majori filtrați (Faza A)."""
         swing_highs = self.detect_swing_highs(df)
         swing_lows = self.detect_swing_lows(df)
+        swing_highs, swing_lows = self.filter_major_swings(df, swing_highs, swing_lows)
         if len(swing_highs) < 3 or len(swing_lows) < 3:
             return 'neutral'
         recent_highs = swing_highs[-3:]
@@ -2341,80 +2325,11 @@ class SMCDetector:
         range_state: Optional[StructuralRangeState] = None,
     ) -> Tuple[Optional[object], str, str, Optional[CHoCH]]:
         """
-        V42.5 Leg Authority — CHoCH once per leg, then BOS continuation.
+        Faza A — Leg authority pur pe pivoți majori + V42.6 (≥1 BOS post-leg = CONTINUITY).
 
         Returns: (latest_signal, strategy_type, current_trend, leg_choch)
         """
-        # V40 breakdown: close sub LL → LOCK BEARISH — unless bullish CHoCH post-LL flipped structure (V45)
-        if (
-            range_state is not None
-            and range_state.locked
-            and range_state.locked_bias == 'bearish'
-        ):
-            close = float(df['close'].iloc[-1])
-            _ll = float(range_state.macro_range_low)
-            _last_choch = chochs[-1] if chochs else None
-            _bullish_flip = (
-                _last_choch is not None
-                and _last_choch.direction == 'bullish'
-                and close > _ll
-                and self._bar_body_close_above(df, _last_choch.index, _ll)
-            )
-            if close <= _ll and not _bullish_flip:
-                bearish_bos = [b for b in bos_list if b.direction == 'bearish']
-                bearish_chochs = [c for c in chochs if c.direction == 'bearish']
-                if bearish_bos:
-                    latest_signal = bearish_bos[-1]
-                    leg_choch = bearish_chochs[-1] if bearish_chochs else None
-                    msg = (
-                        f"   🔒 [V40→V42.5] breakdown below LL "
-                        f"{_ll:.2f} — LOCK BEARISH overrides leg "
-                        f"→ BOS @bar{latest_signal.index}"
-                    )
-                    print(msg)
-                    return latest_signal, 'continuation', 'bearish', leg_choch
-                if bearish_chochs:
-                    leg_choch = bearish_chochs[-1]
-                    msg = (
-                        f"   🔒 [V40→V42.5] breakdown below LL "
-                        f"{_ll:.2f} — LOCK BEARISH overrides leg "
-                        f"→ CHoCH @bar{leg_choch.index}"
-                    )
-                    print(msg)
-                    return leg_choch, 'reversal', 'bearish', leg_choch
-            elif _bullish_flip and close <= _ll:
-                print(
-                    f"   📐 [V45 FLIP] bullish CHoCH @bar{_last_choch.index} reclaimed LL {_ll:.2f} "
-                    f"— V40 bearish lock superseded"
-                )
-            elif (
-                _last_choch is not None
-                and _last_choch.direction == 'bullish'
-                and _last_choch.index >= range_state.macro_range_low_bar
-                and close <= _ll
-            ):
-                print(
-                    f"   ⛔ [V58] micro bullish CHoCH @bar{_last_choch.index} below LL {_ll:.2f} "
-                    f"— dead-cat bounce ignored, bearish lock holds"
-                )
-                bearish_bos = [b for b in bos_list if b.direction == 'bearish']
-                bearish_chochs = [c for c in chochs if c.direction == 'bearish']
-                if bearish_bos:
-                    latest_signal = bearish_bos[-1]
-                    leg_choch = bearish_chochs[-1] if bearish_chochs else None
-                    print(
-                        f"   🔒 [V40→V58] breakdown below LL {_ll:.2f} — "
-                        f"BOS @bar{latest_signal.index}"
-                    )
-                    return latest_signal, 'continuation', 'bearish', leg_choch
-                if bearish_chochs:
-                    leg_choch = bearish_chochs[-1]
-                    print(
-                        f"   🔒 [V40→V58] breakdown below LL {_ll:.2f} — "
-                        f"CHoCH @bar{leg_choch.index}"
-                    )
-                    return leg_choch, 'reversal', 'bearish', leg_choch
-
+        _ = range_state  # V40.1 range hint kept at filter_internal_range_signals layer
         leg_choch = self._find_leg_choch(df, chochs, bos_list)
 
         if leg_choch is None:
@@ -2423,122 +2338,23 @@ class SMCDetector:
             latest_bos = bos_list[-1]
             return latest_bos, 'continuation', latest_bos.direction, None
 
-        opposite_after_leg = [
-            c for c in chochs
-            if c.index > leg_choch.index and c.direction != leg_choch.direction
-        ]
-        ignored_opposite = [
-            c for c in opposite_after_leg
-            if self._leg_choch_still_valid(df, leg_choch, bos_list)
-        ]
         same_dir_bos = [
             b for b in bos_list
             if b.index > leg_choch.index and b.direction == leg_choch.direction
         ]
 
-        # V43.4: distribuție agresivă — nu menține leg bullish când structura a flipat
-        if leg_choch.direction == 'bullish':
-            close = float(df['close'].iloc[-1])
-            recent_high = None
-            if range_state is not None and range_state.macro_range_high:
-                recent_high = float(range_state.macro_range_high)
-            elif len(df) >= 5:
-                start = max(0, len(df) - 150)
-                recent_high = max(
-                    self._swing_body_high(df, i) for i in range(start, len(df))
-                )
-            drop_pct = 0.0
-            if recent_high and recent_high > 0:
-                drop_pct = (recent_high - close) / recent_high * 100.0
-            bearish_after_leg = [
-                c for c in chochs
-                if c.index > leg_choch.index and c.direction == 'bearish'
-            ]
-            leg_invalid = not self._leg_choch_still_valid(df, leg_choch, bos_list)
-            aggressive_distribution = False
-            # V57: invalid bullish leg + any bearish CHoCH post-leg → flip (forex-sized drops)
-            if leg_invalid and len(bearish_after_leg) >= 1:
-                aggressive_distribution = True
-            elif (
-                range_state is not None
-                and range_state.locked
-                and range_state.locked_bias == 'bearish'
-            ):
-                aggressive_distribution = (
-                    drop_pct >= 5.0
-                    or len(bearish_after_leg) > 2
-                )
-            elif drop_pct >= 10.0 and len(bearish_after_leg) > 2:
-                aggressive_distribution = True
-            if aggressive_distribution:
-                bearish_chochs = [c for c in chochs if c.direction == 'bearish']
-                bearish_bos = [b for b in bos_list if b.direction == 'bearish']
-                if bearish_chochs:
-                    new_leg = bearish_chochs[-1]
-                    post_bos = [b for b in bearish_bos if b.index > new_leg.index]
-                    if post_bos:
-                        latest_signal = post_bos[-1]
-                        strategy_type = 'continuation'
-                    else:
-                        latest_signal = new_leg
-                        strategy_type = 'reversal'
-                    _ignored_n = len(ignored_opposite)
-                    print(
-                        f"   📉 [V43.4 DIST] drop {drop_pct:.1f}% from high {recent_high:.2f}, "
-                        f"{len(bearish_after_leg)} bearish CHoCH post-leg — "
-                        f"flip BEARISH @bar{latest_signal.index}"
-                        + (
-                            f" (was ignoring {_ignored_n} opposite pullback CHoCH)"
-                            if _ignored_n else ""
-                        )
-                    )
-                    return latest_signal, strategy_type, 'bearish', new_leg
-
-        # V57: symmetric — invalid bearish leg + bullish CHoCH post-leg
-        if leg_choch.direction == 'bearish':
-            bullish_after_leg = [
-                c for c in chochs
-                if c.index > leg_choch.index and c.direction == 'bullish'
-            ]
-            if (
-                not self._leg_choch_still_valid(df, leg_choch, bos_list)
-                and len(bullish_after_leg) >= 1
-            ):
-                flipped = self._resolve_post_leg_flip(
-                    df, chochs, bos_list, leg_choch, debug=debug,
-                )
-                if flipped[0] is not None:
-                    return flipped
-
-        # V57: leg must be live before continuation/reversal on same direction
-        if not self._leg_choch_still_valid(df, leg_choch, bos_list):
-            flipped = self._resolve_post_leg_flip(
-                df, chochs, bos_list, leg_choch, debug=debug,
-            )
-            if flipped[0] is not None:
-                return flipped
-            return None, 'continuation', 'neutral', leg_choch
-
-        # V42.6: ≥1 BOS aligned with D1 leg bias → CONTINUATION (V42.5 required ≥2)
         if len(same_dir_bos) >= 1:
             latest_signal = same_dir_bos[-1]
-            strategy_type = 'continuation'
-            current_trend = leg_choch.direction
             if debug:
                 print(
                     f"   📐 [V42.6 LEG] continuation — leg CHoCH {leg_choch.direction.upper()} "
                     f"@bar{leg_choch.index}, BOS @bar{latest_signal.index}"
-                    + (
-                        f", ignored {len(ignored_opposite)} opposite pullback CHoCH"
-                        if ignored_opposite else ""
-                    )
                 )
-            return latest_signal, strategy_type, current_trend, leg_choch
+            return latest_signal, 'continuation', leg_choch.direction, leg_choch
 
-        # GBPJPY / GBPNZD: reversal leg — anchor on leg CHoCH, wait pullback AOI + LTF
         if debug:
             print(
-                f"   📐 [V42.5 LEG] reversal — leg CHoCH {leg_choch.direction.upper()} "
+                f"   📐 [V42.6 LEG] reversal — leg CHoCH {leg_choch.direction.upper()} "
                 f"@bar{leg_choch.index} → WAITING_D1_PULLBACK"
             )
         return leg_choch, 'reversal', leg_choch.direction, leg_choch
@@ -3857,142 +3673,9 @@ class SMCDetector:
         )
         fvg = _poi_res.fvg
 
-        # Step 2: Find FVG after signal (CHoCH or BOS) - closest to current price
-        # (V43.0: handled by resolve_d1_poi above — ADR gate + anti-zombie)
-
-        # V42.5: BOS sequence — post-leg same-direction BOS for momentum continuation
-        consecutive_bos_count = 0
-        dominant_bos_direction = None
-        if len(daily_bos_list) >= 3 and leg_choch:
-            post_leg_bos = [
-                b for b in daily_bos_list
-                if b.index > leg_choch.index and b.direction == leg_choch.direction
-            ]
-            recent_bos = post_leg_bos[-5:] if post_leg_bos else []
-            for bos in reversed(recent_bos):
-                if dominant_bos_direction is None:
-                    dominant_bos_direction = bos.direction
-                    consecutive_bos_count = 1
-                elif bos.direction == dominant_bos_direction:
-                    consecutive_bos_count += 1
-                else:
-                    break
-        
-        # 🔥 V8.2: MOMENTUM_CONTINUATION - If 3+ consecutive BOS, prioritize MOMENTUM entry (even if FVG exists)
-        # EURJPY case: 4 BEARISH BOS = strong trend, generate setup regardless of FVG
-        _v39_block_momentum = (
-            _range_state
-            and _range_state.locked
-            and (
-                dominant_bos_direction != _range_state.locked_bias
-                or current_trend != _range_state.locked_bias
-            )
-        )
-        if consecutive_bos_count >= 3 and strategy_type == 'continuation' and not _v39_block_momentum:
-            print(f"\n🚀 V8.2 MOMENTUM_CONTINUATION: {consecutive_bos_count} consecutive BOS detected")
-            print(f"   Strong {dominant_bos_direction.upper()} trend - direct entry at last swing break")
-            
-            # Create MOMENTUM entry zone from last swing levels
-            swing_highs = self.detect_swing_highs(df_daily)
-            swing_lows = self.detect_swing_lows(df_daily)
-            last_bos = daily_bos_list[-1]
-            
-            if dominant_bos_direction == 'bullish':
-                # BULLISH: Entry from last swing LOW to HIGH
-                swings_before_bos_low = [sl for sl in swing_lows if sl.index < last_bos.index]
-                swings_before_bos_high = [sh for sh in swing_highs if sh.index < last_bos.index]
-                
-                # ✅ V10.4 FALLBACK: Dacă nu există swing-uri înainte de BOS, folosim ALL swing-uri
-                if not swings_before_bos_low:
-                    swings_before_bos_low = swing_lows
-                if not swings_before_bos_high:
-                    swings_before_bos_high = swing_highs
-                
-                if swings_before_bos_low and swings_before_bos_high:
-                    entry_zone_bottom = swings_before_bos_low[-1].price
-                    entry_zone_top = swings_before_bos_high[-1].price
-                    
-                    # Asigură că zona e corectă (bottom < top)
-                    if entry_zone_bottom > entry_zone_top:
-                        entry_zone_bottom, entry_zone_top = entry_zone_top, entry_zone_bottom
-                    
-                    # Create synthetic MOMENTUM FVG
-                    fvg = FVG(
-                        index=last_bos.index,
-                        direction='bullish',
-                        top=entry_zone_top,
-                        bottom=entry_zone_bottom,
-                        middle=(entry_zone_top + entry_zone_bottom) / 2,
-                        candle_time=last_bos.candle_time,
-                        is_momentum_entry=True
-                    )
-                    print(f"   ✅ MOMENTUM Entry Zone: {entry_zone_bottom:.5f} - {entry_zone_top:.5f}")
-                else:
-                    # ✅ V10.4 ULTRA-FALLBACK: Folosim ultimele 20 bare high/low
-                    entry_zone_bottom = df_daily['low'].iloc[-20:].min()
-                    entry_zone_top = df_daily['high'].iloc[-20:].max()
-                    fvg = FVG(
-                        index=last_bos.index,
-                        direction='bullish',
-                        top=entry_zone_top,
-                        bottom=entry_zone_bottom,
-                        middle=(entry_zone_top + entry_zone_bottom) / 2,
-                        candle_time=last_bos.candle_time,
-                        is_momentum_entry=True
-                    )
-                    print(f"   ✅ MOMENTUM Entry Zone (fallback 20bars): {entry_zone_bottom:.5f} - {entry_zone_top:.5f}")
-            
-            elif dominant_bos_direction == 'bearish':
-                # BEARISH: Entry from last swing HIGH to LOW
-                swings_before_bos_high = [sh for sh in swing_highs if sh.index < last_bos.index]
-                swings_before_bos_low = [sl for sl in swing_lows if sl.index < last_bos.index]
-                
-                # ✅ V10.4 FALLBACK: Dacă nu există swing-uri înainte de BOS, folosim ALL swing-uri
-                if not swings_before_bos_high:
-                    swings_before_bos_high = swing_highs
-                if not swings_before_bos_low:
-                    swings_before_bos_low = swing_lows
-                
-                if swings_before_bos_high and swings_before_bos_low:
-                    entry_zone_top = swings_before_bos_high[-1].price
-                    entry_zone_bottom = swings_before_bos_low[-1].price
-                    
-                    # Asigură că zona e corectă (bottom < top)
-                    if entry_zone_bottom > entry_zone_top:
-                        entry_zone_bottom, entry_zone_top = entry_zone_top, entry_zone_bottom
-                    
-                    # Create synthetic MOMENTUM FVG
-                    fvg = FVG(
-                        index=last_bos.index,
-                        direction='bearish',
-                        top=entry_zone_top,
-                        bottom=entry_zone_bottom,
-                        middle=(entry_zone_top + entry_zone_bottom) / 2,
-                        candle_time=last_bos.candle_time,
-                        is_momentum_entry=True
-                    )
-                    print(f"   ✅ MOMENTUM Entry Zone: {entry_zone_bottom:.5f} - {entry_zone_top:.5f}")
-                else:
-                    # ✅ V10.4 ULTRA-FALLBACK: Folosim ultimele 20 bare high/low
-                    entry_zone_bottom = df_daily['low'].iloc[-20:].min()
-                    entry_zone_top = df_daily['high'].iloc[-20:].max()
-                    fvg = FVG(
-                        index=last_bos.index,
-                        direction='bearish',
-                        top=entry_zone_top,
-                        bottom=entry_zone_bottom,
-                        middle=(entry_zone_top + entry_zone_bottom) / 2,
-                        candle_time=last_bos.candle_time,
-                        is_momentum_entry=True
-                    )
-                    print(f"   ✅ MOMENTUM Entry Zone (fallback 20bars): {entry_zone_bottom:.5f} - {entry_zone_top:.5f}")
-        
         if not fvg:
-            # V24.6 PERMISSIVE DAILY FLOW — FVG absent → Equilibrium sintetic (Radar 4H arbitrează)
-            print(f"⚠️ [V24.6 DAILY BIAS] {symbol}: FVG corp absent/mituit — construiesc zonă Equilibrium sintetică (Radar 4H va valida)")
-            fvg = self._build_v246_synthetic_fvg(
-                df_daily, latest_signal, current_trend, symbol, dealing_range=_adr,
-            )
+            print(f"   ⏸️ [Faza A] {symbol}: no organic D1 FVG — setup withheld (WAITING_D1_PULLBACK)")
+            return None
 
         if debug:
             gap_size = fvg.top - fvg.bottom
@@ -4164,7 +3847,6 @@ class SMCDetector:
                     print(f"\n✅ CRYPTO FVG V24.4 PASSED: Gap {gap_pct:.3f}%, Body {body_ratio:.1%}")
 
             elif is_gold:
-                # V37.17: FVG organic imperfect → degradare V24.6, NU return None (bias D1 păstrat)
                 gap_size = fvg.top - fvg.bottom
                 gap_pct = (gap_size / fvg.bottom) * 100 if fvg.bottom else 0
                 _gap_idx = min(max(fvg.index, 0), len(df_daily) - 1)
@@ -4172,17 +3854,16 @@ class SMCDetector:
                 candle_body = abs(gap_candle['close'] - gap_candle['open'])
                 candle_range = gap_candle['high'] - gap_candle['low']
                 body_ratio = candle_body / candle_range if candle_range > 0 else 0
-                _already_synthetic = getattr(fvg, '_is_daily_bias_zone', False)
 
-                if not _already_synthetic and (gap_pct < 0.10 or body_ratio < 0.25):
+                if gap_pct < 0.10 or body_ratio < 0.25:
                     _reason = []
                     if gap_pct < 0.10:
                         _reason.append(f"gap {gap_pct:.3f}% < 0.10%")
                     if body_ratio < 0.25:
                         _reason.append(f"body {body_ratio:.1%} < 25%")
-                    print(f"⚠️ [V37.17 {symbol}] FVG organic imperfect ({', '.join(_reason)}) → V24.6 Equilibrium sintetic (WAITING_D1_PULLBACK)")
-                    fvg = self._build_v246_synthetic_fvg(df_daily, latest_signal, current_trend, symbol)
-                elif debug:
+                    print(f"   ⏸️ [Faza A {symbol}] FVG organic imperfect ({', '.join(_reason)}) — setup withheld")
+                    return None
+                if debug:
                     print(f"\n✅ XAUUSD FVG V14.0 PASSED: Gap {gap_pct:.3f}%, Body {body_ratio:.1%}")
                     
             elif is_gbp:

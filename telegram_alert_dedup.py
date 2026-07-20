@@ -18,6 +18,16 @@ _DEDUP_PATH = Path(__file__).resolve().parent / "data" / "telegram_execute_now_b
 _LOCK_PATH = _DEDUP_PATH.with_suffix(".lock")
 
 
+def normalize_trade_direction(direction: str) -> str:
+    """buy/long/BUY → buy; sell/short/SELL → sell (dedup + alert keys)."""
+    d = str(direction or "").strip().lower()
+    if d in ("buy", "long", "bullish"):
+        return "buy"
+    if d in ("sell", "short", "bearish"):
+        return "sell"
+    return d or "unknown"
+
+
 def _acquire_lock(lock_path: Path, timeout_sec: float = 2.0) -> object | None:
     """Exclusive lock — None daca alt proces tine lock-ul."""
     lock_path.parent.mkdir(parents=True, exist_ok=True)
@@ -70,7 +80,7 @@ def claim_execute_now_blocked_alert(symbol: str, direction: str) -> bool:
     True = primul apel in cooldown — trimite Telegram.
     False = duplicat (alt proces sau alerta recenta) — SKIP.
     """
-    key = f"{symbol.upper()}|{str(direction).lower()}"
+    key = f"{symbol.upper()}|{normalize_trade_direction(direction)}"
     now = time.time()
     fh = _acquire_lock(_LOCK_PATH)
     if fh is None:
