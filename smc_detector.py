@@ -1884,6 +1884,206 @@ class SMCDetector:
             )
         return True
 
+    def _fvg_body_mitigated(self, df: pd.DataFrame, fvg: FVG) -> bool:
+        """True dacă body close a mitigat FVG-ul (>20% buffer)."""
+        body_highs = df[['open', 'close']].max(axis=1)
+        body_lows = df[['open', 'close']].min(axis=1)
+        fvg_size = fvg.top - fvg.bottom
+        mitigation_buffer = fvg_size * 0.20
+        for j in range(fvg.index + 1, len(df)):
+            body_high = body_highs.iloc[j]
+            body_low = body_lows.iloc[j]
+            if fvg.direction == 'bullish':
+                if body_low < fvg.bottom - mitigation_buffer:
+                    return True
+            elif body_high > fvg.top + mitigation_buffer:
+                return True
+        return False
+
+    def _scan_organic_fvgs(
+        self,
+        df: pd.DataFrame,
+        start_idx: int,
+        end_idx: int,
+        direction: str,
+    ) -> List[FVG]:
+        """FVG-uri organice wick-to-wick în interval [start_idx, end_idx]."""
+        fvgs: List[FVG] = []
+        search_end = min(end_idx, len(df) - 1)
+        for i in range(max(start_idx + 1, 1), search_end):
+            if direction == 'bullish':
+                if df['high'].iloc[i - 1] < df['low'].iloc[i + 1]:
+                    gap_top = df['low'].iloc[i + 1]
+                    gap_bottom = df['high'].iloc[i - 1]
+                    gap_size = gap_top - gap_bottom
+                    if gap_size > 0 and (gap_size / gap_bottom) >= 0.0005:
+                        fvgs.append(FVG(
+                            index=i,
+                            direction='bullish',
+                            top=gap_top,
+                            bottom=gap_bottom,
+                            middle=(gap_top + gap_bottom) / 2,
+                            candle_time=df['time'].iloc[i] if 'time' in df.columns else i,
+                            is_filled=False,
+                        ))
+            elif df['low'].iloc[i - 1] > df['high'].iloc[i + 1]:
+                gap_top = df['low'].iloc[i - 1]
+                gap_bottom = df['high'].iloc[i + 1]
+                gap_size = gap_top - gap_bottom
+                if gap_size > 0 and (gap_size / gap_bottom) >= 0.0005:
+                    fvgs.append(FVG(
+                        index=i,
+                        direction='bearish',
+                        top=gap_top,
+                        bottom=gap_bottom,
+                        middle=(gap_top + gap_bottom) / 2,
+                        candle_time=df['time'].iloc[i] if 'time' in df.columns else i,
+                        is_filled=False,
+                    ))
+        return fvgs
+
+    def _impulse_equilibrium(self, df: pd.DataFrame, signal) -> Tuple[Optional[float], int, int]:
+        """Equilibrium 50% din impulsul semnalului (origine → break)."""
+        sig_idx = signal.index if hasattr(signal, 'index') else 0
+        direction = getattr(signal, 'direction', '') or ''
+        origin_idx = max(0, sig_idx - 20)
+        equilibrium = None
+        origin_price = None
+        break_price = float(getattr(signal, 'break_price', 0) or 0)
+
+        if hasattr(signal, 'swing_broken') and signal.swing_broken is not None:
+            try:
+                origin_price = float(signal.swing_broken.price)
+                if hasattr(signal.swing_broken, 'index'):
+                    origin_idx = int(signal.swing_broken.index)
+            except Exception:
+                origin_price = None
+
+        if origin_price is None and direction in ('bullish', 'bearish'):
+            swing_highs = self.detect_swing_highs(df)
+            swing_lows = self.detect_swing_lows(df)
+            if direction == 'bearish':
+                prior_lows = [l for l in swing_lows if l.index < sig_idx]
+                prior_highs = [h for h in swing_highs if h.index < sig_idx]
+                if prior_lows:
+                    origin_price = float(prior_lows[-1].price)
+                    origin_idx = prior_lows[-1].index
+                elif prior_highs:
+                    origin_price = float(prior_highs[-1].price)
+                    origin_idx = prior_highs[-1].index
+            else:
+                prior_highs = [h for h in swing_highs if h.index < sig_idx]
+                prior_lows = [l for l in swing_lows if l.index < sig_idx]
+                if prior_highs:
+                    origin_price = float(prior_highs[-1].price)
+                    origin_idx = prior_highs[-1].index
+                elif prior_lows:
+                    origin_price = float(prior_lows[-1].price)
+                    origin_idx = prior_lows[-1].index
+
+        if origin_price is not None and break_price and abs(break_price - origin_price) > 0:
+            equilibrium = (origin_price + break_price) / 2.0
+
+        return equilibrium, origin_idx, sig_idx
+
+    def _fvg_in_pd_zone(self, fvg: FVG, equilibrium: float, direction: str) -> bool:
+        if equilibrium is None:
+            return True
+        if direction == 'bullish':
+            return fvg.middle < equilibrium
+        return fvg.middle > equilibrium
+
+    def _resolve_continuation_poi_cascade(
+        self,
+        df: pd.DataFrame,
+        latest_signal,
+        current_trend: str,
+        adr: Optional[ActiveDealingRange],
+        audit_out: Optional[dict] = None,
+    ) -> Optional[FVG]:
+        """
+        CONTINUITY: dacă primul FVG post-BOS e mitigat, caută în cascadă:
+          (a) ultimul FVG organic ne-mitigat din impulsul major
+          (b) Order Block organic la originea impulsului
+        """
+        direction = (current_trend or getattr(latest_signal, 'direction', '') or '').lower()
+        if direction not in ('bullish', 'bearish'):
+            return None
+
+        equilibrium, origin_idx, sig_idx = self._impulse_equilibrium(df, latest_signal)
+        scan_end = min(len(df) - 1, sig_idx + 40)
+        all_fvgs = self._scan_organic_fvgs(df, origin_idx, scan_end, direction)
+        impulse_fvgs = [f for f in all_fvgs if origin_idx <= f.index <= scan_end]
+
+        unmitigated = [f for f in impulse_fvgs if not self._fvg_body_mitigated(df, f)]
+        pd_unmitigated = [
+            f for f in unmitigated
+            if self._fvg_in_pd_zone(f, equilibrium, direction)
+        ]
+
+        selected: Optional[FVG] = None
+        reason = 'no cascade POI'
+
+        if pd_unmitigated:
+            pd_unmitigated.sort(key=lambda f: (f.index, f.top - f.bottom), reverse=True)
+            selected = pd_unmitigated[0]
+            reason = 'continuation cascade: unmitigated FVG in impulse P/D'
+        else:
+            # (b) OB la originea impulsului — semnalul BOS/CHoCH ancorat pe impuls
+            pseudo_choch = latest_signal
+            if not isinstance(latest_signal, CHoCH):
+                pseudo_choch = CHoCH(
+                    index=latest_signal.index,
+                    direction=direction,
+                    break_price=float(latest_signal.break_price),
+                    previous_trend='bearish' if direction == 'bullish' else 'bullish',
+                    candle_time=getattr(latest_signal, 'candle_time', None),
+                    swing_broken=getattr(latest_signal, 'swing_broken', None),
+                )
+            ob = self.detect_order_block(df, pseudo_choch, fvg=None, debug=False)
+            if ob is not None:
+                ob_top, ob_bottom = float(ob.top), float(ob.bottom)
+                if ob_bottom < ob_top:
+                    mid = (ob_top + ob_bottom) / 2.0
+                    if self._fvg_in_pd_zone(
+                        FVG(
+                            index=ob.index, direction=direction,
+                            top=ob_top, bottom=ob_bottom, middle=mid,
+                            candle_time=ob.candle_time, is_filled=False,
+                        ),
+                        equilibrium,
+                        direction,
+                    ):
+                        selected = FVG(
+                            index=ob.index,
+                            direction=direction,
+                            top=ob_top,
+                            bottom=ob_bottom,
+                            middle=mid,
+                            candle_time=ob.candle_time,
+                            is_filled=False,
+                            associated_choch=pseudo_choch if isinstance(pseudo_choch, CHoCH) else None,
+                        )
+                        reason = 'continuation cascade: impulse origin OB in P/D'
+
+        if audit_out is not None:
+            audit_out['continuation_cascade'] = {
+                'reason': reason,
+                'origin_idx': origin_idx,
+                'signal_idx': sig_idx,
+                'equilibrium': round(float(equilibrium), 5) if equilibrium else None,
+                'unmitigated_count': len(unmitigated),
+                'pd_unmitigated_count': len(pd_unmitigated),
+                'selected': self.fvg_audit_entry(selected) if selected else None,
+            }
+
+        if selected is not None:
+            print(
+                f"  ✅ [CONTINUITY POI CASCADE] {reason} "
+                f"@ {selected.bottom:.5f}-{selected.top:.5f} (bar {selected.index})"
+            )
+        return selected
+
     def resolve_d1_poi(
         self,
         df: pd.DataFrame,
@@ -1926,6 +2126,21 @@ class SMCDetector:
             strategy_type=strategy_type,
             dealing_range=adr,
         )
+        if (
+            selected is None
+            and (strategy_type or '').lower() == 'continuation'
+        ):
+            selected = self._resolve_continuation_poi_cascade(
+                df,
+                latest_signal,
+                current_trend,
+                adr,
+                audit_out=fvg_audit,
+            )
+            if selected is not None:
+                meta['poi_source'] = fvg_audit.get(
+                    'continuation_cascade', {},
+                ).get('reason', 'continuation cascade POI')
         if audit_out is not None:
             audit_out.update(fvg_audit)
 
@@ -2388,6 +2603,50 @@ class SMCDetector:
             )
         return None, 'continuation', 'neutral', None
 
+    @staticmethod
+    def _is_major_structural_choch(choch: Optional[CHoCH]) -> bool:
+        """CHoCH major = flip real (previous_trend ≠ direction)."""
+        if choch is None:
+            return False
+        return bool(choch.previous_trend and choch.previous_trend != choch.direction)
+
+    def _major_reversal_confirmed(
+        self,
+        df: pd.DataFrame,
+        leg_choch: CHoCH,
+    ) -> bool:
+        """
+        REVERSAL doar după body-close confirmat peste/sub ultimul pivot major opus.
+        CHoCH-urile din detect_choch_and_bos folosesc deja pivoți majori filtrați.
+        """
+        if not self._is_major_structural_choch(leg_choch):
+            return False
+        swing_highs = self.detect_swing_highs(df)
+        swing_lows = self.detect_swing_lows(df)
+        major_highs, major_lows = self.filter_major_swings(df, swing_highs, swing_lows)
+        broken = getattr(leg_choch, 'swing_broken', None)
+        if broken is not None:
+            ref_idx = broken.index
+            if leg_choch.direction == 'bullish':
+                if any(h.index == ref_idx for h in major_highs):
+                    ref = self._swing_body_high(df, ref_idx)
+                    return self._body_close_above_after(df, ref_idx, ref)
+            else:
+                if any(l.index == ref_idx for l in major_lows):
+                    ref = self._swing_body_low(df, ref_idx)
+                    return self._body_close_below_after(df, ref_idx, ref)
+        if leg_choch.direction == 'bullish':
+            prior = [h for h in major_highs if h.index < leg_choch.index]
+            if not prior:
+                return True
+            ref = self._swing_body_high(df, prior[-1].index)
+            return self._body_close_above_after(df, prior[-1].index, ref)
+        prior = [l for l in major_lows if l.index < leg_choch.index]
+        if not prior:
+            return True
+        ref = self._swing_body_low(df, prior[-1].index)
+        return self._body_close_below_after(df, prior[-1].index, ref)
+
     def _resolve_d1_leg(
         self,
         df: pd.DataFrame,
@@ -2397,14 +2656,29 @@ class SMCDetector:
         range_state: Optional[StructuralRangeState] = None,
     ) -> Tuple[Optional[object], str, str, Optional[CHoCH]]:
         """
-        SMC leg authority — CHoCH o dată per leg, restul BOS (V42.6).
+        SMC leg authority — trend major = CONTINUITY; REVERSAL doar pe CHoCH major confirmat.
 
-        REVERSAL  = leg CHoCH fără BOS same-direction după leg.
-        CONTINUATION = ≥1 BOS (inclusiv CHoCH post-leg re-etichetat BOS) după leg.
+        CONTINUATION = macro HH/HL sau LH/LL + BOS în direcția trendului (prioritar).
+        REVERSAL = leg CHoCH major (body-close pivot opus) fără BOS same-dir post-leg.
+        Fluctuații interne fără BOS ≠ REVERSAL când trendul macro e activ.
         """
         chochs = self._dedupe_chochs_by_bar(chochs)
         leg_choch = self._find_leg_choch(df, chochs, bos_list)
         chochs, bos_list = self._demote_post_leg_choch_to_bos(leg_choch, chochs, bos_list)
+
+        macro = self.macro_trend_from_swings(df)
+
+        # ── PRIORITATE 1: trend macro activ + BOS aliniat → CONTINUATION obligatoriu ──
+        if macro in ('bullish', 'bearish'):
+            macro_bos = [b for b in bos_list if b.direction == macro]
+            if macro_bos:
+                latest_signal = macro_bos[-1]
+                if debug:
+                    print(
+                        f"   📐 [MACRO CONTINUITY] {macro.upper()} trend + BOS "
+                        f"@bar{latest_signal.index}"
+                    )
+                return latest_signal, 'continuation', macro, leg_choch
 
         if leg_choch is None:
             if not bos_list:
@@ -2421,7 +2695,7 @@ class SMCDetector:
             latest_signal = same_dir_bos[-1]
             if debug:
                 print(
-                    f"   📐 [V42.6 LEG] continuation — leg CHoCH {leg_choch.direction.upper()} "
+                    f"   📐 [LEG CONTINUITY] leg CHoCH {leg_choch.direction.upper()} "
                     f"@bar{leg_choch.index}, BOS @bar{latest_signal.index}"
                 )
             return latest_signal, 'continuation', leg_choch.direction, leg_choch
@@ -2448,12 +2722,55 @@ class SMCDetector:
                     )
                 return leg_choch, 'continuation', leg_choch.direction, leg_choch
 
+        # ── BOS chain fără macro clar: ≥2 BOS same-dir → CONTINUITY ──
+        if bos_list:
+            last_dir = bos_list[-1].direction
+            same_count = sum(1 for b in bos_list if b.direction == last_dir)
+            if same_count >= 2:
+                if debug:
+                    print(
+                        f"   📐 [BOS CHAIN] continuation — {same_count}x "
+                        f"{last_dir.upper()} BOS, latest @bar{bos_list[-1].index}"
+                    )
+                return bos_list[-1], 'continuation', last_dir, leg_choch
+
+        # ── REVERSAL: exclusiv CHoCH major confirmat (pivot opus spart body-close) ──
+        if (
+            self._major_reversal_confirmed(df, leg_choch)
+            and self._leg_choch_still_valid(df, leg_choch, bos_list)
+        ):
+            if debug:
+                print(
+                    f"   📐 [MAJOR REVERSAL] leg CHoCH {leg_choch.direction.upper()} "
+                    f"@bar{leg_choch.index} → WAITING_D1_PULLBACK"
+                )
+            return leg_choch, 'reversal', leg_choch.direction, leg_choch
+
+        # Fluctuație internă / leg neconfirmat major → rămânem în CONTINUITY pe ultimul BOS
+        if bos_list:
+            latest_bos = bos_list[-1]
+            if debug:
+                print(
+                    f"   📐 [INTERNAL PULLBACK] continuation via BOS "
+                    f"{latest_bos.direction.upper()} @bar{latest_bos.index} "
+                    f"(leg @bar{leg_choch.index} not major reversal)"
+                )
+            return latest_bos, 'continuation', latest_bos.direction, leg_choch
+
+        if macro in ('bullish', 'bearish') and macro == leg_choch.direction:
+            if debug:
+                print(
+                    f"   📐 [MACRO HOLD] continuation — macro {macro.upper()} "
+                    f"holds vs internal leg @bar{leg_choch.index}"
+                )
+            return leg_choch, 'continuation', macro, leg_choch
+
         if debug:
             print(
-                f"   📐 [V42.6 LEG] reversal — leg CHoCH {leg_choch.direction.upper()} "
-                f"@bar{leg_choch.index} → WAITING_D1_PULLBACK"
+                f"   📐 [NEUTRAL HOLD] no BOS — default continuation leg "
+                f"{leg_choch.direction.upper()} @bar{leg_choch.index}"
             )
-        return leg_choch, 'reversal', leg_choch.direction, leg_choch
+        return leg_choch, 'continuation', leg_choch.direction, leg_choch
 
     def filter_internal_range_signals(
         self,
@@ -2542,9 +2859,9 @@ class SMCDetector:
 
         if debug:
             print(f"\n{'='*80}")
-            print(f"\ud83d\udcca V24.0 ORGANIC TREND ANALYSIS (full series \u2014 no expiry)")
+            print("V24.0 ORGANIC TREND ANALYSIS (full series — no expiry)")
             print(f"{'='*80}")
-            print(f"   Analyzing {len(df)} bars \u2014 all pivots valid until broken...")
+            print(f"   Analyzing {len(df)} bars — all pivots valid until broken...")
 
         # Detect swing highs and lows pe TOAT\u0102 seria
         swing_highs = self.detect_swing_highs(df)
@@ -3452,7 +3769,7 @@ class SMCDetector:
         df_daily: pd.DataFrame,
         symbol: Optional[str] = None,
     ) -> Tuple[str, str]:
-        """V37.15: CHoCH → reversal, BOS → continuation (inclusiv sub V40 range lock)."""
+        """V37.15 + urgent fix: macro trend + BOS → CONTINUITY; REVERSAL doar pe CHoCH major."""
         sh = self.detect_swing_highs(df_daily)
         sl = self.detect_swing_lows(df_daily)
         chochs, bos_list = self.detect_choch_and_bos(df_daily)
@@ -3463,6 +3780,13 @@ class SMCDetector:
         latest_signal, strategy, current_trend, _ = self._resolve_d1_leg(
             df_daily, chochs, bos_list, range_state=rs
         )
+        macro = self.macro_trend_from_swings(df_daily)
+        if (
+            strategy == 'reversal'
+            and macro in ('bullish', 'bearish')
+            and any(b.direction == macro for b in bos_list)
+        ):
+            strategy = 'continuation'
         if latest_signal:
             signal_label = 'CHoCH' if isinstance(latest_signal, CHoCH) else 'BOS'
         else:
