@@ -897,6 +897,8 @@ class DailyScanner:
                     'strategy': strategy_str,
                     'h4_structure_locked': h4_locked,
                     'bias_fallback': False,
+                    'status': getattr(s, 'status', 'MONITORING'),
+                    'w_d_aligned': getattr(s, 'w_d_aligned', True),
                 })
                 _report_syms.add(s.symbol)
             for entry in bias_fallback_entries:
@@ -909,6 +911,8 @@ class DailyScanner:
                     'strategy': (entry.get('setup_type') or 'CONTINUATION').upper(),
                     'h4_structure_locked': False,
                     'bias_fallback': True,
+                    'status': entry.get('status', 'WAITING_D1_PULLBACK'),
+                    'w_d_aligned': entry.get('w_d_aligned', True),
                 })
                 _report_syms.add(sym)
             

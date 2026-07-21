@@ -22,6 +22,22 @@ from radar_gates import ltf_choch_confirmed_for_card, ltf_choch_price_for_card
 
 load_dotenv()
 
+# W→D→4H: raportul așteaptă CHoCH 4H aliniat cu D1 (nu BOS ca mesaj user-facing).
+_WAIT_4H_CHOCH_HINT = "Waiting 4H CHoCH"
+_WAIT_4H_CHOCH_SUFFIX = f" ({_WAIT_4H_CHOCH_HINT})"
+
+
+def _scan_report_wait_suffix(sym_info: dict) -> str:
+    """Suffix lizibil pentru MARKET_REPORT — reflectă starea W→D→4H."""
+    status = str(sym_info.get('status') or '').upper()
+    if status == 'WAITING_W_D_SYNC' or sym_info.get('w_d_aligned') is False:
+        return " (Waiting W+D sync — apoi 4H CHoCH)"
+    if status == 'WAITING_W_ZONE':
+        return " (Waiting W1 zone — apoi 4H CHoCH)"
+    if status == 'WAITING_D1_PULLBACK' or sym_info.get('bias_fallback'):
+        return " (Daily Bias — WAITING_D1_PULLBACK)"
+    return _WAIT_4H_CHOCH_SUFFIX
+
 # ════════════════════════════════════════
 # V10.4 SOVEREIGN SIGNATURE — ФорексГод EDITION
 # ════════════════════════════════════════
@@ -534,11 +550,14 @@ class TelegramNotifier:
         if strategy_type.startswith('REVERSAL'):
             strategy_emoji = "🔄"
             strategy_label = "REVERSAL (CHoCH)"
-            wait_hint = "Waiting 4H CHoCH"
         else:
             strategy_emoji = "➡️"
             strategy_label = "CONTINUITY (BOS)"
-            wait_hint = "Waiting 4H BOS / Pullback"
+        wait_hint = _WAIT_4H_CHOCH_HINT
+        if getattr(setup, 'status', '') == 'WAITING_W_D_SYNC' or getattr(setup, 'w_d_aligned', True) is False:
+            wait_hint = "Waiting W+D sync — apoi 4H CHoCH"
+        elif getattr(setup, 'status', '') == 'WAITING_W_ZONE':
+            wait_hint = "Waiting W1 zone — apoi 4H CHoCH"
 
         # ── BLOC 1: Identitate & Strategie ──
         block1 = (
@@ -947,10 +966,7 @@ class TelegramNotifier:
                 # V37.2: bulina = directie (🟢 buy / 🔴 sell), nu albastru uniform
                 dot = "🔴" if dir_raw == 'sell' else "🟢"
                 if not h4_locked:
-                    if raw_strat in ('CONTINUATION', 'CONTINUITY'):
-                        status_suffix = " (Waiting 4H BOS / Pullback)"
-                    else:
-                        status_suffix = " (Waiting 4H CHoCH)"
+                    status_suffix = _scan_report_wait_suffix(setup)
                 elif dir_raw == 'sell':
                     status_suffix = "   (confirmed SELL)"
                 else:
@@ -987,12 +1003,9 @@ class TelegramNotifier:
         h4_locked = sym_info.get('h4_structure_locked', sym_info.get('h4_bias_locked', True))
         dot = "🔴" if direction == 'sell' else "🟢"
         if bias_fallback:
-            status_suffix = " (Daily Bias — WAITING_D1_PULLBACK)"
+            status_suffix = _scan_report_wait_suffix(sym_info)
         elif not h4_locked:
-            if raw_strat in ('CONTINUATION', 'CONTINUITY'):
-                status_suffix = " (Waiting 4H BOS / Pullback)"
-            else:
-                status_suffix = " (Waiting 4H CHoCH)"
+            status_suffix = _scan_report_wait_suffix(sym_info)
         elif direction == 'sell':
             status_suffix = " (confirmed SELL)"
         else:
