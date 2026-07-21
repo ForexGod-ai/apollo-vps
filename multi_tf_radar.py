@@ -2226,6 +2226,39 @@ class MultiTFRadar:
             issues.append(('4H', result.tf_4h.choch_direction))
         return macro, issues
 
+    def _w_d_sync_blocks_execute(self, setup: dict, result: 'MultiTFResult') -> bool:
+        """Faza 2: blocare EXECUTE_NOW când W1 ≠ D1 sau preț în afara zonei W1 macro."""
+        sym = setup.get('symbol', '?')
+        d1_dir = (
+            setup.get('d1_bias_direction')
+            or str(setup.get('daily_bias', '')).lower()
+        )
+        sync = self.smc_4h.evaluate_w_d_sync(
+            d1_dir,
+            setup.get('w1_bias', 'NEUTRAL'),
+            setup.get('poi_top') or setup.get('fvg_top'),
+            setup.get('poi_bottom') or setup.get('fvg_bottom'),
+            setup.get('w1_poi_top'),
+            setup.get('w1_poi_bottom'),
+            current_price=result.current_price,
+        )
+        setup['w_d_aligned'] = bool(sync.get('w_d_aligned', True))
+        _sync_status = sync.get('status')
+        if _sync_status and setup.get('status') not in ('TRADE_OPEN', 'PARTIAL_OPEN'):
+            setup['status'] = _sync_status
+
+        if setup.get('status') == 'WAITING_W_D_SYNC' or setup.get('w_d_aligned') is False:
+            logger.debug(
+                f"[W+D SOFT SYNC] {sym}: Așteptăm alinierea D1 în POI Weekly"
+            )
+            return True
+        if setup.get('status') == 'WAITING_W_ZONE':
+            logger.debug(
+                f"[W+D SOFT SYNC] {sym}: Așteptăm alinierea D1 în POI Weekly"
+            )
+            return True
+        return False
+
     def _v423_force_disarm_execute_now(
         self, setup: dict, result: 'MultiTFResult', reason_detail: str = '',
     ) -> None:
@@ -2479,6 +2512,12 @@ class MultiTFRadar:
     def _arm_execute_now(self, setup: dict, result: 'MultiTFResult', exec_tf: str,
                          source: str = 'trigger') -> None:
         """V37.5/6: Seteaza EXECUTE_NOW, flush instant JSON, Telegram o singura data per setup."""
+        if setup.get('status') == 'WAITING_W_D_SYNC' or setup.get('w_d_aligned') is False:
+            logger.debug(
+                f"[W+D SOFT SYNC] {setup.get('symbol', '?')}: "
+                f"Așteptăm alinierea D1 în POI Weekly — skip EXECUTE_NOW arm"
+            )
+            return
         # V49: armare secvențială — touch POI latched + retrace 60–80% (fără overlap simultan)
         _poi_arm_ok = bool(
             result.daily_zone_validated or setup.get('poi_touch_latched')
@@ -2739,6 +2778,11 @@ class MultiTFRadar:
         # înainte ca executorul să apuce să citească True-ul din T+00s → semnal pierdut.
         # Excepție V42.2: TRADE_OPEN = toate intrările complete; PARTIAL_OPEN = radar poate re-arma 4H.
         # V42.3: nu arma EXECUTE_NOW dacă LTF CHoCH ≠ Daily bias.
+        if self._w_d_sync_blocks_execute(setup, result) and setup.get('status') != 'TRADE_OPEN':
+            if setup.get('EXECUTE_NOW') or setup.get('radar_execution_ready'):
+                self._v423_force_disarm_execute_now(
+                    setup, result, 'W+D soft sync — așteptăm alinierea D1 în POI Weekly',
+                )
         _v423_macro, _v423_issues = self._v423_ltf_misalignment(setup, result)
         if _v423_issues and setup.get('status') != 'TRADE_OPEN':
             _detail = '/'.join(f"{tf}={d}" for tf, d in _v423_issues)

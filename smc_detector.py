@@ -132,6 +132,9 @@ class TradeSetup:
     daily_bias_active: bool = False
     confidence: str = 'NORMAL'  # V40.3: LOW_W1_COUNTER_TREND when D1 vs W1 macro conflict
     w1_bias: Optional[str] = None
+    w1_poi_top: Optional[float] = None
+    w1_poi_bottom: Optional[float] = None
+    w_d_aligned: bool = True
     structural_breach: bool = False  # V43.0 E1-T7 — close broke LH (SHORT) or LL (LONG); passive signal
     adr_lh: Optional[float] = None
     adr_ll: Optional[float] = None
@@ -165,81 +168,267 @@ class SMCDetector:
         self._swing_lows_cache:  dict = {}  # {(id, len): List[SwingPoint]}
 
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    # V15.0 WEEKLY ANCHOR — W1 BIAS CALCULATOR (Body Close Rule)
+    # W→D→4H Faza 1/2 — W1 macro pipeline (same leg authority as D1) + W+D soft sync
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    # W1 POLICY: INFORMATIV ONLY — apelat exclusiv din daily_scanner.py pentru Telegram/confidence.
-    # NU apela din pipeline-ul D1 de clasificare (_resolve_d1_leg, detect_choch_and_bos, detect_fvg).
-    def calculate_w1_bias(self, df_w1: 'pd.DataFrame') -> dict:
-        """
-        Calculează W1 macro bias folosind EXCLUSIV Body Close (nu wick).
 
-        V37.4 MACRO ANCHOR:
-          • Bias = direcția ultimului CHoCH pe W1 (inversare macro)
-          • BOS counter-trend DUPĂ CHoCH = pullback — NU schimbă bias
-            (fix BTC: BOS bullish pe bounce nu mai bate CHoCH bearish la vârf)
-          • Fără CHoCH pe W1 → fallback ultimul BOS (piețe în range)
+    @staticmethod
+    def _normalize_macro_bias_label(bias: str) -> Optional[str]:
+        b = str(bias or '').strip().upper()
+        if b in ('BULLISH', 'BUY', 'LONG'):
+            return 'bullish'
+        if b in ('BEARISH', 'SELL', 'SHORT'):
+            return 'bearish'
+        return None
+
+    @staticmethod
+    def daily_poi_inside_weekly_zone(
+        daily_poi_top: Optional[float],
+        daily_poi_bottom: Optional[float],
+        w1_poi_top: Optional[float],
+        w1_poi_bottom: Optional[float],
+    ) -> bool:
+        """Faza 2: middle Daily FVG trebuie în range-ul W1 POI macro."""
+        if None in (daily_poi_top, daily_poi_bottom, w1_poi_top, w1_poi_bottom):
+            return True
+        w_lo = min(float(w1_poi_bottom), float(w1_poi_top))
+        w_hi = max(float(w1_poi_bottom), float(w1_poi_top))
+        d_lo = min(float(daily_poi_bottom), float(daily_poi_top))
+        d_hi = max(float(daily_poi_bottom), float(daily_poi_top))
+        mid = (d_lo + d_hi) / 2.0
+        return w_lo <= mid <= w_hi
+
+    def _resolve_w1_leg_pipeline(
+        self,
+        df_w1: 'pd.DataFrame',
+        debug: bool = False,
+    ):
+        """W1 = același pipeline D1: major swings + filter_internal + _resolve_d1_leg."""
+        import pandas as pd
+        if df_w1 is None or len(df_w1) < 10:
+            return None, None, 'neutral', None, None, None
+
+        df = df_w1.iloc[-60:].copy()
+        w1_det = SMCDetector(swing_lookback=3, atr_multiplier=self.atr_multiplier)
+        w1_det._swing_highs_cache.clear()
+        w1_det._swing_lows_cache.clear()
+
+        chochs, bos_list = w1_det.detect_choch_and_bos(df)
+        sh = w1_det.detect_swing_highs(df)
+        sl = w1_det.detect_swing_lows(df)
+        range_state = w1_det.compute_structural_range(df, sh, sl, symbol='W1_MACRO')
+        chochs, bos_list, range_state = w1_det.filter_internal_range_signals(
+            'W1_MACRO', df, chochs, bos_list, range_state,
+        )
+        latest_signal, strategy_type, current_trend, leg_choch = w1_det._resolve_d1_leg(
+            df, chochs, bos_list, debug=debug, range_state=range_state,
+        )
+        return latest_signal, strategy_type, current_trend, leg_choch, w1_det, df
+
+    def calculate_w1_bias(self, df_w1: 'pd.DataFrame', debug: bool = False) -> dict:
+        """
+        W1 macro bias — EXACT același pipeline ca D1 (_resolve_d1_leg pe pivoți majori).
 
         Returnează dict:
-            {
-              'bias': 'BULLISH' | 'BEARISH' | 'NEUTRAL',
-              'last_bos_direction': 'bullish' | 'bearish' | None,
-              'last_bos_price': float | None,
-              'last_bos_bar_idx': int | None,
-            }
+            bias, strategy_type, current_trend, last_signal_type,
+            last_bos_direction, last_bos_price, last_bos_bar_idx
         """
+        _empty = {
+            'bias': 'NEUTRAL',
+            'strategy_type': None,
+            'current_trend': None,
+            'last_signal_type': None,
+            'last_bos_direction': None,
+            'last_bos_price': None,
+            'last_bos_bar_idx': None,
+        }
         try:
-            import pandas as pd
-            if df_w1 is None or len(df_w1) < 10:
-                return {'bias': 'NEUTRAL', 'last_bos_direction': None, 'last_bos_price': None, 'last_bos_bar_idx': None}
-
-            df_w1_recent = df_w1.iloc[-60:].copy()
-            w1_detector = SMCDetector(swing_lookback=3, atr_multiplier=self.atr_multiplier)
-            w1_chochs, w1_bos_list = w1_detector.detect_choch_and_bos(df_w1_recent)
-
-            all_chochs_info = [f"CHoCH {c.direction} @{c.break_price:.5f} bar{c.index}" for c in w1_chochs]
-            all_bos_info = [f"BOS {b.direction} @{b.break_price:.5f} bar{b.index}" for b in w1_bos_list]
-            print(f"   🔍 [W1 BIAS DEBUG] CHoCH ({len(w1_chochs)}): {all_chochs_info}")
-            print(f"   🔍 [W1 BIAS DEBUG] BOS   ({len(w1_bos_list)}): {all_bos_info}")
-
-            last_signal = None
-            last_signal_type = None
-
-            if w1_chochs:
-                # V37.4: ultimul CHoCH cronologic = ancoră macro (BOS nu o suprascrie)
-                macro_choch = max(w1_chochs, key=lambda c: c.index)
-                last_signal = macro_choch
-                last_signal_type = 'CHoCH'
-                latest_bos = max(w1_bos_list, key=lambda b: b.index) if w1_bos_list else None
-                if latest_bos and latest_bos.index > macro_choch.index and latest_bos.direction != macro_choch.direction:
-                    print(
-                        f"   🔒 [V37.4 W1 MACRO ANCHOR] Ignor BOS {latest_bos.direction.upper()} "
-                        f"bar{latest_bos.index} — pullback vs CHoCH {macro_choch.direction.upper()} "
-                        f"bar{macro_choch.index}"
-                    )
-            elif w1_bos_list:
-                last_signal = max(w1_bos_list, key=lambda b: b.index)
-                last_signal_type = 'BOS'
-
-            if last_signal is None:
-                print(f"   🔍 [W1 BIAS DEBUG] 0 CHoCH + 0 BOS detectate pe W1 60 bare → NEUTRAL")
-                return {'bias': 'NEUTRAL', 'last_bos_direction': None, 'last_bos_price': None, 'last_bos_bar_idx': None}
-
-            bias = 'BULLISH' if last_signal.direction == 'bullish' else 'BEARISH'
-            print(
-                f"   🔍 [W1 BIAS DEBUG] Semnal final: {last_signal_type} "
-                f"{last_signal.direction.upper()} @{last_signal.break_price:.5f} → BIAS={bias}"
+            latest_signal, strategy_type, current_trend, leg_choch, w1_det, df = (
+                self._resolve_w1_leg_pipeline(df_w1, debug=debug)
             )
+            if w1_det is None or latest_signal is None or current_trend == 'neutral':
+                if debug:
+                    print("   🔍 [W1 BIAS] leg pipeline → NEUTRAL (fără semnal major)")
+                return _empty
+
+            bias = 'BULLISH' if current_trend == 'bullish' else 'BEARISH'
+            sig_type = 'CHoCH' if isinstance(latest_signal, CHoCH) else 'BOS'
+            if debug:
+                chochs, bos_list = w1_det.detect_choch_and_bos(df)
+                print(
+                    f"   🔍 [W1 BIAS] {sig_type} {current_trend.upper()} "
+                    f"@bar{latest_signal.index} → {strategy_type.upper()} → BIAS={bias}"
+                )
+                if leg_choch is not None:
+                    print(
+                        f"   🔍 [W1 LEG] leg CHoCH {leg_choch.direction.upper()} "
+                        f"@bar{leg_choch.index}"
+                    )
 
             return {
                 'bias': bias,
-                'last_bos_direction': last_signal.direction,
-                'last_bos_price': float(last_signal.break_price),
-                'last_bos_bar_idx': last_signal.index,
+                'strategy_type': strategy_type,
+                'current_trend': current_trend,
+                'last_signal_type': sig_type,
+                'last_bos_direction': latest_signal.direction,
+                'last_bos_price': float(latest_signal.break_price),
+                'last_bos_bar_idx': latest_signal.index,
             }
         except Exception as e:
             print(f"⚠️ [W1 BIAS] Error: {e}")
-            return {'bias': 'NEUTRAL', 'last_bos_direction': None, 'last_bos_price': None, 'last_bos_bar_idx': None}
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            return _empty
+
+    def resolve_w1_poi(
+        self,
+        df_w1: 'pd.DataFrame',
+        w1_bias: str,
+        debug: bool = False,
+    ) -> Optional[dict]:
+        """
+        Faza 1: FVG/OB organic W1 în Premium/Discount (V16.1).
+        Fallback: bandă macro P/D (50% din range weekly) când lipsește FVG.
+        """
+        w1_norm = (w1_bias or 'NEUTRAL').upper()
+        if w1_norm == 'NEUTRAL':
+            return None
+
+        latest_signal, strategy_type, current_trend, _, w1_det, df = (
+            self._resolve_w1_leg_pipeline(df_w1, debug=debug)
+        )
+        if w1_det is None or latest_signal is None:
+            return None
+
+        orderflow = 'bullish' if w1_norm == 'BULLISH' else 'bearish'
+        fvg = w1_det.detect_fvg(df, latest_signal, strategy_type=strategy_type)
+        poi_source = 'w1_fvg'
+
+        if fvg is not None:
+            w1_top = float(fvg.top)
+            w1_bottom = float(fvg.bottom)
+        else:
+            macro_high, macro_low, premium_threshold, discount_threshold = (
+                w1_det.calculate_premium_discount_zones(df)
+            )
+            eq = (macro_low + macro_high) / 2.0
+            if orderflow == 'bullish':
+                w1_bottom = float(macro_low)
+                w1_top = float(eq)
+            else:
+                w1_bottom = float(eq)
+                w1_top = float(macro_high)
+            poi_source = 'w1_pd_band'
+
+        if debug:
+            print(
+                f"   📅 [W1 POI] {poi_source} zone "
+                f"{min(w1_bottom, w1_top):.5f} – {max(w1_bottom, w1_top):.5f} "
+                f"({w1_norm} macro)"
+            )
+
+        return {
+            'w1_poi_top': max(w1_top, w1_bottom),
+            'w1_poi_bottom': min(w1_top, w1_bottom),
+            'w1_poi_source': poi_source,
+        }
+
+    def evaluate_w_d_sync(
+        self,
+        d1_direction: str,
+        w1_bias: str,
+        daily_poi_top: Optional[float],
+        daily_poi_bottom: Optional[float],
+        w1_poi_top: Optional[float] = None,
+        w1_poi_bottom: Optional[float] = None,
+        current_price: Optional[float] = None,
+    ) -> dict:
+        """
+        Faza 2: clasificare W+D — soft wait, fără reject hard.
+        Returnează w_d_aligned, status (optional override), reason.
+        """
+        w1_dir = self._normalize_macro_bias_label(w1_bias)
+        d1_dir = self._normalize_macro_bias_label(d1_direction)
+
+        if w1_dir is None:
+            return {'w_d_aligned': True, 'status': None, 'reason': 'w1_neutral'}
+
+        w_d_aligned = w1_dir == d1_dir
+        if not w_d_aligned:
+            return {
+                'w_d_aligned': False,
+                'status': 'WAITING_W_D_SYNC',
+                'reason': f'W1={w1_bias} vs D1={d1_direction}',
+            }
+
+        if w1_poi_top is not None and w1_poi_bottom is not None:
+            if not self.daily_poi_inside_weekly_zone(
+                daily_poi_top, daily_poi_bottom, w1_poi_top, w1_poi_bottom,
+            ):
+                return {
+                    'w_d_aligned': True,
+                    'status': 'WAITING_D1_PULLBACK',
+                    'reason': 'daily_poi_outside_w1_macro_zone',
+                }
+            if current_price is not None:
+                w_lo = min(float(w1_poi_bottom), float(w1_poi_top))
+                w_hi = max(float(w1_poi_bottom), float(w1_poi_top))
+                if not (w_lo <= float(current_price) <= w_hi):
+                    return {
+                        'w_d_aligned': True,
+                        'status': 'WAITING_W_ZONE',
+                        'reason': 'price_outside_w1_poi',
+                    }
+
+        return {'w_d_aligned': True, 'status': None, 'reason': 'w_d_aligned'}
+
+    def apply_w_d_sync_gate(
+        self,
+        setup: Optional['TradeSetup'],
+        w1_bias: str,
+        w1_poi: Optional[dict] = None,
+        current_price: Optional[float] = None,
+    ) -> Optional['TradeSetup']:
+        """Faza 2: aplică W+D soft sync pe TradeSetup (status + câmpuri JSON)."""
+        if setup is None or not getattr(setup, 'daily_choch', None):
+            return setup
+
+        sym = getattr(setup, 'symbol', '?')
+        setup.w1_bias = (w1_bias or 'NEUTRAL').upper()
+
+        if w1_poi:
+            setup.w1_poi_top = w1_poi.get('w1_poi_top')
+            setup.w1_poi_bottom = w1_poi.get('w1_poi_bottom')
+
+        d1_top = setup.fvg.top if setup.fvg else None
+        d1_bottom = setup.fvg.bottom if setup.fvg else None
+        sync = self.evaluate_w_d_sync(
+            setup.daily_choch.direction,
+            setup.w1_bias,
+            d1_top,
+            d1_bottom,
+            setup.w1_poi_top,
+            setup.w1_poi_bottom,
+            current_price=current_price,
+        )
+        setup.w_d_aligned = bool(sync.get('w_d_aligned', True))
+
+        if sync.get('status') == 'WAITING_W_D_SYNC':
+            setup.status = 'WAITING_W_D_SYNC'
+            setup.confidence = 'LOW_W1_COUNTER_TREND'
+            print(
+                f"⏸️ [W+D SOFT SYNC] {sym}: {sync.get('reason')} — "
+                f"monitor only, zero EXECUTE_NOW"
+            )
+        elif sync.get('status'):
+            setup.status = sync['status']
+            if debug_msg := sync.get('reason'):
+                print(f"   📅 [W+D] {sym}: {setup.status} ({debug_msg})")
+        elif setup.w_d_aligned and setup.confidence == 'LOW_W1_COUNTER_TREND':
+            setup.confidence = 'NORMAL'
+
+        return setup
+
+    # W1 POLICY legacy alias — delegă la apply_w_d_sync_gate (Faza 2).
+    def apply_w1_gate(self, setup: Optional['TradeSetup'], w1_bias: str) -> Optional['TradeSetup']:
+        return self.apply_w_d_sync_gate(setup, w1_bias)
     
     def store_fvg_magnet(self, symbol: str, timeframe: str, fvg: FVG) -> None:
         """
@@ -3337,32 +3526,7 @@ class SMCDetector:
                 best_bar = pos
         return best_high, best_bar
 
-    # W1 POLICY: INFORMATIV ONLY — nu respinge setup-uri Daily; doar annotare confidence.
-    def apply_w1_gate(self, setup: Optional['TradeSetup'], w1_bias: str) -> Optional['TradeSetup']:
-        """
-        V40.3 W1 PURE INFORMATIVE — nu respinge și nu degradează setup-uri Daily.
-        Annothează counter-trend macro cu confidence=LOW_W1_COUNTER_TREND.
-        """
-        if setup is None or not getattr(setup, 'daily_choch', None):
-            return setup
-        w1 = (w1_bias or 'NEUTRAL').upper()
-        setup.w1_bias = w1 if w1 != 'NEUTRAL' else getattr(setup, 'w1_bias', None)
-        d1_dir = setup.daily_choch.direction
-        is_counter = (
-            (w1 == 'BEARISH' and d1_dir == 'bullish') or
-            (w1 == 'BULLISH' and d1_dir == 'bearish')
-        )
-        sym = getattr(setup, 'symbol', '?')
-        if is_counter:
-            setup.confidence = 'LOW_W1_COUNTER_TREND'
-            print(
-                f"⚠️ [V40.3 W1 INFO] {sym}: D1 {d1_dir.upper()} vs W1 {w1} — "
-                f"confidence=LOW_W1_COUNTER_TREND (informativ, setup păstrat)"
-            )
-        elif not getattr(setup, 'confidence', None) or setup.confidence == 'NORMAL':
-            setup.confidence = 'NORMAL'
-        return setup
-    
+    # apply_w1_gate → see apply_w_d_sync_gate (Faza 2) above.
     def _get_pip_size(self, symbol: str) -> float:
         """V37.0 — delegat la pip_utils.get_pip_size."""
         from pip_utils import get_pip_size

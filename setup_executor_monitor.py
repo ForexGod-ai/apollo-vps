@@ -1318,6 +1318,7 @@ class SetupExecutorMonitor:
                 _active_statuses_v31 = [
                     'MONITORING', 'READY', 'WAITING_POSITION_CLOSE',
                     'WAITING_D1_PULLBACK', 'WAITING_4H_CHOCH',
+                    'WAITING_W_D_SYNC', 'WAITING_W_ZONE',
                     'PARTIAL_OPEN',
                 ]
                 if status not in _active_statuses_v31:

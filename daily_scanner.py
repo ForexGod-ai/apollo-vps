@@ -379,6 +379,7 @@ class DailyScanner:
                 # V40.3: W1 = macro anchor informativ (confidence flag, fără reject)
                 print(f"   📅 Downloading W1 data (Weekly Anchor — 52 bars, ~1 an)...")
                 df_w1 = None
+                w1_poi = None
                 w1_result = {'bias': 'NEUTRAL', 'last_bos_direction': None, 'last_bos_price': None, 'last_bos_bar_idx': None}
                 try:
                     df_w1 = self.data_provider.get_historical_data(symbol, "W1", 52)  # V31.0
@@ -386,6 +387,9 @@ class DailyScanner:
                         print(f"   ✅ W1 data: {len(df_w1)} bars")
                         w1_result = self.smc_detector.calculate_w1_bias(df_w1)
                         w1_bias_map[symbol] = w1_result.get('bias', 'NEUTRAL')
+                        w1_poi = self.smc_detector.resolve_w1_poi(
+                            df_w1, w1_result.get('bias', 'NEUTRAL'),
+                        )
                     else:
                         print(f"   ⚠️ W1 data unavailable for {symbol} — bias = NEUTRAL")
                         w1_bias_map[symbol] = 'NEUTRAL'
@@ -448,8 +452,14 @@ class DailyScanner:
                         print(f"✅ [V13.0 SNIPER ALIGNED] {symbol}: 4H CHoCH {h4_direction.upper()} = aliniat cu D1 {d1_direction.upper()} → {d1_label} valid")
                     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-                    # V40.3 W1 INFO — annotare counter-trend, fără reject
-                    setup = self.smc_detector.apply_w1_gate(setup, w1_bias_map.get(symbol, 'NEUTRAL'))
+                    # Faza 2: W+D soft sync gate (W1 POI + anti-counter-trend)
+                    _live_px = symbol_price_map.get(symbol)
+                    setup = self.smc_detector.apply_w_d_sync_gate(
+                        setup,
+                        w1_bias_map.get(symbol, 'NEUTRAL'),
+                        w1_poi=w1_poi,
+                        current_price=_live_px,
+                    )
 
                 if setup:
                     # V10.1: Display strategy type immediately
@@ -676,12 +686,24 @@ class DailyScanner:
                         if _bias_dir in ('bullish', 'bearish'):
                             _w1 = w1_bias_map.get(symbol, 'NEUTRAL')
                             _bias_trade_dir = 'buy' if _bias_dir == 'bullish' else 'sell'
+                            _bf_status = 'WAITING_D1_PULLBACK'
+                            _bf_w_d_aligned = True
                             _bf_confidence = 'NORMAL'
-                            if _bias_dir == 'bullish' and _w1 == 'BEARISH':
+                            if _w1 == 'BEARISH' and _bias_dir == 'bullish':
+                                _bf_status = 'WAITING_W_D_SYNC'
+                                _bf_w_d_aligned = False
                                 _bf_confidence = 'LOW_W1_COUNTER_TREND'
                                 print(
-                                    f"⚠️ [V40.3 W1 INFO] {symbol}: bias fallback LONG — "
-                                    f"⚠️ [COUNTER-TREND W1] (salvat cu confidence={_bf_confidence})"
+                                    f"⏸️ [W+D SOFT SYNC] {symbol}: bias fallback LONG vs W1 BEARISH — "
+                                    f"status=WAITING_W_D_SYNC (monitor only)"
+                                )
+                            elif _w1 == 'BULLISH' and _bias_dir == 'bearish':
+                                _bf_status = 'WAITING_W_D_SYNC'
+                                _bf_w_d_aligned = False
+                                _bf_confidence = 'LOW_W1_COUNTER_TREND'
+                                print(
+                                    f"⏸️ [W+D SOFT SYNC] {symbol}: bias fallback SHORT vs W1 BULLISH — "
+                                    f"status=WAITING_W_D_SYNC (monitor only)"
                                 )
                             # V37.15: strategy din semnal D1 real (CHoCH/BOS), nu hardcod continuation
                             _bf_strategy, _bf_sig = self.smc_detector.infer_d1_strategy_type(
@@ -690,7 +712,7 @@ class DailyScanner:
                             _bf_setup_type = _bf_strategy.upper()
                             print(
                                 f"📡 [V31.0 BIAS FALLBACK] {symbol}: bias={_bias_dir.upper()} "
-                                f"→ {_bf_sig}/{_bf_strategy.upper()} WAITING_D1_PULLBACK"
+                                f"→ {_bf_sig}/{_bf_strategy.upper()} {_bf_status}"
                             )
                             _bf_entry = {
                                 'symbol': symbol,
@@ -703,12 +725,15 @@ class DailyScanner:
                                 'daily_bias_active': True,
                                 'confidence': _bf_confidence,
                                 'w1_bias': _w1,
+                                'w_d_aligned': _bf_w_d_aligned,
+                                'w1_poi_top': w1_poi.get('w1_poi_top') if w1_poi else None,
+                                'w1_poi_bottom': w1_poi.get('w1_poi_bottom') if w1_poi else None,
                                 'poi_top': None,
                                 'poi_bottom': None,
                                 'fvg_top': None,
                                 'fvg_bottom': None,
                                 'daily_target_price': None,
-                                'status': 'WAITING_D1_PULLBACK',
+                                'status': _bf_status,
                                 'setup_time': datetime.now().isoformat(),
                                 'bias_fallback': True,
                             }
@@ -1705,7 +1730,10 @@ def _trade_setup_to_monitoring_dict(setup: TradeSetup, setup_time_str: str) -> d
     fvg_top = setup.fvg.top if setup.fvg and hasattr(setup.fvg, 'top') else None
     fvg_bottom = setup.fvg.bottom if setup.fvg and hasattr(setup.fvg, 'bottom') else None
     scan_status = getattr(setup, 'status', 'WAITING_D1_PULLBACK')
-    if scan_status not in ('MONITORING', 'READY', 'WAITING_D1_PULLBACK', 'WAITING_4H_CHOCH'):
+    if scan_status not in (
+        'MONITORING', 'READY', 'WAITING_D1_PULLBACK', 'WAITING_4H_CHOCH',
+        'WAITING_W_D_SYNC', 'WAITING_W_ZONE',
+    ):
         scan_status = 'WAITING_D1_PULLBACK'
     _d1_sig = setup.daily_choch
     _d1_signal_type = 'CHoCH' if isinstance(_d1_sig, CHoCH) else 'BOS'
@@ -1720,6 +1748,9 @@ def _trade_setup_to_monitoring_dict(setup: TradeSetup, setup_time_str: str) -> d
         "daily_bias_active": bool(getattr(setup, 'daily_bias_active', False)),
         "confidence": getattr(setup, 'confidence', 'NORMAL'),
         "w1_bias": getattr(setup, 'w1_bias', 'NEUTRAL'),
+        "w1_poi_top": getattr(setup, 'w1_poi_top', None),
+        "w1_poi_bottom": getattr(setup, 'w1_poi_bottom', None),
+        "w_d_aligned": bool(getattr(setup, 'w_d_aligned', True)),
         "poi_top": float(fvg_top) if fvg_top is not None else None,
         "poi_bottom": float(fvg_bottom) if fvg_bottom is not None else None,
         "fvg_top": float(fvg_top) if fvg_top is not None else None,
@@ -1785,7 +1816,8 @@ def save_monitoring_setups(
     # Status-uri active — PASTRATE INTACTE de la o zi la alta
     _ACTIVE_STATUSES = {
         'WAITING_D1_PULLBACK', 'MONITORING', 'READY',
-        'WAITING_4H_CHOCH', 'PARTIAL_OPEN', 'TRADE_OPEN'
+        'WAITING_4H_CHOCH', 'WAITING_W_D_SYNC', 'WAITING_W_ZONE',
+        'PARTIAL_OPEN', 'TRADE_OPEN'
     }
     # Status-uri terminale — nu se mai includ in output
     _DEAD_STATUSES = {
@@ -1902,7 +1934,7 @@ def save_monitoring_setups(
         # Pasul 3: Adaugam setup-uri NOI din scanul de azi (numai daca nu exista deja)
         for setup in setups:
             if setup.status not in ("MONITORING", "READY", "WAITING_D1_PULLBACK",
-                                    "WAITING_4H_CHOCH"):
+                                    "WAITING_4H_CHOCH", "WAITING_W_D_SYNC", "WAITING_W_ZONE"):
                 continue
 
             direction = "buy" if setup.daily_choch.direction == "bullish" else "sell"

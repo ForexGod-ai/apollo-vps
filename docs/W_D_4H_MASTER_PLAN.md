@@ -1,12 +1,12 @@
 # Plan Master: W → D → 4H (fără 1H) + Fix Dedup 4H
 
 **Branch:** `cursor/v36-3-radar-live-sync`  
-**Ultim commit pushed:** `1a8e616` (D1 CONTINUITY/REVERSAL + cascade POI)  
-**Work in progress (local, necommitat):** Faza 3 + Faza 0b
+**Ultim commit pushed:** `0ba1d73` (Faza 3 + 0b: fără 1H runtime + dedup alerte 4H)  
+**Work in progress (local):** Faza 1 + Faza 2 (W1 POI + W+D soft sync gate)
 
 **Documentație referință:** [SMC_ALIGNMENT_AUDIT_GIM.md](SMC_ALIGNMENT_AUDIT_GIM.md)
 
-**Actualizat:** 2026-07-21 (după sesiunea Faza 0b)
+**Actualizat:** 2026-07-21 (după Faza 1 + 2 local)
 
 > **Regulă:** Acest fișier se actualizează după fiecare edit de cod relevant (DONE / TODO / prompturi).
 
@@ -52,8 +52,10 @@ flowchart TD
 | CHoCH o dată per leg (A.1) | `3aeb2c1` | DONE (pushed) |
 | D1 CONTINUITY vs REVERSAL + cascade POI | `1a8e616` | DONE (pushed) |
 | Unicode `--debug` audit | `smc_detector.py` | DONE |
-| **Faza 3 — Eliminare 1H, 4H-only (runtime)** | local WIP | **DONE (necommitat)** |
-| **Faza 0b — Dedup alerte 4H + POI flicker** | local WIP | **DONE (necommitat)** |
+| **Faza 3 — Eliminare 1H, 4H-only (runtime)** | `0ba1d73` | DONE (pushed) |
+| **Faza 0b — Dedup alerte 4H + POI flicker** | `0ba1d73` | DONE (pushed) |
+| **Faza 1 — W1 Bias + POI macro** | local | DONE |
+| **Faza 2 — W+D Soft Sync Gate** | local | DONE |
 
 ### Detaliu Faza 3 (2026-07-21) — DONE local
 
@@ -97,7 +99,7 @@ python3 -m pytest tests/ -q
 # → 48 passed
 ```
 
-**Notă:** Modificările Faza 3 + 0b sunt **doar locale** — trebuie commit + push înainte de deploy VPS.
+**Notă:** Faza 3 + 0b pushed in `0ba1d73` — gata pentru deploy VPS (Faza 0).
 
 ### Curățare 1H rămasă (non-runtime, opțional)
 
@@ -165,32 +167,50 @@ flowchart TD
 
 ---
 
-### Faza 1 — W: Bias + Zona Macro (~2–3h) — **PENDING**
+### Faza 1 — W: Bias + Zona Macro (~2–3h) — **DONE (local)**
 
 **Fișiere:** `smc_detector.py`, `daily_scanner.py`
 
-1. `calculate_w1_bias()` — același pipeline D1 (`_resolve_d1_leg`, CHoCH-once-per-leg)
-2. `resolve_w1_poi()` (NEW) — FVG/OB organic weekly in P/D, zonă **largă**
-3. JSON: `w1_poi_top`, `w1_poi_bottom`, `w_d_aligned`
-4. Telegram scan report — afișare zonă W (informativ, fără blocare)
+1. `calculate_w1_bias()` — același pipeline D1 (`_resolve_w1_leg_pipeline` → `_resolve_d1_leg`, CHoCH-once-per-leg)
+2. `resolve_w1_poi()` — FVG/OB organic weekly in P/D (fallback bandă P/D), zonă **largă**
+3. JSON: `w1_poi_top`, `w1_poi_bottom`, `w_d_aligned` via `_trade_setup_to_monitoring_dict`
+4. Bias fallback: propagă `w1_poi_*` când W1 disponibil
 
-**Nu atinge radar/executor încă.**
+**Verificare:**
+
+```bash
+python3 -m pytest tests/test_w_d_sync.py -q
+# → 7 passed
+```
 
 ---
 
-### Faza 2 — W+D Soft Sync Gate (~2–3h) — **PENDING**
+### Faza 2 — W+D Soft Sync Gate (~2–3h) — **DONE (local)**
 
-**Fișiere:** `smc_detector.py`, `daily_scanner.py`, `multi_tf_radar.py`
+**Fișiere:** `smc_detector.py`, `daily_scanner.py`, `multi_tf_radar.py`, `setup_executor_monitor.py`, `telegram_command_center.py`
 
 ```
-IF preț NOT in w1_poi_zone     → MONITORING / WAITING_W_ZONE
+IF preț NOT in w1_poi_zone     → WAITING_W_ZONE
 ELIF w1_bias != d1_bias        → WAITING_W_D_SYNC (soft wait, zero exec)
 ELIF daily_poi NOT in w1_poi   → WAITING_D1_PULLBACK (log low priority)
-ELIF preț in daily_poi AND W=D → WAITING_4H_CHOCH → flux 4H
+ELIF preț in daily_poi AND W=D → flux 4H normal
 ```
 
 - `daily_poi_inside_weekly_zone()` — middle D POI in range W
-- Radar: `_arm_execute_now` blocat dacă `status == WAITING_W_D_SYNC`
+- `apply_w_d_sync_gate()` — scanner + bias fallback anti-counter-trend
+- Radar: `_arm_execute_now` + `_w_d_sync_blocks_execute` blocat dacă `WAITING_W_D_SYNC` / `w_d_aligned == False`
+- Log silent: `[W+D SOFT SYNC] Așteptăm alinierea D1 în POI Weekly`
+
+**Verificare rulată (Faza 1 + 2):**
+
+```bash
+python3 -m py_compile smc_detector.py daily_scanner.py multi_tf_radar.py
+python3 -m pytest tests/ -q
+# → 55 passed
+python3 scripts/audit_structural_classification.py --symbol EURGBP GBPUSD EURUSD BTCUSD --d1-bars 300 --debug
+# → EURGBP bearish, GBPUSD/EURUSD bullish, BTCUSD bearish (exit 0)
+```
+
 
 ---
 
@@ -205,7 +225,7 @@ Vezi secțiunea **Detaliu Faza 3** de mai sus.
 | Metric | Target | Depinde de |
 |--------|--------|------------|
 | Alerte 4H duplicate | Zero (1/ciclu POI) | Faza 0b ✅ cod + Faza 0 deploy |
-| `WAITING_W_D_SYNC` | Vizibil JSON/Telegram, zero EXECUTE_NOW | Faza 2 |
+| `WAITING_W_D_SYNC` | Vizibil JSON/Telegram, zero EXECUTE_NOW | Faza 2 ✅ |
 | EXECUTE_NOW | Doar 4H, W=D, post POI touch | Faza 2 + live |
 | Alerte 1H | Zero | Faza 3 ✅ |
 | Audit | EURGBP, GBPUSD, EURUSD, BTCUSD — bias corect | Faza 0 deploy |
@@ -224,12 +244,12 @@ Vezi secțiunea **Detaliu Faza 3** de mai sus.
 
 ## Checklist TODO
 
-- [ ] **Commit + push Faza 3 + 0b** (modificări locale necommitate)
+- [x] **Commit + push Faza 3 + 0b** — `0ba1d73`
 - [ ] **Faza 0:** Deploy pe VPS + wipe JSON + rescan + restart
-- [x] **Faza 0b:** Fix dedup 4H CHoCH (claim, POI flicker, flush keys, header) — **DONE local**
-- [ ] **Faza 1:** W bias + `resolve_w1_poi()` + JSON fields
-- [ ] **Faza 2:** `WAITING_W_D_SYNC` + containment W⊃D
-- [x] **Faza 3:** Eliminare 1H, 4H-only (runtime) — **DONE local**
+- [x] **Faza 0b:** Fix dedup 4H CHoCH (claim, POI flicker, flush keys, header) — **pushed**
+- [x] **Faza 1:** W bias + `resolve_w1_poi()` + JSON fields — **DONE (local)**
+- [x] **Faza 2:** `WAITING_W_D_SYNC` + containment W⊃D — **DONE (local)**
+- [x] **Faza 3:** Eliminare 1H, 4H-only (runtime) — **pushed**
 - [ ] **Faza 4:** audit + monitor 48h live
 - [ ] *(Opțional)* Curățare 1H in scripturi/docs/backtest
 
@@ -237,12 +257,11 @@ Vezi secțiunea **Detaliu Faza 3** de mai sus.
 
 ## Ordinea de lucru recomandată
 
-1. **Commit + push Faza 3 + 0b** ← **acum**
-2. **Faza 0** — deploy VPS + wipe JSON + restart
-3. **Faza 4** — monitor 48h (parțial, fără W gate)
-4. **Faza 1** — W bias + POI zone
-5. **Faza 2** — W+D soft gate
-6. **Faza 4** — validare completă post Faza 2
+1. **Faza 0** — deploy VPS + wipe JSON + restart ← **acum**
+2. **Faza 4** — monitor 48h (parțial, fără W gate)
+3. **Faza 1** — W bias + POI zone
+4. **Faza 2** — W+D soft gate
+5. **Faza 4** — validare completă post Faza 2
 
 ---
 

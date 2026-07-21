@@ -429,6 +429,7 @@ class TelegramCommandCenter:
         _WATCHING = frozenset({
             'MONITORING', 'READY', 'WAITING_D1_PULLBACK',
             'WAITING_4H_CHOCH', 'WAITING_4H_PULLBACK',
+            'WAITING_W_D_SYNC', 'WAITING_W_ZONE',
             'WAITING_POSITION_CLOSE',
         })
 
@@ -686,6 +687,7 @@ class TelegramCommandCenter:
     _STATUS_WATCHING_STATUSES = frozenset({
         'MONITORING', 'READY', 'ACTIVE', 'WAITING_D1_PULLBACK',
         'WAITING_4H_CHOCH', 'WAITING_4H_PULLBACK',
+        'WAITING_W_D_SYNC', 'WAITING_W_ZONE',
         'WAITING_POSITION_CLOSE',
     })
 
