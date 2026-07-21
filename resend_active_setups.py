@@ -45,7 +45,6 @@ for idx, setup_data in enumerate(active_setups, 1):
         print(f"📡 Fetching data for {symbol}...")
         df_daily = ctrader.get_historical_data(symbol, 'Daily', bars=100)
         df_4h = ctrader.get_historical_data(symbol, 'Hour4', bars=200)
-        df_1h = ctrader.get_historical_data(symbol, 'Hour', bars=300)
         
         # Recreate TradeSetup object
         swing = SwingPoint(
@@ -82,7 +81,6 @@ for idx, setup_data in enumerate(active_setups, 1):
             daily_choch=daily_choch,
             fvg=fvg,
             h4_choch=h4_choch,
-            h1_choch=None,
             entry_price=setup_data.get('entry_price', 0.0),
             stop_loss=setup_data.get('stop_loss', 0.0),
             take_profit=setup_data.get('take_profit', 0.0),
@@ -94,15 +92,15 @@ for idx, setup_data in enumerate(active_setups, 1):
         )
         
         # Add current price for live distance calculation
-        if len(df_1h) > 0:
-            trade_setup.current_price = df_1h['close'].iloc[-1]
+        if df_4h is not None and len(df_4h) > 0:
+            trade_setup.current_price = df_4h['close'].iloc[-1]
         
         # Send setup alert with charts
         print(f"📱 Sending {symbol} setup to Telegram...")
-        success = notifier.send_setup_alert(trade_setup, df_daily, df_4h, df_1h)
+        success = notifier.send_setup_alert(trade_setup, df_daily, df_4h)
         
         if success:
-            print(f"✅ {symbol} sent successfully with 3 charts!")
+            print(f"✅ {symbol} sent successfully with charts!")
         else:
             print(f"⚠️ {symbol} - partial success or errors")
             

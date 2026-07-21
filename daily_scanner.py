@@ -376,16 +376,6 @@ class DailyScanner:
                     daily_bias_map[symbol] = 'neutral'
                     print(f"   ⚠️ [V40] bias map error {symbol}: {_dbm_err}")
                 
-                # V3.1 SCALE_IN: Download 1H data for ALL pairs (Entry 1 validation)
-                print(f"   📊 Downloading 1H data (SCALE_IN strategy)...") 
-                df_1h = self.data_provider.get_historical_data(
-                    symbol,
-                    "H1",
-                    self.scanner_settings['lookback_candles'].get('h1', 225)
-                )
-                if df_1h is None:
-                    print(f"⚠️ Warning: {symbol} has no 1H data (Entry 1 disabled)")
-
                 # V40.3: W1 = macro anchor informativ (confidence flag, fără reject)
                 print(f"   📅 Downloading W1 data (Weekly Anchor — 52 bars, ~1 an)...")
                 df_w1 = None
@@ -414,7 +404,6 @@ class DailyScanner:
                         df_daily=df_daily,
                         df_4h=df_4h,
                         priority=priority,
-                        df_1h=df_1h,  # V3.0: Pass 1H data for GBP pairs
                         debug=True,    # ✅ V10.6: verbose reject messages
                         stored_poi_top=_stored.get('poi_top') if _stored.get('poi_top') is not None else _stored.get('fvg_top'),
                         stored_poi_bottom=_stored.get('poi_bottom') if _stored.get('poi_bottom') is not None else _stored.get('fvg_bottom'),
@@ -653,7 +642,6 @@ class DailyScanner:
                                     setup=setup,
                                     df_daily=df_daily,
                                     df_4h=df_4h,
-                                    df_1h=df_1h,
                                     charts_mode='daily_only'  # V43.9: info-only — no manual Execute/Skip buttons
                                 )
                                 print(f"   ✅ Chart trimis pe Telegram: {symbol} [{tg_prefix}] [DAILY ONLY]")
@@ -949,28 +937,22 @@ class DailyScanner:
                 print(f"❌ {symbol} not found in pairs_config.json")
                 return None
             
-            # Download data (add 1H for SCALE_IN strategy)
+            # Download data (W→D→4H)
             # V11.2: citim din pairs_config.json — NU mai hardcodăm 100
             d1_bars = self.scanner_settings.get('lookback_candles', {}).get('daily', 200)
             h4_bars = self.scanner_settings.get('lookback_candles', {}).get('h4', 200)
-            h1_bars = self.scanner_settings.get('lookback_candles', {}).get('h1', 300)
             df_daily = self.data_provider.get_historical_data(symbol, "D1", d1_bars)
             df_4h = self.data_provider.get_historical_data(symbol, "H4", h4_bars)
-            df_1h = self.data_provider.get_historical_data(symbol, "H1", h1_bars)  # NEW: 1H data
             
             if df_daily is None or df_4h is None:
                 print(f"❌ Failed to download data for {symbol}")
                 return None
             
-            if df_1h is None:
-                print(f"⚠️  Warning: 1H data unavailable for {symbol}, SCALE_IN disabled")
-            
-            # Run detection (pass df_1h for SCALE_IN validation)
+            # Run detection (W→D→4H)
             setup = self.smc_detector.scan_for_setup(
                 symbol=symbol,
                 df_daily=df_daily,
                 df_4h=df_4h,
-                df_1h=df_1h,  # NEW: pass 1H data
                 priority=pair_config['priority'],
                 debug=True    # ✅ V10.6: verbose reject messages
             )
@@ -1723,7 +1705,7 @@ def _trade_setup_to_monitoring_dict(setup: TradeSetup, setup_time_str: str) -> d
     fvg_top = setup.fvg.top if setup.fvg and hasattr(setup.fvg, 'top') else None
     fvg_bottom = setup.fvg.bottom if setup.fvg and hasattr(setup.fvg, 'bottom') else None
     scan_status = getattr(setup, 'status', 'WAITING_D1_PULLBACK')
-    if scan_status not in ('MONITORING', 'READY', 'WAITING_D1_PULLBACK', 'WAITING_4H_CHOCH', 'WAITING_1H_CHOCH'):
+    if scan_status not in ('MONITORING', 'READY', 'WAITING_D1_PULLBACK', 'WAITING_4H_CHOCH'):
         scan_status = 'WAITING_D1_PULLBACK'
     _d1_sig = setup.daily_choch
     _d1_signal_type = 'CHoCH' if isinstance(_d1_sig, CHoCH) else 'BOS'
@@ -1780,7 +1762,7 @@ def save_monitoring_setups(
     Logica:
       1. Citim JSON existent.
       2. Pastram INTACTE paritati cu status: WAITING_D1_PULLBACK, MONITORING, READY,
-         WAITING_4H_CHOCH, WAITING_1H_CHOCH, PARTIAL_OPEN, TRADE_OPEN.
+         WAITING_4H_CHOCH, PARTIAL_OPEN, TRADE_OPEN.
       3. Setup-uri noi din scan: adaugam NUMAI daca paritatea NU exista deja activa in JSON.
       4. Bias fallback: la fel (nu suprascrie activ).
       5. Paritati cu status terminal (INVALIDATED, EXPIRED_TIMEOUT, COMPLETED_WITHOUT_ENTRY,
@@ -1803,7 +1785,7 @@ def save_monitoring_setups(
     # Status-uri active — PASTRATE INTACTE de la o zi la alta
     _ACTIVE_STATUSES = {
         'WAITING_D1_PULLBACK', 'MONITORING', 'READY',
-        'WAITING_4H_CHOCH', 'WAITING_1H_CHOCH', 'PARTIAL_OPEN', 'TRADE_OPEN'
+        'WAITING_4H_CHOCH', 'PARTIAL_OPEN', 'TRADE_OPEN'
     }
     # Status-uri terminale — nu se mai includ in output
     _DEAD_STATUSES = {
@@ -1920,7 +1902,7 @@ def save_monitoring_setups(
         # Pasul 3: Adaugam setup-uri NOI din scanul de azi (numai daca nu exista deja)
         for setup in setups:
             if setup.status not in ("MONITORING", "READY", "WAITING_D1_PULLBACK",
-                                    "WAITING_4H_CHOCH", "WAITING_1H_CHOCH"):
+                                    "WAITING_4H_CHOCH"):
                 continue
 
             direction = "buy" if setup.daily_choch.direction == "bullish" else "sell"

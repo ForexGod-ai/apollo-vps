@@ -267,19 +267,12 @@ class GlitchBacktester:
             d1_df['time'] = d1_df['timestamp']
             h4_df['time'] = h4_df['timestamp']
             
-            # V3.0: Prepare 1H data for GBP pairs
-            df_1h = None
-            if h1_data is not None:
-                df_1h = h1_data.copy()
-                df_1h['time'] = df_1h['timestamp']
-            
             # Use SMCDetector.scan_for_setup() directly (same as morning scanner!)
             setup = self.smc_detector.scan_for_setup(
                 symbol=pair,
                 df_daily=d1_df,
                 df_4h=h4_df,
                 priority=1,
-                df_1h=df_1h  # V3.0: GBP 2-TF confirmation
             )
             
             if setup is None:

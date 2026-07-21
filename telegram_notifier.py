@@ -34,13 +34,11 @@ _MONITORING_JSON = Path(__file__).resolve().parent / 'monitoring_setups.json'
 
 _RADAR_LIVE_KEYS = (
     'h4_structure_locked', 'h4_locked', 'h4_structure_locked_at',
-    'h4_choch_alert_sent', 'h4_bos_alert_sent', 'h1_choch_alert_sent',
+    'h4_choch_alert_sent', 'h4_bos_alert_sent',
     'radar_panda_active', 'radar_4h_choch_detected', 'radar_4h_choch_direction',
     'radar_4h_choch_price', 'radar_4h_choch_time', 'radar_4h_choch_bars_ago',
-    'radar_4h_status', 'radar_1h_choch_detected', 'radar_1h_choch_direction',
-    'radar_1h_choch_price', 'radar_1h_choch_time', 'radar_1h_choch_bars_ago',
-    'radar_1h_status', 'radar_1h_choch_stale', 'EXECUTE_NOW', 'execute_now_trigger_tf',
-    'poi_first_touch_time', 'h4_fvg_first_touch_time', 'choch_1h_price',
+    'radar_4h_status', 'EXECUTE_NOW', 'execute_now_trigger_tf',
+    'poi_first_touch_time', 'h4_fvg_first_touch_time',
 )
 
 
@@ -119,7 +117,7 @@ def _ltf_choch_confirmed(
     tf: str,
     macro_dir: str,
 ) -> bool:
-    """V51: live interconectat cu radar — fără artefacte scanner (h4_choch/h1_choch)."""
+    """V51/W→D→4H: live interconectat cu radar — fără artefacte scanner istorice."""
     merged = _merge_radar_state(setup, snap)
     return ltf_choch_confirmed_for_card(merged, tf, macro_dir)
 
@@ -135,34 +133,18 @@ def _format_radar_exec_lines(
     symbol: str,
     macro_dir: str,
     wait_hint: str,
-) -> tuple:
+) -> str:
     snap = _load_monitoring_radar_snapshot(symbol, macro_dir)
 
     if _ltf_choch_confirmed(setup, snap, '4H', macro_dir):
         price_4h = _ltf_choch_price(setup, snap, '4H', macro_dir)
         if price_4h is not None:
-            h4_line = (
+            return (
                 f"📡 ✅ 4H CHoCH Confirmat — "
                 f"<code>{format_telegram_price(symbol, price_4h)}</code>"
             )
-        else:
-            h4_line = "📡 ✅ 4H CHoCH Confirmat"
-    else:
-        h4_line = f"📡 4H: ⏳ {wait_hint}"
-
-    if _ltf_choch_confirmed(setup, snap, '1H', macro_dir):
-        price_1h = _ltf_choch_price(setup, snap, '1H', macro_dir)
-        if price_1h is not None:
-            h1_line = (
-                f"🔭 ✅ 1H CHoCH Confirmat — "
-                f"<code>{format_telegram_price(symbol, price_1h)}</code>"
-            )
-        else:
-            h1_line = "🔭 ✅ 1H CHoCH Confirmat"
-    else:
-        h1_line = "🔭 1H: ⏳ Waiting pullback + FVG"
-
-    return h4_line, h1_line
+        return "📡 ✅ 4H CHoCH Confirmat"
+    return f"📡 4H: ⏳ {wait_hint}"
 
 
 def _trade_levels_valid(entry, sl) -> bool:
@@ -310,7 +292,6 @@ class TelegramNotifier:
         setup: TradeSetup, 
         df_daily: pd.DataFrame,
         df_4h: pd.DataFrame,
-        df_1h: pd.DataFrame = None,
         charts_mode: str = 'full'  # V15.0: 'full' | 'daily_only'
     ) -> bool:
         """
@@ -318,10 +299,9 @@ class TelegramNotifier:
         - Formatted message
         - Daily chart screenshot
         - 4H chart screenshot (ONLY when charts_mode='full')
-        - 1H chart screenshot  (ONLY when charts_mode='full')
         V15.0 Silent Scan: charts_mode='daily_only' → trimite doar Daily chart la scanare.
         V43.9: fără butoane manuale — execuția rămâne autonomă (radar + executor).
-        4H+1H se trimit separat la confirmare CHoCH (send_4h_choch_alert: photo+caption 4H / send_1h_choch_alert).
+        Alertele structurale 4H se trimit separat (send_4h_structural_alert).
         """
         # 1. Send main alert message
         message = self.format_setup_alert(setup)
@@ -347,7 +327,7 @@ class TelegramNotifier:
             import traceback
             traceback.print_exc()
         
-        # V15.0 SILENT SCAN: la charts_mode='daily_only' oprim aici — 4H+1H vin la confirmare CHoCH
+        # V15.0 SILENT SCAN: la charts_mode='daily_only' oprim aici — 4H vine la confirmare CHoCH
         if charts_mode == 'daily_only':
             print(f"[INFO] {setup.symbol}: daily_only mode — scan card complete (no manual buttons)")
             return True
@@ -367,24 +347,6 @@ class TelegramNotifier:
             print(f"[ERROR] Error generating 4H chart for {setup.symbol}: {e}")
             import traceback
             traceback.print_exc()
-        
-        # V11.9: Anti-flood delay înainte de 1H chart
-        time.sleep(3)
-        
-        # 4. Generate and send 1H chart (for SCALE_IN strategy)
-        if df_1h is not None:
-            try:
-                print(f"[INFO] Generating 1H chart for {setup.symbol}...")
-                h1_chart = self._create_1h_chart(setup, df_1h)
-                if h1_chart:
-                    print(f"[SUCCESS] 1H chart generated ({len(h1_chart)} bytes)")
-                    self.send_photo(h1_chart, caption=f"⏰ {setup.symbol} - 1H Timeframe (Entry 1)")
-                else:
-                    print(f"[WARNING] 1H chart returned None for {setup.symbol}")
-            except Exception as e:
-                print(f"[ERROR] Error generating 1H chart for {setup.symbol}: {e}")
-                import traceback
-                traceback.print_exc()
         
         return True
 
@@ -456,11 +418,20 @@ class TelegramNotifier:
             struct_dir_u = str(struct_dir).upper()
             d1_line = f"\n📊 D1 signal: <code>{d1_sig}</code>" if d1_sig else ""
 
+            strat_u = strategy.replace('_COUNTER_W1', '')
+            is_continuation = strat_u.startswith('CONTINUATION') or strat_u.startswith('CONTINUITY')
+
             if sig == 'BOS':
                 header = "⚡ <b>4H STRUCTURĂ CONFIRMATĂ (BOS)</b> — Continuare"
                 wait_line = (
                     f"✅ POI Daily atins — BOS 4H {struct_dir_u} {bars_str} post-POI\n"
                     "⏳ Următorul pas: retrace Premium/Discount 60–80% pe impuls BOS → entry"
+                )
+            elif is_continuation:
+                header = "⚡ <b>4H STRUCTURĂ CONFIRMATĂ (4H CHoCH)</b> — Continuare"
+                wait_line = (
+                    f"✅ POI Daily atins — CHoCH 4H {struct_dir_u} {bars_str} post-POI\n"
+                    "⏳ Următorul pas: retrace Premium/Discount 60–80% pe impuls 4H → entry"
                 )
             else:
                 header = "🔄 <b>4H INVERSARE STRUCTURĂ (CHoCH)</b> — Pregătire Entry"
@@ -544,121 +515,6 @@ class TelegramNotifier:
     def send_4h_choch_alert(self, setup_data: dict, df_4h: pd.DataFrame) -> bool:
         """Backward compat — delegă la V47 send_4h_structural_alert."""
         return self.send_4h_structural_alert(setup_data, df_4h, signal_type='CHoCH')
-
-    def send_1h_choch_alert(
-        self,
-        setup_data: dict,
-        df_1h: pd.DataFrame,
-        tf_data=None,
-    ) -> bool:
-        """
-        V47: Photo + caption HTML (paritate 4H), fallback text. Gate 4H confirmat în radar.
-        """
-        try:
-            symbol = setup_data.get('symbol', 'UNKNOWN')
-            if setup_data.get('radar_1h_choch_stale'):
-                print(f"[BLOCK] 1H CHoCH STALE — skip Telegram for {symbol}")
-                return False
-
-            direction = setup_data.get('direction', 'buy').upper()
-            if direction in ('LONG',):
-                direction = 'BUY'
-            elif direction in ('SHORT',):
-                direction = 'SELL'
-            strategy = str(setup_data.get('strategy_type', 'reversal')).upper()
-            sig = (getattr(tf_data, 'signal_type', None) or 'CHoCH').upper()
-            choch_1h_price = (
-                setup_data.get('choch_1h_price')
-                or setup_data.get('radar_1h_choch_price')
-                or getattr(tf_data, 'choch_price', None)
-                or setup_data.get('entry_price')
-                or 0
-            )
-            bars_ago = getattr(tf_data, 'choch_bars_ago', None)
-            bars_str = f"-{bars_ago}b" if bars_ago is not None else ""
-            retrace_pct = getattr(tf_data, 'retrace_pct', None)
-            struct_dir = (
-                getattr(tf_data, 'choch_direction', None)
-                or setup_data.get('radar_1h_choch_direction')
-                or ('bearish' if direction == 'SELL' else 'bullish')
-            )
-            struct_dir_u = str(struct_dir).upper()
-            h4_confirmed = bool(
-                setup_data.get('h4_choch_alert_sent') or setup_data.get('h4_bos_alert_sent')
-            )
-            dir_emoji = "🟢" if direction == 'BUY' else "🔴"
-            sep = UNIVERSAL_SEPARATOR
-            trade_block = _choch_monitoring_levels_line()
-
-            retrace_hint = ""
-            if retrace_pct is not None:
-                if 0 <= retrace_pct <= 2.0:
-                    retrace_hint = (
-                        f"\n📊 Retrace curent pe impuls 1H: <code>{retrace_pct * 100:.1f}%</code>"
-                    )
-                else:
-                    retrace_hint = "\n⚠️ Retrace invalid — structură stale, așteptăm CHoCH LIVE"
-
-            h4_line = (
-                "✅ 4H confirmat (alertă LIVE trimisă)"
-                if h4_confirmed
-                else "⏳ Așteptăm confirmare 4H LIVE"
-            )
-            bars_post_poi = f" {bars_str} post-POI" if bars_str else " post-POI"
-            wait_line = (
-                f"✅ POI Daily atins · {h4_line}\n"
-                f"📍 1H {sig} {struct_dir_u}{bars_post_poi}\n"
-                "⏳ Următorul pas: preț în Premium/Discount 60–80% pe impuls 1H "
-                "→ EXECUTE_NOW sniper"
-                f"{retrace_hint}"
-            )
-
-            caption = (
-                f"🎯 <b>SNIPER 1H READY</b> — cascadă POI → 4H → 1H completă\n"
-                f"{sep}\n"
-                f"{dir_emoji} <b>{symbol}</b> {direction}\n"
-                f"🎯 Strategy: <code>{strategy}</code>\n"
-                f"📍 1H {sig} {struct_dir_u} @ <code>{format_telegram_price(symbol, choch_1h_price)}</code>"
-                f"{f' | {bars_str} post-POI' if bars_str else ''}\n"
-                f"{trade_block}"
-                f"{sep}\n"
-                f"{wait_line}"
-            )
-
-            chart_1h = None
-            if df_1h is not None and not df_1h.empty and len(df_1h) >= 50:
-                from types import SimpleNamespace
-                setup_ns = SimpleNamespace(
-                    symbol=symbol,
-                    direction=direction.lower(),
-                    entry_price=choch_1h_price,
-                    stop_loss=None,
-                    take_profit=None,
-                    risk_reward=0,
-                    status='MONITORING',
-                    strategy_type=strategy.lower(),
-                    daily_choch=SimpleNamespace(
-                        direction='bullish' if direction == 'BUY' else 'bearish'
-                    ),
-                    h4_choch=None,
-                    fvg=SimpleNamespace(bottom=sl, top=tp),
-                    choch_break_price=choch_1h_price,
-                )
-                chart_1h = self._create_1h_chart(setup_ns, df_1h)
-
-            if chart_1h:
-                if not self.send_photo(chart_1h, caption=caption):
-                    print(f"[WARNING] send_photo 1H failed for {symbol} — fallback to text")
-                    self.send_message(caption)
-            else:
-                print(f"[WARNING] No 1H chart bytes for {symbol} — fallback to text alert")
-                self.send_message(caption)
-
-            print(f"[✅] 1H Alert sent: {symbol}")
-            return True
-        except Exception as e:
-            print(f"[ERROR] send_1h_choch_alert failed for {setup_data.get('symbol', '?')}: {e}")
-            return False
 
     def format_setup_alert(self, setup) -> str:
         """Format scan card — V43.6: 3-block premium layout + asset-class price precision."""
@@ -758,14 +614,13 @@ class TelegramNotifier:
         block2 = f"\n{sep}\n" + "\n".join(block2_parts)
 
         # ── BLOC 3: Radar & Execuție (stare live din JSON radar + setup) ──
-        h4_line, h1_line = _format_radar_exec_lines(setup, symbol, raw_dir, wait_hint)
+        h4_line = _format_radar_exec_lines(setup, symbol, raw_dir, wait_hint)
 
         block3 = (
             f"\n{sep}\n"
             f"{h4_line}\n"
-            f"{h1_line}\n"
             f"⏳ <b>Entry / SL / TP</b> — la semnal <b>EXECUTE NOW</b>\n"
-            f"⚡ Radar monitorizează 4H + 1H live"
+            f"⚡ Radar monitorizează 4H live"
         )
 
         return f"{block1}{block2}{block3}".strip()
@@ -789,7 +644,6 @@ class TelegramNotifier:
 
             entry = (
                 setup_data.get('radar_4h_fvg_entry')
-                or setup_data.get('radar_1h_fvg_entry')
                 or setup_data.get('entry_price')
             )
             sl = setup_data.get('h4_sl_price') or setup_data.get('stop_loss')
@@ -1036,29 +890,6 @@ class TelegramNotifier:
             return chart_bytes
         except Exception as e:
             print(f"❌ Error creating 4H chart: {e}")
-            return None
-    
-    def _create_1h_chart(self, setup, df: pd.DataFrame) -> Optional[bytes]:
-        """V47: Create 1H chart — log explicit on failure."""
-        symbol = getattr(setup, 'symbol', '?')
-        if df is None or df.empty:
-            print(f"[1H CHART FAIL] {symbol}: dataframe gol")
-            return None
-        if len(df) < 50:
-            print(f"[1H CHART FAIL] {symbol}: doar {len(df)} bare (min 50)")
-            return None
-        try:
-            chart_bytes = self.chart_generator.create_1h_chart(
-                symbol=symbol,
-                df=df,
-                setup=setup,
-                save_path=None,
-            )
-            if not chart_bytes:
-                print(f"[1H CHART FAIL] {symbol}: create_1h_chart returnat None")
-            return chart_bytes
-        except Exception as e:
-            print(f"[1H CHART FAIL] {symbol}: {e}")
             return None
     
     def send_system_start(self) -> bool:

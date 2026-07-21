@@ -428,16 +428,16 @@ class TelegramCommandCenter:
         """
         _WATCHING = frozenset({
             'MONITORING', 'READY', 'WAITING_D1_PULLBACK',
-            'WAITING_4H_CHOCH', 'WAITING_1H_CHOCH', 'WAITING_4H_PULLBACK',
+            'WAITING_4H_CHOCH', 'WAITING_4H_PULLBACK',
             'WAITING_POSITION_CLOSE',
         })
 
         def _setup_radar_hint(s: dict) -> str:
             if s.get('EXECUTE_NOW'):
                 return '🔥 EXECUTE_NOW'
-            if s.get('radar_1h_in_fvg') or s.get('radar_4h_in_fvg'):
+            if s.get('radar_4h_in_fvg'):
                 return '🎯 In FVG'
-            if s.get('radar_1h_choch_detected') or s.get('choch_1h_detected'):
+            if s.get('radar_4h_choch_detected'):
                 return '⏳ CHoCH → aștept FVG'
             verdict = (s.get('radar_verdict') or '')[:40]
             return verdict or s.get('status', '?')
@@ -685,7 +685,7 @@ class TelegramCommandCenter:
 
     _STATUS_WATCHING_STATUSES = frozenset({
         'MONITORING', 'READY', 'ACTIVE', 'WAITING_D1_PULLBACK',
-        'WAITING_4H_CHOCH', 'WAITING_1H_CHOCH', 'WAITING_4H_PULLBACK',
+        'WAITING_4H_CHOCH', 'WAITING_4H_PULLBACK',
         'WAITING_POSITION_CLOSE',
     })
 
@@ -880,15 +880,15 @@ class TelegramCommandCenter:
                     choch_waiting = sum(
                         1 for s in setups
                         if s.get('status') in watching
-                        and not (s.get('radar_1h_choch_detected') or s.get('choch_1h_detected'))
+                        and not s.get('radar_4h_choch_detected')
                     )
                     in_zone = sum(
                         1 for s in setups
                         if s.get('status') in watching
                         and (
-                            s.get('radar_1h_in_fvg') or s.get('radar_4h_in_fvg')
+                            s.get('radar_4h_in_fvg')
                             or (
-                                (s.get('radar_1h_choch_detected') or s.get('choch_1h_detected'))
+                                s.get('radar_4h_choch_detected')
                                 and not s.get('EXECUTE_NOW')
                             )
                         )

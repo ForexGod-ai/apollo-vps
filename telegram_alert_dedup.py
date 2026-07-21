@@ -14,8 +14,14 @@ from pathlib import Path
 # 1 alerta / simbol / directie / ora — indiferent de motiv sau numar procese
 EXECUTE_NOW_BLOCKED_COOLDOWN_SEC = 3600
 
+# V0b: 1 alerta 4H structurala / break_key / 24h — anti-spam POI flicker + procese paralele
+H4_STRUCTURAL_ALERT_COOLDOWN_SEC = 86400
+
 _DEDUP_PATH = Path(__file__).resolve().parent / "data" / "telegram_execute_now_blocked.json"
 _LOCK_PATH = _DEDUP_PATH.with_suffix(".lock")
+
+_H4_DEDUP_PATH = Path(__file__).resolve().parent / "data" / "telegram_4h_structural_alerts.json"
+_H4_LOCK_PATH = _H4_DEDUP_PATH.with_suffix(".lock")
 
 
 def normalize_trade_direction(direction: str) -> str:
@@ -105,6 +111,47 @@ def claim_execute_now_blocked_alert(symbol: str, direction: str) -> bool:
         tmp = _DEDUP_PATH.with_suffix(".tmp")
         tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
         tmp.replace(_DEDUP_PATH)
+        return True
+    finally:
+        _release_lock(fh)
+
+
+def claim_4h_structural_alert(symbol: str, direction: str, break_key: str) -> bool:
+    """
+    V0b: True = prima alerta 4H pentru acest break_key in 24h — trimite Telegram.
+    False = duplicat (acelasi break sau alerta recenta) — SKIP.
+    """
+    bk = str(break_key or "").strip()
+    if not bk:
+        return False
+    key = f"{symbol.upper()}|{normalize_trade_direction(direction)}|{bk}"
+    now = time.time()
+    fh = _acquire_lock(_H4_LOCK_PATH)
+    if fh is None:
+        return False
+    try:
+        data: dict = {}
+        if _H4_DEDUP_PATH.exists():
+            try:
+                raw = json.loads(_H4_DEDUP_PATH.read_text(encoding="utf-8"))
+                if isinstance(raw, dict):
+                    data = raw
+            except Exception:
+                data = {}
+
+        last = float(data.get(key, 0) or 0)
+        if last and (now - last) < H4_STRUCTURAL_ALERT_COOLDOWN_SEC:
+            return False
+
+        data[key] = now
+        data = {
+            k: v for k, v in data.items()
+            if now - float(v) < H4_STRUCTURAL_ALERT_COOLDOWN_SEC
+        }
+        _H4_DEDUP_PATH.parent.mkdir(parents=True, exist_ok=True)
+        tmp = _H4_DEDUP_PATH.with_suffix(".tmp")
+        tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        tmp.replace(_H4_DEDUP_PATH)
         return True
     finally:
         _release_lock(fh)

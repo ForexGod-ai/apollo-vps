@@ -281,13 +281,11 @@ class RealtimeMonitor:
             lookback = self.scanner_settings.get('lookback_candles', {})
             daily_count = lookback.get('daily', 100)
             h4_count = lookback.get('h4', 200)
-            h1_count = lookback.get('h1', 300)
             
             logger.info(f"🔬 V9.0 DISCOVERY: Scanning {symbol} (priority={priority})...")
             
             df_daily = self._get_historical_data_cached(symbol, "D1", daily_count)
             df_4h = self._get_historical_data_cached(symbol, "H4", h4_count)
-            df_1h = self._get_historical_data_cached(symbol, "H1", h1_count)
             
             if df_daily is None or df_4h is None:
                 logger.warning(f"⚠️ {symbol}: Cannot download D1/H4 data for setup discovery")
@@ -299,7 +297,6 @@ class RealtimeMonitor:
                 df_daily=df_daily,
                 df_4h=df_4h,
                 priority=priority,
-                df_1h=df_1h
             )
             
             if setup is None:

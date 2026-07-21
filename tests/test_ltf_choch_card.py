@@ -1,4 +1,4 @@
-"""V51: Telegram scan card LTF CHoCH — live gates aligned with radar V47/V50."""
+"""V51/W→D→4H: Telegram scan card LTF CHoCH — live gates aligned with radar V47/V50."""
 from __future__ import annotations
 
 import sys
@@ -24,11 +24,9 @@ class _GbpusdScanSetup:
     daily_choch = type('DC', (), {'direction': 'bearish'})()
     fvg = type('FVG', (), {'bottom': 1.33249, 'top': 1.33905})()
     h4_choch = _FakeChoch()
-    h1_choch = type('H1', (), {'break_price': 1.33378})()
-    choch_1h_detected = True
 
 
-def test_scanner_h4_h1_objects_do_not_confirm_without_radar():
+def test_scanner_h4_objects_do_not_confirm_without_radar():
     setup = _GbpusdScanSetup()
     assert _ltf_choch_confirmed(setup, {}, '4H', 'bearish') is False
     assert _ltf_choch_confirmed(setup, {}, '1H', 'bearish') is False
@@ -79,13 +77,13 @@ def test_h4_alert_sent_confirms():
     assert ltf_choch_confirmed_for_card(merged, '4H', 'bearish') is True
 
 
-def test_h1_blocked_without_h4_gate():
+def test_non_4h_tf_never_confirms():
     merged = {
-        'radar_1h_choch_detected': True,
-        'radar_1h_choch_direction': 'bearish',
+        'radar_4h_choch_detected': True,
+        'radar_4h_choch_direction': 'bearish',
         'poi_first_touch_time': '2026-07-03T10:00:00+00:00',
-        'radar_1h_choch_time': '2026-07-03T13:00:00+00:00',
-        'radar_1h_choch_bars_ago': 1,
+        'radar_4h_choch_time': '2026-07-03T13:00:00+00:00',
+        'radar_4h_choch_bars_ago': 1,
     }
     assert ltf_choch_confirmed_for_card(merged, '1H', 'bearish') is False
 
@@ -104,24 +102,22 @@ def test_post_poi_26b_confirms_without_lock():
     assert ltf_choch_confirmed_for_card(merged, '4H', 'bearish') is True
 
 
-def test_gbpusd_card_shows_waiting_lines():
+def test_gbpusd_card_shows_waiting_line():
     setup = _GbpusdScanSetup()
-    h4_line, h1_line = _format_radar_exec_lines(
+    h4_line = _format_radar_exec_lines(
         setup, 'GBPUSD', 'bearish', 'Waiting 4H CHoCH',
     )
     assert '⏳' in h4_line
     assert 'Confirmat' not in h4_line
-    assert '⏳' in h1_line
-    assert 'Confirmat' not in h1_line
 
 
 if __name__ == '__main__':
-    test_scanner_h4_h1_objects_do_not_confirm_without_radar()
+    test_scanner_h4_objects_do_not_confirm_without_radar()
     test_waiting_pullback_status_does_not_confirm()
     test_stale_historical_choch_not_live()
     test_bullish_ltf_against_bearish_daily_not_confirmed()
     test_h4_alert_sent_confirms()
-    test_h1_blocked_without_h4_gate()
+    test_non_4h_tf_never_confirms()
     test_post_poi_26b_confirms_without_lock()
-    test_gbpusd_card_shows_waiting_lines()
+    test_gbpusd_card_shows_waiting_line()
     print('tests/test_ltf_choch_card.py: all passed')

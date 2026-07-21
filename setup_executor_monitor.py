@@ -5,7 +5,7 @@ V48 (plan SYSTEM_PRODUCTION_AND_EXECUTOR_AUDIT):
 - Fail-hard live OHLC on EXECUTE_NOW (no stale cache)
 - Spread guard via /price:8010 — gate before execute_trade()
 - Single lot source: unified_risk_manager.compute_lot_size()
-- SL on executing TF (1H/4H); TP on live D1 only
+- SL on 4H; TP on live D1 only
 """
 # Windows VPS fix: force UTF-8 stdout to prevent UnicodeEncodeError on emoji
 import sys as _sys, io as _io, re as _re
@@ -190,7 +190,7 @@ class SetupExecutorMonitor:
         'INVALIDATED', 'CLOSED', 'COMPLETED_WITHOUT_ENTRY',
     })
 
-    _DEFAULT_MULTI_ENTRY_PLAN = ('1H', '4H')
+    _DEFAULT_MULTI_ENTRY_PLAN = ('4H',)
 
     @classmethod
     def _multi_entry_plan(cls, setup: dict) -> list:
@@ -201,7 +201,7 @@ class SetupExecutorMonitor:
         """V42.2: first fill → PARTIAL_OPEN; all planned TFs filled → TRADE_OPEN."""
         symbol = setup.get('symbol', '?')
         plan = cls._multi_entry_plan(setup)
-        tf = (trigger_tf or setup.get('execute_now_trigger_tf') or '1H').upper()
+        tf = (trigger_tf or setup.get('execute_now_trigger_tf') or '4H').upper()
         filled = [x.upper() for x in (setup.get('entries_filled_tfs') or [])]
         if tf not in filled:
             filled.append(tf)
@@ -238,7 +238,7 @@ class SetupExecutorMonitor:
         plan = cls._multi_entry_plan(setup)
         filled = [x.upper() for x in (setup.get('entries_filled_tfs') or [])]
         if setup.get('entry1_filled') and not filled:
-            filled = [(setup.get('entry1_trigger_tf') or '1H').upper()]
+            filled = [(setup.get('entry1_trigger_tf') or '4H').upper()]
         return [p for p in plan if p.upper() not in filled]
 
     @classmethod
@@ -291,7 +291,7 @@ class SetupExecutorMonitor:
     @classmethod
     def _v423_structural_sync_ok(cls, setup: dict) -> tuple:
         """
-        V42.3: Scut absolut D1 = LTF — EXECUTE_NOW doar cu CHoCH 4H/1H aliniat cu Daily.
+        V42.3/W→D→4H: Scut absolut D1 = 4H — EXECUTE_NOW doar cu CHoCH 4H aliniat cu Daily.
         TRADE_OPEN: nu blocăm (poziție deja deschisă).
         """
         if setup.get('status') == 'TRADE_OPEN':
@@ -301,19 +301,12 @@ class SetupExecutorMonitor:
             return False, 'invalid D1 direction'
 
         h4_dir = setup.get('radar_4h_choch_direction')
-        h1_dir = setup.get('radar_1h_choch_direction')
-        trigger = (setup.get('execute_now_trigger_tf') or '1H').upper()
 
         if setup.get('radar_4h_choch_detected') and h4_dir and h4_dir != macro:
             return False, h4_dir
-        if setup.get('radar_1h_choch_detected') and h1_dir and h1_dir != macro:
-            return False, h1_dir
 
-        if trigger == '4H':
-            if not (setup.get('radar_4h_choch_detected') and h4_dir == macro):
-                return False, h4_dir or 'missing'
-        elif not (setup.get('radar_1h_choch_detected') and h1_dir == macro):
-            return False, h1_dir or 'missing'
+        if not (setup.get('radar_4h_choch_detected') and h4_dir == macro):
+            return False, h4_dir or 'missing'
 
         return True, ''
 
@@ -441,7 +434,6 @@ class SetupExecutorMonitor:
             'swing_lookback_candles': 5,
             'sl_buffer_pips': 10,
             'on_timeout_action': 'force_entry',
-            'use_1h_sl': True,  # [LEGACY — Dezactivat permanent din V31.0] V3.3 SNIPER SL
             'use_4h_sl': True   # [LEGACY — Dezactivat permanent din V31.0] V3.3 HIGH CONFIDENCE SL
         })
         
@@ -457,7 +449,6 @@ class SetupExecutorMonitor:
         logger.info(f"⏱️  Check interval: {check_interval}s")
         logger.info(f"📊 Execution Strategy: {self.execution_strategy.get('mode', 'N/A')}")
         logger.info(f"🎯 V3.2 Pullback Strategy: {'ENABLED' if self.pullback_config['enabled'] else 'DISABLED'}")
-        logger.info(f"[LEGACY V3.3 — dezactivat V31.0] SL 1H: {'ENABLED' if self.pullback_config.get('use_1h_sl', True) else 'DISABLED'}")
         logger.info(f"[LEGACY V3.3 — dezactivat V31.0] SL 4H: {'ENABLED' if self.pullback_config.get('use_4h_sl', True) else 'DISABLED'}")
     
     def _load_config(self):
@@ -1326,8 +1317,8 @@ class SetupExecutorMonitor:
                 # V31.0: WAITING_D1_PULLBACK si WAITING_4H_CHOCH sunt statusuri noi din Scanner V31.0
                 _active_statuses_v31 = [
                     'MONITORING', 'READY', 'WAITING_POSITION_CLOSE',
-                    'WAITING_D1_PULLBACK', 'WAITING_4H_CHOCH', 'WAITING_1H_CHOCH',
-                    'PARTIAL_OPEN',  # V42.2: second layer (4H) while 1H position open
+                    'WAITING_D1_PULLBACK', 'WAITING_4H_CHOCH',
+                    'PARTIAL_OPEN',
                 ]
                 if status not in _active_statuses_v31:
                     if not self._execute_trigger_active(setup):
@@ -1385,10 +1376,7 @@ class SetupExecutorMonitor:
                         f"[EXEC SKIP] {symbol}: Position Guard error — {_pos_guard_err}"
                     )
                 
-                # 🔥 IN-ZONE INDICATOR
-                # V3.2: choch_1h_detected (Fibo 50% logic)
-                # V3.3: radar_1h_choch_detected (SNIPER MODE with FVG)
-                in_zone = setup.get('choch_1h_detected', False) or setup.get('radar_1h_choch_detected', False)
+                in_zone = setup.get('radar_4h_in_fvg', False) or setup.get('radar_4h_choch_detected', False)
                 zone_emoji = "🎯" if in_zone else "🔍"
                 logger.debug(f"{zone_emoji} Processing {symbol} (in_zone={in_zone})")
                 
@@ -1403,7 +1391,7 @@ class SetupExecutorMonitor:
                     #   5. Sentinelă pe valorile REALE înainte de execuție
                     _exec_ok, _exec_skip = self._can_execute_execute_now(setup)
                     if _exec_ok:
-                        # ── V42.3: Scut absolut sincron structural D1 = 4H = 1H ───────────────
+                        # ── V42.3: Scut absolut sincron structural D1 = 4H ───────────────
                         if setup.get('status') != 'TRADE_OPEN':
                             _sync_ok, _ltf_mismatch = self._v423_structural_sync_ok(setup)
                             if not _sync_ok:
@@ -1438,17 +1426,12 @@ class SetupExecutorMonitor:
                         # ── STEP 1: Entry price — din FVG-ul radar (midpoint zonă de intrare) ──────
                         _en_entry = (
                             setup.get('radar_4h_fvg_entry') or
-                            setup.get('radar_1h_fvg_entry') or
                             setup.get('entry_price', 0)
                         )
                         _en_direction = setup.get('direction', 'buy').lower()
                         _pip_size_en = get_pip_size(symbol)
-                        _trigger_tf = (
-                            setup.get('execute_now_trigger_tf')
-                            or setup.get('radar_priority_timeframe')
-                            or '1H'
-                        ).upper()
-                        _sl_tf = 'H4' if _trigger_tf == '4H' else 'H1'
+                        _trigger_tf = '4H'
+                        _sl_tf = 'H4'
 
                         _df_sl_en = self._get_cached_data(
                             symbol, _sl_tf, 225, require_live=True,
@@ -1492,7 +1475,7 @@ class SetupExecutorMonitor:
                         _sl_pips_en = sl_pips_between(symbol, _en_entry, _sl) if _sl else 0.0
                         if not _sl or _sl_pips_en < MIN_SL_PIPS:
                             _blk = (
-                                f'V40.8: SL 1H/4H indisponibil sau {_sl_pips_en:.1f}p < min {MIN_SL_PIPS}p'
+                                f'V40.8: SL 4H indisponibil sau {_sl_pips_en:.1f}p < min {MIN_SL_PIPS}p'
                             )
                             logger.critical(f"🚨 [V40.8 MIN SL] {symbol}: {_blk}")
                             self._track_rejection(f"V40.8 min SL {symbol}: {_sl_pips_en:.1f}p")
@@ -1764,7 +1747,7 @@ class SetupExecutorMonitor:
         min_sl_pips: float = MIN_SL_PIPS,
     ):
         """
-        SL structural pe TF (4H sau 1H) — pivot cel mai apropiat de entry in interval sniper.
+        SL structural pe 4H — pivot cel mai apropiat de entry in interval sniper.
         """
         if df_4h is None or df_4h.empty or not entry:
             return None
@@ -1837,12 +1820,12 @@ class SetupExecutorMonitor:
         trigger_tf: str,
     ):
         """
-        V48 SL: structural pivot strict pe TF executant (1H sau 4H live).
+        V48 SL: structural pivot strict pe 4H live.
         """
         if df_sl is None or df_sl.empty:
             return None
 
-        trigger_tf = (trigger_tf or '1H').upper()
+        trigger_tf = (trigger_tf or '4H').upper()
         sl = self._calc_structural_sl_4h(
             symbol, direction, entry, df_sl, pip_size, MIN_SL_PIPS,
         )

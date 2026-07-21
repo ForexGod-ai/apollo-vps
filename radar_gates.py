@@ -1,6 +1,7 @@
 """
 V47/V50 shared gates — radar structural alerts + Telegram scan card LTF lines.
 Single source of truth for post-POI, live bars, and card confirmation logic.
+W→D→4H: LTF confirmare exclusiv pe 4H.
 """
 from __future__ import annotations
 
@@ -8,7 +9,6 @@ from datetime import datetime, timezone
 from typing import Dict, Optional
 
 V47_ALERT_MAX_BARS_4H = 3
-V47_ALERT_MAX_BARS_1H = 3
 
 
 def parse_radar_dt(ts) -> Optional[datetime]:
@@ -47,10 +47,11 @@ def v47_break_post_poi_touch(setup_data: dict, break_time_str: Optional[str]) ->
 
 
 def v47_live_alert_bars_ok(timeframe_display: str, bars_ago: int) -> bool:
-    """V47: confirmare live doar pe break proaspăt (≤3 bare TF)."""
-    cap = V47_ALERT_MAX_BARS_1H if timeframe_display == '1H' else V47_ALERT_MAX_BARS_4H
+    """V47: confirmare live doar pe break proaspăt (≤3 bare 4H)."""
+    if timeframe_display != '4H':
+        return False
     try:
-        return int(bars_ago) <= cap
+        return int(bars_ago) <= V47_ALERT_MAX_BARS_4H
     except (TypeError, ValueError):
         return False
 
@@ -65,47 +66,28 @@ def _poi_monitoring_active(merged: Dict) -> bool:
 
 def ltf_choch_confirmed_for_card(merged: Dict, tf: str, macro_dir: str) -> bool:
     """
-    V51: Card Telegram scan — aceleași porți ca alertele structurale V47/V50.
-    Nu folosește h4_choch/h1_choch din TradeSetup (artefact scanner istoric).
+    V51/W→D→4H: Card Telegram scan — aceleași porți ca alertele structurale V47/V50.
+    Confirmare LTF exclusiv pe 4H.
     """
-    if tf == '4H':
-        if _h4_structural_alert_sent(merged):
-            return True
-        if merged.get('EXECUTE_NOW') and str(merged.get('execute_now_trigger_tf', '')).upper() == '4H':
-            return True
-        if not _poi_monitoring_active(merged):
-            return False
-        if not merged.get('radar_4h_choch_detected'):
-            return False
-        if merged.get('radar_4h_choch_direction') != macro_dir:
-            return False
-        if not v47_break_post_poi_touch(merged, merged.get('radar_4h_choch_time')):
-            return False
-        return True
-
-    if bool(merged.get('radar_1h_choch_stale')):
+    if tf != '4H':
         return False
-    if merged.get('h1_choch_alert_sent'):
+    if _h4_structural_alert_sent(merged):
         return True
-    if merged.get('EXECUTE_NOW') and str(merged.get('execute_now_trigger_tf', '')).upper() == '1H':
+    if merged.get('EXECUTE_NOW') and str(merged.get('execute_now_trigger_tf', '')).upper() == '4H':
         return True
-    if not _h4_structural_alert_sent(merged):
-        return False
     if not _poi_monitoring_active(merged):
         return False
-    if not merged.get('radar_1h_choch_detected'):
+    if not merged.get('radar_4h_choch_detected'):
         return False
-    if merged.get('radar_1h_choch_direction') != macro_dir:
+    if merged.get('radar_4h_choch_direction') != macro_dir:
         return False
-    if not v47_break_post_poi_touch(merged, merged.get('radar_1h_choch_time')):
+    if not v47_break_post_poi_touch(merged, merged.get('radar_4h_choch_time')):
         return False
     return True
 
 
 def ltf_choch_price_for_card(merged: Dict, tf: str, confirmed: bool):
-    """Preț CHoCH doar când confirmarea live e validă — fără fallback scanner."""
-    if not confirmed:
+    """Preț CHoCH 4H doar când confirmarea live e validă — fără fallback scanner."""
+    if not confirmed or tf != '4H':
         return None
-    if tf == '4H':
-        return merged.get('radar_4h_choch_price')
-    return merged.get('choch_1h_price') or merged.get('radar_1h_choch_price')
+    return merged.get('radar_4h_choch_price')
