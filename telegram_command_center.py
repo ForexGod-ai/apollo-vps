@@ -72,19 +72,29 @@ def acquire_pid_lock(lock_file: Path) -> bool:
             # Read existing PID
             with open(lock_file, 'r') as f:
                 old_pid = int(f.read().strip())
-            
+
             # Check if process is still running
             if psutil.pid_exists(old_pid):
                 try:
                     proc = psutil.Process(old_pid)
+                    cmdline = ' '.join(proc.cmdline() or [])
                     # Verify it's the same script (not PID reuse)
-                    if 'telegram_command_center' in ' '.join(proc.cmdline()):
+                    if 'telegram_command_center' in cmdline:
                         logger.error(f"❌ Command Center already running (PID {old_pid})")
                         logger.error("⚠️  Cannot start duplicate instance - exiting")
                         return False
+                    # Windows VPS: minimized/detached python often has cmdline=[] — still block duplicate
+                    if os.name == 'nt' and not cmdline:
+                        pname = (proc.name() or '').lower()
+                        if 'python' in pname:
+                            logger.error(
+                                f"❌ Command Center already running (PID {old_pid}, cmdline hidden)"
+                            )
+                            logger.error("⚠️  Cannot start duplicate instance - exiting")
+                            return False
                 except (psutil.NoSuchProcess, psutil.AccessDenied):
                     pass
-            
+
             # Stale lock file - remove it
             logger.warning(f"🔧 Removing stale lock file (PID {old_pid} not running)")
             lock_file.unlink()
@@ -155,6 +165,20 @@ class TelegramCommandCenter:
             logger.warning(f"Could not load update_id from disk: {e}")
         return 0
 
+    def _ensure_polling_mode(self) -> None:
+        """Asigură long-polling (deleteWebhook) — altfel getUpdates nu primește comenzi."""
+        if not self.bot_token:
+            return
+        try:
+            url = f"https://api.telegram.org/bot{self.bot_token}/deleteWebhook"
+            response = requests.get(url, params={'drop_pending_updates': 'false'}, timeout=15)
+            if response.status_code == 200 and response.json().get('ok'):
+                logger.info("✅ Telegram polling mode (webhook dezactivat)")
+            else:
+                logger.warning(f"⚠️ deleteWebhook: {response.text[:200]}")
+        except Exception as e:
+            logger.warning(f"⚠️ deleteWebhook failed: {e}")
+
     def _save_update_id(self, update_id: int):
         """Persist last_update_id to disk immediately"""
         try:
@@ -175,10 +199,13 @@ class TelegramCommandCenter:
             
             response = requests.get(url, params=params, timeout=35)
             if response.status_code != 200:
-                logger.error(
-                    f"❌ getUpdates HTTP {response.status_code}: "
-                    f"{response.text[:300]}"
-                )
+                body = response.text[:300]
+                logger.error(f"❌ getUpdates HTTP {response.status_code}: {body}")
+                if response.status_code == 409:
+                    logger.error(
+                        "❌ getUpdates 409 CONFLICT — alt proces face polling pe același bot. "
+                        "Oprește duplicatele telegram_command_center.py"
+                    )
                 return []
             data = response.json()
             if not data.get('ok'):
@@ -209,8 +236,12 @@ class TelegramCommandCenter:
             logger.error(f"❌ Force sync error: {e}")
             return False
     
-    def send_message(self, text: str):
+    def send_message(self, text: str, chat_id=None):
         """Send message to Telegram with HTML formatting"""
+        target_chat = chat_id if chat_id is not None else self.chat_id
+        if not target_chat:
+            logger.error("❌ sendMessage: chat_id lipsă")
+            return False
         try:
             url = f"https://api.telegram.org/bot{self.bot_token}/sendMessage"
             
@@ -223,9 +254,12 @@ class TelegramCommandCenter:
                 f"{sep}\n"
                 f"🏛 <b>ГЛИТЧ ИН МАТРИКС</b> 🏛"
             )
+            # Telegram hard limit 4096 chars
+            if len(branded_text) > 4096:
+                branded_text = branded_text[:4080] + "\n\n… [truncat]"
             
             payload = {
-                'chat_id': self.chat_id,
+                'chat_id': target_chat,
                 'text': branded_text,
                 'parse_mode': 'HTML'
             }
@@ -1647,10 +1681,12 @@ class TelegramCommandCenter:
         🔓 PUBLIC  → /monitoring /stats /weekly /help /status
         🔐 ADMIN   → /killall /resume /active /btcusd /news /rates
         """
+        reply_chat_id = None
         try:
             from_user = message_obj.get('from', {})
             user_id   = from_user.get('id')
             text      = message_obj.get('text', '').strip()
+            reply_chat_id = message_obj.get('chat', {}).get('id')
 
             if not text.startswith('/'):
                 return
@@ -1658,14 +1694,15 @@ class TelegramCommandCenter:
             command = text.split()[0].lower()
             is_admin = (user_id == self.admin_id)
 
-            logger.info(f"📥 cmd={command} user={user_id} admin={is_admin}")
+            logger.info(f"📥 cmd={command} user={user_id} admin={is_admin} chat={reply_chat_id}")
 
             # ── ACCES RESTRICȚIONAT: comandă ADMIN apelată de non-admin ──
             if command in self.ADMIN_COMMANDS and not is_admin:
                 logger.warning(f"🔐 ACCES REFUZAT: user={user_id} a încercat {command}")
                 self.send_message(
                     f"⚠️ <b>ACCES RESTRICȚIONAT.</b>\n\n"
-                    f"Comanda <code>{command}</code> este rezervată exclusiv administratorului."
+                    f"Comanda <code>{command}</code> este rezervată exclusiv administratorului.",
+                    chat_id=reply_chat_id,
                 )
                 return
 
@@ -1738,13 +1775,19 @@ class TelegramCommandCenter:
                 else:
                     return  # non-admin + comandă necunoscută → ignorăm
 
-            self.send_message(response)
+            self.send_message(response, chat_id=reply_chat_id)
 
         except Exception as e:
-            logger.error(f"❌ Command processing error: {e}")
+            logger.exception(f"❌ Command processing error: {e}")
+            if reply_chat_id:
+                self.send_message(
+                    f"❌ <b>Eroare la procesarea comenzii</b>\n\n<code>{str(e)[:200]}</code>",
+                    chat_id=reply_chat_id,
+                )
     
     def run(self):
         """Main loop - listen for commands"""
+        self._ensure_polling_mode()
         logger.info("🎮 Command Center started - Listening for commands...")
         
         while True:

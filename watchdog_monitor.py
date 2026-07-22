@@ -181,12 +181,50 @@ class WatchdogMonitor:
         logger.info(f"🔇 Notification cooldown: {self.notification_cooldown}s (15 min) | FAILED: {self.failed_restart_cooldown}s (60 min)")
         logger.info(f"🐍 Python: {self.python_path}")
     
+    def _windows_process_cmdlines(self) -> dict:
+        """process_name -> pid for python processes (inclusiv Hidden / detached)."""
+        result = {}
+        try:
+            import subprocess as _sp
+            out = _sp.run(
+                ['wmic', 'process', 'where', 'name="python.exe"',
+                 'get', 'ProcessId,CommandLine', '/format:csv'],
+                capture_output=True, text=True, timeout=10,
+                encoding='utf-8', errors='replace',
+            )
+            for line in out.stdout.splitlines():
+                line = line.strip()
+                if not line or line.startswith('Node'):
+                    continue
+                parts = line.split(',', 2)
+                if len(parts) < 3:
+                    continue
+                cmdline_str = parts[1]
+                try:
+                    pid = int(parts[2])
+                except ValueError:
+                    continue
+                for proc_name in self.processes:
+                    if proc_name in cmdline_str and proc_name not in result:
+                        result[proc_name] = pid
+        except Exception as e:
+            logger.debug(f"wmic process scan failed: {e}")
+        return result
+
     def is_process_running(self, process_name: str) -> bool:
         """
         🔍 Check if process is running using psutil (accurate PID + cmdline verification)
         Returns True only if process exists AND matches the script name
         """
         try:
+            if os.name == 'nt':
+                wmic_map = self._windows_process_cmdlines()
+                if process_name in wmic_map:
+                    logger.debug(
+                        f"✅ Found running (wmic): {process_name} (PID {wmic_map[process_name]})"
+                    )
+                    return True
+
             # Iterate through all running Python processes
             for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
                 try:
@@ -233,9 +271,19 @@ class WatchdogMonitor:
                         if pid_in_lock and _psutil.pid_exists(pid_in_lock):
                             try:
                                 proc = _psutil.Process(pid_in_lock)
-                                if process_stem in ' '.join(proc.cmdline()):
-                                    logger.info(f"⏭️  Process already running (PID {pid_in_lock}), skipping lock clear")
-                                    pid_in_lock = 0  # Don't remove — it's legitimately running
+                                cmdline_str = ' '.join(proc.cmdline() or [])
+                                if process_stem in cmdline_str:
+                                    logger.info(
+                                        f"⏭️  Process already running (PID {pid_in_lock}), skipping lock clear"
+                                    )
+                                    pid_in_lock = 0
+                                elif os.name == 'nt' and 'python' in (proc.name() or '').lower():
+                                    # Windows detached: cmdline gol dar PID live — nu șterge lock-ul
+                                    logger.info(
+                                        f"⏭️  Live python PID {pid_in_lock} holds lock "
+                                        f"(cmdline hidden) — skip clear"
+                                    )
+                                    pid_in_lock = 0
                             except (_psutil.NoSuchProcess, _psutil.AccessDenied):
                                 pass
                         if pid_in_lock:
