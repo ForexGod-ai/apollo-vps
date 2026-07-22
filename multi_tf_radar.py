@@ -116,8 +116,13 @@ def _radar_log_filter(record) -> bool:
 
 
 def _radar_out(msg: str) -> None:
-    """Print radar line — ASCII-safe on Windows log files."""
-    print(_ascii_sanitize(msg))
+    """Print radar line — ASCII-safe on Windows log files + persist to multi_tf_radar.log."""
+    clean = _ascii_sanitize(msg)
+    print(clean)
+    try:
+        logger.info(clean)
+    except Exception:
+        pass
     sys.stdout.flush()
 
 
@@ -1049,9 +1054,9 @@ class MultiTFRadar:
         _wos.replace(_MONITORING_TMP, _MONITORING_FILE)
 
     def _purge_structural_breaches(self, setups: list) -> list:
-        """V43.2 E3-T2: elimină definitiv setup-uri cu structural_breach din JSON."""
+        """V43.2 E3-T2: structural_breach — downgrade swing monitor, nu purge din JSON."""
         survivors = []
-        purged_symbols = []
+        downgraded = []
         for s in setups:
             if not isinstance(s, dict):
                 continue
@@ -1062,25 +1067,29 @@ class MultiTFRadar:
                 and not s.get('entry1_filled')
                 and st not in ('TRADE_OPEN', 'PARTIAL_OPEN')
             ):
-                purged_symbols.append(sym)
+                _prev = st or 'MONITORING'
+                if _prev not in (
+                    'WAITING_D1_PULLBACK', 'MONITORING', 'WAITING_W_D_SYNC',
+                    'WAITING_W_ZONE', 'WAITING_4H_CHOCH',
+                ):
+                    s['status'] = 'WAITING_D1_PULLBACK'
+                for _ek in ('EXECUTE_NOW', 'execute_now_trigger_tf'):
+                    s.pop(_ek, None)
+                downgraded.append(sym)
                 _radar_out(
-                    f"[🛰️ RADAR PURGE] Setup invalidat structural eliminat definitiv din JSON."
+                    f"  [RADAR BREACH] {sym}: structural_breach=True — "
+                    f"kept in JSON ({s.get('status')}), EXECUTE_NOW cleared"
                 )
-                _radar_out(
-                    f"  [🛰️ RADAR PURGE] {sym}: structural_breach=True — "
-                    f"continuitate MORTĂ (LH/LL spart)"
-                )
-                continue
             survivors.append(s)
-        if purged_symbols:
+        if downgraded:
             try:
                 self._write_monitoring_setups(survivors)
                 logger.warning(
-                    f"[V43.2 PURGE] Eliminate {len(purged_symbols)} setup(uri): "
-                    f"{', '.join(purged_symbols)}"
+                    f"[V59 BREACH] {len(downgraded)} setup(uri) downgrade (not purged): "
+                    f"{', '.join(downgraded)}"
                 )
             except Exception as _pe:
-                logger.error(f"[V43.2 PURGE] Salvare JSON eșuată: {_pe}")
+                logger.error(f"[V59 BREACH] Salvare JSON eșuată: {_pe}")
                 return setups
         return survivors
 
@@ -1164,6 +1173,13 @@ class MultiTFRadar:
 
         return None
     
+    def _d1_close_for_lifecycle(self, symbol: str) -> Optional[float]:
+        """Swing Poarta 1 — daily close (not intraday tick) for structural invalidation."""
+        df = self.get_historical_data(symbol, 'D1', 5)
+        if df is not None and not df.empty and 'close' in df.columns:
+            return float(df['close'].iloc[-1])
+        return None
+
     def get_historical_data(
         self,
         symbol: str,
@@ -1819,36 +1835,18 @@ class MultiTFRadar:
         symbol = setup_data.get('symbol', 'UNKNOWN')
         self._last_skip_reason = None
 
-        # V43.2 E3-T2: structural_breach → purge imediat, fără scan LTF
+        # V59: structural_breach — swing monitor kept; clear EXECUTE, continue 4H scan
         if (
             setup_data.get('structural_breach')
             and not setup_data.get('entry1_filled')
             and setup_data.get('status') not in ('TRADE_OPEN', 'PARTIAL_OPEN')
         ):
+            setup_data.pop('EXECUTE_NOW', None)
+            setup_data.pop('execute_now_trigger_tf', None)
             _radar_out(
-                f"[🛰️ RADAR PURGE] Setup invalidat structural eliminat definitiv din JSON."
+                f"  [RADAR BREACH] {symbol}: structural_breach=True — "
+                f"monitor swing kept, EXECUTE_NOW cleared, 4H scan continues"
             )
-            _radar_out(
-                f"  [🛰️ RADAR PURGE] {symbol}: structural_breach=True — scan LTF oprit"
-            )
-            try:
-                all_setups = self.load_monitoring_setups()
-                survivors = [
-                    s for s in all_setups
-                    if not (
-                        isinstance(s, dict)
-                        and s.get('symbol') == symbol
-                        and not s.get('entry1_filled')
-                        and s.get('status') not in ('TRADE_OPEN', 'PARTIAL_OPEN')
-                        and s.get('structural_breach')
-                    )
-                ]
-                if len(survivors) < len(all_setups):
-                    self._write_monitoring_setups(survivors)
-            except Exception as _purge_err:
-                logger.error(f"[V43.2 PURGE] {symbol}: {_purge_err}")
-            self._last_skip_reason = 'structural_breach — setup eliminat din JSON'
-            return None
 
         # ── V25.0 DIRECTION GUARD: ZERO toleranță pentru direcție lipsă sau ambiguuă ──────────
         # BUG PRE-V25.0: default='SHORT' — dacă câmpul 'direction' lipsea din JSON,
@@ -2243,9 +2241,15 @@ class MultiTFRadar:
             current_price=result.current_price,
         )
         setup['w_d_aligned'] = bool(sync.get('w_d_aligned', True))
-        _sync_status = sync.get('status')
-        if _sync_status and setup.get('status') not in ('TRADE_OPEN', 'PARTIAL_OPEN'):
-            setup['status'] = _sync_status
+        if setup.get('status') not in ('TRADE_OPEN', 'PARTIAL_OPEN'):
+            _prev = setup.get('status', '')
+            _new = self.smc_4h.resolve_status_after_w_d_sync(_prev, sync)
+            if _new != _prev:
+                setup['status'] = _new
+                logger.info(
+                    f"[W+D SYNC] {sym}: {_prev} → {_new} "
+                    f"(w_d_aligned={setup['w_d_aligned']})"
+                )
 
         if setup.get('status') == 'WAITING_W_D_SYNC' or setup.get('w_d_aligned') is False:
             logger.debug(
@@ -2934,39 +2938,50 @@ class MultiTFRadar:
 
             direction = s.get('direction', '').lower()  # 'buy' / 'sell'
 
-            # Obtinem pret live (necesar pentru Portile 1 si 2)
+            # Poarta 1: D1 close (swing) — Poarta 2: live price for TP touch
+            _d1_close = self._d1_close_for_lifecycle(sym)
             try:
-                _cp = self.get_current_price(sym)
+                _live_cp = self.get_current_price(sym)
             except Exception as _cp_err:
-                logger.warning(f"[V37.0] {sym}: live price unavailable for Poarta 1: {_cp_err}")
-                _cp = None
+                logger.warning(f"[V37.0] {sym}: live price unavailable for Poarta 2: {_cp_err}")
+                _live_cp = None
 
-            if _cp is not None:
-                # ── POARTA 1: Invalidare Structurala Macro ────────────────────────
-                # LONG: pretul inchide sub daily_swing_low (baza structurii invalidata)
-                # SHORT: pretul inchide peste daily_swing_high (plafonul structurii spart)
+            if _d1_close is not None:
+                # ── POARTA 1: Invalidare Structurala Macro (D1 close confirmat) ───
                 _dsl = s.get('daily_swing_low')
                 _dsh = s.get('daily_swing_high')
-                if direction == 'buy' and _dsl and _cp < float(_dsl):
+                if direction == 'buy' and _dsl and _d1_close < float(_dsl):
                     s['status'] = 'INVALIDATED'
-                    s['invalidation_reason'] = f'P1: close {_cp:.5f} < swing_low {_dsl:.5f}'
+                    s['invalidation_reason'] = (
+                        f'P1: D1 close {_d1_close:.5f} < swing_low {_dsl:.5f}'
+                    )
                     for _lk in ('poi_touch_latched', 'radar_panda_active', 'poi_first_touch_time',
                                 'poi_radar_armed_at', '_poi_occupied'):
                         s.pop(_lk, None)
-                    logger.warning(f"[V33 POARTA 1] {sym} LONG INVALIDATED: pret {_cp:.5f} < daily_swing_low {_dsl:.5f}")
+                    logger.warning(
+                        f"[V33 POARTA 1] {sym} LONG INVALIDATED: "
+                        f"D1 close {_d1_close:.5f} < daily_swing_low {_dsl:.5f}"
+                    )
                     changed = True
                     continue
-                elif direction == 'sell' and _dsh and _cp > float(_dsh):
+                elif direction == 'sell' and _dsh and _d1_close > float(_dsh):
                     s['status'] = 'INVALIDATED'
-                    s['invalidation_reason'] = f'P1: close {_cp:.5f} > swing_high {_dsh:.5f}'
+                    s['invalidation_reason'] = (
+                        f'P1: D1 close {_d1_close:.5f} > swing_high {_dsh:.5f}'
+                    )
                     for _lk in ('poi_touch_latched', 'radar_panda_active', 'poi_first_touch_time',
                                 'poi_radar_armed_at', '_poi_occupied'):
                         s.pop(_lk, None)
-                    logger.warning(f"[V33 POARTA 1] {sym} SHORT INVALIDATED: pret {_cp:.5f} > daily_swing_high {_dsh:.5f}")
+                    logger.warning(
+                        f"[V33 POARTA 1] {sym} SHORT INVALIDATED: "
+                        f"D1 close {_d1_close:.5f} > daily_swing_high {_dsh:.5f}"
+                    )
                     changed = True
                     continue
 
-                # ── POARTA 2: Target Atins Fara Noi ───────────────────────────────
+            if _live_cp is not None:
+                # ── POARTA 2: Target Atins Fara Noi (live OK) ─────────────────────
+                _cp = _live_cp
                 _tp = s.get('daily_tp_price') or s.get('daily_target_price')
                 _filled = s.get('entry1_filled', False)
                 if _tp and not _filled:

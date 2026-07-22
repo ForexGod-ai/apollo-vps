@@ -825,7 +825,7 @@ class DailyScanner:
         re_evaluated_setups = [s for s in all_active_setups if s.symbol in monitoring_symbols]
 
         # SAVE first, then show final summary — V31.0: WIPE + bias fallback
-        save_monitoring_setups(
+        save_result = save_monitoring_setups(
             all_active_setups,
             bias_fallback_entries,
             daily_bias_map,
@@ -834,18 +834,35 @@ class DailyScanner:
             symbol_df_daily_map=symbol_df_daily_map,
             smc_detector=self.smc_detector,
         )
+        persist_missing = _audit_scan_persistence(
+            all_active_setups,
+            bias_fallback_entries,
+            save_result.get('saved_symbols', []),
+            save_result.get('skipped', {}),
+        )
 
         # Now reload to get accurate count
-        final_monitoring_count = 0
+        final_monitoring_count = save_result.get('total', 0)
+        watching_count = 0
+        _WATCHING_STATUSES = frozenset({
+            'MONITORING', 'READY', 'WAITING_D1_PULLBACK',
+            'WAITING_4H_CHOCH', 'WAITING_4H_PULLBACK',
+            'WAITING_W_D_SYNC', 'WAITING_W_ZONE', 'WAITING_POSITION_CLOSE',
+        })
         try:
             with open('monitoring_setups.json', 'r', encoding='utf-8') as f:
                 data = json.load(f)
-                
-                # V8.0 FAILSAFE: Handle both formats
                 if isinstance(data, dict):
-                    final_monitoring_count = len(data.get("setups", []))
+                    _setups_list = data.get("setups", [])
+                    final_monitoring_count = len(_setups_list)
+                    watching_count = sum(
+                        1 for s in _setups_list if s.get('status') in _WATCHING_STATUSES
+                    )
                 elif isinstance(data, list):
                     final_monitoring_count = len(data)
+                    watching_count = sum(
+                        1 for s in data if s.get('status') in _WATCHING_STATUSES
+                    )
         except Exception as _cnt_err:
             logger.warning(f"[V37.0] Could not read final monitoring count: {_cnt_err}")
         
@@ -884,38 +901,45 @@ class DailyScanner:
             except Exception as e:
                 logger.debug(f"Could not check Deep Sleep state: {e}")
             
-            # Build setup symbols info for the report (V37.17: include bias fallback entries)
+            # Build setup symbols from JSON (inventar real) + fallback scan-only pentru nesalvate
             setup_symbols = []
-            _report_syms = set()
-            for s in setups_found:
-                direction_str = "buy" if s.daily_choch.direction == 'bullish' else "sell"
-                strategy_str = getattr(s, 'strategy_type', 'UNKNOWN').upper()
-                h4_locked = getattr(s, 'h4_structure_locked', getattr(s, 'h4_bias_locked', False))
-                setup_symbols.append({
-                    'symbol': s.symbol,
-                    'direction': direction_str,
-                    'strategy': strategy_str,
-                    'h4_structure_locked': h4_locked,
-                    'bias_fallback': False,
-                    'status': getattr(s, 'status', 'MONITORING'),
-                    'w_d_aligned': getattr(s, 'w_d_aligned', True),
-                })
-                _report_syms.add(s.symbol)
-            for entry in bias_fallback_entries:
-                sym = entry.get('symbol')
-                if not sym or sym in _report_syms:
-                    continue
-                setup_symbols.append({
-                    'symbol': sym,
-                    'direction': entry.get('direction', 'buy'),
-                    'strategy': (entry.get('setup_type') or 'CONTINUATION').upper(),
-                    'h4_structure_locked': False,
-                    'bias_fallback': True,
-                    'status': entry.get('status', 'WAITING_D1_PULLBACK'),
-                    'w_d_aligned': entry.get('w_d_aligned', True),
-                })
-                _report_syms.add(sym)
-            
+            _json_syms = set()
+            try:
+                with open('monitoring_setups.json', 'r', encoding='utf-8') as _jf:
+                    _jdata = json.load(_jf)
+                _jlist = _jdata.get('setups', []) if isinstance(_jdata, dict) else _jdata
+                for row in _jlist:
+                    if not isinstance(row, dict):
+                        continue
+                    sym = row.get('symbol')
+                    if not sym:
+                        continue
+                    _json_syms.add(sym)
+                    setup_symbols.append({
+                        'symbol': sym,
+                        'direction': row.get('direction', 'buy'),
+                        'strategy': (row.get('strategy_type') or 'CONTINUATION').upper(),
+                        'h4_structure_locked': row.get('h4_structure_locked', False),
+                        'bias_fallback': bool(row.get('bias_fallback')),
+                        'status': row.get('status', 'MONITORING'),
+                        'w_d_aligned': row.get('w_d_aligned', True),
+                    })
+            except Exception as _js_err:
+                logger.warning(f"[V59] Could not build report from JSON: {_js_err}")
+                _json_syms = set()
+                for s in setups_found:
+                    direction_str = "buy" if s.daily_choch.direction == 'bullish' else "sell"
+                    setup_symbols.append({
+                        'symbol': s.symbol,
+                        'direction': direction_str,
+                        'strategy': getattr(s, 'strategy_type', 'UNKNOWN').upper(),
+                        'h4_structure_locked': getattr(s, 'h4_structure_locked', False),
+                        'bias_fallback': False,
+                        'status': getattr(s, 'status', 'MONITORING'),
+                        'w_d_aligned': getattr(s, 'w_d_aligned', True),
+                    })
+                    _json_syms.add(s.symbol)
+
             # Send the OFFICIAL scan report (mirrors console exactly)
             try:
                 self.telegram.send_scan_report(
@@ -924,10 +948,12 @@ class DailyScanner:
                     truly_new=len(brand_new_setups),
                     re_detected=len(re_evaluated_setups),
                     monitoring_count=final_monitoring_count,
+                    watching_count=watching_count,
                     open_positions=len(all_open_positions),
                     deep_sleep_active=deep_sleep_active,
                     deep_sleep_until=deep_sleep_until_str,
-                    setup_symbols=setup_symbols
+                    setup_symbols=setup_symbols,
+                    persist_missing=persist_missing,
                 )
             except Exception as e:
                 print(f"[ERROR] send_scan_report failed: {e} — trimite versiune simpla")
@@ -1225,6 +1251,49 @@ def _apply_setup_identity_lock(
     out.update(_snapshot())
     out['setup_identity_locked'] = True
     return out
+
+
+def _unlock_identity_on_direction_flip(old: dict, new_direction: str, symbol: str = '?') -> dict:
+    """Bias/direction flip — drop stale identity lock so live D1 macro can persist."""
+    old_dir = (old.get('direction') or '').lower()
+    new_dir = (new_direction or '').lower()
+    if old_dir and new_dir and old_dir != new_dir:
+        print(
+            f"  🔓 [V59 FLIP] {symbol}: identity unlock {old_dir.upper()} → {new_dir.upper()} "
+            f"(fresh D1 macro from scan)"
+        )
+        return {}
+    return old
+
+
+def _audit_scan_persistence(
+    scan_setups: list,
+    bias_fallback: list,
+    saved_symbols: list,
+    skip_audit: dict,
+) -> list:
+    """Return list of {symbol, reason} for detections missing from JSON after save."""
+    expected = set()
+    for s in scan_setups:
+        sym = getattr(s, 'symbol', None)
+        if sym:
+            expected.add(sym)
+    for entry in bias_fallback or []:
+        sym = entry.get('symbol')
+        if sym:
+            expected.add(sym)
+
+    saved = set(saved_symbols or [])
+    missing = []
+    for sym in sorted(expected - saved):
+        missing.append({'symbol': sym, 'reason': skip_audit.get(sym, 'not_persisted_unknown')})
+    if missing:
+        print("\n⚠️  [V59 PERSIST AUDIT] Setup-uri detectate dar LIPSĂ din JSON după save:")
+        for row in missing:
+            print(f"   • {row['symbol']}: {row['reason']}")
+    else:
+        print(f"\n✅ [V59 PERSIST AUDIT] Toate cele {len(expected)} detectări sunt în JSON.")
+    return missing
 
 
 def _adr_level_shift(
@@ -1632,7 +1701,20 @@ def _apply_v431_lifecycle_gates(
     in_poi = _price_in_daily_poi(price, setup_dict, d1_wick_high, d1_wick_low)
 
     if setup_dict.get('structural_breach'):
-        if not setup_dict.get('entry1_filled') and status not in ('TRADE_OPEN', 'PARTIAL_OPEN'):
+        _swing_watch = frozenset({
+            'MONITORING', 'READY', 'WAITING_D1_PULLBACK', 'WAITING_W_D_SYNC',
+            'WAITING_W_ZONE', 'WAITING_4H_CHOCH', 'WAITING_4H_PULLBACK',
+        })
+        if (
+            not setup_dict.get('entry1_filled')
+            and status in _swing_watch
+            and status not in ('TRADE_OPEN', 'PARTIAL_OPEN')
+        ):
+            print(
+                f"  [V43.1 LIFECYCLE] {sym}: structural_breach flag — "
+                f"swing monitor kept ({status}), no instant INVALIDATED"
+            )
+        elif not setup_dict.get('entry1_filled') and status not in ('TRADE_OPEN', 'PARTIAL_OPEN'):
             setup_dict['status'] = 'INVALIDATED'
             setup_dict['invalidation_reason'] = 'V43.1 structural_breach'
             for key in _RADAR_RESET_KEYS:
@@ -1789,7 +1871,7 @@ def save_monitoring_setups(
     symbol_price_map: dict = None,
     symbol_df_daily_map: dict = None,
     smc_detector: Optional[SMCDetector] = None,
-):
+) -> dict:
     """[V33 SMART MERGE] + V40.3 re-hidratare strategică + soft TTL 4 zile fără POI.
     Un pullback pe Daily poate dura zile — stergerea oarba de dimineata este interzisa.
     V40.3: W1 strict informativ; continuation↔reversal re-hidratează JSON; TTL 4d fără POI.
@@ -1814,13 +1896,15 @@ def save_monitoring_setups(
     if symbol_df_daily_map is None:
         symbol_df_daily_map = {}
     detector = smc_detector or SMCDetector()
+    _skip_audit: dict = {}
 
     _SOFT_TTL_DAYS = 4
 
     # Status-uri active — PASTRATE INTACTE de la o zi la alta
     _ACTIVE_STATUSES = {
         'WAITING_D1_PULLBACK', 'MONITORING', 'READY',
-        'WAITING_4H_CHOCH', 'WAITING_W_D_SYNC', 'WAITING_W_ZONE',
+        'WAITING_4H_CHOCH', 'WAITING_4H_PULLBACK',
+        'WAITING_W_D_SYNC', 'WAITING_W_ZONE',
         'PARTIAL_OPEN', 'TRADE_OPEN'
     }
     # Status-uri terminale — nu se mai includ in output
@@ -1939,6 +2023,7 @@ def save_monitoring_setups(
         for setup in setups:
             if setup.status not in ("MONITORING", "READY", "WAITING_D1_PULLBACK",
                                     "WAITING_4H_CHOCH", "WAITING_W_D_SYNC", "WAITING_W_ZONE"):
+                _skip_audit[setup.symbol] = f"scan_status={getattr(setup, 'status', '?')}_not_saveable"
                 continue
 
             direction = "buy" if setup.daily_choch.direction == "bullish" else "sell"
@@ -1948,17 +2033,20 @@ def save_monitoring_setups(
             if open_dir and open_dir != direction:
                 print(f"⛔ SAVE GUARD: {setup.symbol} — NOT saving {direction.upper()} setup, "
                       f"open {open_dir.upper()} position exists")
+                _skip_audit[setup.symbol] = f"conflict_open_{open_dir}"
                 continue
 
             setup_time_str = _setup_time_to_iso(setup.setup_time)
 
             if setup.symbol in preserved_symbols:
                 _old = existing_active.get(setup.symbol, {})
+                _old = _unlock_identity_on_direction_flip(_old, direction, setup.symbol)
                 if _macro_overwrite_blocked(_old, open_position_dir_map):
                     print(
                         f"  ⚠️ [V42 CONFLICT] Skipping macro overwrite for {setup.symbol} "
                         f"due to active TRADE_OPEN/PARTIAL_OPEN"
                     )
+                    _skip_audit[setup.symbol] = 'macro_overwrite_blocked_trade_open'
                     continue
 
                 monitoring_setup = _trade_setup_to_monitoring_dict(setup, setup_time_str)
@@ -1974,6 +2062,7 @@ def save_monitoring_setups(
                     merged = _try_bos_new_range_evolution(detector, df_d1, merged, setup.symbol)
                     merged = _try_post_tp_evolution(detector, df_d1, merged, setup.symbol)
                 if merged.get('status') in _DEAD_STATUSES:
+                    _skip_audit[setup.symbol] = f"lifecycle_{merged.get('status')}"
                     monitoring_setups = [
                         s for s in monitoring_setups if s.get('symbol') != setup.symbol
                     ]
@@ -2001,9 +2090,11 @@ def save_monitoring_setups(
                 monitoring_setup = _try_bos_new_range_evolution(detector, df_d1, monitoring_setup, setup.symbol)
                 monitoring_setup = _try_post_tp_evolution(detector, df_d1, monitoring_setup, setup.symbol)
             if monitoring_setup.get('status') in _DEAD_STATUSES:
+                _skip_audit[setup.symbol] = f"lifecycle_{monitoring_setup.get('status')}"
                 continue
             monitoring_setups.append(monitoring_setup)
             preserved_symbols.add(setup.symbol)
+            _skip_audit.pop(setup.symbol, None)
 
         # Pasul 4: Bias fallback entries (numai daca simbolul nu e deja activ)
         for entry in bias_fallback:
@@ -2081,8 +2172,15 @@ def save_monitoring_setups(
         print(f"\n💾 [V42 LIVE AUTHORITY] {len(monitoring_setups)} total — "
               f"{len(existing_active)} pastrate/rehidratate + {new_count} noi din scan de azi")
 
+        return {
+            'saved_symbols': [s.get('symbol') for s in monitoring_setups if s.get('symbol')],
+            'skipped': dict(_skip_audit),
+            'total': len(monitoring_setups),
+        }
+
     except Exception as e:
         print(f"❌ Error saving monitoring setups: {e}")
+        return {'saved_symbols': [], 'skipped': dict(_skip_audit), 'total': 0, 'error': str(e)}
 
 
 def main():

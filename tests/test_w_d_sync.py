@@ -133,3 +133,64 @@ def test_w_d_sync_radar_blocks_execute():
     result = SimpleNamespace(symbol='GBPUSD', current_price=1.262)
     assert radar._w_d_sync_blocks_execute(setup, result) is True
     assert setup['status'] == 'WAITING_W_D_SYNC'
+
+
+def test_resolve_status_promotes_waiting_w_d_sync_when_aligned():
+    sync = {'w_d_aligned': True, 'status': None, 'reason': 'w_d_aligned'}
+    assert SMCDetector.resolve_status_after_w_d_sync('WAITING_W_D_SYNC', sync) == 'MONITORING'
+    assert SMCDetector.resolve_status_after_w_d_sync('WAITING_W_ZONE', sync) == 'MONITORING'
+    assert SMCDetector.resolve_status_after_w_d_sync('MONITORING', sync) == 'MONITORING'
+
+
+def test_apply_w_d_sync_gate_promotes_sticky_waiting_status():
+    det = SMCDetector()
+    setup = _make_setup('bullish')
+    setup.status = 'WAITING_W_D_SYNC'
+    setup.confidence = 'LOW_W1_COUNTER_TREND'
+    setup.w_d_aligned = False
+    out = det.apply_w_d_sync_gate(
+        setup,
+        'BULLISH',
+        w1_poi={'w1_poi_top': 1.110, 'w1_poi_bottom': 1.095},
+        current_price=1.103,
+    )
+    assert out.w_d_aligned is True
+    assert out.status == 'MONITORING'
+    assert out.confidence == 'NORMAL'
+
+
+def test_arm_execute_now_allowed_after_w_d_promotion():
+    radar = mtr.MultiTFRadar.__new__(mtr.MultiTFRadar)
+    radar.smc_4h = SMCDetector()
+    radar._execute_now_alert_keys = set()
+    setup = {
+        'symbol': 'USDCAD',
+        'direction': 'buy',
+        'daily_bias': 'BULLISH',
+        'd1_bias_direction': 'bullish',
+        'w1_bias': 'BULLISH',
+        'w_d_aligned': True,
+        'status': 'WAITING_W_D_SYNC',
+        'poi_top': 1.365,
+        'poi_bottom': 1.360,
+        'w1_poi_top': 1.370,
+        'w1_poi_bottom': 1.355,
+        'poi_touch_latched': True,
+    }
+    result = SimpleNamespace(
+        symbol='USDCAD',
+        direction='LONG',
+        current_price=1.362,
+        tf_4h=SimpleNamespace(
+            fvg_top=1.364, fvg_bottom=1.361, equilibrium=1.3625,
+            h4_sl_price=1.358, retrace_pct=0.7, in_poi_entry_zone=True,
+        ),
+        daily_zone_validated=True,
+    )
+    assert radar._w_d_sync_blocks_execute(setup, result) is False
+    assert setup['status'] == 'MONITORING'
+    with patch.object(radar, '_flush_execute_now_to_json'):
+        with patch.object(radar, '_v423_ltf_misalignment', return_value=('bullish', [])):
+            with patch.object(mtr, 'logger'):
+                radar._arm_execute_now(setup, result, '4H', source='test')
+    assert setup.get('EXECUTE_NOW') is True

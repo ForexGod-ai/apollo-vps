@@ -379,6 +379,24 @@ class SMCDetector:
 
         return {'w_d_aligned': True, 'status': None, 'reason': 'w_d_aligned'}
 
+    @staticmethod
+    def resolve_status_after_w_d_sync(current_status: str, sync: dict) -> str:
+        """
+        Promote or set status from evaluate_w_d_sync result.
+        Fixes sticky WAITING_W_D_SYNC when W+D become aligned (status None).
+        """
+        current = str(current_status or '')
+        w_d_aligned = bool(sync.get('w_d_aligned', True))
+        sync_status = sync.get('status')
+
+        if sync_status == 'WAITING_W_D_SYNC':
+            return 'WAITING_W_D_SYNC'
+        if sync_status:
+            return str(sync_status)
+        if w_d_aligned and current in ('WAITING_W_D_SYNC', 'WAITING_W_ZONE'):
+            return 'MONITORING'
+        return current
+
     def apply_w_d_sync_gate(
         self,
         setup: Optional['TradeSetup'],
@@ -409,18 +427,25 @@ class SMCDetector:
             current_price=current_price,
         )
         setup.w_d_aligned = bool(sync.get('w_d_aligned', True))
+        _prev_status = getattr(setup, 'status', '') or ''
+        setup.status = self.resolve_status_after_w_d_sync(_prev_status, sync)
 
-        if sync.get('status') == 'WAITING_W_D_SYNC':
-            setup.status = 'WAITING_W_D_SYNC'
+        if setup.status == 'WAITING_W_D_SYNC':
             setup.confidence = 'LOW_W1_COUNTER_TREND'
             print(
                 f"⏸️ [W+D SOFT SYNC] {sym}: {sync.get('reason')} — "
                 f"monitor only, zero EXECUTE_NOW"
             )
-        elif sync.get('status'):
-            setup.status = sync['status']
+        elif sync.get('status') and setup.status != _prev_status:
             if debug_msg := sync.get('reason'):
                 print(f"   📅 [W+D] {sym}: {setup.status} ({debug_msg})")
+        elif (
+            setup.w_d_aligned
+            and _prev_status == 'WAITING_W_D_SYNC'
+            and setup.status == 'MONITORING'
+        ):
+            setup.confidence = 'NORMAL'
+            print(f"   ✅ [W+D SYNC] {sym}: WAITING_W_D_SYNC → MONITORING (W+D aligned)")
         elif setup.w_d_aligned and setup.confidence == 'LOW_W1_COUNTER_TREND':
             setup.confidence = 'NORMAL'
 

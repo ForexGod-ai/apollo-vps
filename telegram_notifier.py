@@ -1022,7 +1022,9 @@ class TelegramNotifier:
         open_positions: int,
         deep_sleep_active: bool = False,
         deep_sleep_until: str = None,
-        setup_symbols: list = None
+        setup_symbols: list = None,
+        watching_count: int = None,
+        persist_missing: list = None,
     ) -> bool:
         """
         V14.4 MARKET_REPORT — Professional institutional format by ФорексГод
@@ -1031,6 +1033,7 @@ class TelegramNotifier:
         Must be called with time.sleep(2) BEFORE to dodge Telegram flood-control.
         """
         sep = UNIVERSAL_SEPARATOR
+        _watching = watching_count if watching_count is not None else monitoring_count
 
         # ── HEADER ──
         report = (
@@ -1040,9 +1043,11 @@ class TelegramNotifier:
             f"✅ <b>SCANARE COMPLETĂ</b>\n\n"
             f"📈 <b>CONTEXT PORTOFOLIU</b>\n"
             f"• Perechi analizate: {total_pairs}\n"
-            f"• Monitorizare activă: {monitoring_count}\n"
+            f"• Total JSON: {monitoring_count}\n"
+            f"• În pândă (/monitoring): {_watching}\n"
+            f"• Detectate azi (scan): {new_setups_found}\n"
             f"• Poziții deschise: {open_positions}\n"
-            f"• Setup-uri noi: {new_setups_found} (noi: {truly_new} | re-detectate: {re_detected})\n"
+            f"• Breakdown scan: noi {truly_new} | re-detectate {re_detected}\n"
             f"{sep}\n"
         )
 
@@ -1060,6 +1065,14 @@ class TelegramNotifier:
                 for sym_info in _bias_only:
                     report += self._format_scan_report_line(sym_info, bias_fallback=True)
                 report += "\n"
+
+        if persist_missing:
+            report += "⚠️ <b>DETECTATE DAR NESalvate în JSON</b>\n"
+            for row in persist_missing[:10]:
+                sym = row.get('symbol', '?')
+                reason = row.get('reason', '?')
+                report += f"• <code>{sym}</code> — <i>{reason}</i>\n"
+            report += "\n"
 
         # ── STATUS ──
         if deep_sleep_active and deep_sleep_until:
