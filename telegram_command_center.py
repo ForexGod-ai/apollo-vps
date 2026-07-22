@@ -137,6 +137,10 @@ class TelegramCommandCenter:
         logger.info("🎮 Telegram Command Center V3.7 initialized")
         logger.info(f"🔐 Authorized User ID: {self.authorized_user_id}")
         logger.info(f"📁 Monitoring file: {self.monitoring_file}")
+        if not self.bot_token:
+            logger.error("❌ TELEGRAM_BOT_TOKEN lipsă din .env — comenzile Telegram NU vor funcționa")
+        if not self.chat_id:
+            logger.warning("⚠️ TELEGRAM_CHAT_ID lipsă — sendMessage va eșua")
     
     def _load_update_id(self) -> int:
         """Load last processed update_id from disk (prevents re-processing on restart)"""
@@ -162,15 +166,28 @@ class TelegramCommandCenter:
 
     def get_updates(self):
         """Get new messages from Telegram"""
+        if not self.bot_token:
+            logger.error("❌ TELEGRAM_BOT_TOKEN lipsă — getUpdates oprit")
+            return []
         try:
             url = f"https://api.telegram.org/bot{self.bot_token}/getUpdates"
             params = {'offset': self.last_update_id + 1, 'timeout': 30}
             
             response = requests.get(url, params=params, timeout=35)
-            if response.status_code == 200:
-                data = response.json()
-                if data.get('ok'):
-                    return data.get('result', [])
+            if response.status_code != 200:
+                logger.error(
+                    f"❌ getUpdates HTTP {response.status_code}: "
+                    f"{response.text[:300]}"
+                )
+                return []
+            data = response.json()
+            if not data.get('ok'):
+                logger.error(f"❌ getUpdates API error: {data.get('description', data)}")
+                return []
+            results = data.get('result', [])
+            if results:
+                logger.debug(f"📥 getUpdates: {len(results)} update(s), offset>{self.last_update_id}")
+            return results
         except Exception as e:
             logger.error(f"❌ Error getting updates: {e}")
         
@@ -214,7 +231,13 @@ class TelegramCommandCenter:
             }
             
             response = requests.post(url, json=payload, timeout=10)
-            return response.status_code == 200
+            if response.status_code != 200:
+                logger.error(
+                    f"❌ sendMessage HTTP {response.status_code}: "
+                    f"{response.text[:300]}"
+                )
+                return False
+            return True
         except Exception as e:
             logger.error(f"❌ Error sending message: {e}")
             return False

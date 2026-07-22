@@ -3197,24 +3197,30 @@ class MultiTFRadar:
         """Load setups from monitoring_setups.json"""
         try:
             with open(_MONITORING_FILE, 'r', encoding='utf-8') as f:
-                data = json.load(f)
+                raw = f.read().strip()
+            if not raw:
+                print(
+                    "⚠️  monitoring_setups.json este GOL — rulează: python daily_scanner.py"
+                )
+                return []
+            data = json.loads(raw)
                 
-                if isinstance(data, dict):
-                    setups = data.get("setups", [])
-                elif isinstance(data, list):
-                    setups = data
-                else:
-                    return []
+            if isinstance(data, dict):
+                setups = data.get("setups", [])
+            elif isinstance(data, list):
+                setups = data
+            else:
+                return []
                 
-                # V22: Accept orice setup cu 'symbol' — entry_price poate lipsi la setups proaspete
-                # Filtrul pe entry_price era cauza invizibilității setup-urilor nou create de daily_scanner
-                return [s for s in setups if isinstance(s, dict) and s.get('symbol')]
+            # V22: Accept orice setup cu 'symbol' — entry_price poate lipsi la setups proaspete
+            return [s for s in setups if isinstance(s, dict) and s.get('symbol')]
         
         except FileNotFoundError:
-            print("⚠️  monitoring_setups.json not found")
+            print("⚠️  monitoring_setups.json not found — rulează: python daily_scanner.py")
             return []
         except json.JSONDecodeError as e:
             print(f"⚠️  Error parsing monitoring_setups.json: {e}")
+            print("   Fix: rescrie JSON valid apoi rulează python daily_scanner.py")
             return []
     
     def run_scan(self, symbol: Optional[str] = None, all_setups: bool = False):
