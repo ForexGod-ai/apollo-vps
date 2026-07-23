@@ -280,14 +280,7 @@ def audit_setup(
     result["poi_zombie"] = poi_res.poi_zombie
 
     selected_fvg = poi_res.fvg
-    if selected_fvg is None and direction in ("bullish", "bearish"):
-        synthetic = detector._build_v246_synthetic_fvg(
-            df_d1, latest_signal, current_trend, symbol=symbol, dealing_range=adr,
-        )
-        result["recalc_poi_top"] = round(float(synthetic.top), 5)
-        result["recalc_poi_bottom"] = round(float(synthetic.bottom), 5)
-        result["recalc_source"] = "V43 synthetic ADR clip"
-    elif selected_fvg is not None:
+    if selected_fvg is not None:
         result["recalc_poi_top"] = round(float(selected_fvg.top), 5)
         result["recalc_poi_bottom"] = round(float(selected_fvg.bottom), 5)
         result["recalc_source"] = poi_res.poi_source or audit_fvg.get(
@@ -296,6 +289,7 @@ def audit_setup(
     else:
         result["recalc_poi_top"] = None
         result["recalc_poi_bottom"] = None
+        result["recalc_source"] = "no organic FVG (V59 — synthetic removed)"
 
     if (
         adr is not None
