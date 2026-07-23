@@ -88,7 +88,7 @@ def test_send_scan_report_compact_header_no_duplicate_json(mock_send):
     assert "Setup-uri cu POI" in body
     assert "Bias D1 fără FVG" in body
     assert "AUTHORED BY" not in body
-    assert "🔱 ФорексГод · Глитч Ин Мatrix" in body
+    assert "🔱 ФорексГод · Глитч Ин Матрикс" in body
     assert mock_send.call_args[1]['add_signature'] is False
 
 

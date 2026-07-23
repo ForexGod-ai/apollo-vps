@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from loguru import logger
 
-SLIM_FOOTER_BRAND = "🔱 ФорексГод · Глитч Ин Мatrix"
+SLIM_FOOTER_BRAND = "🔱 ФорексГод · Глитч Ин Матрикс"
 
 # Telegram mobile: U+2500 (─) renders wider than Cyrillic/Latin in HTML bubbles.
 # Calibrated on device: 16 chars flush with brand line (29 chars @ ~0.55).
