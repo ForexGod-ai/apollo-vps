@@ -5,6 +5,7 @@ Usage:
   python3 scripts/preview_telegram_scan_layout.py
   python3 scripts/preview_telegram_scan_layout.py --market-report
   python3 scripts/preview_telegram_scan_layout.py --scan-card
+  python3 scripts/preview_telegram_scan_layout.py --4h-alert
 """
 from __future__ import annotations
 
@@ -217,6 +218,45 @@ def preview_scan_card_v61() -> None:
     _print_mobile_wrap(plain)
 
 
+def preview_4h_alert_v62() -> None:
+    """V62 4H CHoCH/BOS structural alert caption preview."""
+    from types import SimpleNamespace
+    from telegram_notifier import format_4h_structural_alert
+
+    print('=' * 72)
+    print('V62 4H STRUCTURAL ALERT — HYBRID RO PREVIEW')
+    print('=' * 72)
+
+    setup = {
+        'symbol': 'EURJPY',
+        'direction': 'sell',
+        'strategy_type': 'reversal',
+        'd1_signal_type': 'CHoCH',
+        'w1_bias': 'NEUTRAL',
+        'radar_4h_choch_price': 165.0,
+    }
+    tf = SimpleNamespace(
+        choch_price=165.0,
+        choch_bars_ago=5,
+        choch_direction='bearish',
+        retrace_pct=0.42,
+        signal_type='CHoCH',
+    )
+
+    for label, sig, strat, d1 in (
+        ('CHoCH reversal', 'CHoCH', 'reversal', 'CHoCH'),
+        ('BOS continuation', 'BOS', 'continuation', 'BOS'),
+    ):
+        s = dict(setup, strategy_type=strat, d1_signal_type=d1)
+        cap = format_4h_structural_alert(s, tf_data=tf, signal_type=sig, live_price=165.234)
+        plain = _strip_html(cap)
+        print('\n' + '-' * 72)
+        print(label)
+        print('-' * 72)
+        print(plain)
+        _print_mobile_wrap(plain)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description='Preview Telegram layouts without sending.')
     parser.add_argument(
@@ -229,12 +269,20 @@ def main() -> None:
         action='store_true',
         help='Preview V61 scan card layout + mobile width check',
     )
+    parser.add_argument(
+        '--4h-alert',
+        dest='alert_4h',
+        action='store_true',
+        help='Preview V62 4H CHoCH/BOS alert caption + mobile width check',
+    )
     args = parser.parse_args()
 
     if args.market_report:
         preview_market_report()
     elif args.scan_card:
         preview_scan_card_v61()
+    elif args.alert_4h:
+        preview_4h_alert_v62()
     else:
         preview_scan_cards()
 

@@ -307,13 +307,127 @@ def _trade_levels_valid(entry, sl) -> bool:
 
 
 def _choch_monitoring_levels_line() -> str:
-    """P0: faza MONITORING — fără Entry/SL/TP stale din JSON."""
+    """V62: disclaimer scurt — Entry/SL/TP doar la EXECUTE_NOW."""
+    return "📐 <i>Entry/SL/TP live la semnal · fără nivele fantomă D1</i>"
+
+
+def _strategy_chip_4h(strategy: str, d1_sig: str, signal_type: str) -> str:
+    """REV (CHoCH) / CONT (BOS) for 4H structural alert caption."""
+    strat_u = str(strategy or '').upper().replace('_COUNTER_W1', '')
+    sig = (signal_type or 'CHoCH').upper()
+    if sig == 'BOS' or strat_u.startswith('CONTINUATION') or strat_u.startswith('CONTINUITY'):
+        return 'CONT (BOS)'
+    if strat_u.startswith('REVERSAL'):
+        return 'REV (CHoCH)'
+    if str(d1_sig or '').upper() == 'BOS':
+        return 'CONT (BOS)'
+    return 'REV (CHoCH)'
+
+
+def _normalize_alert_direction(raw: str) -> tuple:
+    """Return (BUY|SELL, display label 🟢 LONG|🔴 SHORT)."""
+    d = str(raw or 'buy').upper()
+    if d in ('LONG', 'BUY', 'BULLISH'):
+        return 'BUY', '🟢 LONG'
+    return 'SELL', '🔴 SHORT'
+
+
+def _live_price_from_df(df_4h) -> Optional[float]:
+    if df_4h is None or getattr(df_4h, 'empty', True):
+        return None
+    try:
+        if len(df_4h) < 1:
+            return None
+        return float(df_4h['close'].iloc[-1])
+    except (TypeError, ValueError, KeyError, IndexError):
+        return None
+
+
+def format_4h_structural_alert(
+    setup_data: dict,
+    tf_data=None,
+    signal_type: str = 'CHoCH',
+    live_price: Optional[float] = None,
+) -> str:
+    """V62 — caption hibrid RO pentru alertă 4H CHoCH/BOS (+ chart PNG)."""
+    symbol = setup_data.get('symbol', 'UNKNOWN')
+    sig = (signal_type or 'CHoCH').upper()
+    direction, dir_label = _normalize_alert_direction(setup_data.get('direction', 'buy'))
+    strategy = str(setup_data.get('strategy_type', 'reversal'))
+    d1_sig = str(setup_data.get('d1_signal_type', '') or '').upper()
+    w1_bias = setup_data.get('w1_bias', 'NEUTRAL') or 'NEUTRAL'
     sep = UNIVERSAL_SEPARATOR
-    return (
-        f"{sep}\n"
-        f"📐 <i>Niveluri Entry/SL/TP calculate LIVE la EXECUTE_NOW</i>\n"
-        f"<i>(valorile din scan D1 nu se afișează — evită nivele fantomă)</i>\n"
+
+    struct_dir = (
+        getattr(tf_data, 'choch_direction', None)
+        or setup_data.get('radar_4h_choch_direction')
+        or ('bearish' if direction == 'SELL' else 'bullish')
     )
+    if sig == 'BOS' and getattr(tf_data, 'bos_direction', None):
+        struct_dir = tf_data.bos_direction
+
+    break_px = (
+        getattr(tf_data, 'choch_price', None)
+        or setup_data.get('radar_4h_choch_price')
+        or setup_data.get('entry_price')
+        or 0
+    )
+    bars_ago = getattr(tf_data, 'choch_bars_ago', None) or setup_data.get('radar_4h_choch_bars_ago')
+    if sig == 'BOS':
+        bars_ago = getattr(tf_data, 'bos_bars_ago', None) or bars_ago
+
+    strategy_chip = _strategy_chip_4h(strategy, d1_sig, sig)
+    is_cont = strategy_chip.startswith('CONT')
+    line_emoji = '➡️' if is_cont or sig == 'BOS' else '🔄'
+    sig_label = 'BOS 4H confirmat' if sig == 'BOS' else 'CHoCH 4H confirmat'
+
+    block1 = (
+        f"{line_emoji} <b>{symbol}</b> · {dir_label}\n"
+        f"⚡ <b>{sig_label}</b> · {strategy_chip}"
+    )
+    if w1_bias and w1_bias != 'NEUTRAL':
+        aligned = (w1_bias == 'BULLISH' and direction == 'BUY') or \
+                  (w1_bias == 'BEARISH' and direction == 'SELL')
+        w1_suffix = '✅' if aligned else '⚠️ nealiniat'
+        block1 += f"\n📅 W1: <b>{w1_bias}</b> {w1_suffix}"
+
+    block2_parts = []
+    if live_price is not None:
+        block2_parts.append(
+            f"💹 Preț cTrader: <code>{format_telegram_price(symbol, live_price)}</code>"
+        )
+
+    break_line = f"📍 Break 4H: <code>{format_telegram_price(symbol, break_px)}</code>"
+    if bars_ago is not None and bars_ago != 9999:
+        break_line += f" · {bars_ago} bare post-POI"
+    block2_parts.append(break_line)
+
+    macro_dir = 'BULLISH' if direction == 'BUY' else 'BEARISH'
+    d1_label = d1_sig or ('BOS' if is_cont else 'CHoCH')
+    block2_parts.append(f"📊 D1: <b>{macro_dir} {d1_label}</b>")
+
+    if w1_bias == 'NEUTRAL':
+        block2_parts.append('📅 W1: NEUTRAL')
+
+    retrace = getattr(tf_data, 'retrace_pct', None) if tf_data is not None else None
+    if retrace is not None:
+        try:
+            rp = float(retrace)
+            pct_display = rp * 100.0 if abs(rp) <= 1.5 else rp
+            block2_parts.append(
+                f"📉 Retrace impuls: {pct_display:.0f}% · așteptăm 60–80%"
+            )
+        except (TypeError, ValueError):
+            pass
+
+    impulse_label = 'BOS' if sig == 'BOS' else '4H'
+    block3 = (
+        f"\n{sep}\n"
+        f"⏳ <b>Următorul pas:</b> retrace 60–80% pe impuls {impulse_label} → <b>EXECUTE NOW</b>\n"
+        f"{_choch_monitoring_levels_line()}"
+    )
+
+    return f"{block1}\n{sep}\n" + "\n".join(block2_parts) + block3
 
 
 def _choch_trade_block(symbol: str, entry, sl, tp, rr) -> str:
@@ -530,27 +644,18 @@ class TelegramNotifier:
         tf_data=None,
     ) -> bool:
         """
-        V47: Alertă 4H — CHoCH (inversare) sau BOS (continuare), photo+caption, fallback text.
+        V62: Alertă 4H — CHoCH/BOS, photo+caption hibrid RO, fallback text.
         """
         symbol = setup_data.get('symbol', 'UNKNOWN')
         sig = (signal_type or 'CHoCH').upper()
         try:
-            direction = setup_data.get('direction', 'buy').upper()
-            if direction in ('LONG',):
-                direction = 'BUY'
-            elif direction in ('SHORT',):
-                direction = 'SELL'
+            direction, _ = _normalize_alert_direction(setup_data.get('direction', 'buy'))
             strategy = str(setup_data.get('strategy_type', 'reversal')).upper()
-            d1_sig = setup_data.get('d1_signal_type', '')
-            w1_bias = setup_data.get('w1_bias', 'NEUTRAL')
-            dir_emoji = "🟢" if direction == 'BUY' else "🔴"
-            w1_emoji = (
-                "✅" if w1_bias == 'BULLISH' and direction == 'BUY'
-                else "✅" if w1_bias == 'BEARISH' and direction == 'SELL'
-                else "⚠️ COUNTER" if w1_bias != 'NEUTRAL' else "⏳ NEUTRAL"
+
+            live_price = _live_price_from_df(df_4h)
+            caption = format_4h_structural_alert(
+                setup_data, tf_data=tf_data, signal_type=sig, live_price=live_price,
             )
-            sep = UNIVERSAL_SEPARATOR
-            trade_block = _choch_monitoring_levels_line()
 
             break_px = (
                 getattr(tf_data, 'choch_price', None)
@@ -558,49 +663,10 @@ class TelegramNotifier:
                 or setup_data.get('entry_price')
                 or 0
             )
-            bars_ago = getattr(tf_data, 'choch_bars_ago', None) or setup_data.get('radar_4h_choch_bars_ago')
-            bars_str = f"-{bars_ago}b" if bars_ago is not None else "?b"
             struct_dir = (
                 getattr(tf_data, 'choch_direction', None)
                 or setup_data.get('radar_4h_choch_direction')
                 or ('bearish' if direction == 'SELL' else 'bullish')
-            )
-            struct_dir_u = str(struct_dir).upper()
-            d1_line = f"\n📊 D1 signal: <code>{d1_sig}</code>" if d1_sig else ""
-
-            strat_u = strategy.replace('_COUNTER_W1', '')
-            is_continuation = strat_u.startswith('CONTINUATION') or strat_u.startswith('CONTINUITY')
-
-            if sig == 'BOS':
-                header = "⚡ <b>4H STRUCTURĂ CONFIRMATĂ (BOS)</b> — Continuare"
-                wait_line = (
-                    f"✅ POI Daily atins — BOS 4H {struct_dir_u} {bars_str} post-POI\n"
-                    "⏳ Următorul pas: retrace Premium/Discount 60–80% pe impuls BOS → entry"
-                )
-            elif is_continuation:
-                header = "⚡ <b>4H STRUCTURĂ CONFIRMATĂ (4H CHoCH)</b> — Continuare"
-                wait_line = (
-                    f"✅ POI Daily atins — CHoCH 4H {struct_dir_u} {bars_str} post-POI\n"
-                    "⏳ Următorul pas: retrace Premium/Discount 60–80% pe impuls 4H → entry"
-                )
-            else:
-                header = "🔄 <b>4H INVERSARE STRUCTURĂ (CHoCH)</b> — Pregătire Entry"
-                wait_line = (
-                    f"✅ POI Daily atins — CHoCH 4H {struct_dir_u} {bars_str} post-POI\n"
-                    "⏳ Următorul pas: retrace Premium/Discount 60–80% pe impuls 4H → entry"
-                )
-
-            caption = (
-                f"{header}\n"
-                f"{sep}\n"
-                f"{dir_emoji} <b>{symbol}</b> {direction}\n"
-                f"🎯 Strategy: <code>{strategy}</code>{d1_line}\n"
-                f"📅 W1 Bias: <b>{w1_bias}</b> {w1_emoji}\n"
-                f"📍 4H {sig} {struct_dir_u} @ <code>{format_telegram_price(symbol, break_px)}</code> | "
-                f"{bars_str} post-POI\n"
-                f"{trade_block}"
-                f"{sep}\n"
-                f"{wait_line}"
             )
 
             chart_4h = None
