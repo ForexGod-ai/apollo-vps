@@ -38,6 +38,17 @@ import os
 import psutil
 from loguru import logger
 
+from telegram_command_format import (
+    SLIM_FOOTER_SEP,
+    append_slim_footer,
+    format_btcusd_card,
+    format_stat_block,
+    format_two_column_grid,
+    load_monitoring_json,
+    save_monitoring_json,
+    section_header,
+)
+
 load_dotenv()
 
 # ━━━ V8.0 VPS-READY: Force UTC timezone + persistent log file ━━━
@@ -236,7 +247,7 @@ class TelegramCommandCenter:
             logger.error(f"❌ Force sync error: {e}")
             return False
     
-    def send_message(self, text: str, chat_id=None):
+    def send_message(self, text: str, chat_id=None, add_signature: bool = True):
         """Send message to Telegram with HTML formatting"""
         target_chat = chat_id if chat_id is not None else self.chat_id
         if not target_chat:
@@ -244,16 +255,8 @@ class TelegramCommandCenter:
             return False
         try:
             url = f"https://api.telegram.org/bot{self.bot_token}/sendMessage"
-            
-            # ═══ V11.5 SOVEREIGN SIGNATURE — 16-char separator, ALL CAPS ═══
-            sep = "────────────────"  # 16 chars
-            branded_text = (
-                f"{text}\n\n"
-                f"{sep}\n"
-                f"🔱 AUTHORED BY <b>ФорексГод</b> 🔱\n"
-                f"{sep}\n"
-                f"🏛 <b>ГЛИТЧ ИН МАТРИКС</b> 🏛"
-            )
+
+            branded_text = append_slim_footer(text) if add_signature else text.rstrip()
             # Telegram hard limit 4096 chars
             if len(branded_text) > 4096:
                 branded_text = branded_text[:4080] + "\n\n… [truncat]"
@@ -339,28 +342,20 @@ class TelegramCommandCenter:
             profit_emoji = "🔥" if total_profit > 0 else ("💥" if total_profit < 0 else "⚪")
             weekly_emoji = "🔥" if weekly_profit > 0 else ("💥" if weekly_profit < 0 else "⚪")
 
-            # 📦 COMPACT VERTICAL LAYOUT (Dashboard Sniper)
-            message = f"""<b>📊 DAILY STATS</b>
-────────────────
-<b>📅 {datetime.now().strftime('%d %b %Y')}</b>
-
-{profit_emoji} <b>Net Profit</b>
-<code>${total_profit:+.2f}</code>
-
-📈 <b>Trades</b>
-<code>{total_trades}</code> total
-
-✅ <b>Wins</b> / ❌ <b>Losses</b>
-<code>{wins}</code> • <code>{losses}</code>
-
-🎯 <b>Win Rate</b>
-<code>{win_rate:.1f}%</code>
-
-💵 <b>Avg P/L</b>
-<code>${avg_profit:+.2f}</code>
-────────────────"""
-
-            message += f"""\n<b>📈 WEEKLY (7d)</b>\n\n{weekly_emoji} <b>Profit</b>\n<code>${weekly_profit:+.2f}</code>\n\n📋 <b>Trades</b>\n<code>{weekly_trades}</code>"""
+            # V63 compact hibrid RO
+            date_str = datetime.now().strftime('%d %b %Y')
+            message = (
+                f"<b>📊 Stats · {date_str}</b>\n"
+                f"{SLIM_FOOTER_SEP}\n\n"
+                f"{format_stat_block('P/L azi', f'${total_profit:+.2f}', profit_emoji)}\n\n"
+                f"📈 <b>Tranzacții</b> · <code>{total_trades}</code>\n"
+                f"✅ <code>{wins}</code> · ❌ <code>{losses}</code> · "
+                f"WR <code>{win_rate:.1f}%</code>\n"
+                f"💵 Medie · <code>${avg_profit:+.2f}</code>\n\n"
+                f"{section_header('📈 Săptămână (7z)')}\n\n"
+                f"{format_stat_block('Profit', f'${weekly_profit:+.2f}', weekly_emoji)}\n"
+                f"📋 Tranzacții · <code>{weekly_trades}</code>"
+            )
 
             return message
             
@@ -391,29 +386,20 @@ class TelegramCommandCenter:
             wr_emoji = "✅" if win_rate >= 50 else "⚠️"
 
             message = (
-                f"<b>📈 WEEKLY REPORT</b>\n"
-                f"{UNIVERSAL_SEPARATOR}\n"
-                f"<b>📅 {week_start} — {week_end}</b>\n"
-                f"{UNIVERSAL_SEPARATOR}\n"
-                f"{pnl_emoji} <b>Total P&amp;L</b>\n"
-                f"<code>${total_pnl:+.2f}</code>\n\n"
-                f"📋 <b>Trades</b>\n"
-                f"<code>{total}</code> executate\n\n"
-                f"✅ <b>Wins</b> / ❌ <b>Losses</b>\n"
-                f"<code>{wins}</code> • <code>{losses}</code>\n\n"
-                f"{wr_emoji} <b>Win Rate</b>\n"
-                f"<code>{win_rate:.1f}%</code>\n\n"
-                f"💵 <b>Profit Mediu / Trade</b>\n"
-                f"<code>${avg_pnl:+.2f}</code>\n"
+                f"<b>📈 Raport săptămânal</b>\n"
+                f"{SLIM_FOOTER_SEP}\n"
+                f"📅 <b>{week_start} — {week_end}</b>\n\n"
+                f"{format_stat_block('P/L total', f'${total_pnl:+.2f}', pnl_emoji)}\n\n"
+                f"📋 Tranzacții · <code>{total}</code>\n"
+                f"✅ <code>{wins}</code> · ❌ <code>{losses}</code>\n"
+                f"{wr_emoji} Win rate · <code>{win_rate:.1f}%</code>\n"
+                f"💵 Medie/trade · <code>${avg_pnl:+.2f}</code>"
             )
             if best_trade is not None:
                 message += (
-                    f"\n🏆 <b>Best Trade</b>\n"
-                    f"<code>${best_trade:+.2f}</code>\n"
-                    f"💣 <b>Worst Trade</b>\n"
-                    f"<code>${worst_trade:+.2f}</code>\n"
+                    f"\n\n🏆 Best · <code>${best_trade:+.2f}</code>\n"
+                    f"💣 Worst · <code>${worst_trade:+.2f}</code>"
                 )
-            message += UNIVERSAL_SEPARATOR
             return message
 
         except Exception as e:
@@ -467,11 +453,9 @@ class TelegramCommandCenter:
         
         if expired_count > 0:
             try:
-                with open(self.monitoring_file, 'r') as f:
-                    data = json.load(f)
+                data, _ = load_monitoring_json(self.monitoring_file)
                 data['setups'] = setups
-                with open(self.monitoring_file, 'w') as f:
-                    json.dump(data, f, indent=2)
+                save_monitoring_json(self.monitoring_file, data)
                 logger.success(f"🧹 Auto-expired {expired_count} stale setup(s) from monitoring_setups.json")
             except Exception as e:
                 logger.error(f"❌ Failed to save expired setups: {e}")
@@ -490,33 +474,11 @@ class TelegramCommandCenter:
             'WAITING_POSITION_CLOSE',
         })
 
-        def _setup_radar_hint(s: dict) -> str:
-            if s.get('EXECUTE_NOW'):
-                return '🔥 EXECUTE_NOW'
-            if s.get('radar_4h_in_fvg'):
-                return '🎯 In FVG'
-            if s.get('radar_4h_choch_detected'):
-                return '⏳ CHoCH → aștept FVG'
-            verdict = (s.get('radar_verdict') or '')[:40]
-            return verdict or s.get('status', '?')
-
         try:
             if not self.monitoring_file.exists():
-                return "❌ <b>No monitoring setups found!</b>\n\n<code>monitoring_setups.json</code> missing."
+                return "❌ <b>Fără setup-uri!</b>\n\n<code>monitoring_setups.json</code> lipsește."
 
-            try:
-                with open(self.monitoring_file, 'r', encoding='utf-8') as f:
-                    raw = f.read().strip()
-                data = json.loads(raw) if raw else {}
-            except (json.JSONDecodeError, ValueError):
-                data = {}
-
-            if isinstance(data, list):
-                setups = data
-            elif isinstance(data, dict):
-                setups = data.get('setups', [])
-            else:
-                setups = []
+            _, setups = load_monitoring_json(self.monitoring_file)
 
             broker = self._load_broker_positions()
             broker_symbols = set(broker.keys())
@@ -539,70 +501,45 @@ class TelegramCommandCenter:
                     "Așteptăm următorul scan sau semnal radar."
                 )
 
+            from telegram_notifier import _render_grouped_setups
+
             message = (
-                f"<b>👁️ SETUP-URI ÎN PÂNDĂ</b>\n"
-                f"{UNIVERSAL_SEPARATOR}\n\n"
-                f"📋 Total pândă: <b>{len(watching)}</b>"
+                f"<b>👁️ Setup-uri în pândă</b>\n"
+                f"{SLIM_FOOTER_SEP}\n\n"
+                f"📋 Total · <b>{len(watching)}</b>"
             )
             if execute_now:
-                message += f" | 🔥 EXECUTE_NOW: <b>{len(execute_now)}</b>"
+                message += f" · 🔥 EXECUTE_NOW · <b>{len(execute_now)}</b>"
             if trade_open:
-                message += f" | 📂 TRADE_OPEN: <b>{len(trade_open)}</b>"
+                message += f" · 📂 TRADE_OPEN · <b>{len(trade_open)}</b>"
             message += "\n"
 
             if total_broker:
                 message += (
-                    f"\n💡 Live la broker: <b>{total_broker}</b> poziții — "
-                    f"detalii: <code>/active</code>\n"
+                    f"\n💡 Live broker · <b>{total_broker}</b> poziții → <code>/active</code>\n"
                 )
-            
-            if watching:
-                message += f"\n{UNIVERSAL_SEPARATOR}\n"
-                message += "<b>📡 RADAR / SCANNER</b>\n\n"
 
+            if watching:
                 watching_sorted = sorted(
                     watching,
                     key=lambda x: (0 if x.get('EXECUTE_NOW') else 1, x.get('symbol', '')),
                 )
-
-                for idx, setup in enumerate(watching_sorted[:15], 1):
-                    symbol = setup.get('symbol', 'UNKNOWN')
-                    direction = str(setup.get('direction', '?')).upper()
-                    status = setup.get('status', '?')
-                    strategy = str(setup.get('strategy_type', '?')).upper()[:3]
-                    locked = '🔒' if setup.get('strategy_locked') or setup.get('h4_structure_locked') else '🔓'
-                    dir_emoji = "🟢" if direction in ('BUY', 'LONG') else "🔴"
-                    hint = _setup_radar_hint(setup)
-
-                    carry_line = ""
-                    swap_long = setup.get('swap_long')
-                    swap_short = setup.get('swap_short')
-                    if swap_long is not None and swap_short is not None:
-                        rel = swap_long if direction in ('BUY', 'LONG') else swap_short
-                        carry_line = f" | 💱 <code>{rel:+.2f}p/d</code>"
-
-                    message += (
-                        f"<b>{idx}.</b> {dir_emoji} <code>{symbol}</code> "
-                        f"<b>{direction}</b> [{strategy}-{locked}]\n"
-                        f"   📌 <code>{status}</code> — {hint}{carry_line}\n\n"
-                    )
-
+                message += f"\n{section_header('📡 Radar / Scanner')}\n\n"
+                message += _render_grouped_setups(watching_sorted[:15])
                 if len(watching) > 15:
-                    message += f"<i>… + {len(watching) - 15} setup-uri</i>\n"
-
+                    message += f"\n<i>… + {len(watching) - 15} setup-uri</i>\n"
             elif total_broker:
                 message += (
-                    f"\n<i>Niciun setup în pândă în JSON — "
-                    f"<code>/status</code> pentru health sistem.</i>\n"
+                    f"\n<i>Niciun setup în pândă — <code>/status</code> pentru health.</i>\n"
                 )
 
             if desync_setups:
-                message += f"\n{UNIVERSAL_SEPARATOR}\n"
-                message += "⚠️ <b>DESYNC</b> (ACTIVE în JSON, lipsă la broker)\n\n"
+                message += f"\n{section_header('⚠️ Desync')}\n"
+                message += "<i>ACTIVE în JSON, lipsă la broker</i>\n\n"
                 for setup in desync_setups:
                     sym = setup.get('symbol', '?')
                     dr = setup.get('direction', '?').upper()
-                    message += f"   ⚠️ <code>{sym}</code> {dr} — ghost\n"
+                    message += f"   ⚠️ <code>{sym}</code> {dr}\n"
                 message += "\n"
 
             if expired_count:
@@ -766,13 +703,13 @@ class TelegramCommandCenter:
                 _time_header = (now + timedelta(hours=3)).strftime('%d %b %Y, %H:%M:%S (ora României)')
 
             message = (
-                f"<b>🔧 SYSTEM STATUS — V40.4</b>\n"
-                f"{UNIVERSAL_SEPARATOR}\n\n"
+                f"<b>🔧 System Status</b>\n"
+                f"{SLIM_FOOTER_SEP}\n"
                 f"⏰ {_time_header}\n\n"
             )
             
-            # ═══ SECTION 1: MONITORS ═══
-            message += "<b>📊 MONITORS:</b>\n"
+            # ═══ SECTION 1: MONITORS (grid 2 coloane) ═══
+            message += f"{section_header('📊 Monitoare')}\n\n"
             
             processes = {
                 'setup_executor_monitor.py': '🎯 Executor',
@@ -843,6 +780,7 @@ class TelegramCommandCenter:
 
             online_count = 0
             total_count = len(processes)
+            monitor_cells = []
             for proc_name, display_name in processes.items():
                 if proc_name in running_procs:
                     uptime_str = ''
@@ -856,25 +794,24 @@ class TelegramCommandCenter:
                             uptime_str = f" ({age_s/60:.0f}m)"
                     except Exception:
                         pass
-                    message += f"  {display_name} ✅{uptime_str}\n"
+                    monitor_cells.append(f"{display_name} ✅{uptime_str}")
                     online_count += 1
                 else:
-                    message += f"  {display_name} ❌ OFFLINE\n"
-            
-            message += f"  <i>({online_count}/{total_count} online)</i>\n\n"
+                    monitor_cells.append(f"{display_name} ❌")
+            message += format_two_column_grid(monitor_cells, cols=2)
+            message += f"\n  <i>{online_count}/{total_count} online</i>\n\n"
             
             # ═══ SECTION 2: CONNECTIONS ═══
-            message += "<b>📡 CONNECTIONS:</b>\n"
+            message += f"{section_header('📡 Conexiuni')}\n\n"
             try:
                 resp = requests.get('http://localhost:8767/', timeout=3)
                 cbot_status = '✅' if resp.status_code == 200 else '⚠️'
             except Exception:
                 cbot_status = '❌'
-            message += f"  🤖 cTrader cBot: {cbot_status}\n"
-            message += f"  💾 Database: {'✅' if self.db_path.exists() else '❌'}\n\n"
+            message += f"  🤖 cBot {cbot_status}    💾 DB {'✅' if self.db_path.exists() else '❌'}\n\n"
             
-            # ═══ SECTION 3: TODAY'S P/L ═══
-            message += "<b>💰 TODAY'S P/L:</b>\n"
+            # ═══ SECTION 3: TODAY'S P/L (o linie — fără duplicat session/calendar) ═══
+            message += f"{section_header('💰 P/L azi')}\n\n"
             pnl_ctx = {
                 'closed_pnl': 0.0, 'trade_count': 0, 'pnl_pct': 0.0,
                 'max_loss': 10.0, 'risk_label': '🟢 SAFE', 'resumed_today': False,
@@ -887,52 +824,38 @@ class TelegramCommandCenter:
                 max_loss = pnl_ctx['max_loss']
                 reset_cutoff = pnl_ctx.get('reset_cutoff')
 
-                if reset_cutoff:
+                if reset_cutoff and pnl_ctx.get('resumed_today'):
                     sess_pnl = pnl_ctx['session_closed_pnl']
                     sess_pct = pnl_ctx['session_pnl_pct']
                     sess_trades = pnl_ctx['session_trade_count']
                     sess_emoji = '🟢' if sess_pnl >= 0 else '🔴'
-                    cal_emoji = '🟢' if closed_pnl >= 0 else '🔴'
                     message += (
-                        f"  🔱 Session: {sess_emoji} <code>${sess_pnl:+.2f}</code> "
-                        f"({sess_pct:+.1f}%) · <code>{sess_trades}</code> trade(s) "
-                        f"since <code>{reset_cutoff[:19]}</code>\n"
-                    )
-                    message += (
-                        f"  📅 Calendar: {cal_emoji} <code>${closed_pnl:+.2f}</code> "
-                        f"({pnl_pct:+.1f}%) · <code>{trade_count}</code> trade(s) "
-                        f"(00:00 RO → now)\n"
+                        f"  🔱 Session {sess_emoji} <code>${sess_pnl:+.2f}</code> "
+                        f"({sess_pct:+.1f}%) · <code>{sess_trades}</code> trade(s)\n"
                     )
                 else:
                     pnl_emoji = '🟢' if closed_pnl >= 0 else '🔴'
-                    message += f"  {pnl_emoji} Closed: <code>${closed_pnl:+.2f}</code> ({pnl_pct:+.1f}%)\n"
-                    message += f"  📊 Trades today: <code>{trade_count}</code>\n"
+                    message += (
+                        f"  {pnl_emoji} <code>${closed_pnl:+.2f}</code> "
+                        f"({pnl_pct:+.1f}%) · <code>{trade_count}</code> trade(s)\n"
+                    )
 
                 if pnl_ctx.get('broker_synced'):
-                    message += "  📡 Source: <code>cTrader broker (synced)</code>\n"
-                message += f"  🛡️ Risk: {pnl_ctx['risk_label']} (limit: -{max_loss}%)\n\n"
+                    message += "  📡 <code>cTrader synced</code>\n"
+                message += f"  🛡️ {pnl_ctx['risk_label']} (limit −{max_loss}%)\n\n"
 
             except Exception as e:
                 message += f"  ⚠️ Data unavailable: {e}\n\n"
             
-            # ═══ SECTION 4: MONITORING SETUPS ═══
-            message += "<b>📋 SETUPS:</b>\n"
+            # ═══ SECTION 4: MONITORING SETUPS (grouped V60) ═══
+            message += f"{section_header('📋 Setup-uri')}\n\n"
             try:
+                from telegram_notifier import _render_grouped_setups
+
                 script_dir = Path(__file__).parent.resolve()
                 mon_file = script_dir / 'monitoring_setups.json'
                 if mon_file.exists():
-                    with open(mon_file, 'r', encoding='utf-8') as f:
-                        raw = f.read().strip()
-                    if not raw:
-                        setups = []
-                    else:
-                        data = json.loads(raw)
-                        if isinstance(data, dict):
-                            setups = data.get('setups', [])
-                        elif isinstance(data, list):
-                            setups = data
-                        else:
-                            setups = []
+                    _, setups = load_monitoring_json(mon_file)
                     active = sum(1 for s in setups if s.get('status') == 'TRADE_OPEN')
                     watching = self._STATUS_WATCHING_STATUSES
                     monitoring = sum(1 for s in setups if s.get('status') in watching)
@@ -952,41 +875,23 @@ class TelegramCommandCenter:
                             )
                         )
                     )
-                    message += f"  🔥 Open: <code>{active}</code> | 👀 Pândă: <code>{monitoring}</code>\n"
-                    message += f"  ⏳ CHoCH wait: <code>{choch_waiting}</code> | 🎯 In Zone: <code>{in_zone}</code>\n"
-                    # 3-column grid: symbol + strategy label [REV-🔒] / [CNT-🔒]
-                    def _setup_cell(s: dict) -> str:
-                        sym = s.get('symbol', '?')
-                        stype = s.get('strategy_type', '').upper()
-                        locked = s.get('strategy_locked', False)
-                        if 'REVERSAL' in stype:
-                            tag = 'REV'
-                        elif 'CONTINUATION' in stype or 'CONTINUITY' in stype:
-                            tag = 'CNT'
-                        else:
-                            tag = stype[:3] if stype else '?'
-                        lock_icon = '🔒' if locked else '🔓'
-                        return f"• {sym} [{tag}-{lock_icon}]"
+                    message += (
+                        f"  🔥 Open <code>{active}</code> · 👀 Pândă <code>{monitoring}</code>\n"
+                        f"  ⏳ CHoCH wait <code>{choch_waiting}</code> · 🎯 In zone <code>{in_zone}</code>\n\n"
+                    )
                     mon_syms = [s for s in setups if s.get('status') in self._STATUS_WATCHING_STATUSES]
                     if mon_syms:
-                        cols = 3
-                        cells = [_setup_cell(s) for s in mon_syms[:cols * 4]]
-                        rows = [cells[i:i+cols] for i in range(0, len(cells), cols)]
-                        grid = "\n".join("  " + "  ".join(row) for row in rows)
-                        extra = len(mon_syms) - cols * 4
-                        if extra > 0:
-                            grid += f"\n  + {extra} more"
-                        message += f"{grid}\n"
+                        message += _render_grouped_setups(mon_syms[:12])
+                        if len(mon_syms) > 12:
+                            message += f"\n<i>+ {len(mon_syms) - 12} setup-uri</i>\n"
                     message += "\n"
                 else:
-                    message += "  ⚠️ No monitoring file\n\n"
+                    message += "  ⚠️ Fișier monitoring lipsă\n\n"
             except Exception:
-                message += "  ⚠️ Error reading setups\n\n"
+                message += "  ⚠️ Eroare citire setup-uri\n\n"
             
             # ═══ SECTION 5: DEEP SLEEP STATUS ═══
-            # V19.6.2 FIX: citim și pnl_pct/max_loss calculate în Section 3 ca fallback
-            # dacă deep_sleep_state.json nu există dar limita e atinsă
-            message += "<b>😴 DEEP SLEEP:</b>\n"
+            message += f"{section_header('😴 Deep Sleep')}\n\n"
             try:
                 sleep_file = Path(__file__).parent.resolve() / 'data' / 'deep_sleep_state.json'
                 if sleep_file.exists():
@@ -1060,7 +965,7 @@ class TelegramCommandCenter:
                 message += "  ✅ ACTIVE\n\n"
             
             # ═══ SECTION 6: RISK REJECTIONS TODAY ═══
-            message += "<b>⛔ REJECTIONS TODAY:</b>\n"
+            message += f"{section_header('⛔ Rejections azi')}\n\n"
             try:
                 rej_file = Path(__file__).parent.resolve() / 'data' / 'daily_rejections.json'
                 if rej_file.exists():
@@ -1099,8 +1004,8 @@ class TelegramCommandCenter:
             except Exception:
                 message += "  ⚠️ Data unavailable\n\n"
             
-            # ═══ SECTION 7: NEXT AUTO SCAN (Mon/Wed/Fri 07:00 Bucharest = 05:00 UTC) ═══
-            message += "<b>🤖 NEXT AUTO SCAN:</b>\n"
+            # ═══ SECTION 7: NEXT AUTO SCAN ═══
+            message += f"{section_header('🤖 Următorul scan')}\n\n"
             try:
                 SCAN_DAYS = {0, 2, 4}  # Mon=0, Wed=2, Fri=4
                 SCAN_HOUR_UTC = 5      # 07:00 Bucharest = 05:00 UTC (summer) / 06:00 UTC (winter)
@@ -1130,8 +1035,8 @@ class TelegramCommandCenter:
             except Exception:
                 message += "  ⚠️ Unknown\n\n"
             
-            # ═══ SECTION 8: NEWS TODAY (synced with upcoming_news.json) ═══
-            message += "<b>📰 NEWS TODAY:</b>\n"
+            # ═══ SECTION 8: NEWS TODAY ═══
+            message += f"{section_header('📰 News azi')}\n\n"
             try:
                 from datetime import timezone as _tz
                 news_file = Path(__file__).parent.resolve() / 'data' / 'upcoming_news.json'
@@ -1198,7 +1103,7 @@ class TelegramCommandCenter:
                 _verdict = '🔴 LIMIT — NO NEW TRADES'
             else:
                 _verdict = '✅ OPERATIONAL'
-            message += f"{UNIVERSAL_SEPARATOR}\n<b>🎯 VERDICT:</b> {_verdict}"
+            message += f"\n{SLIM_FOOTER_SEP}\n<b>🎯 Verdict:</b> {_verdict}"
             
             return message
             
@@ -1207,18 +1112,18 @@ class TelegramCommandCenter:
             return f"❌ <b>Error:</b> {str(e)}"
     
     def handle_btcusd_command(self):
-        """Handle /btcusd command - Quick BTCUSD analysis"""
+        """Handle /btcusd command - Quick BTCUSD analysis (V63 V61-style)"""
         try:
             if not self.monitoring_file.exists():
-                return "⚪ <b>BTCUSD — No Setup</b>\n\n<code>monitoring_setups.json</code> not found."
+                return "⚪ <b>BTCUSD — fără setup</b>\n\n<code>monitoring_setups.json</code> lipsește."
 
-            with open(self.monitoring_file, 'r') as f:
-                data = json.load(f)
+            _, setups = load_monitoring_json(self.monitoring_file)
 
-            setups = data.get('setups', [])
-
-            # Caută BTCUSD cu orice status activ (ACTIVE, MONITORING, WATCHING, PENDING)
-            ACTIVE_STATUSES = {'ACTIVE', 'MONITORING', 'WATCHING', 'PENDING'}
+            ACTIVE_STATUSES = {
+                'ACTIVE', 'MONITORING', 'WATCHING', 'PENDING', 'READY',
+                'WAITING_D1_PULLBACK', 'WAITING_4H_CHOCH', 'WAITING_4H_PULLBACK',
+                'WAITING_W_D_SYNC', 'WAITING_W_ZONE', 'WAITING_POSITION_CLOSE',
+            }
             btc_setup = next(
                 (s for s in setups
                  if s.get('symbol', '').upper() == 'BTCUSD'
@@ -1227,61 +1132,16 @@ class TelegramCommandCenter:
             )
 
             if not btc_setup:
-                # Verifică dacă există dar e EXPIRED
                 btc_any = next((s for s in setups if s.get('symbol', '').upper() == 'BTCUSD'), None)
                 if btc_any:
                     st = btc_any.get('status', '?').upper()
                     return (
-                        f"⚪ <b>BTCUSD — Setup {st}</b>\n\n"
-                        f"Setup există dar statusul este <code>{st}</code>.\n"
-                        f"Nu mai este activ."
+                        f"⚪ <b>BTCUSD — setup {st}</b>\n\n"
+                        f"Există în JSON dar status <code>{st}</code> — nu mai e activ."
                     )
-                return "⚪ <b>BTCUSD — No Setup</b>\n\nNu există setup BTCUSD în monitoring list."
+                return "⚪ <b>BTCUSD — fără setup</b>\n\nNu există BTCUSD în lista de monitorizare."
 
-            direction = btc_setup.get('direction', 'UNKNOWN').upper()
-            status    = btc_setup.get('status', '?').upper()
-            entry     = btc_setup.get('entry_price', 0)
-            sl        = btc_setup.get('stop_loss', 0)
-            tp        = btc_setup.get('take_profit', 0)
-            rr        = btc_setup.get('risk_reward', 0)
-            lot       = btc_setup.get('lot_size', 0)
-            strategy  = btc_setup.get('strategy_type', '—').upper()
-            ml_score  = btc_setup.get('ml_score', '—')
-            fvg_top   = btc_setup.get('fvg_top', 0)
-            fvg_bot   = btc_setup.get('fvg_bottom', 0)
-            setup_time = btc_setup.get('setup_time', '')
-            entry1_filled = btc_setup.get('entry1_filled', False)
-
-            dir_emoji = "🔴" if direction == "SELL" or direction == "SHORT" else "🟢"
-            entry_status = "✅ FILLED" if entry1_filled else "⏳ PENDING"
-
-            # Risk/Reward display
-            rr_display = f"{rr:.1f}R" if isinstance(rr, (int, float)) and rr > 0 else "—"
-
-            # Setup date
-            date_display = setup_time[:10] if setup_time else "—"
-
-            fvg_line = ""
-            if fvg_top and fvg_bot:
-                fvg_line = f"\n📐 FVG Zone: <code>${fvg_bot:,.0f} — ${fvg_top:,.0f}</code>"
-
-            ml_line = f"\n📊 ML Score: <code>{ml_score}/100</code>" if ml_score != '—' else ""
-
-            message = (
-                f"₿ <b>BTCUSD QUICK ANALYSIS</b>\n"
-                f"────────────────\n\n"
-                f"{dir_emoji} <b>{direction}</b> | {status} | {strategy}\n"
-                f"📅 Setup: <code>{date_display}</code>\n\n"
-                f"💰 Entry: <code>${entry:,.2f}</code> — {entry_status}\n"
-                f"⛔ Stop Loss: <code>${sl:,.2f}</code>\n"
-                f"🎯 Take Profit: <code>${tp:,.2f}</code>\n"
-                f"⚖️ Risk/Reward: <code>{rr_display}</code>\n"
-                f"📦 Lot Size: <code>{lot}</code>"
-                f"{fvg_line}"
-                f"{ml_line}"
-            )
-
-            return message
+            return format_btcusd_card(btc_setup)
 
         except Exception as e:
             logger.error(f"❌ BTCUSD command error: {e}")
@@ -1290,7 +1150,7 @@ class TelegramCommandCenter:
     def handle_active_command(self):
         """Handle /active command - Show live open positions from cTrader"""
         try:
-            trade_history_file = Path('trade_history.json')
+            trade_history_file = Path(__file__).parent.resolve() / 'trade_history.json'
             
             if not trade_history_file.exists():
                 return "❌ <b>No trading data found!</b>\n\n<code>trade_history.json</code> missing. Make sure cTrader sync is running."
@@ -1304,19 +1164,19 @@ class TelegramCommandCenter:
             equity = account.get('equity', 0)
             
             if not positions:
-                return f"""<b>⚪ NO ACTIVE POSITIONS</b>
-{UNIVERSAL_SEPARATOR}
-💰 <b>Balance:</b> <code>${balance:,.2f}</code>
-📊 <b>Equity:</b> <code>${equity:,.2f}</code>
-{UNIVERSAL_SEPARATOR}
-🔍 All positions closed - Waiting for new setups"""
-            
-            # Build vertical message
-            message = f"""<b>🔵 LIVE POSITIONS</b>
-{UNIVERSAL_SEPARATOR}
-<b>📊 Active:</b> <code>{len(positions)}</code>
-{UNIVERSAL_SEPARATOR}
-"""
+                return (
+                    f"<b>⚪ Fără poziții active</b>\n"
+                    f"{SLIM_FOOTER_SEP}\n"
+                    f"💰 Balance · <code>${balance:,.2f}</code>\n"
+                    f"📊 Equity · <code>${equity:,.2f}</code>\n\n"
+                    f"<i>Așteptăm setup-uri noi</i>"
+                )
+
+            message = (
+                f"<b>🔵 Poziții live</b>\n"
+                f"{SLIM_FOOTER_SEP}\n"
+                f"📊 Active · <code>{len(positions)}</code>\n\n"
+            )
             
             total_floating_pl = 0
             
@@ -1344,23 +1204,22 @@ class TelegramCommandCenter:
                 
                 # Vertical layout - each detail on own line with spacing
                 message += f"""{idx}. {dir_emoji} <b>{symbol}</b>
-   💰 In: <code>{entry:.5f}</code>
-   {pl_emoji} P/L: <code>{pl_text}</code>
+   💰 Entry · <code>{entry:.5f}</code>
+   {pl_emoji} P/L · <code>{pl_text}</code>
 
 """
             
-            # Portfolio summary - vertical for clarity
             pl_summary_emoji = "🟢" if total_floating_pl > 0 else ("🔴" if total_floating_pl < 0 else "⚪")
             pl_summary_text = f"+${total_floating_pl:.2f}" if total_floating_pl > 0 else f"-${abs(total_floating_pl):.2f}"
             roi = ((equity - balance) / balance * 100) if balance > 0 else 0
             
-            # ✅ CRITICAL FIX by ФорексГод: Remove double signature
-            # Signature is added automatically by send_message function
-            message += f"""{UNIVERSAL_SEPARATOR}
-💰 <b>Balance:</b> <code>${balance:,.2f}</code>
-📈 <b>Equity:</b> <code>${equity:,.2f}</code>
-🔥 <b>Total Profit:</b> <code>{pl_summary_text}</code>
-📊 <b>ROI:</b> <code>{roi:+.1f}%</code>"""
+            message += (
+                f"{SLIM_FOOTER_SEP}\n"
+                f"💰 Balance · <code>${balance:,.2f}</code>\n"
+                f"📈 Equity · <code>${equity:,.2f}</code>\n"
+                f"🔥 Floating · <code>{pl_summary_text}</code>\n"
+                f"📊 ROI · <code>{roi:+.1f}%</code>"
+            )
             
             return message
             
@@ -1497,8 +1356,9 @@ class TelegramCommandCenter:
                 logger.warning(f"⚠️ PnL baseline reset on /resume failed: {_pnl_reset_err}")
 
             msg = (
-                "SYSTEM AWAKENED. Deep sleep cleared. "
-                "Executor și Radar reluate pasiv pe baza setupurilor existente în JSON."
+                "🔱 <b>Sistem reactivat</b>\n\n"
+                "Deep sleep șters · executor și radar reluate pe setup-urile din JSON.\n"
+                "<i>Fără scan Daily / bias sync</i>"
             )
             logger.info("🔱 /resume executed — deep sleep cleared, loss limit bypass, no market scan")
             return msg
@@ -1597,13 +1457,13 @@ class TelegramCommandCenter:
 
             # ── Build header
             msg = (
-                f"<b>🚨 HIGH IMPACT NEWS — Next 14 Days</b>\n"
-                f"{UNIVERSAL_SEPARATOR}\n\n"
+                f"<b>🚨 News HIGH IMPACT — 14 zile</b>\n"
+                f"{SLIM_FOOTER_SEP}\n\n"
             )
 
             if not upcoming:
-                msg += "✅ <b>ALL CLEAR</b> — No High Impact events in the next 7 days.\n"
-                msg += f"\n<i>Sursă: {source or '📂 economic_calendar.json'}</i>"
+                msg += "✅ <b>All clear</b> — fără evenimente HIGH în următoarele 14 zile.\n"
+                msg += f"\n<i>Sursă: {source or 'economic_calendar.json'}</i>"
                 return msg
 
             # ── Group by day and display ALL events
@@ -1652,8 +1512,8 @@ class TelegramCommandCenter:
                     f"   ⏰ {tstr}  {countdown}  |  F:<b>{fc}</b>  P:{prev}\n"
                 )
 
-            msg += f"\n{UNIVERSAL_SEPARATOR}\n"
-            msg += f"<i>Sursă date: {source}</i>"
+            msg += f"\n{SLIM_FOOTER_SEP}\n"
+            msg += f"<i>Sursă: {source}</i>"
             return msg
 
         except Exception as e:
@@ -1665,7 +1525,7 @@ class TelegramCommandCenter:
         try:
             from macro_rates import format_rates_telegram_message
             return format_rates_telegram_message(
-                separator=UNIVERSAL_SEPARATOR,
+                separator=SLIM_FOOTER_SEP,
                 include_swaps=True,
                 force_refresh=True,
                 notify_on_change=True,
@@ -1733,40 +1593,37 @@ class TelegramCommandCenter:
             elif command == '/rates':
                 response = self.handle_rates_command()
             elif command == '/help':
-                sep = UNIVERSAL_SEPARATOR
                 if is_admin:
-                    # ADMIN vede toate comenzile
                     response = (
-                        f"<b>🎮 COMMAND CENTER V11.5</b>\n"
-                        f"{sep}\n\n"
-                        f"🔓 <b>PUBLIC</b>\n"
-                        f"<code>/monitoring</code> — Setup-uri în pândă (JSON/radar)\n"
-                        f"<code>/stats</code> — Statistici zilnice trading\n"
-                        f"<code>/weekly</code> — Raport 7 zile (P&amp;L, WR, best/worst)\n"
-                        f"<code>/status</code> — Health check sistem\n"
+                        f"<b>🎮 Command Center V63</b>\n"
+                        f"{SLIM_FOOTER_SEP}\n\n"
+                        f"🔓 <b>Public</b>\n"
+                        f"<code>/monitoring</code> — Setup-uri în pândă\n"
+                        f"<code>/stats</code> — P/L zilnic\n"
+                        f"<code>/weekly</code> — Raport 7 zile\n"
+                        f"<code>/status</code> — Health sistem\n"
+                        f"<code>/btcusd</code> — Quick BTCUSD\n"
+                        f"<code>/news</code> — HIGH IMPACT\n"
+                        f"<code>/rates</code> — Rate BC\n"
                         f"<code>/help</code> — Această listă\n\n"
-                        f"{sep}\n\n"
-                        f"🔐 <b>ADMIN ONLY</b>\n"
-                        f"<code>/active</code> — Poziții deschise live\n"
-                        f"<code>/btcusd</code> — Analiză rapidă BTCUSD\n"
-                        f"<code>/news</code> — 🚨 Next 5 HIGH IMPACT events\n"
-                        f"<code>/rates</code> — 🏦 Ratele băncilor centrale\n"
-                        f"<code>/killall</code> — 🚨 Închide TOT + 24h lockdown\n"
-                        f"<code>/resume</code> — 🔱 Ieșire deep sleep (fără scan Daily)\n"
+                        f"{SLIM_FOOTER_SEP}\n\n"
+                        f"🔐 <b>Admin</b>\n"
+                        f"<code>/active</code> — Poziții live\n"
+                        f"<code>/killall</code> — Stop total + 24h lock\n"
+                        f"<code>/resume</code> — Ieșire deep sleep\n"
                     )
                 else:
-                    # PUBLIC vede doar comenzile disponibile pentru ei
                     response = (
-                        f"<b>🎮 COMMAND CENTER V11.5</b>\n"
-                        f"{sep}\n\n"
-                        f"🔓 <b>COMENZI DISPONIBILE</b>\n"
-                        f"<code>/monitoring</code> — Setup-uri în pândă (JSON/radar)\n"
-                        f"<code>/stats</code> — Statistici zilnice trading\n"
-                        f"<code>/weekly</code> — Raport săptămânal P&amp;L\n"
-                        f"<code>/status</code> — Stare tehnică sistem\n"
-                        f"<code>/btcusd</code> — Analiză rapidă BTCUSD\n"
-                        f"<code>/news</code> — 🚨 Next HIGH IMPACT events\n"
-                        f"<code>/rates</code> — 🏦 Ratele băncilor centrale\n"
+                        f"<b>🎮 Command Center V63</b>\n"
+                        f"{SLIM_FOOTER_SEP}\n\n"
+                        f"🔓 <b>Comenzi</b>\n"
+                        f"<code>/monitoring</code> — Setup-uri în pândă\n"
+                        f"<code>/stats</code> — P/L zilnic\n"
+                        f"<code>/weekly</code> — Raport săptămânal\n"
+                        f"<code>/status</code> — Stare sistem\n"
+                        f"<code>/btcusd</code> — Quick BTCUSD\n"
+                        f"<code>/news</code> — HIGH IMPACT\n"
+                        f"<code>/rates</code> — Rate BC\n"
                         f"<code>/help</code> — Această listă\n"
                     )
             else:

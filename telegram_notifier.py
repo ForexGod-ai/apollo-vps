@@ -25,6 +25,8 @@ from pip_utils import (
 )
 from radar_gates import ltf_choch_confirmed_for_card, ltf_choch_price_for_card
 
+from telegram_command_format import SLIM_FOOTER_SEP, format_slim_footer
+
 load_dotenv()
 
 # W→D→4H: raportul așteaptă CHoCH 4H aliniat cu D1 (nu BOS ca mesaj user-facing).
@@ -1248,7 +1250,7 @@ class TelegramNotifier:
         else:
             report += f"{sep}\n⚡ Activ — radar live\n"
 
-        footer = f"{sep}\n🔱 ФорексГод · Глитч Ин Мatrix"
+        footer = format_slim_footer()
         full_report = report.rstrip() + "\n" + footer
 
         success = self.send_message(full_report.strip(), parse_mode="HTML", add_signature=False)
