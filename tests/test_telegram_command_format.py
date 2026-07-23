@@ -19,7 +19,8 @@ from telegram_command_format import (
 def test_slim_footer_separator_matches_brand_width():
     # ─ renders wider than letters on Telegram — sep is shorter than len(brand).
     assert len(SLIM_FOOTER_SEP) < len(SLIM_FOOTER_BRAND)
-    assert 14 <= len(SLIM_FOOTER_SEP) <= 22
+    assert len(SLIM_FOOTER_SEP) == 16
+    assert 14 <= len(SLIM_FOOTER_SEP) <= 18
     assert SLIM_FOOTER_BRAND in format_slim_footer()
     assert SLIM_FOOTER_SEP in format_slim_footer()
 

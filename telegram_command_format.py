@@ -13,8 +13,8 @@ from loguru import logger
 SLIM_FOOTER_BRAND = "🔱 ФорексГод · Глитч Ин Мatrix"
 
 # Telegram mobile: U+2500 (─) renders wider than Cyrillic/Latin in HTML bubbles.
-# ~0.62× char count aligns separator end with brand line (see V63 UX screenshots).
-_TELEGRAM_BOX_CHAR_RATIO = 0.62
+# Calibrated on device: 16 chars flush with brand line (29 chars @ ~0.55).
+_TELEGRAM_BOX_CHAR_RATIO = 0.55
 
 
 def brand_separator(brand: str = SLIM_FOOTER_BRAND) -> str:
