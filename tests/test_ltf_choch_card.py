@@ -105,10 +105,11 @@ def test_post_poi_26b_confirms_without_lock():
 def test_gbpusd_card_shows_waiting_line():
     setup = _GbpusdScanSetup()
     h4_line = _format_radar_exec_lines(
-        setup, 'GBPUSD', 'bearish', 'Waiting 4H CHoCH',
+        setup, 'GBPUSD', 'bearish', 'Așteptăm CHoCH aliniat D1', radar_snapshot={},
     )
     assert '⏳' in h4_line
     assert 'Confirmat' not in h4_line
+    assert 'confirmat' not in h4_line
 
 
 if __name__ == '__main__':

@@ -93,14 +93,40 @@ def format_telegram_fvg_range(
     )
 
 
+def format_poi_price_relation(
+    price: Optional[Union[float, int]],
+    fvg_bottom: Union[float, int, None],
+    fvg_top: Union[float, int, None],
+) -> str:
+    """Premium / Discount / în zonă relative to Daily POI (for scan cards)."""
+    if price is None or fvg_bottom is None or fvg_top is None:
+        return ''
+    try:
+        px = float(price)
+        lo = float(fvg_bottom)
+        hi = float(fvg_top)
+    except (TypeError, ValueError):
+        return ''
+    if lo <= px <= hi:
+        return 'în zonă'
+    if px > hi and hi:
+        pct = (px - hi) / hi * 100.0
+        return f'Premium (+{pct:.1f}%)'
+    if px < lo and lo:
+        pct = (lo - px) / lo * 100.0
+        return f'Discount (+{pct:.1f}%)'
+    return ''
+
+
 def format_swap_line(
     swap_val: Optional[Union[float, int]],
     *,
     triple_day: Optional[str] = 'Wed',
     prefix: str = '\n',
+    ro: bool = False,
 ) -> str:
     """
-    V43.6 — Swap row for Telegram alerts.
+    V43.6 / V61 — Swap row for Telegram alerts.
     Zero swap → neutral; non-zero → CREDIT/DEBIT.
     """
     if swap_val is None:
@@ -109,11 +135,26 @@ def format_swap_line(
         sv = float(swap_val)
     except (TypeError, ValueError):
         return ''
-    triple_suffix = f" (3x {triple_day})" if triple_day else ''
+    _triple_ro = {
+        'Mon': 'Lun', 'Tue': 'Mar', 'Wed': 'Mier', 'Thu': 'Joi',
+        'Fri': 'Vin', 'Sat': 'Sâm', 'Sun': 'Dum',
+    }
+    if ro and triple_day:
+        triple_label = _triple_ro.get(str(triple_day), triple_day)
+        triple_suffix = f" (3x {triple_label})"
+        unit = 'pips/zi'
+        label = 'Swap'
+    else:
+        triple_suffix = f" (3x {triple_day})" if triple_day else ''
+        unit = 'pips/day'
+        label = 'SWAP'
     if abs(sv) < 1e-9:
-        return f"{prefix}💱 SWAP: ⚪ NEUTRAL | 0.00 pips/day{triple_suffix}"
+        neutral = '⚪ NEUTRAL' if not ro else '⚪ neutru'
+        return f"{prefix}💱 {label}: {neutral} | 0.00 {unit}{triple_suffix}"
     swap_status = '✅ CREDIT' if sv > 0 else '⚠️ DEBIT'
-    return f"{prefix}💱 SWAP: {swap_status} | {sv:+.2f} pips/day{triple_suffix}"
+    if ro:
+        swap_status = '✅' if sv > 0 else '⚠️'
+    return f"{prefix}💱 {label}: {swap_status} {sv:+.2f} {unit}{triple_suffix}"
 
 
 def sl_pips_between(symbol: str, entry: float, stop_loss: float) -> float:

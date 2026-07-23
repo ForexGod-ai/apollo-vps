@@ -17,13 +17,19 @@ from datetime import datetime, timezone
 from dotenv import load_dotenv
 from smc_detector import TradeSetup, CHoCH, FVG
 from chart_generator import ChartGenerator
-from pip_utils import format_telegram_price, format_telegram_fvg_range, format_swap_line
+from pip_utils import (
+    format_telegram_price,
+    format_telegram_fvg_range,
+    format_swap_line,
+    format_poi_price_relation,
+)
 from radar_gates import ltf_choch_confirmed_for_card, ltf_choch_price_for_card
 
 load_dotenv()
 
 # W→D→4H: raportul așteaptă CHoCH 4H aliniat cu D1 (nu BOS ca mesaj user-facing).
 _WAIT_4H_CHOCH_HINT = "Waiting 4H CHoCH"
+_WAIT_4H_CHOCH_HINT_RO = "Așteptăm CHoCH aliniat D1"
 
 # V60 MARKET_REPORT — phase keys (grouped vertical layout)
 PHASE_WD_SYNC = "wd_sync"
@@ -154,6 +160,42 @@ def _setup_attr(setup: Any, key: str, default=None):
     return getattr(setup, key, default)
 
 
+def _scan_card_wait_hint(setup: Any) -> str:
+    """RO wait hint for V61 scan card Block 3."""
+    status = str(_setup_attr(setup, 'status', '') or '')
+    if status == 'WAITING_W_D_SYNC' or _setup_attr(setup, 'w_d_aligned', True) is False:
+        return 'Așteptăm sync W+D'
+    if status == 'WAITING_W_ZONE':
+        return 'Așteptăm zonă W1'
+    return _WAIT_4H_CHOCH_HINT_RO
+
+
+def _is_w1_counter_trend(setup: Any, raw_dir: str) -> bool:
+    confidence = _setup_attr(setup, 'confidence', 'NORMAL')
+    w1_bias = _setup_attr(setup, 'w1_bias', None)
+    if confidence == 'LOW_W1_COUNTER_TREND':
+        return True
+    if not w1_bias or w1_bias == 'NEUTRAL':
+        return False
+    return (
+        (w1_bias == 'BEARISH' and raw_dir == 'bullish')
+        or (w1_bias == 'BULLISH' and raw_dir == 'bearish')
+    )
+
+
+def _resolve_radar_snapshot(
+    symbol: str,
+    macro_dir: str,
+    radar_snapshot: Optional[Dict],
+) -> Dict:
+    """Use in-memory snapshot when provided; else fall back to monitoring JSON."""
+    if radar_snapshot is not None:
+        if not radar_snapshot:
+            return {}
+        return {k: radar_snapshot[k] for k in _RADAR_LIVE_KEYS if k in radar_snapshot}
+    return _load_monitoring_radar_snapshot(symbol, macro_dir)
+
+
 def _radar_direction_matches(stored_dir: str, macro_dir: str) -> bool:
     d = str(stored_dir or '').lower()
     if macro_dir == 'bullish':
@@ -239,17 +281,18 @@ def _format_radar_exec_lines(
     symbol: str,
     macro_dir: str,
     wait_hint: str,
+    radar_snapshot: Optional[Dict] = None,
 ) -> str:
-    snap = _load_monitoring_radar_snapshot(symbol, macro_dir)
+    snap = _resolve_radar_snapshot(symbol, macro_dir, radar_snapshot)
 
     if _ltf_choch_confirmed(setup, snap, '4H', macro_dir):
         price_4h = _ltf_choch_price(setup, snap, '4H', macro_dir)
         if price_4h is not None:
             return (
-                f"📡 ✅ 4H CHoCH Confirmat — "
+                f"📡 ✅ 4H CHoCH confirmat — "
                 f"<code>{format_telegram_price(symbol, price_4h)}</code>"
             )
-        return "📡 ✅ 4H CHoCH Confirmat"
+        return "📡 ✅ 4H CHoCH confirmat"
     return f"📡 4H: ⏳ {wait_hint}"
 
 
@@ -398,7 +441,8 @@ class TelegramNotifier:
         setup: TradeSetup, 
         df_daily: pd.DataFrame,
         df_4h: pd.DataFrame,
-        charts_mode: str = 'full'  # V15.0: 'full' | 'daily_only'
+        charts_mode: str = 'full',  # V15.0: 'full' | 'daily_only'
+        radar_snapshot: Optional[Dict] = None,
     ) -> bool:
         """
         Send complete trade setup alert with:
@@ -410,7 +454,7 @@ class TelegramNotifier:
         Alertele structurale 4H se trimit separat (send_4h_structural_alert).
         """
         # 1. Send main alert message
-        message = self.format_setup_alert(setup)
+        message = self.format_setup_alert(setup, radar_snapshot=radar_snapshot)
         print(f"[DEBUG] Sending setup alert for {setup.symbol} | status: {getattr(setup, 'status', None)} | mode: {charts_mode}")
         if not self.send_message(message):
             print(f"[ERROR] Failed to send main message for {setup.symbol}")
@@ -622,62 +666,72 @@ class TelegramNotifier:
         """Backward compat — delegă la V47 send_4h_structural_alert."""
         return self.send_4h_structural_alert(setup_data, df_4h, signal_type='CHoCH')
 
-    def format_setup_alert(self, setup) -> str:
-        """Format scan card — V43.6: 3-block premium layout + asset-class price precision."""
+    def format_setup_alert(self, setup, radar_snapshot: Optional[Dict] = None) -> str:
+        """V61 scan card — hibrid RO, preț live cTrader, Block 3 compact."""
         sep = UNIVERSAL_SEPARATOR
         symbol = setup.symbol
 
         raw_dir = setup.daily_choch.direction
         direction = "🟢 LONG" if raw_dir == 'bullish' else "🔴 SHORT"
-        emoji = "📈" if raw_dir == 'bullish' else "📉"
 
         pair_stats = self._load_pair_statistics(symbol)
 
         status_emoji = "✅" if setup.status == 'READY' else "📋"
-        status = "READY" if setup.status == 'READY' else "SCAN OK"
+        status_label = "Gata execuție" if setup.status == 'READY' else "Scan OK"
 
         strategy_type = getattr(setup, 'strategy_type', 'reversal').upper()
         if strategy_type.startswith('REVERSAL'):
             strategy_emoji = "🔄"
-            strategy_label = "REVERSAL (CHoCH)"
+            strategy_chip = "REV (CHoCH)"
         else:
             strategy_emoji = "➡️"
-            strategy_label = "CONTINUITY (BOS)"
-        wait_hint = _WAIT_4H_CHOCH_HINT
-        if getattr(setup, 'status', '') == 'WAITING_W_D_SYNC' or getattr(setup, 'w_d_aligned', True) is False:
-            wait_hint = "Waiting W+D sync — apoi 4H CHoCH"
-        elif getattr(setup, 'status', '') == 'WAITING_W_ZONE':
-            wait_hint = "Waiting W1 zone — apoi 4H CHoCH"
+            strategy_chip = "CONT (BOS)"
 
-        # ── BLOC 1: Identitate & Strategie ──
+        wait_hint = _scan_card_wait_hint(setup)
+        w1_counter = _is_w1_counter_trend(setup, raw_dir)
+
+        # ── BLOC 1: Identitate ──
         block1 = (
-            f"{strategy_emoji} <b>{symbol}</b> {direction} {emoji}\n"
-            f"{status_emoji} <b>{status}</b>\n"
-            f"🎯 <b>Strategy: {strategy_label}</b>"
+            f"{strategy_emoji} <b>{symbol}</b> · {direction}\n"
+            f"{status_emoji} <b>{status_label}</b> · {strategy_chip}"
         )
-
-        _confidence = getattr(setup, 'confidence', 'NORMAL')
-        w1_bias_val_hdr = getattr(setup, 'w1_bias', None)
-        _w1_counter = (
-            _confidence == 'LOW_W1_COUNTER_TREND'
-            or (
-                w1_bias_val_hdr and w1_bias_val_hdr != 'NEUTRAL'
-                and (
-                    (w1_bias_val_hdr == 'BEARISH' and raw_dir == 'bullish')
-                    or (w1_bias_val_hdr == 'BULLISH' and raw_dir == 'bearish')
-                )
-            )
-        )
-        if _w1_counter:
-            block1 += f"\n⚠️ <b>[COUNTER-TREND W1]</b> — D1 vs W1 macro nealiniat"
+        if w1_counter:
+            block1 += "\n⚠️ <b>W1 nealiniat</b>"
 
         swap_val = getattr(setup, 'swap_long', None) if raw_dir == 'bullish' \
                    else getattr(setup, 'swap_short', None)
         swap_triple = getattr(setup, 'swap_triple_day', 'Wed')
-        block1 += format_swap_line(swap_val, triple_day=swap_triple)
+        block1 += format_swap_line(swap_val, triple_day=swap_triple, ro=True)
 
-        # ── BLOC 2: Context macro live ──
+        # ── BLOC 2: Context live cTrader ──
         block2_parts = []
+
+        live_price = getattr(setup, 'live_price', None)
+        if live_price is not None:
+            block2_parts.append(
+                f"💹 Preț cTrader: <code>{format_telegram_price(symbol, live_price)}</code>"
+            )
+
+        poi_range = format_telegram_fvg_range(symbol, setup.fvg.bottom, setup.fvg.top)
+        poi_relation = format_poi_price_relation(live_price, setup.fvg.bottom, setup.fvg.top)
+        poi_line = f"🎯 POI Daily: <code>{poi_range}</code>"
+        if poi_relation:
+            poi_line += f" · {poi_relation}"
+        block2_parts.append(poi_line)
+
+        daily_structure_label = "CHoCH" if strategy_type.startswith('REVERSAL') else "BOS"
+        block2_parts.append(
+            f"📊 D1: <b>{setup.daily_choch.direction.upper()} {daily_structure_label}</b>"
+        )
+
+        w1_bias_val = getattr(setup, 'w1_bias', None)
+        if w1_bias_val and w1_bias_val != 'NEUTRAL':
+            is_aligned = (w1_bias_val == 'BULLISH' and raw_dir == 'bullish') or \
+                         (w1_bias_val == 'BEARISH' and raw_dir == 'bearish')
+            w1_suffix = "✅" if is_aligned else "⚠️ nealiniat"
+            block2_parts.append(f"📅 W1: <b>{w1_bias_val}</b> {w1_suffix}")
+        else:
+            block2_parts.append("📅 W1: NEUTRAL")
 
         if hasattr(setup, 'ml_score') and setup.ml_score is not None and \
            hasattr(setup, 'ai_probability_score') and setup.ai_probability_score is not None:
@@ -688,48 +742,31 @@ class TelegramNotifier:
             rec = getattr(setup, 'ml_recommendation', 'REVIEW')
             rec_badge = "EXECUTE" if rec == 'TAKE' else "REVIEW" if rec == 'REVIEW' else "SKIP"
             block2_parts.append(
-                f"🧠 <b>AI: {fused_score}% ({confidence})</b> | {rec_badge} "
-                f"<i>— informativ, nu blochează execuția</i>"
+                f"🧠 <b>AI: {fused_score}% ({confidence})</b> · {rec_badge} · <i>informativ</i>"
             )
 
         if pair_stats:
             wr = pair_stats.get('win_rate', 0)
             trades = pair_stats.get('total_trades', 0)
             quality = "Exc" if wr >= 60 else "Good" if wr >= 45 else "Avg"
-            block2_parts.append(f"✨ {quality} | 📊 {trades} trades")
-
-        daily_structure_label = "CHoCH" if strategy_type.startswith('REVERSAL') else "BOS"
-        block2_parts.append(
-            f"📊 <b>DAILY:</b> {setup.daily_choch.direction.upper()} {daily_structure_label}"
-        )
-        block2_parts.append(
-            f"🎯 FVG: <code>{format_telegram_fvg_range(symbol, setup.fvg.bottom, setup.fvg.top)}</code>"
-        )
+            block2_parts.append(f"✨ Istoric bot: {quality} · {trades} trades")
 
         if hasattr(setup, 'liquidity_sweep') and setup.liquidity_sweep:
             sweep = setup.liquidity_sweep
             conf_boost = getattr(setup, 'confidence_boost', 0)
             block2_parts.append(f"💧 {sweep['sweep_type']} +{conf_boost}")
 
-        w1_bias_val = getattr(setup, 'w1_bias', None)
-        if w1_bias_val and w1_bias_val != 'NEUTRAL':
-            is_aligned = (w1_bias_val == 'BULLISH' and raw_dir == 'bullish') or \
-                         (w1_bias_val == 'BEARISH' and raw_dir == 'bearish')
-            w1_align_emoji = "✅" if is_aligned else "⚠️ [COUNTER-TREND W1]"
-            block2_parts.append(f"📅 W1: <b>{w1_bias_val}</b> {w1_align_emoji}")
-        else:
-            block2_parts.append("📅 W1: NEUTRAL ⏳")
-
         block2 = f"\n{sep}\n" + "\n".join(block2_parts)
 
-        # ── BLOC 3: Radar & Execuție (stare live din JSON radar + setup) ──
-        h4_line = _format_radar_exec_lines(setup, symbol, raw_dir, wait_hint)
+        # ── BLOC 3: Radar & Execuție ──
+        h4_line = _format_radar_exec_lines(
+            setup, symbol, raw_dir, wait_hint, radar_snapshot=radar_snapshot,
+        )
 
         block3 = (
             f"\n{sep}\n"
             f"{h4_line}\n"
-            f"⏳ <b>Entry / SL / TP</b> — la semnal <b>EXECUTE NOW</b>\n"
-            f"⚡ Radar monitorizează 4H live"
+            f"⏳ <b>Entry/SL/TP</b> la <b>EXECUTE NOW</b> · radar 4H live"
         )
 
         return f"{block1}{block2}{block3}".strip()

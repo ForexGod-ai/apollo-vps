@@ -4,6 +4,7 @@ V43.6 / V60 — Preview scan card + MARKET_REPORT layout in console (no Telegram
 Usage:
   python3 scripts/preview_telegram_scan_layout.py
   python3 scripts/preview_telegram_scan_layout.py --market-report
+  python3 scripts/preview_telegram_scan_layout.py --scan-card
 """
 from __future__ import annotations
 
@@ -196,6 +197,26 @@ def preview_market_report() -> None:
     print(f'\n  Lines: {len(plain.splitlines())} | Full POI: {len(full_setups)} | Bias fallback: {len(bias_only)}')
 
 
+def preview_scan_card_v61() -> None:
+    """V61 EURJPY-style scan card with live price + mobile width."""
+    print('=' * 72)
+    print('V61 SCAN CARD — HYBRID RO PREVIEW')
+    print('=' * 72)
+
+    setup = _mock_setup(
+        'EURJPY', fvg_bottom=184.496, fvg_top=185.664, swap_val=0.48,
+        direction='bullish', w1_bias='NEUTRAL', ml_rec='SKIP',
+    )
+    setup.live_price = 185.664
+    setup.status = 'MONITORING'
+
+    notifier = TelegramNotifier()
+    raw = notifier.format_setup_alert(setup, radar_snapshot={})
+    plain = _strip_html(raw)
+    print(plain)
+    _print_mobile_wrap(plain)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description='Preview Telegram layouts without sending.')
     parser.add_argument(
@@ -203,10 +224,17 @@ def main() -> None:
         action='store_true',
         help='Preview V60 MARKET_REPORT grouped layout + mobile width check',
     )
+    parser.add_argument(
+        '--scan-card',
+        action='store_true',
+        help='Preview V61 scan card layout + mobile width check',
+    )
     args = parser.parse_args()
 
     if args.market_report:
         preview_market_report()
+    elif args.scan_card:
+        preview_scan_card_v61()
     else:
         preview_scan_cards()
 

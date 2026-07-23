@@ -648,11 +648,19 @@ class DailyScanner:
                         if send_telegram_card:
                             print(f"   📸 {tg_prefix} — Generez chart pentru {symbol}...")
                             try:
+                                setup.live_price = symbol_price_map.get(symbol)
+                                setup.live_price_source = 'ctrader_d1_close'
+                                _radar_snap = (
+                                    existing_setups_by_symbol.get(symbol, {})
+                                    if setup_status == 'READY'
+                                    else {}
+                                )
                                 self.telegram.send_setup_alert(
                                     setup=setup,
                                     df_daily=df_daily,
                                     df_4h=df_4h,
-                                    charts_mode='daily_only'  # V43.9: info-only — no manual Execute/Skip buttons
+                                    charts_mode='daily_only',  # V43.9: info-only — no manual Execute/Skip buttons
+                                    radar_snapshot=_radar_snap,
                                 )
                                 print(f"   ✅ Chart trimis pe Telegram: {symbol} [{tg_prefix}] [DAILY ONLY]")
                             except Exception as e:
