@@ -24,19 +24,109 @@ load_dotenv()
 
 # W→D→4H: raportul așteaptă CHoCH 4H aliniat cu D1 (nu BOS ca mesaj user-facing).
 _WAIT_4H_CHOCH_HINT = "Waiting 4H CHoCH"
-_WAIT_4H_CHOCH_SUFFIX = f" ({_WAIT_4H_CHOCH_HINT})"
+
+# V60 MARKET_REPORT — phase keys (grouped vertical layout)
+PHASE_WD_SYNC = "wd_sync"
+PHASE_W1_ZONE = "w1_zone"
+PHASE_D1_PULLBACK = "d1_pullback"
+PHASE_H4_CHOCH = "h4_choch"
+PHASE_READY = "ready"
+
+_PHASE_ORDER = (
+    PHASE_WD_SYNC,
+    PHASE_W1_ZONE,
+    PHASE_D1_PULLBACK,
+    PHASE_H4_CHOCH,
+    PHASE_READY,
+)
+
+_PHASE_LABELS = {
+    PHASE_WD_SYNC: "⏳ W+D nealiniat",
+    PHASE_W1_ZONE: "⏳ Zonă W1",
+    PHASE_D1_PULLBACK: "⏳ Pullback D1",
+    PHASE_H4_CHOCH: "⏳ Confirmare 4H",
+    PHASE_READY: "✅ Gata execuție",
+}
+
+
+def _normalize_sym_info(sym_info: dict) -> dict:
+    """Normalize setup dict keys from JSON or legacy send_daily_summary."""
+    out = dict(sym_info)
+    if 'strategy' not in out and out.get('strategy_type'):
+        out['strategy'] = out['strategy_type']
+    return out
+
+
+def _classify_setup_phase(sym_info: dict) -> str:
+    """Classify setup into W→D→4H phase for grouped MARKET_REPORT."""
+    info = _normalize_sym_info(sym_info)
+    status = str(info.get('status') or '').upper()
+    if status == 'READY':
+        return PHASE_READY
+    if info.get('h4_structure_locked') or info.get('h4_bias_locked'):
+        return PHASE_READY
+    if status == 'WAITING_W_D_SYNC' or info.get('w_d_aligned') is False:
+        return PHASE_WD_SYNC
+    if status == 'WAITING_W_ZONE':
+        return PHASE_W1_ZONE
+    if status == 'WAITING_D1_PULLBACK':
+        return PHASE_D1_PULLBACK
+    if status == 'WAITING_4H_CHOCH':
+        return PHASE_H4_CHOCH
+    if status == 'MONITORING':
+        return PHASE_H4_CHOCH
+    return PHASE_H4_CHOCH
+
+
+def _format_strategy_short(raw_strat: str) -> str:
+    s = str(raw_strat or 'UNKNOWN').upper().replace('_COUNTER_W1', '')
+    if s in ('CONTINUITY', 'CONTINUATION'):
+        return 'CONT'
+    if s.startswith('REVERSAL'):
+        return 'REV'
+    return s[:4] if len(s) > 4 else s
+
+
+def _format_compact_line(sym_info: dict) -> str:
+    """One symbol per line: 🟢 GBPCAD · REV"""
+    info = _normalize_sym_info(sym_info)
+    symbol = info.get('symbol', '?')
+    direction = str(info.get('direction', 'buy')).lower()
+    strat = _format_strategy_short(info.get('strategy', 'UNKNOWN'))
+    dot = "🔴" if direction == 'sell' else "🟢"
+    return f"{dot} {symbol} · {strat}\n"
+
+
+def _group_setups_by_phase(setup_symbols: list) -> dict:
+    grouped = {k: [] for k in _PHASE_ORDER}
+    for sym_info in setup_symbols or []:
+        phase = _classify_setup_phase(sym_info)
+        grouped[phase].append(sym_info)
+    return grouped
+
+
+def _render_grouped_setups(setup_symbols: list) -> str:
+    """Vertical list grouped by phase — status shown once per group header."""
+    if not setup_symbols:
+        return ""
+    grouped = _group_setups_by_phase(setup_symbols)
+    parts = []
+    for phase in _PHASE_ORDER:
+        items = grouped.get(phase) or []
+        if not items:
+            continue
+        label = _PHASE_LABELS[phase]
+        parts.append(f"{label} · {len(items)}\n")
+        for sym_info in items:
+            parts.append(_format_compact_line(sym_info))
+        parts.append("\n")
+    return "".join(parts)
 
 
 def _scan_report_wait_suffix(sym_info: dict) -> str:
-    """Suffix lizibil pentru MARKET_REPORT — reflectă starea W→D→4H."""
-    status = str(sym_info.get('status') or '').upper()
-    if status == 'WAITING_W_D_SYNC' or sym_info.get('w_d_aligned') is False:
-        return " (Waiting W+D sync — apoi 4H CHoCH)"
-    if status == 'WAITING_W_ZONE':
-        return " (Waiting W1 zone — apoi 4H CHoCH)"
-    if status == 'WAITING_D1_PULLBACK' or sym_info.get('bias_fallback'):
-        return " (Daily Bias — WAITING_D1_PULLBACK)"
-    return _WAIT_4H_CHOCH_SUFFIX
+    """Legacy suffix — prefer grouped MARKET_REPORT (V60). Kept for send_daily_summary fallback."""
+    phase = _classify_setup_phase(sym_info)
+    return f" ({_PHASE_LABELS.get(phase, '⏳ Confirmare 4H')})"
 
 # ════════════════════════════════════════
 # V10.4 SOVEREIGN SIGNATURE — ФорексГод EDITION
@@ -951,27 +1041,22 @@ class TelegramNotifier:
             f"• Monitorizare activă: {active_count}\n"
         )
 
-        # Setup list — monitoring
+        # Setup list — monitoring (V60 grouped vertical)
         if monitoring_setups:
             message += f"{sep}\n"
-            message += "🎯 SETUP-URI DETECTATE (Daily Bias)\n"
-            for setup in monitoring_setups:
-                symbol = setup.get('symbol', 'Unknown')
-                dir_raw = str(setup.get('direction', '')).strip().lower()
-                h4_locked = setup.get('h4_structure_locked', setup.get('h4_bias_locked', False))
-                # Normalize strategy type
-                raw_strat = str(setup.get('strategy_type', 'UNKNOWN')).upper()
-                if raw_strat in ('CONTINUATION',):
-                    raw_strat = 'CONTINUITY'
-                # V37.2: bulina = directie (🟢 buy / 🔴 sell), nu albastru uniform
-                dot = "🔴" if dir_raw == 'sell' else "🟢"
-                if not h4_locked:
-                    status_suffix = _scan_report_wait_suffix(setup)
-                elif dir_raw == 'sell':
-                    status_suffix = "   (confirmed SELL)"
-                else:
-                    status_suffix = "   (confirmed BUY)"
-                message += f"{dot} {symbol} ➔ {raw_strat}{status_suffix}\n"
+            sym_list = [
+                {
+                    'symbol': s.get('symbol', 'Unknown'),
+                    'direction': s.get('direction', 'buy'),
+                    'strategy': s.get('strategy_type', 'UNKNOWN'),
+                    'status': s.get('status', 'MONITORING'),
+                    'h4_structure_locked': s.get('h4_structure_locked', s.get('h4_bias_locked', False)),
+                    'w_d_aligned': s.get('w_d_aligned', True),
+                }
+                for s in monitoring_setups
+            ]
+            message += f"🎯 SETUP-URI ({len(sym_list)})\n\n"
+            message += _render_grouped_setups(sym_list)
 
         # Active trades section
         if executed_positions:
@@ -991,26 +1076,6 @@ class TelegramNotifier:
                 message += f"{dot} {symbol} {profit_emoji} Entry: {entry_fmt} | RR: 1:{rr:.1f} | P/L: ${profit:.2f}\n"
 
         return self.send_message(message.strip(), parse_mode="HTML")
-    
-    def _format_scan_report_line(self, sym_info: dict, bias_fallback: bool = False) -> str:
-        """V37.17 — formatare linie setup / bias fallback pentru MARKET_REPORT."""
-        symbol = sym_info.get('symbol', '?')
-        direction = str(sym_info.get('direction', '?')).lower()
-        raw_strat = str(sym_info.get('strategy', 'UNKNOWN')).upper()
-        if raw_strat == 'CONTINUITY':
-            raw_strat = 'CONTINUATION'
-        raw_strat = raw_strat.replace('_COUNTER_W1', '')
-        h4_locked = sym_info.get('h4_structure_locked', sym_info.get('h4_bias_locked', True))
-        dot = "🔴" if direction == 'sell' else "🟢"
-        if bias_fallback:
-            status_suffix = _scan_report_wait_suffix(sym_info)
-        elif not h4_locked:
-            status_suffix = _scan_report_wait_suffix(sym_info)
-        elif direction == 'sell':
-            status_suffix = " (confirmed SELL)"
-        else:
-            status_suffix = " (confirmed BUY)"
-        return f"{dot} {symbol} ➔ {raw_strat}{status_suffix}\n"
 
     def send_scan_report(
         self,
@@ -1027,7 +1092,7 @@ class TelegramNotifier:
         persist_missing: list = None,
     ) -> bool:
         """
-        V14.4 MARKET_REPORT — Professional institutional format by ФорексГод
+        V60 MARKET_REPORT — grouped vertical layout, compact header/footer.
 
         Sends a SINGLE final message after ALL charts are delivered.
         Must be called with time.sleep(2) BEFORE to dodge Telegram flood-control.
@@ -1035,39 +1100,39 @@ class TelegramNotifier:
         sep = UNIVERSAL_SEPARATOR
         _watching = watching_count if watching_count is not None else monitoring_count
 
-        # ── HEADER ──
+        # ── HEADER (compact) ──
         report = (
             f"<b>ФорексГод.АИ</b>\n"
             f"🏛 <b>MARKET_REPORT</b> 🏛\n"
             f"{sep}\n"
-            f"✅ <b>SCANARE COMPLETĂ</b>\n\n"
-            f"📈 <b>CONTEXT PORTOFOLIU</b>\n"
-            f"• Perechi analizate: {total_pairs}\n"
-            f"• Total JSON: {monitoring_count}\n"
-            f"• În pândă (/monitoring): {_watching}\n"
-            f"• Detectate azi (scan): {new_setups_found}\n"
-            f"• Poziții deschise: {open_positions}\n"
-            f"• Breakdown scan: noi {truly_new} | re-detectate {re_detected}\n"
-            f"{sep}\n"
+            f"✅ <b>Scan complet</b> · {total_pairs} perechi\n"
+            f"📊 {new_setups_found} setup · {_watching} monitorizare · {open_positions} deschise\n"
         )
+        if truly_new > 0 or re_detected > 0:
+            report += (
+                f"<i>Detectate azi: {new_setups_found} "
+                f"({truly_new} noi · {re_detected} re-scan)</i>\n"
+            )
+        if monitoring_count != _watching:
+            report += f"<i>Total JSON: {monitoring_count}</i>\n"
+        report += f"{sep}\n"
 
-        # ── SETUP-URI ──
+        # ── SETUP-URI (grouped vertical) ──
         if setup_symbols:
             _full_setups = [s for s in setup_symbols if not s.get('bias_fallback')]
             _bias_only = [s for s in setup_symbols if s.get('bias_fallback')]
             if _full_setups:
-                report += "🎯 <b>SETUP-URI DETECTATE (Daily Bias)</b>\n"
-                for sym_info in _full_setups:
-                    report += self._format_scan_report_line(sym_info)
-                report += "\n"
+                report += f"🎯 <b>Setup-uri cu POI ({len(_full_setups)})</b>\n\n"
+                report += _render_grouped_setups(_full_setups)
             if _bias_only:
-                report += "📡 <b>DAILY BIAS FALLBACK</b> <i>(structură D1 confirmată, FVG degradat)</i>\n"
-                for sym_info in _bias_only:
-                    report += self._format_scan_report_line(sym_info, bias_fallback=True)
-                report += "\n"
+                report += (
+                    f"📡 <b>Bias D1 fără FVG ({len(_bias_only)})</b>\n"
+                    f"   <i>structură OK — lipsește zona POI Daily</i>\n\n"
+                )
+                report += _render_grouped_setups(_bias_only)
 
         if persist_missing:
-            report += "⚠️ <b>DETECTATE DAR NESalvate în JSON</b>\n"
+            report += "⚠️ <b>Detectate dar nesalvate în JSON</b>\n"
             for row in persist_missing[:10]:
                 sym = row.get('symbol', '?')
                 reason = row.get('reason', '?')
@@ -1076,17 +1141,11 @@ class TelegramNotifier:
 
         # ── STATUS ──
         if deep_sleep_active and deep_sleep_until:
-            report += f"{sep}\n😴 <b>Status: DEEP SLEEP ACTIVE</b>\n• Wake: {deep_sleep_until}\n"
+            report += f"{sep}\n😴 <b>Deep sleep</b> · wake {deep_sleep_until}\n"
         else:
-            report += f"{sep}\n⚡ Status: ACTIV — Monitoring live\n"
+            report += f"{sep}\n⚡ Activ — radar live\n"
 
-        # Semnătura ALL CAPS oficială
-        footer = (
-            f"{sep}\n"
-            f"🔱 AUTHORED BY <b>ФорексГод</b> 🔱\n"
-            f"{sep}\n"
-            f"🏛 <b>ГЛИТЧ ИН МАТРИКС</b> 🏛"
-        )
+        footer = f"{sep}\n🔱 ФорексГод · Глитч Ин Мatrix"
         full_report = report.rstrip() + "\n" + footer
 
         success = self.send_message(full_report.strip(), parse_mode="HTML", add_signature=False)
