@@ -11,7 +11,19 @@ from typing import Any, Dict, List, Optional, Tuple
 from loguru import logger
 
 SLIM_FOOTER_BRAND = "🔱 ФорексГод · Глитч Ин Мatrix"
-SLIM_FOOTER_SEP = "─" * len(SLIM_FOOTER_BRAND)
+
+# Telegram mobile: U+2500 (─) renders wider than Cyrillic/Latin in HTML bubbles.
+# ~0.62× char count aligns separator end with brand line (see V63 UX screenshots).
+_TELEGRAM_BOX_CHAR_RATIO = 0.62
+
+
+def brand_separator(brand: str = SLIM_FOOTER_BRAND) -> str:
+    """Horizontal rule flush with brand signature on Telegram mobile."""
+    n = max(14, round(len(brand) * _TELEGRAM_BOX_CHAR_RATIO))
+    return "─" * n
+
+
+SLIM_FOOTER_SEP = brand_separator(SLIM_FOOTER_BRAND)
 
 
 def format_slim_footer() -> str:
