@@ -87,6 +87,31 @@ MIN_LIVE_CURRENCIES = 6
 DEFAULT_TTL_HOURS = 6
 STALE_CACHE_DAYS = 7
 SIGNIFICANT_CHANGE_PCT = 0.25
+CACHE_FRESH_MAX_HOURS = DEFAULT_TTL_HOURS * 4  # 24h — label "cache" vs "cache_stale"
+
+INVESTING_CB_URL = "https://www.investing.com/central-banks/"
+INVESTING_BROWSER_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/131.0.0.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Referer": "https://www.investing.com/",
+    "Cache-Control": "no-cache",
+}
+
+BANK_NAME_TO_CCY = [
+    ("federal reserve", "USD"),
+    ("european central", "EUR"),
+    ("bank of england", "GBP"),
+    ("swiss national", "CHF"),
+    ("reserve bank of australia", "AUD"),
+    ("bank of canada", "CAD"),
+    ("reserve bank of new zealand", "NZD"),
+    ("bank of japan", "JPY"),
+]
 
 
 def _now_bucharest() -> datetime:
@@ -118,6 +143,36 @@ def save_cache(rates: Dict[str, float], source: str) -> None:
     tmp.replace(CACHE_FILE)
 
 
+def _parse_investing_cb_table(html: str) -> Dict[str, float]:
+    """Parse G8 central bank rates from investing.com central-banks page."""
+    if not HAS_BS4:
+        return {}
+    soup = BeautifulSoup(html, "html.parser")
+    live: Dict[str, float] = {}
+    for row in soup.select("table tr"):
+        cols = row.find_all("td")
+        if len(cols) < 2:
+            continue
+        row_text = " ".join(c.get_text(" ", strip=True) for c in cols).lower()
+        rate_val: Optional[float] = None
+        for col in cols:
+            txt = col.get_text(strip=True).replace("%", "").replace(",", ".")
+            try:
+                val = float(txt)
+                if 0.0 <= val <= 30.0:
+                    rate_val = val
+                    break
+            except ValueError:
+                continue
+        if rate_val is None:
+            continue
+        for key, ccy in BANK_NAME_TO_CCY:
+            if key in row_text and ccy not in live:
+                live[ccy] = rate_val
+                break
+    return live
+
+
 def fetch_live_cb_rates(retries: int = FETCH_RETRIES) -> Dict[str, float]:
     """
     Scrape official central bank rates from investing.com.
@@ -130,64 +185,28 @@ def fetch_live_cb_rates(retries: int = FETCH_RETRIES) -> Dict[str, float]:
         logger.warning("[macro_rates] BeautifulSoup not installed — run: pip install beautifulsoup4")
         return {}
 
-    url = "https://www.investing.com/central-banks/"
-    headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/122.0.0.0 Safari/537.36"
-        ),
-        "Accept-Language": "en-US,en;q=0.9",
-        "Accept": "text/html,application/xhtml+xml",
-    }
-    bank_map = [
-        ("federal reserve", "USD"),
-        ("european central", "EUR"),
-        ("bank of england", "GBP"),
-        ("swiss national", "CHF"),
-        ("reserve bank of australia", "AUD"),
-        ("bank of canada", "CAD"),
-        ("reserve bank of new zealand", "NZD"),
-        ("bank of japan", "JPY"),
-    ]
-
     for attempt in range(1, retries + 1):
-        live: Dict[str, float] = {}
         try:
-            resp = requests.get(url, headers=headers, timeout=15)
+            resp = requests.get(
+                INVESTING_CB_URL,
+                headers=INVESTING_BROWSER_HEADERS,
+                timeout=15,
+            )
             if resp.status_code != 200:
-                logger.warning(f"[macro_rates] HTTP {resp.status_code} (attempt {attempt}/{retries})")
+                logger.warning(
+                    f"[macro_rates] HTTP {resp.status_code} (attempt {attempt}/{retries})"
+                )
                 if attempt < retries:
                     time.sleep(FETCH_RETRY_DELAY_SEC)
                 continue
 
-            soup = BeautifulSoup(resp.text, "html.parser")
-            for row in soup.select("table tr"):
-                cols = row.find_all("td")
-                if len(cols) < 2:
-                    continue
-                row_text = " ".join(c.get_text(" ", strip=True) for c in cols).lower()
-                rate_val: Optional[float] = None
-                for col in cols:
-                    txt = col.get_text(strip=True).replace("%", "").replace(",", ".")
-                    try:
-                        val = float(txt)
-                        if 0.0 <= val <= 30.0:
-                            rate_val = val
-                            break
-                    except ValueError:
-                        continue
-                if rate_val is None:
-                    continue
-                for key, ccy in bank_map:
-                    if key in row_text and ccy not in live:
-                        live[ccy] = rate_val
-                        break
-
+            live = _parse_investing_cb_table(resp.text)
             if len(live) >= MIN_LIVE_CURRENCIES:
                 logger.success(f"[macro_rates] live fetch OK ({len(live)} currencies): {live}")
                 return live
-            logger.warning(f"[macro_rates] only {len(live)} currencies parsed (attempt {attempt}/{retries})")
+            logger.warning(
+                f"[macro_rates] only {len(live)} currencies parsed (attempt {attempt}/{retries})"
+            )
 
         except Exception as e:
             logger.warning(f"[macro_rates] scrape failed (attempt {attempt}/{retries}): {e}")
@@ -226,19 +245,34 @@ def detect_rate_changes(
 
 
 def _source_badge(source: str, fetched_at: Optional[str]) -> str:
-    if source.startswith("live"):
+    if source == "live":
         return "🟢 LIVE"
-    if source.startswith("cache"):
+    if source in ("cache", "cache_stale"):
         if fetched_at:
             try:
                 age_h = (_now_bucharest() - datetime.fromisoformat(fetched_at)).total_seconds() / 3600
-                if age_h < 1:
+                if source == "cache" and age_h < 1:
                     return "🟡 CACHE (<1h)"
-                return f"🟡 CACHE ({int(age_h)}h)"
+                if age_h < 24:
+                    return f"🟡 CACHE ({int(age_h)}h)"
+                days = max(1, int(age_h / 24))
+                return f"🟡 CACHE ({days}d)"
             except Exception:
                 pass
         return "🟡 CACHE"
     return "🔴 OFFLINE"
+
+
+def _is_usable_source(source: str) -> bool:
+    """Live or cached real data — not hardcoded fallback."""
+    return source in ("live", "cache", "cache_stale")
+
+
+def _rates_from_cache_entry(cache: dict, ttl_hours: float = DEFAULT_TTL_HOURS) -> Tuple[Dict[str, float], str, Optional[str]]:
+    """Return cached rates with fresh vs stale label."""
+    age_h = _cache_age_hours(cache)
+    label = "cache" if age_h < ttl_hours * 4 else "cache_stale"
+    return cache["rates"], label, cache.get("fetched_at")
 
 
 def _rate_bar(rate: float, max_rate: float = 5.0) -> str:
@@ -288,9 +322,10 @@ def get_effective_rates(
     Returns (rates, source_label, fetched_at_iso, changes_vs_previous_cache).
 
     Priority:
-      1. Fresh live scrape (if force or cache stale)
-      2. Valid cache file
-      3. FALLBACK_RATES
+      1. Fresh live scrape (if force or cache TTL expired)
+      2. Recent cache (<24h) → cache
+      3. Any cached rates on disk → cache_stale (better than hardcoded)
+      4. FALLBACK_RATES — last resort only
     """
     cache = load_cache()
     previous_rates = cache.get("rates", {}) if cache else dict(FALLBACK_RATES)
@@ -299,7 +334,7 @@ def get_effective_rates(
     if cache and not needs_refresh:
         needs_refresh = _cache_age_hours(cache) >= ttl_hours
 
-    if needs_refresh or force_refresh:
+    if needs_refresh:
         live = fetch_live_cb_rates()
         if live:
             effective = _merge_rates(live, FALLBACK_RATES)
@@ -308,17 +343,26 @@ def get_effective_rates(
             fetched_at = _now_bucharest().isoformat()
             return effective, "live", fetched_at, changes
 
+        # Live failed — use any existing cache before hardcoded fallback
+        if cache and cache.get("rates"):
+            rates, label, fetched_at = _rates_from_cache_entry(cache, ttl_hours)
+            logger.warning(
+                f"[macro_rates] live fetch failed — using {label} "
+                f"(fetched {fetched_at or '?'})"
+            )
+            return rates, label, fetched_at, []
+
     if cache and cache.get("rates"):
         age_h = _cache_age_hours(cache)
         if age_h < ttl_hours * 4:
-            return (
-                cache["rates"],
-                "cache",
-                cache.get("fetched_at"),
-                [],
-            )
+            return _rates_from_cache_entry(cache, ttl_hours)
 
-    logger.warning("[macro_rates] using FALLBACK_RATES — no live data and no recent cache")
+    if cache and cache.get("rates"):
+        rates, label, fetched_at = _rates_from_cache_entry(cache, ttl_hours)
+        logger.warning(f"[macro_rates] using {label} — live unavailable")
+        return rates, label, fetched_at, []
+
+    logger.warning("[macro_rates] using FALLBACK_RATES — no live data and no cache file")
     return dict(FALLBACK_RATES), "fallback", None, []
 
 
@@ -546,11 +590,11 @@ def format_rates_telegram_message(
             fetched_at=fetched_at,
             rates=rates,
             changes=[{"ccy": c, "old": o, "new": n} for c, o, n in changes],
-            success=source in ("live", "cache"),
+            success=_is_usable_source(source),
             updated_by="macro_rates.format_rates_telegram_message",
         )
 
-    if notify_on_change and changes and _should_send_alert(changes):
+    if notify_on_change and source == "live" and changes and _should_send_alert(changes):
         _send_rate_change_alert(changes, source, rates)
         _mark_alert_sent(changes)
 
@@ -571,7 +615,12 @@ def format_rates_telegram_message(
         f"{separator}\n"
     )
 
-    if badge == "🔴 OFFLINE":
+    if source == "fallback":
+        msg += (
+            "⚠️ <b>Live indisponibil</b> — date estimate hardcodate, nu oficiale.\n"
+            "Verifică VPS: <code>python3 scripts/refresh_cb_rates.py --print</code>\n"
+        )
+    elif badge == "🔴 OFFLINE":
         msg += "⚠️ Live indisponibil · <code>pip install beautifulsoup4</code>\n"
 
     # CB rates — 2 per line, compact
@@ -618,9 +667,6 @@ def format_rates_telegram_message(
 def format_weekly_macro_report(local_tz=None) -> str:
     """Weekly macro table — same data source as /rates."""
     rates, source, fetched_at, changes = get_effective_rates(force_refresh=True)
-    sorted_rates = sorted(rates.items(), key=lambda x: x[1], reverse=True)
-    all_vals = [v for _, v in sorted_rates]
-    median_rate = sorted(all_vals)[len(all_vals) // 2] if all_vals else 0.0
 
     if local_tz:
         now_ro = datetime.now(local_tz).replace(tzinfo=None)
@@ -628,6 +674,20 @@ def format_weekly_macro_report(local_tz=None) -> str:
         now_ro = _now_bucharest()
 
     week_str = now_ro.strftime("W%W • %d %b %Y")
+
+    if source == "fallback":
+        return (
+            "🏦 <b>MACRO WEEKLY TABLE</b>\n"
+            f"📅 <b>{week_str}</b>\n\n"
+            "⚠️ <b>Live indisponibil</b> — nu trimit tabel cu rate estimate.\n"
+            "Reîncerc la refresh zilnic <code>08:00 EET</code> sau rulează "
+            "<code>python3 scripts/refresh_cb_rates.py</code> pe VPS."
+        )
+
+    sorted_rates = sorted(rates.items(), key=lambda x: x[1], reverse=True)
+    all_vals = [v for _, v in sorted_rates]
+    median_rate = sorted(all_vals)[len(all_vals) // 2] if all_vals else 0.0
+
     SEP = "━━━━━━━━━━━━━━━━"
 
     ts_label = ""
@@ -637,18 +697,22 @@ def format_weekly_macro_report(local_tz=None) -> str:
         except Exception:
             ts_label = fetched_at
 
+    badge = _source_badge(source, fetched_at)
     msg = "🏦 <b>MACRO WEEKLY TABLE</b>\n"
-    msg += f"📅 <b>{week_str}</b>\n"
+    msg += f"📅 <b>{week_str}</b>  {badge}\n"
     msg += f"🕐 <i>Transmis {now_ro.strftime('%H:%M')} EET"
     if ts_label:
-        msg += f" | rate fetch: {ts_label} ({source})"
+        msg += f" | rate fetch: {ts_label}"
     msg += "</i>\n"
     msg += SEP + "\n"
 
-    if is_cache_stale():
-        msg += "⚠️ <b>Rate macro stale (&gt;7 zile) — verifică VPS</b>\n" + SEP + "\n"
+    if source == "cache_stale" and fetched_at:
+        msg += (
+            f"ℹ️ <i>Ultimele rate live salvate · fetch {ts_label}</i>\n"
+            f"{SEP}\n"
+        )
 
-    if changes:
+    if changes and source == "live":
         msg += "🚨 <b>RATE CHANGES!</b>\n"
         for ccy, old, new in changes:
             arrow = "🔺" if new > old else "🔻"
@@ -716,7 +780,7 @@ def refresh_rates_daily(notify_telegram: bool = True) -> dict:
 
     change_rows = [{"ccy": c, "old": o, "new": n} for c, o, n in changes]
     summary = {
-        "success": source in ("live", "cache") or bool(cache_before),
+        "success": _is_usable_source(source),
         "source": source,
         "fetched_at": fetched_at,
         "changes": change_rows,
@@ -731,14 +795,10 @@ def refresh_rates_daily(notify_telegram: bool = True) -> dict:
         success=summary["success"],
     )
 
-    # V48 Instant Trigger: cb_rates_cache.json already written inside get_effective_rates
-    # when live scrape succeeds — alert only after persist.
-    if notify_telegram and changes and _should_send_alert(changes):
+    # Alert only on confirmed live rate moves (not cache/fallback noise).
+    if notify_telegram and source == "live" and changes and _should_send_alert(changes):
         _send_rate_change_alert(changes, source, rates)
         _mark_alert_sent(changes)
-
-    if notify_telegram and is_cache_stale() and source == "fallback":
-        _send_stale_alert(source)
 
     return summary
 
@@ -822,16 +882,6 @@ def _send_rate_change_alert(
         "<i>Verifică setup-uri carry afectate.</i>",
     ])
     _send_telegram_html("\n".join(lines))
-
-
-def _send_stale_alert(source: str) -> None:
-    _send_telegram_html(
-        "⚠️ <b>MACRO RATES STALE</b>\n"
-        "────────────────\n"
-        f"Cache-ul de dobânzi centrale are &gt;7 zile sau fetch-ul live a eșuat.\n"
-        f"Sursă curentă: <code>{source}</code>\n"
-        "Verifică VPS / investing.com scrape."
-    )
 
 
 if __name__ == "__main__":
