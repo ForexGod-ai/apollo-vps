@@ -7,6 +7,7 @@ Usage:
   python3 scripts/preview_telegram_commands.py --command stats
   python3 scripts/preview_telegram_commands.py --command status
   python3 scripts/preview_telegram_commands.py --command btcusd
+  python3 scripts/preview_telegram_commands.py --command rates
   python3 scripts/preview_telegram_commands.py --command help
 """
 from __future__ import annotations
@@ -26,9 +27,35 @@ os.environ.setdefault('TELEGRAM_CHAT_ID', 'preview-chat')
 os.environ.setdefault('AUTHORIZED_USER_ID', '1')
 
 from telegram_command_center import TelegramCommandCenter
-from telegram_command_format import append_slim_footer
+from telegram_command_format import append_slim_footer, SLIM_FOOTER_SEP
+
+MOCK_SWAPS = [
+    {"symbol": "GBPJPY", "swap_long": 1.21, "swap_short": -2.38, "triple_day": "Wed"},
+    {"symbol": "XAUUSD", "swap_long": -53.76, "swap_short": 36.93, "triple_day": "Wed"},
+    {"symbol": "EURUSD", "swap_long": -0.82, "swap_short": 0.15, "triple_day": "Wed"},
+    {"symbol": "USDCAD", "swap_long": 0.24, "swap_short": -0.99, "triple_day": "Wed"},
+    {"symbol": "AUDJPY", "swap_long": 0.85, "swap_short": -1.36, "triple_day": "Wed"},
+    {"symbol": "USDJPY", "swap_long": 0.54, "swap_short": -1.22, "triple_day": "Wed"},
+]
+
 
 MOBILE_WIDTH = 40
+
+
+def _preview_rates() -> str:
+    """V64 /rates layout with mocked live rates + cTrader swaps."""
+    import macro_rates as mr
+
+    rates = dict(mr.FALLBACK_RATES)
+    with patch.object(mr, "get_effective_rates", return_value=(rates, "live", "2026-07-24T16:01:00", [])), \
+         patch.object(mr, "_write_refresh_meta"), \
+         patch.object(mr, "fetch_ic_markets_swaps", return_value=MOCK_SWAPS):
+        return mr.format_rates_telegram_message(
+            separator=SLIM_FOOTER_SEP,
+            include_swaps=True,
+            force_refresh=False,
+            notify_on_change=False,
+        )
 
 
 def _strip_html(text: str) -> str:
@@ -49,7 +76,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Preview V63 command layouts")
     parser.add_argument(
         '--command',
-        choices=['stats', 'weekly', 'help', 'monitoring', 'status', 'btcusd', 'active', 'news', 'resume', 'all'],
+        choices=['stats', 'weekly', 'help', 'monitoring', 'status', 'btcusd', 'active', 'news', 'resume', 'rates', 'all'],
         default='all',
     )
     args = parser.parse_args()
@@ -80,11 +107,16 @@ def main() -> int:
         return 0
 
     targets = list(handlers.keys()) if args.command == 'all' else [args.command]
+    if args.command == 'all':
+        targets.append('rates')
     for name in targets:
         if name == 'help':
             continue
         try:
-            body = handlers[name]()
+            if name == 'rates':
+                body = _preview_rates()
+            else:
+                body = handlers[name]()
         except Exception as exc:
             body = f"❌ Preview error: {exc}"
         _print_block(f"/{name}", append_slim_footer(body))

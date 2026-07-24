@@ -111,3 +111,49 @@ def test_weekly_report_includes_table_on_live():
         msg = mr.format_weekly_macro_report()
     assert "DOBÂNZI BĂNCI CENTRALE" in msg
     assert "🟢 LIVE" in msg
+
+
+MOCK_SWAPS = [
+    {"symbol": "GBPJPY", "swap_long": 1.21, "swap_short": -2.38, "triple_day": "Wed"},
+    {"symbol": "XAUUSD", "swap_long": -53.76, "swap_short": 36.93, "triple_day": "Wed"},
+    {"symbol": "EURUSD", "swap_long": -0.82, "swap_short": 0.15, "triple_day": "Wed"},
+    {"symbol": "USDCAD", "swap_long": 0.24, "swap_short": -0.99, "triple_day": "Wed"},
+    {"symbol": "AUDJPY", "swap_long": 0.85, "swap_short": -1.36, "triple_day": "Wed"},
+]
+
+
+def test_top_swap_credits_sorts_long_and_short():
+    long_top = mr._top_swap_credits(MOCK_SWAPS, "long", 3)
+    short_top = mr._top_swap_credits(MOCK_SWAPS, "short", 3)
+    assert long_top[0]["symbol"] == "GBPJPY"
+    assert long_top[0]["swap_long"] == 1.21
+    assert short_top[0]["symbol"] == "XAUUSD"
+    assert short_top[0]["swap_short"] == 36.93
+
+
+def test_format_rates_v64_elite_sections():
+    rates = dict(mr.FALLBACK_RATES)
+    with patch.object(mr, "get_effective_rates", return_value=(rates, "live", "2026-07-24T16:01:00", [])), \
+         patch.object(mr, "_write_refresh_meta"), \
+         patch.object(mr, "fetch_ic_markets_swaps", return_value=MOCK_SWAPS):
+        msg = mr.format_rates_telegram_message(
+            force_refresh=False,
+            notify_on_change=False,
+        )
+    assert "DOBÂNZI BĂNCI CENTRALE" in msg
+    assert "CARRY POLICY (teoretic)" in msg
+    assert "Spread rate BC — nu e swap broker" in msg
+    assert "TOP SWAP IC MARKETS" in msg
+    assert "cTrader live" in msg
+    assert "SWAP GRID" in msg
+    assert "HIGH" in msg or "LOW" in msg
+    assert "▰" in msg
+
+
+def test_format_rates_fallback_warning_unchanged():
+    with patch.object(mr, "get_effective_rates", return_value=(mr.FALLBACK_RATES, "fallback", None, [])), \
+         patch.object(mr, "_write_refresh_meta"), \
+         patch.object(mr, "fetch_ic_markets_swaps", return_value=[]):
+        msg = mr.format_rates_telegram_message(force_refresh=False, notify_on_change=False)
+    assert "Live indisponibil" in msg
+    assert "DOBÂNZI BĂNCI CENTRALE" in msg

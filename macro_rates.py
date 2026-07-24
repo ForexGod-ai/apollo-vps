@@ -443,6 +443,71 @@ def _format_two_columns(
     return "\n".join(lines)
 
 
+CB_GRID_CELL_WIDTH = 36
+
+
+def _format_cb_rate_cell(
+    ccy: str,
+    rate: float,
+    median_rate: float,
+    max_rate: float,
+) -> str:
+    """Single CB rate cell: flag, rate, visual bar, HIGH/LOW vs median."""
+    flag = FLAGS.get(ccy, "")
+    bar = _rate_bar(rate, max(max_rate, 0.01))
+    tag = "HIGH" if rate >= median_rate else "LOW "
+    return f"{flag}{ccy} {rate:>5.2f}% {bar} {tag}"
+
+
+def _format_cb_rates_grid(
+    sorted_rates: List[Tuple[str, float]],
+    median_rate: float,
+    max_rate: float,
+) -> str:
+    """Two-column monospace grid of CB rates with bars and HIGH/LOW tags."""
+    cells = [
+        _format_cb_rate_cell(ccy, rate, median_rate, max_rate)
+        for ccy, rate in sorted_rates
+    ]
+    lines = []
+    for row in _chunked(cells, 2):
+        if len(row) == 2:
+            lines.append(f"{row[0]:<{CB_GRID_CELL_WIDTH}}{row[1]}")
+        else:
+            lines.append(row[0])
+    return "\n".join(lines)
+
+
+def _top_swap_credits(
+    swaps: List[dict],
+    side: str = "long",
+    top_n: int = 3,
+) -> List[dict]:
+    """Top positive swap credits from cTrader (long or short leg)."""
+    key = "swap_long" if side == "long" else "swap_short"
+    credits = [s for s in swaps if float(s.get(key, 0.0)) > 0]
+    credits.sort(key=lambda s: float(s[key]), reverse=True)
+    return credits[:top_n]
+
+
+def _format_swap_highlights(swaps: List[dict]) -> str:
+    """Compact pre block: top 3 LONG + top 3 SHORT swap credits (pips/day)."""
+    long_top = _top_swap_credits(swaps, "long", 3)
+    short_top = _top_swap_credits(swaps, "short", 3)
+    if not long_top and not short_top:
+        return ""
+    lines: List[str] = []
+    for i, s in enumerate(long_top):
+        lines.append(
+            f"{CARRY_MEDALS[i]} LONG  {s['symbol']:<6} {s['swap_long']:+.2f} pips/zi"
+        )
+    for i, s in enumerate(short_top):
+        lines.append(
+            f"{CARRY_MEDALS[i]} SHORT {s['symbol']:<6} {s['swap_short']:+.2f} pips/zi"
+        )
+    return "\n".join(lines)
+
+
 def _parse_symbol_to_carry_pair(symbol: str) -> Optional[Tuple[str, str]]:
     """Parse 6-char FX symbol into (base, quote) when both legs have CB rates."""
     s = symbol.upper().replace("/", "").strip()
@@ -580,7 +645,7 @@ def format_rates_telegram_message(
     force_refresh: bool = True,
     notify_on_change: bool = True,
 ) -> str:
-    """Build compact /rates Telegram HTML card (V38.8)."""
+    """Build compact /rates Telegram HTML card (V64 Elite)."""
     rates, source, fetched_at, changes = get_effective_rates(force_refresh=force_refresh)
     badge = _source_badge(source, fetched_at)
 
@@ -609,9 +674,10 @@ def format_rates_telegram_message(
     sorted_rates = sorted(rates.items(), key=lambda x: x[1], reverse=True)
     all_vals = [v for _, v in sorted_rates]
     median_rate = sorted(all_vals)[len(all_vals) // 2] if all_vals else 0.0
+    max_rate = max(all_vals) if all_vals else 5.0
 
     msg = (
-        f"<b>🏦 CENTRAL BANK RATES</b>  {badge}  <i>{ts_str} EET</i>\n"
+        f"<b>🏦 DOBÂNZI BĂNCI CENTRALE</b>  {badge}  <i>{ts_str} EET</i>\n"
         f"{separator}\n"
     )
 
@@ -623,43 +689,41 @@ def format_rates_telegram_message(
     elif badge == "🔴 OFFLINE":
         msg += "⚠️ Live indisponibil · <code>pip install beautifulsoup4</code>\n"
 
-    # CB rates — 2 per line, compact
-    rate_lines = []
-    for ccy, rate in sorted_rates:
-        flag = FLAGS.get(ccy, "")
-        tag = "🟢" if rate >= median_rate else "🔴"
-        rate_lines.append(f"{flag}{ccy} {rate:.2f}% {tag}")
-    msg += "<code>"
-    for row in _chunked(rate_lines, 2):
-        msg += "  ".join(f"{cell:<14}" for cell in row) + "\n"
-    msg += "</code>\n"
+    msg += f"<pre>{_format_cb_rates_grid(sorted_rates, median_rate, max_rate)}</pre>\n"
 
-    # Top carry — blank line after title, single pre block for column alignment
     top3 = get_top_carry_pairs(rates, 3)
-    msg += f"\n{separator}\n<b>🎯 CARRY SPREADS</b>\n\n"
-    msg += f"<pre>{_format_carry_block(top3)}</pre>\n\n"
+    msg += f"\n{separator}\n<b>🎯 CARRY POLICY (teoretic)</b>\n\n"
+    msg += f"<pre>{_format_carry_block(top3)}</pre>\n"
+    msg += "<i>Spread rate BC — nu e swap broker</i>\n"
 
     if include_swaps:
         swaps = fetch_ic_markets_swaps()
-        msg += f"{separator}\n"
         if swaps:
+            highlights = _format_swap_highlights(swaps)
+            if highlights:
+                msg += (
+                    f"\n{separator}\n"
+                    f"<b>💱 TOP SWAP IC MARKETS</b> <i>(cTrader live)</i>\n\n"
+                    f"<pre>{highlights}</pre>\n"
+                )
             cells = [
                 _format_swap_grid_cell(s["symbol"], s["swap_long"], s["swap_short"])
                 for s in swaps
             ]
             mid = (len(cells) + 1) // 2
             msg += (
-                f"<b>💱 SWAP</b> <i>L/S pips/day · {len(swaps)} Matrix pairs</i>\n"
+                f"\n{separator}\n"
+                f"<b>📊 SWAP GRID</b> <i>· {len(swaps)} perechi Matrix · L/S pips/zi</i>\n"
                 f"<pre>{_format_two_columns(cells[:mid], cells[mid:])}</pre>\n\n"
             )
         else:
-            msg += "<i>💱 Swap offline · cBot DATA port 8010</i>\n\n"
+            msg += f"\n{separator}\n<i>💱 Swap offline · cBot DATA port 8010</i>\n\n"
 
     strongest_ccy, strongest_rate = sorted_rates[0]
     weakest_ccy, weakest_rate = sorted_rates[-1]
     msg += (
         f"{separator}\n"
-        f"💪{strongest_ccy} {strongest_rate:.2f}% · 😴{weakest_ccy} {weakest_rate:.2f}%"
+        f"💪 {strongest_ccy} {strongest_rate:.2f}% · 😴 {weakest_ccy} {weakest_rate:.2f}%"
     )
     return msg
 
