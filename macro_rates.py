@@ -78,7 +78,9 @@ SWAP_CARRY_SYMBOLS = ["GBPJPY", "NZDJPY", "AUDJPY", "USDJPY", "GBPNZD", "EURJPY"
 PAIRS_CONFIG_FILE = ROOT / "pairs_config.json"
 SWAP_FETCH_TIMEOUT_SEC = 3
 SWAP_COL_SIZE = 8
-SWAP_COL_WIDTH = 22
+# Match CB rates grid — Telegram mobile breathes at ~36 chars per column.
+TELEGRAM_GRID_COL_WIDTH = 36
+SWAP_COL_WIDTH = TELEGRAM_GRID_COL_WIDTH
 CARRY_PAIR_WIDTH = 8
 CARRY_SPREAD_WIDTH = 7
 CARRY_MEDALS = ("🥇", "🥈", "🥉")
@@ -433,17 +435,20 @@ def _format_two_columns(
     right: List[str],
     width: int = SWAP_COL_WIDTH,
 ) -> str:
-    """Monospace grid: fixed-width left cells concatenated with right cells."""
+    """Monospace grid: fixed-width left cells with gap before right column."""
     rows = max(len(left), len(right))
     lines = []
     for i in range(rows):
-        l_cell = left[i] if i < len(left) else " " * width
+        l_cell = left[i] if i < len(left) else ""
         r_cell = right[i] if i < len(right) else ""
-        lines.append(f"{l_cell} {r_cell}")
+        if r_cell:
+            lines.append(f"{l_cell:<{width}}  {r_cell}")
+        else:
+            lines.append(l_cell)
     return "\n".join(lines)
 
 
-CB_GRID_CELL_WIDTH = 36
+CB_GRID_CELL_WIDTH = TELEGRAM_GRID_COL_WIDTH
 
 
 def _format_cb_rate_cell(
