@@ -1105,17 +1105,13 @@ class SetupExecutorMonitor:
     # ━━━ END V39.5 LIQUIDITY SNIPER ━━━
 
     def _atomic_write_monitoring(self, write_data: dict):
-        """V24.8: Scriere atomică monitoring_setups.json — previne coruperea JSON la crash/restart.
-        
-        Mecanismul: scrie în .tmp → os.replace() atomic (operație kernel-level indivizibilă).
-        Dacă procesul crapă în mijlocul scrierii → fișierul original rămâne intact (nu parțial scris).
-        Aceasta elimină cauza principală a dispariției setup-urilor din JSON.
-        """
-        import os as _atomic_os
-        tmp_path = str(self.monitoring_file) + '.tmp'
-        with open(tmp_path, 'w', encoding='utf-8') as f:
-            json.dump(write_data, f, indent=2, default=str)
-        _atomic_os.replace(tmp_path, str(self.monitoring_file))
+        """V24.8 + V64: Scriere atomică cu lock + temp dedicat executor (.tmp.executor)."""
+        from monitoring_json_io import save_monitoring_json
+        save_monitoring_json(
+            self.monitoring_file,
+            write_data,
+            tmp_tag=".executor",
+        )
 
     def _cleanup_monitoring_setups(self):
         """
@@ -1144,11 +1140,11 @@ class SetupExecutorMonitor:
             return
 
         try:
-            with open(self.monitoring_file, 'r', encoding='utf-8') as f:
-                data = json.load(f)
+            from monitoring_json_io import load_monitoring_json
+            data, setups, _ = load_monitoring_json(self.monitoring_file)
 
             if isinstance(data, dict):
-                setups = data.get('setups', [])
+                setups = data.get('setups', setups)
             elif isinstance(data, list):
                 setups = data
             else:
@@ -1288,9 +1284,10 @@ class SetupExecutorMonitor:
             return
         
         try:
-            with open(self.monitoring_file, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                setups = data.get('setups', [])
+            from monitoring_json_io import load_monitoring_json
+            data, setups, _ = load_monitoring_json(self.monitoring_file)
+            if isinstance(data, dict):
+                setups = data.get('setups', setups)
             
             if not setups:
                 logger.info("[EXEC SKIP] zero setups în JSON")

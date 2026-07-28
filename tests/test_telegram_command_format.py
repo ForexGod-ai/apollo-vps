@@ -49,7 +49,8 @@ def test_save_monitoring_json_atomic(tmp_path: Path):
     save_monitoring_json(path, payload)
     data, setups = load_monitoring_json(path)
     assert setups[0]["symbol"] == "BTCUSD"
-    assert data == payload
+    assert data.get("setups") == payload["setups"]
+    assert "last_updated" in data
 
 
 def test_format_two_column_grid():

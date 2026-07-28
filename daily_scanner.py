@@ -18,6 +18,7 @@ import json
 import os
 import time
 import argparse
+from pathlib import Path
 from typing import List, Optional, Dict, Tuple
 from dotenv import load_dotenv
 from loguru import logger
@@ -2170,11 +2171,12 @@ def save_monitoring_setups(
             "setups": monitoring_setups,
             "last_updated": datetime.now().isoformat()
         }
-        _ms_tmp = 'monitoring_setups.json.tmp'
-        with open(_ms_tmp, 'w', encoding='utf-8') as f:
-            json.dump(_ms_write, f, indent=2)
-        import os as _ms_os
-        _ms_os.replace(_ms_tmp, 'monitoring_setups.json')
+        from monitoring_json_io import save_monitoring_json
+        save_monitoring_json(
+            Path('monitoring_setups.json'),
+            _ms_write,
+            tmp_tag='.scanner',
+        )
 
         new_count = max(0, len(monitoring_setups) - len(existing_active))
         print(f"\n💾 [V42 LIVE AUTHORITY] {len(monitoring_setups)} total — "

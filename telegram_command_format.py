@@ -59,53 +59,16 @@ def format_two_column_grid(cells: List[str], cols: int = 2) -> str:
 
 
 def load_monitoring_json(path: Path) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
-    """
-    Load monitoring_setups.json resiliently.
-    Handles empty files, list root, and concatenated/corrupt JSON (Extra data).
-    """
-    if not path.exists():
-        return {}, []
-    try:
-        raw = path.read_text(encoding='utf-8').strip()
-    except OSError as exc:
-        logger.error(f"Cannot read {path}: {exc}")
-        return {}, []
-    if not raw:
-        return {}, []
-
-    data: Any = None
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError:
-        try:
-            decoder = json.JSONDecoder()
-            data, end = decoder.raw_decode(raw)
-            if end < len(raw.strip()):
-                logger.warning(
-                    f"monitoring_setups.json truncated parse at char {end} "
-                    f"(extra data ignored — run atomic save to repair)"
-                )
-        except json.JSONDecodeError as exc:
-            logger.error(f"monitoring_setups.json unreadable: {exc}")
-            return {}, []
-
-    if isinstance(data, list):
-        return {'setups': data}, data
-    if isinstance(data, dict):
-        setups = data.get('setups', [])
-        if not isinstance(setups, list):
-            setups = []
-        return data, setups
-    return {}, []
+    """Backward-compatible wrapper — see monitoring_json_io.py."""
+    from monitoring_json_io import load_monitoring_json as _load
+    data, setups, _ = _load(path)
+    return data, setups
 
 
 def save_monitoring_json(path: Path, data: Dict[str, Any]) -> None:
-    """Atomic write — .tmp + os.replace() prevents partial/corrupt JSON."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_suffix(path.suffix + '.tmp')
-    with open(tmp_path, 'w', encoding='utf-8') as f:
-        json.dump(data, f, indent=2, default=str)
-    os.replace(tmp_path, path)
+    """Atomic write — delegates to monitoring_json_io (Telegram tag)."""
+    from monitoring_json_io import save_monitoring_json as _save
+    _save(path, data, tmp_tag=".telegram")
 
 
 def setup_radar_hint(setup: dict) -> str:

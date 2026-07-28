@@ -46,7 +46,15 @@ from pathlib import Path as _Path
 # V22.2: Cale absolută — nu depinde de CWD la pornire
 _RADAR_DIR = _Path(__file__).parent.resolve()
 _MONITORING_FILE = str(_RADAR_DIR / 'monitoring_setups.json')
-_MONITORING_TMP  = str(_RADAR_DIR / 'monitoring_setups.json.tmp')
+_MONITORING_PATH = _RADAR_DIR / 'monitoring_setups.json'
+
+from monitoring_json_io import (
+    load_monitoring_json,
+    save_monitoring_json,
+    monitoring_json_lock,
+    monitoring_json_default,
+    repair_monitoring_json_if_needed,
+)
 import argparse
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
@@ -864,6 +872,75 @@ class MultiTFRadar:
         # V36.3: motivul ultimului skip — propagat la run_scan pentru logging explicit
         self._last_skip_reason: Optional[str] = None
 
+    def _read_monitoring_file(self) -> Tuple[Dict, List[Dict]]:
+        data, setups, _ = load_monitoring_json(_MONITORING_PATH)
+        return data, setups
+
+    def _save_monitoring_file(self, data: Dict) -> None:
+        save_monitoring_json(
+            _MONITORING_PATH,
+            data,
+            tmp_tag=".radar",
+            json_default=monitoring_json_default,
+        )
+
+    def _patch_matched_setup_in_json(
+        self,
+        setup: dict,
+        copy_keys: tuple,
+        pop_keys_if_absent: tuple = (),
+    ) -> bool:
+        """Read-modify-write one setup under cross-process lock — confirmation fields only."""
+        sym = setup.get("symbol")
+        setup_dir = setup.get("direction", "").upper()
+        try:
+            with monitoring_json_lock(_MONITORING_PATH):
+                data, setups, _ = load_monitoring_json(_MONITORING_PATH)
+                if not isinstance(setups, list):
+                    return False
+                matched = False
+                for i, s in enumerate(setups):
+                    s_dir = s.get("direction", "").upper()
+                    dir_ok = (
+                        s.get("symbol") == sym
+                        and (
+                            setup_dir == s_dir
+                            or (setup_dir in ("SELL", "SHORT") and s_dir in ("SELL", "SHORT"))
+                            or (setup_dir in ("BUY", "LONG") and s_dir in ("BUY", "LONG"))
+                        )
+                    )
+                    if not dir_ok:
+                        continue
+                    for key in copy_keys:
+                        if key in setup:
+                            setups[i][key] = setup[key]
+                        elif key in setups[i] and key in pop_keys_if_absent:
+                            setups[i].pop(key, None)
+                    matched = True
+                    break
+                if not matched:
+                    return False
+                if isinstance(data, dict):
+                    data["setups"] = setups
+                    data["last_updated"] = datetime.now().isoformat()
+                    payload = data
+                else:
+                    payload = {
+                        "setups": setups,
+                        "last_updated": datetime.now().isoformat(),
+                    }
+                save_monitoring_json(
+                    _MONITORING_PATH,
+                    payload,
+                    tmp_tag=".radar",
+                    json_default=monitoring_json_default,
+                    locked=True,
+                )
+                return True
+        except Exception as exc:
+            logger.warning(f"[radar json patch] {sym}: {exc}")
+            return False
+
     # V36.4: IC Markets folosește XTIUSD live — WTIUSD poate returna "Symbol not found"
     _BROKER_SYMBOL_ALIASES: Dict[str, List[str]] = {
         'BTCUSD': ['BTC/USD'],
@@ -1030,28 +1107,12 @@ class MultiTFRadar:
         return _result
     
     def _write_monitoring_setups(self, setups: list) -> None:
-        """Atomic write monitoring_setups.json (V43.2 purge path)."""
-        import os as _wos
-        import numpy as _np
-
-        def _json_safe(obj):
-            if isinstance(obj, (_np.bool_,)):
-                return bool(obj)
-            if isinstance(obj, (_np.integer,)):
-                return int(obj)
-            if isinstance(obj, (_np.floating,)):
-                return float(obj)
-            if isinstance(obj, (_np.ndarray,)):
-                return obj.tolist()
-            raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
-
+        """Atomic write monitoring_setups.json (V43.2 purge path) — locked + .tmp.radar."""
         payload = {
             'setups': setups,
             'last_updated': datetime.now().isoformat(),
         }
-        with open(_MONITORING_TMP, 'w', encoding='utf-8') as _wf:
-            json.dump(payload, _wf, indent=2, default=_json_safe)
-        _wos.replace(_MONITORING_TMP, _MONITORING_FILE)
+        self._save_monitoring_file(payload)
 
     def _purge_structural_breaches(self, setups: list) -> list:
         """V43.2 E3-T2: structural_breach — downgrade swing monitor, nu purge din JSON."""
@@ -2297,125 +2358,24 @@ class MultiTFRadar:
 
     def _flush_execute_now_to_json(self, setup: dict) -> None:
         """V37.6: Scrie EXECUTE_NOW instant in JSON — executorul nu asteapta batch sync."""
-        import os as _flush_os
-        try:
-            import numpy as _np
-
-            def _json_safe(obj):
-                if isinstance(obj, (_np.bool_,)):
-                    return bool(obj)
-                if isinstance(obj, (_np.integer,)):
-                    return int(obj)
-                if isinstance(obj, (_np.floating,)):
-                    return float(obj)
-                if isinstance(obj, (_np.ndarray,)):
-                    return obj.tolist()
-                raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
-
-            with open(_MONITORING_FILE, 'r', encoding='utf-8') as _f:
-                data = json.load(_f)
-            setups = data.get('setups', data) if isinstance(data, dict) else data
-
-            sym = setup.get('symbol')
-            setup_dir = setup.get('direction', '').upper()
-            matched = False
-            for i, s in enumerate(setups):
-                s_dir = s.get('direction', '').upper()
-                dir_ok = (
-                    s.get('symbol') == sym
-                    and (
-                        setup_dir == s_dir
-                        or (setup_dir in ('SELL', 'SHORT') and s_dir in ('SELL', 'SHORT'))
-                        or (setup_dir in ('BUY', 'LONG') and s_dir in ('BUY', 'LONG'))
-                    )
-                )
-                if not dir_ok:
-                    continue
-                for key in self._EXECUTE_NOW_FLUSH_KEYS:
-                    if key in setup:
-                        setups[i][key] = setup[key]
-                    elif key in setups[i] and key in ('EXECUTE_NOW', 'execute_now_trigger_tf'):
-                        # V37.9: execute_now_alert_sent/key NU se sterg niciodata la flush —
-                        # doar _clear_execute_now_signal() (entry1_filled / setup nou).
-                        setups[i].pop(key, None)
-                matched = True
-                break
-
-            if not matched:
-                return
-
-            if isinstance(data, dict):
-                data['setups'] = setups
-                data['last_updated'] = datetime.now().isoformat()
-            else:
-                data = setups
-
-            tmp_path = _MONITORING_TMP
-            with open(tmp_path, 'w', encoding='utf-8') as _wf:
-                json.dump(data, _wf, indent=2, default=_json_safe)
-            _flush_os.replace(tmp_path, _MONITORING_FILE)
-            logger.debug(f"[V37.6 FLUSH] {sym}: EXECUTE_NOW scris instant in JSON")
-        except Exception as _flush_err:
-            logger.warning(f"[V37.6 FLUSH] {setup.get('symbol', '?')}: flush esuat ({_flush_err})")
+        if self._patch_matched_setup_in_json(
+            setup,
+            copy_keys=self._EXECUTE_NOW_FLUSH_KEYS,
+            pop_keys_if_absent=('EXECUTE_NOW', 'execute_now_trigger_tf'),
+        ):
+            logger.debug(
+                f"[V37.6 FLUSH] {setup.get('symbol', '?')}: EXECUTE_NOW scris instant in JSON"
+            )
 
     def _flush_choch_alerts_to_json(self, setup: dict) -> None:
         """Persist CHoCH alert dedup keys instantly — survives restart without re-alert."""
-        import os as _flush_os
-        try:
-            import numpy as _np
-
-            def _json_safe(obj):
-                if isinstance(obj, (_np.bool_,)):
-                    return bool(obj)
-                if isinstance(obj, (_np.integer,)):
-                    return int(obj)
-                if isinstance(obj, (_np.floating,)):
-                    return float(obj)
-                if isinstance(obj, (_np.ndarray,)):
-                    return obj.tolist()
-                raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
-
-            with open(_MONITORING_FILE, 'r', encoding='utf-8') as _f:
-                data = json.load(_f)
-            setups = data.get('setups', data) if isinstance(data, dict) else data
-
-            sym = setup.get('symbol')
-            setup_dir = setup.get('direction', '').upper()
-            matched = False
-            for i, s in enumerate(setups):
-                s_dir = s.get('direction', '').upper()
-                dir_ok = (
-                    s.get('symbol') == sym
-                    and (
-                        setup_dir == s_dir
-                        or (setup_dir in ('SELL', 'SHORT') and s_dir in ('SELL', 'SHORT'))
-                        or (setup_dir in ('BUY', 'LONG') and s_dir in ('BUY', 'LONG'))
-                    )
-                )
-                if not dir_ok:
-                    continue
-                for key in self._CHOCH_ALERT_FLUSH_KEYS:
-                    if key in setup:
-                        setups[i][key] = setup[key]
-                matched = True
-                break
-
-            if not matched:
-                return
-
-            if isinstance(data, dict):
-                data['setups'] = setups
-                data['last_updated'] = datetime.now().isoformat()
-            else:
-                data = setups
-
-            tmp_path = _MONITORING_TMP
-            with open(tmp_path, 'w', encoding='utf-8') as _wf:
-                json.dump(data, _wf, indent=2, default=_json_safe)
-            _flush_os.replace(tmp_path, _MONITORING_FILE)
-            logger.debug(f"[V15.0 CHoCH FLUSH] {sym}: alert dedup scris in JSON")
-        except Exception as _flush_err:
-            logger.warning(f"[V15.0 CHoCH FLUSH] {setup.get('symbol', '?')}: flush esuat ({_flush_err})")
+        if self._patch_matched_setup_in_json(
+            setup,
+            copy_keys=self._CHOCH_ALERT_FLUSH_KEYS,
+        ):
+            logger.debug(
+                f"[V37.6 CHoCH FLUSH] {setup.get('symbol', '?')}: alert keys persisted"
+            )
 
     def _maybe_send_choch_alerts(
         self,
@@ -3001,23 +2961,24 @@ class MultiTFRadar:
         # Daca ceva s-a schimbat, salvam imediat JSON-ul (inainte de analiza structurala)
         if changed:
             try:
-                import numpy as _np
-                def _json_safe(obj):
-                    if isinstance(obj, (_np.bool_,)):    return bool(obj)
-                    if isinstance(obj, (_np.integer,)):  return int(obj)
-                    if isinstance(obj, (_np.floating,)): return float(obj)
-                    if isinstance(obj, (_np.ndarray,)):  return obj.tolist()
-                    raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
-                with open(_MONITORING_FILE, 'r', encoding='utf-8') as _f:
-                    _raw = json.load(_f)
-                if isinstance(_raw, dict):
-                    _raw['setups'] = setups
-                    _raw['last_updated'] = datetime.now().isoformat()
-                else:
-                    _raw = {'setups': setups, 'last_updated': datetime.now().isoformat()}
-                with open(_MONITORING_TMP, 'w', encoding='utf-8') as _f:
-                    json.dump(_raw, _f, indent=2, default=_json_safe)
-                _os.replace(_MONITORING_TMP, _MONITORING_FILE)
+                with monitoring_json_lock(_MONITORING_PATH):
+                    _raw, _, _ = load_monitoring_json(_MONITORING_PATH)
+                    if isinstance(_raw, dict):
+                        _raw["setups"] = setups
+                        _raw["last_updated"] = datetime.now().isoformat()
+                        payload = _raw
+                    else:
+                        payload = {
+                            "setups": setups,
+                            "last_updated": datetime.now().isoformat(),
+                        }
+                    save_monitoring_json(
+                        _MONITORING_PATH,
+                        payload,
+                        tmp_tag=".radar",
+                        json_default=monitoring_json_default,
+                        locked=True,
+                    )
                 logger.info("[V33 LIFECYCLE] JSON actualizat cu statusuri invalidate")
             except Exception as _se:
                 logger.error(f"[V33 LIFECYCLE] Eroare salvare dupa gate: {_se}")
@@ -3042,73 +3003,46 @@ class MultiTFRadar:
              rămân INTACTE — merge parțial, nu overwrite complet.
         """
         try:
-            import numpy as _np
-            import os as _os
+            with monitoring_json_lock(_MONITORING_PATH):
+                fresh_data, setups, _ = load_monitoring_json(_MONITORING_PATH)
+                if not isinstance(setups, list):
+                    logger.error("⚠️ _batch_sync V22: format JSON nerecunoscut")
+                    return
 
-            def _json_safe(obj):
-                if isinstance(obj, (_np.bool_,)):    return bool(obj)
-                if isinstance(obj, (_np.integer,)):  return int(obj)
-                if isinstance(obj, (_np.floating,)): return float(obj)
-                if isinstance(obj, (_np.ndarray,)):  return obj.tolist()
-                raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
+                matched_count = 0
+                for _original_setup, result in results:
+                    # Direction matching non-case-sensitive
+                    result_dir = result.direction.upper()
+                    for i, setup in enumerate(setups):
+                        setup_dir = setup.get('direction', '').upper()
+                        matches_sell   = (result_dir == 'SHORT' and setup_dir == 'SELL')
+                        matches_buy    = (result_dir == 'LONG'  and setup_dir == 'BUY')
+                        matches_direct = (result_dir == setup_dir)
+                        if setup.get('symbol') == result.symbol and (matches_sell or matches_buy or matches_direct):
+                            # V37.9 + V53: latch in-memory → JSON (bidirectional pop pentru chei zombie)
+                            _merge_in_memory_latch_to_json(setups[i], _original_setup)
+                            # V49 P0-A: post-update wins — NU restaura EXECUTE_NOW din snapshot scan-start
+                            self._update_setup_with_radar(setups[i], result)
+                            if setups[i].get('entry1_filled'):
+                                for _ek in ('EXECUTE_NOW', 'execute_now_trigger_tf'):
+                                    setups[i].pop(_ek, None)
+                            matched_count += 1
+                            break
 
-            # ── Re-citire LIVE: starea ACTUALĂ a fișierului, nu snapshot-ul de la startul ciclului ──
-            fresh_data = None
-            for _read_attempt in range(3):
-                try:
-                    with open(_MONITORING_FILE, 'r', encoding='utf-8') as _f:
-                        fresh_data = json.load(_f)
-                    break
-                except Exception as _je:
-                    if _read_attempt >= 2:
-                        logger.error(
-                            f"⚠️ _batch_sync V22: Nu pot re-citi monitoring_setups.json "
-                            f"după 3 încercări: {_je}"
-                        )
-                        return
-                    time.sleep(0.15)
+                if isinstance(fresh_data, dict):
+                    fresh_data['setups'] = setups
+                    fresh_data['last_updated'] = datetime.now().isoformat()
+                else:
+                    fresh_data = {
+                        'setups': setups,
+                        'last_updated': datetime.now().isoformat(),
+                    }
 
-            if isinstance(fresh_data, dict):
-                setups = fresh_data.get("setups", [])
-            elif isinstance(fresh_data, list):
-                setups = fresh_data
-            else:
-                logger.error("⚠️ _batch_sync V22: format JSON nerecunoscut")
-                return
-
-            matched_count = 0
-            for _original_setup, result in results:
-                # Direction matching non-case-sensitive
-                result_dir = result.direction.upper()
-                for i, setup in enumerate(setups):
-                    setup_dir = setup.get('direction', '').upper()
-                    matches_sell   = (result_dir == 'SHORT' and setup_dir == 'SELL')
-                    matches_buy    = (result_dir == 'LONG'  and setup_dir == 'BUY')
-                    matches_direct = (result_dir == setup_dir)
-                    if setup.get('symbol') == result.symbol and (matches_sell or matches_buy or matches_direct):
-                        # V37.9 + V53: latch in-memory → JSON (bidirectional pop pentru chei zombie)
-                        _merge_in_memory_latch_to_json(setups[i], _original_setup)
-                        # V49 P0-A: post-update wins — NU restaura EXECUTE_NOW din snapshot scan-start
-                        self._update_setup_with_radar(setups[i], result)
-                        if setups[i].get('entry1_filled'):
-                            for _ek in ('EXECUTE_NOW', 'execute_now_trigger_tf'):
-                                setups[i].pop(_ek, None)
-                        matched_count += 1
-                        break
-
-            if isinstance(fresh_data, dict):
-                fresh_data['setups'] = setups
-                fresh_data['last_updated'] = datetime.now().isoformat()
-            else:
-                fresh_data = setups
-
-            # V33 CLEANUP: Elimina din JSON paritati cu status terminal
-            # (marcate de _apply_lifecycle_gates sau de executor)
-            _DEAD = {
-                'INVALIDATED', 'COMPLETED_WITHOUT_ENTRY', 'EXPIRED_TIMEOUT',
-                'EXPIRED', 'CLOSED', 'FAILED', 'CANCELLED'
-            }
-            if isinstance(fresh_data, dict):
+                # V33 CLEANUP: Elimina din JSON paritati cu status terminal
+                _DEAD = {
+                    'INVALIDATED', 'COMPLETED_WITHOUT_ENTRY', 'EXPIRED_TIMEOUT',
+                    'EXPIRED', 'CLOSED', 'FAILED', 'CANCELLED'
+                }
                 _before = len(fresh_data.get('setups', []))
                 _survivors = []
                 for s in fresh_data.get('setups', []):
@@ -3126,15 +3060,18 @@ class MultiTFRadar:
                 if _removed:
                     logger.info(f"[V33 CLEANUP] {_removed} paritate(i) terminale eliminate din JSON")
 
-            tmp_path = _MONITORING_TMP
-            with open(tmp_path, 'w', encoding='utf-8') as f:
-                json.dump(fresh_data, f, indent=2, default=_json_safe)
-            _os.replace(tmp_path, _MONITORING_FILE)
-            logger.success(
-                f"[BATCH SYNC V22 MERGE] monitoring_setups.json actualizat — "
-                f"{matched_count}/{len(results)} paritati sincronizate (re-citire LIVE, race-free)"
-            )
-            sys.stdout.flush()
+                save_monitoring_json(
+                    _MONITORING_PATH,
+                    fresh_data,
+                    tmp_tag=".radar",
+                    json_default=monitoring_json_default,
+                    locked=True,
+                )
+                logger.success(
+                    f"[BATCH SYNC V22 MERGE] monitoring_setups.json actualizat — "
+                    f"{matched_count}/{len(results)} paritati sincronizate (re-citire LIVE, race-free)"
+                )
+                sys.stdout.flush()
 
         except Exception as e:
             logger.error(f"⚠️ _batch_sync_to_monitoring_setups V22 error: {e}")
@@ -3209,33 +3146,35 @@ class MultiTFRadar:
         )
     
     def load_monitoring_setups(self) -> List[Dict]:
-        """Load setups from monitoring_setups.json"""
+        """Load setups from monitoring_setups.json — resilient + auto-repair Extra data."""
         try:
-            with open(_MONITORING_FILE, 'r', encoding='utf-8') as f:
-                raw = f.read().strip()
-            if not raw:
-                print(
-                    "⚠️  monitoring_setups.json este GOL — rulează: python daily_scanner.py"
-                )
+            if not _MONITORING_PATH.exists():
+                print("⚠️  monitoring_setups.json not found — rulează: python daily_scanner.py")
                 return []
-            data = json.loads(raw)
-                
-            if isinstance(data, dict):
-                setups = data.get("setups", [])
-            elif isinstance(data, list):
-                setups = data
-            else:
+
+            _, setups, had_junk = load_monitoring_json(_MONITORING_PATH)
+            if not setups:
+                try:
+                    if not _MONITORING_PATH.read_text(encoding='utf-8').strip():
+                        print(
+                            "⚠️  monitoring_setups.json este GOL — rulează: python daily_scanner.py"
+                        )
+                except OSError:
+                    pass
                 return []
-                
-            # V22: Accept orice setup cu 'symbol' — entry_price poate lipsi la setups proaspete
+
+            if had_junk:
+                if repair_monitoring_json_if_needed(_MONITORING_PATH):
+                    print(
+                        "🔧 monitoring_setups.json reparat (Extra data eliminat) — "
+                        f"{len(setups)} setup(uri) recuperate"
+                    )
+
             return [s for s in setups if isinstance(s, dict) and s.get('symbol')]
-        
-        except FileNotFoundError:
-            print("⚠️  monitoring_setups.json not found — rulează: python daily_scanner.py")
-            return []
-        except json.JSONDecodeError as e:
-            print(f"⚠️  Error parsing monitoring_setups.json: {e}")
-            print("   Fix: rescrie JSON valid apoi rulează python daily_scanner.py")
+
+        except Exception as e:
+            print(f"⚠️  Error loading monitoring_setups.json: {e}")
+            print("   Fix: python daily_scanner.py sau repară JSON manual")
             return []
     
     def run_scan(self, symbol: Optional[str] = None, all_setups: bool = False):
@@ -3347,9 +3286,8 @@ class MultiTFRadar:
         Date citite din JSON-ul deja scris de ciclul anterior — zero HTTP calls extra.
         """
         try:
-            with open(_MONITORING_FILE, 'r', encoding='utf-8') as _af:
-                _ad = json.load(_af)
-            _setups = _ad.get('setups', _ad) if isinstance(_ad, dict) else _ad
+            _ad, _setups, _ = load_monitoring_json(_MONITORING_PATH)
+            _setups = _ad.get('setups', _setups) if isinstance(_ad, dict) else _setups
             if not isinstance(_setups, list):
                 return base_interval
             if symbol:
