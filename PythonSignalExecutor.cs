@@ -462,12 +462,15 @@ namespace cAlgo.Robots
                 else if (modDir == "buy" || modDir == "long")
                     modTradeType = TradeType.Buy;
 
+                bool sniperBe = (signal.CloseReason ?? "").IndexOf(
+                    "LIQUIDITY_SNIPER_BE", StringComparison.OrdinalIgnoreCase) >= 0;
+
                 int modifiedCount = 0;
                 foreach (var pos in Positions)
                 {
                     if (pos.SymbolName != modMapped)
                         continue;
-                    if (!IsBotPosition(pos))
+                    if (!sniperBe && !IsBotPosition(pos))
                         continue;
                     if (modTradeType.HasValue && pos.TradeType != modTradeType.Value)
                         continue;

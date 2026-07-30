@@ -395,6 +395,7 @@ class SetupExecutorMonitor:
 
         # V39.5 LIQUIDITY SNIPER — BE protection dedup (position_key → event_key)
         self._liquidity_sniper_be_applied: set = set()
+        self._liquidity_sniper_be_fail_alerted: set = set()
         self._liquidity_sniper_be_file = Path("data/liquidity_sniper_be_applied.json")
         self._load_liquidity_sniper_be_state()
 
@@ -1069,18 +1070,30 @@ class SetupExecutorMonitor:
                         pass
                 else:
                     fail_reason = result.get('reason') or result.get('status') or 'unknown'
+                    fail_status = str(result.get('status', 'UNKNOWN')).upper()
                     logger.warning(
                         f"⚠️ V43.9 BE protect failed: {symbol} {direction.upper()} "
-                        f"SL→{new_sl:.5f} — {fail_reason}"
+                        f"SL→{new_sl:.5f} — {fail_status}: {fail_reason}"
                     )
+                    # Stop retry storm: NO_POSITION / permanent failures won't succeed on next loop
+                    self._liquidity_sniper_be_applied.add(dedup_key)
+                    self._save_liquidity_sniper_be_state()
+
+                    fail_alert_key = f"fail|{dedup_key}"
+                    if fail_alert_key in self._liquidity_sniper_be_fail_alerted:
+                        continue
+
+                    self._liquidity_sniper_be_fail_alerted.add(fail_alert_key)
                     try:
                         msg = (
                             f"⚠️ <b>BE Modification Failed!</b>\n\n"
                             f"<b>{symbol}</b> {direction.upper()} ITM\n"
                             f"Target SL: <code>{new_sl:.5f}</code>\n"
                             f"News: {event['currency']} {event['event']} in {mins:.0f}min\n"
-                            f"Status: <code>{result.get('status', 'UNKNOWN')}</code>\n"
-                            f"Reason: {fail_reason}\n\n"
+                            f"Status: <code>{fail_status}</code>\n"
+                            f"Reason: {fail_reason}\n"
+                            f"<i>Alert o singură dată — verifică label poziție pe cTrader "
+                            f"(Glitch Matrix) sau redeploy cBot.</i>\n\n"
                             f"  {sep}\n"
                             f"  🔱 AUTHORED BY <b>ФорексГод</b> 🔱\n"
                             f"  {sep}\n"
