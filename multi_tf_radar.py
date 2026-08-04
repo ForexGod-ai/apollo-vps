@@ -74,6 +74,8 @@ from radar_gates import (
     parse_radar_dt as _parse_radar_dt,
     resolve_mitigation_touch_anchor as _resolve_mitigation_touch_anchor,
     v47_break_post_poi_touch as _v47_break_post_poi_touch,
+    normalize_structural_direction as _normalize_structural_direction,
+    h4_structural_direction_ok as _h4_structural_direction_ok,
 )
 
 try:
@@ -1534,6 +1536,15 @@ class MultiTFRadar:
             logger.warning(f"[W→D→4H] {symbol}: 1H scan disabled — 4H only strategy")
             return _empty_tf_waiting()
 
+        _req_dir = _normalize_structural_direction(required_direction)
+        if _req_dir is None:
+            logger.warning(
+                f"[4H DIRECTION MISMATCH SKIP] {symbol}: required_direction invalid "
+                f"({required_direction!r}) — skip 4H scan"
+            )
+            return _empty_tf_waiting()
+        required_direction = _req_dir
+
         timeframe_display = "4H"
         
         # 4H: 300 bare = ~50 zile → CHoCH major Daily acoperit complet
@@ -1609,8 +1620,9 @@ class MultiTFRadar:
             rejected_count = all_chochs_count - len(aligned_chochs)
             if rejected_count > 0:
                 print(
-                    f"  🚫 [{timeframe_display} DIRECTION GUARD] {symbol}: "
-                    f"{rejected_count} CHoCH(uri) contrare ({required_direction.upper()} opus) — IGNORATE"
+                    f"  🚫 [4H DIRECTION MISMATCH SKIP] {symbol}: "
+                    f"{rejected_count} CHoCH(uri) contrare bias Daily "
+                    f"({required_direction.upper()}) — IGNORATE"
                 )
                 sys.stdout.flush()
 
@@ -1692,13 +1704,17 @@ class MultiTFRadar:
                 )
             sys.stdout.flush()
 
-            # ── V24.9 DIRECTION ASSERTION — guard final ──────────────────────
-            # Paranoid check: dacă după toate filtrele choch_direction != required_direction
-            # (nu ar trebui să se întâmple, dar dacă se întâmplă → WAITING forțat)
-            if choch_direction != required_direction:
-                print(f"  🚨 [{timeframe_display} DIRECTION ASSERT FAILED] {symbol}: "
-                      f"CHoCH dir={choch_direction} != required={required_direction} — FORȚĂM WAITING")
+            # ── V61 DIRECTION ASSERTION — guard final nenegociabil ─────────────
+            if _normalize_structural_direction(choch_direction) != required_direction:
+                print(
+                    f"  🚨 [4H DIRECTION MISMATCH SKIP] {symbol}: "
+                    f"CHoCH dir={choch_direction} != required={required_direction}"
+                )
                 sys.stdout.flush()
+                logger.info(
+                    f"[4H DIRECTION MISMATCH SKIP] {symbol}: structural break "
+                    f"{choch_direction} vs Daily bias {required_direction}"
+                )
                 return TimeframeAnalysis(
                     timeframe=timeframe_display,
                     choch_detected=False,
@@ -2270,18 +2286,16 @@ class MultiTFRadar:
             logger.info(f"[V37.9] {sym}: EXECUTE_NOW dezarmat — {reason} (alerta Telegram pastrata)")
 
     def _v423_macro_bias(self, setup: dict, result: 'MultiTFResult') -> str:
-        d = (setup.get('direction') or '').lower()
-        if d in ('buy', 'long', 'bullish'):
-            return 'bullish'
-        if d in ('sell', 'short', 'bearish'):
-            return 'bearish'
+        d = _normalize_structural_direction(setup.get('direction'))
+        if d is not None:
+            return d
         return 'bullish' if result.direction == 'LONG' else 'bearish'
 
     def _v423_ltf_misalignment(self, setup: dict, result: 'MultiTFResult') -> tuple:
         """Returnează (macro_bias, listă de (tf, dir_choch) nealiniate)."""
         macro = self._v423_macro_bias(setup, result)
         issues = []
-        if result.tf_4h.choch_detected and result.tf_4h.choch_direction != macro:
+        if result.tf_4h.choch_detected and not _h4_structural_direction_ok(macro, result.tf_4h):
             issues.append(('4H', result.tf_4h.choch_direction))
         return macro, issues
 
@@ -2409,18 +2423,27 @@ class MultiTFRadar:
 
         def _v47_4h_alert_check() -> tuple:
             sig_u = (tf_4h.signal_type or 'CHoCH').upper()
+            if not _h4_structural_direction_ok(macro_dir, tf_4h):
+                _macro_norm = _normalize_structural_direction(macro_dir)
+                _actual = (
+                    tf_4h.bos_direction if sig_u == 'BOS' else tf_4h.choch_direction
+                )
+                msg = (
+                    f"[4H DIRECTION MISMATCH SKIP] {sym}: 4H {_actual} != "
+                    f"D1 bias {_macro_norm} — alertă blocată"
+                )
+                print(f"  {msg}")
+                sys.stdout.flush()
+                logger.info(msg)
+                return False, 'direction_mismatch', tf_4h.choch_time, tf_4h.choch_bars_ago
             if sig_u == 'BOS':
                 if not tf_4h.bos_detected:
                     return False, 'bos_not_detected', tf_4h.choch_time, tf_4h.bos_bars_ago
-                if tf_4h.bos_direction != macro_dir:
-                    return False, 'bos_direction_mismatch', tf_4h.choch_time, tf_4h.bos_bars_ago
                 break_time = tf_4h.choch_time
                 bars_ago = tf_4h.bos_bars_ago
             else:
                 if not tf_4h.choch_detected:
                     return False, 'choch_not_detected', tf_4h.choch_time, tf_4h.choch_bars_ago
-                if tf_4h.choch_direction != macro_dir:
-                    return False, 'choch_direction_mismatch', tf_4h.choch_time, tf_4h.choch_bars_ago
                 break_time = tf_4h.choch_time
                 bars_ago = tf_4h.choch_bars_ago
             post_poi = _v47_break_post_poi_touch(setup, break_time)
@@ -2662,13 +2685,11 @@ class MultiTFRadar:
         _prev_h4_locked = bool(setup.get('h4_structure_locked'))
         _panda_active = bool(setup.get('radar_panda_active'))
 
-        _4h_choch_direction_ok = (
-            result.tf_4h.choch_direction is not None
-            and result.tf_4h.choch_direction == _setup_direction_lower
-        )
+        _4h_choch_direction_ok = _h4_structural_direction_ok(_setup_direction_lower, result.tf_4h)
         _4h_bos_direction_ok = (
-            result.tf_4h.bos_direction is not None
-            and result.tf_4h.bos_direction == _setup_direction_lower
+            result.tf_4h.bos_detected
+            and _normalize_structural_direction(result.tf_4h.bos_direction)
+            == _setup_direction_lower
         )
         _h4_post_poi = _v47_break_post_poi_touch(setup, result.tf_4h.choch_time)
         _4h_live_choch = (
@@ -2715,7 +2736,7 @@ class MultiTFRadar:
             )
         elif result.tf_4h.choch_detected and not _4h_choch_direction_ok:
             logger.warning(
-                f"🚫 [V50 H4 DIRECTION MISMATCH] {result.symbol}: "
+                f"[4H DIRECTION MISMATCH SKIP] {result.symbol}: "
                 f"CHoCH 4H dir={result.tf_4h.choch_direction} != setup={_setup_direction_lower} "
                 f"— h4_structure_locked NESETAT"
             )

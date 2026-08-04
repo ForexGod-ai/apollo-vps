@@ -2871,6 +2871,88 @@ class SMCDetector:
         ref = self._swing_body_low(df, prior[-1].index)
         return self._body_close_below_after(df, prior[-1].index, ref)
 
+    def _coerce_d1_bias_to_major_structure(
+        self,
+        df: pd.DataFrame,
+        symbol: str,
+        latest_signal,
+        strategy_type: str,
+        current_trend: str,
+        leg_choch,
+        daily_chochs: List[CHoCH],
+        daily_bos_list: List,
+        range_state: Optional[StructuralRangeState],
+    ) -> Tuple[Optional[object], str, str, Optional[CHoCH]]:
+        """
+        V61: Daily bias transmis către radar trebuie să reflecte structura majoră reală.
+        În range bearish (LL < close <= LH) — fără REVERSAL bullish prematur.
+        """
+        if range_state is None or not range_state.locked:
+            return latest_signal, strategy_type, current_trend, leg_choch
+
+        close = float(df['close'].iloc[-1])
+        lh = float(range_state.macro_range_high)
+        ll = float(range_state.macro_range_low)
+        macro_swings = self.macro_trend_from_swings(df)
+        inside_bearish_range = ll < close <= lh
+        bullish_reversal_blocked = (
+            strategy_type == 'reversal'
+            and current_trend == 'bullish'
+            and close <= lh
+        )
+
+        if inside_bearish_range or (
+            macro_swings == 'bearish' and bullish_reversal_blocked
+        ):
+            bearish_bos = [b for b in daily_bos_list if b.direction == 'bearish']
+            bearish_chochs = [c for c in daily_chochs if c.direction == 'bearish']
+            if bearish_bos:
+                sig = bearish_bos[-1]
+                print(
+                    f"🔄 [V61 D1 BIAS COERCE] {symbol}: inside bearish range "
+                    f"→ BEARISH CONTINUATION BOS @bar{sig.index}"
+                )
+                return sig, 'continuation', 'bearish', leg_choch
+            if bearish_chochs:
+                sig = bearish_chochs[-1]
+                print(
+                    f"🔄 [V61 D1 BIAS COERCE] {symbol}: inside bearish range "
+                    f"→ BEARISH CONTINUATION CHoCH @bar{sig.index}"
+                )
+                return sig, 'continuation', 'bearish', leg_choch
+            if current_trend == 'bullish':
+                print(
+                    f"🔄 [V61 D1 BIAS COERCE] {symbol}: inside bearish range "
+                    f"→ force BEARISH trend (no opposite signal)"
+                )
+                return latest_signal, 'continuation', 'bearish', leg_choch
+
+        inside_bullish_breakout = close > lh and macro_swings == 'bullish'
+        bearish_reversal_blocked = (
+            strategy_type == 'reversal'
+            and current_trend == 'bearish'
+            and close >= ll
+        )
+        if inside_bullish_breakout and bearish_reversal_blocked:
+            bullish_bos = [b for b in daily_bos_list if b.direction == 'bullish']
+            bullish_chochs = [c for c in daily_chochs if c.direction == 'bullish']
+            if bullish_bos:
+                sig = bullish_bos[-1]
+                print(
+                    f"🔄 [V61 D1 BIAS COERCE] {symbol}: above LH bullish macro "
+                    f"→ BULLISH CONTINUATION BOS @bar{sig.index}"
+                )
+                return sig, 'continuation', 'bullish', leg_choch
+            if bullish_chochs:
+                sig = bullish_chochs[-1]
+                print(
+                    f"🔄 [V61 D1 BIAS COERCE] {symbol}: above LH bullish macro "
+                    f"→ BULLISH CONTINUATION CHoCH @bar{sig.index}"
+                )
+                return sig, 'continuation', 'bullish', leg_choch
+
+        return latest_signal, strategy_type, current_trend, leg_choch
+
     def _resolve_d1_leg(
         self,
         df: pd.DataFrame,
@@ -2885,7 +2967,6 @@ class SMCDetector:
         - BOS (spargere în direcția trendului) → continuation
         - Leg invalidat → V57 post-leg flip
         """
-        _ = range_state  # reserved; V40 filtering applied upstream
         chochs = self._dedupe_chochs_by_bar(chochs)
         leg_choch = self._find_leg_choch(df, chochs, bos_list)
 
@@ -2903,12 +2984,36 @@ class SMCDetector:
         latest_bos = bos_list[-1] if bos_list else None
 
         reversal_choch = None
+        _close = float(df['close'].iloc[-1]) if len(df) else 0.0
+        _lh = float(range_state.macro_range_high) if range_state and range_state.locked else None
+        _ll = float(range_state.macro_range_low) if range_state and range_state.locked else None
         for c in reversed(chochs):
             if not self._is_major_structural_choch(c):
                 continue
             if not self._major_reversal_confirmed(df, c):
                 continue
             if not self._leg_choch_still_valid(df, c, bos_list):
+                continue
+            # V61: în range bearish locked — bullish CHoCH = extindere pullback, nu reversal
+            if (
+                range_state
+                and range_state.locked
+                and _ll is not None
+                and _lh is not None
+                and c.direction == 'bullish'
+                and _ll < _close <= _lh
+                and range_state.locked_bias == 'bearish'
+            ):
+                continue
+            if (
+                range_state
+                and range_state.locked
+                and _ll is not None
+                and _lh is not None
+                and c.direction == 'bearish'
+                and _close > _lh
+                and range_state.locked_bias == 'bullish'
+            ):
                 continue
             reversal_choch = c
             break
@@ -4078,8 +4183,48 @@ class SMCDetector:
                 print(f"❌ REJECTED: No Daily CHoCH or BOS found")
             return None
 
+        latest_signal, strategy_type, current_trend, leg_choch = (
+            self._coerce_d1_bias_to_major_structure(
+                df_daily,
+                symbol,
+                latest_signal,
+                strategy_type,
+                current_trend,
+                leg_choch,
+                daily_chochs,
+                daily_bos_list,
+                _range_state,
+            )
+        )
+
         _close = float(df_daily['close'].iloc[-1])
         _macro_swings = self.macro_trend_from_swings(df_daily)
+        if (
+            strategy_type == 'reversal'
+            and current_trend == 'bullish'
+            and _range_state
+            and _close <= float(_range_state.macro_range_high)
+            and _close > float(_range_state.macro_range_low)
+        ):
+            print(
+                f"⛔ [V58 MACRO GATE] {symbol}: REVERSAL LONG rejected — "
+                f"close {_close:.5f} inside range (LL–LH), no LH body-close break"
+            )
+            latest_signal, strategy_type, current_trend, leg_choch = (
+                self._coerce_d1_bias_to_major_structure(
+                    df_daily,
+                    symbol,
+                    latest_signal,
+                    strategy_type,
+                    current_trend,
+                    leg_choch,
+                    daily_chochs,
+                    daily_bos_list,
+                    _range_state,
+                )
+            )
+            if current_trend == 'bullish' and strategy_type == 'reversal':
+                return None
         if (
             strategy_type == 'reversal'
             and current_trend == 'bullish'

@@ -11,6 +11,31 @@ from typing import Dict, Optional
 V47_ALERT_MAX_BARS_4H = 3
 
 
+def normalize_structural_direction(raw) -> Optional[str]:
+    """Normalize LONG/SHORT/buy/sell/bullish/bearish → bullish/bearish."""
+    if raw is None:
+        return None
+    d = str(raw).strip().lower()
+    if d in ('bullish', 'long', 'buy'):
+        return 'bullish'
+    if d in ('bearish', 'short', 'sell'):
+        return 'bearish'
+    return None
+
+
+def h4_structural_direction_ok(macro_dir, tf_4h) -> bool:
+    """True when 4H CHoCH/BOS direction matches D1 macro bias (normalized)."""
+    macro = normalize_structural_direction(macro_dir)
+    if macro is None:
+        return False
+    sig = (getattr(tf_4h, 'signal_type', None) or 'CHoCH').upper()
+    if sig == 'BOS':
+        actual = normalize_structural_direction(getattr(tf_4h, 'bos_direction', None))
+    else:
+        actual = normalize_structural_direction(getattr(tf_4h, 'choch_direction', None))
+    return actual == macro
+
+
 def parse_radar_dt(ts) -> Optional[datetime]:
     """Parse ISO choch_time from TimeframeAnalysis or JSON."""
     if ts is None:
@@ -79,7 +104,7 @@ def ltf_choch_confirmed_for_card(merged: Dict, tf: str, macro_dir: str) -> bool:
         return False
     if not merged.get('radar_4h_choch_detected'):
         return False
-    if merged.get('radar_4h_choch_direction') != macro_dir:
+    if normalize_structural_direction(merged.get('radar_4h_choch_direction')) != normalize_structural_direction(macro_dir):
         return False
     if not v47_break_post_poi_touch(merged, merged.get('radar_4h_choch_time')):
         return False
