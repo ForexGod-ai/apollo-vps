@@ -2927,6 +2927,34 @@ class SMCDetector:
                 )
                 return latest_signal, 'continuation', 'bearish', leg_choch
 
+        # V62: macro HH/HL bullish — bearish reversal pe pullback = misread
+        if (
+            macro_swings == 'bullish'
+            and current_trend == 'bearish'
+            and strategy_type == 'reversal'
+        ):
+            bullish_bos = [b for b in daily_bos_list if b.direction == 'bullish']
+            bullish_chochs = [c for c in daily_chochs if c.direction == 'bullish']
+            if bullish_bos:
+                sig = bullish_bos[-1]
+                print(
+                    f"🔄 [V62 D1 BIAS COERCE] {symbol}: macro swings BULLISH "
+                    f"→ BULLISH CONTINUATION BOS @bar{sig.index}"
+                )
+                return sig, 'continuation', 'bullish', leg_choch
+            if bullish_chochs:
+                sig = bullish_chochs[-1]
+                print(
+                    f"🔄 [V62 D1 BIAS COERCE] {symbol}: macro swings BULLISH "
+                    f"→ BULLISH CONTINUATION CHoCH @bar{sig.index}"
+                )
+                return sig, 'continuation', 'bullish', leg_choch
+            print(
+                f"🔄 [V62 D1 BIAS COERCE] {symbol}: macro swings BULLISH "
+                f"→ force BULLISH continuation"
+            )
+            return latest_signal, 'continuation', 'bullish', leg_choch
+
         inside_bullish_breakout = close > lh and macro_swings == 'bullish'
         bearish_reversal_blocked = (
             strategy_type == 'reversal'
@@ -2952,6 +2980,95 @@ class SMCDetector:
                 return sig, 'continuation', 'bullish', leg_choch
 
         return latest_signal, strategy_type, current_trend, leg_choch
+
+    def resolve_authoritative_d1_bias(
+        self,
+        df: pd.DataFrame,
+        symbol: str = '?',
+    ) -> dict:
+        """
+        V62: Single source of truth for D1 direction/strategy (scanner + identity lock + JSON).
+        Runs resolve_d1_leg + coerce + macro swing fallback.
+        """
+        empty = {
+            'trend': 'neutral',
+            'strategy_type': 'continuation',
+            'macro_swings': 'neutral',
+            'direction': '',
+            'd1_bias_direction': 'neutral',
+            'daily_bias': 'NEUTRAL',
+        }
+        if df is None or df.empty:
+            return empty
+        if not {'open', 'high', 'low', 'close'}.issubset(df.columns):
+            return empty
+
+        chochs, bos_list = self.detect_choch_and_bos(df)
+        swing_h = self.detect_swing_highs(df)
+        swing_l = self.detect_swing_lows(df)
+        range_state = self.compute_structural_range(df, swing_h, swing_l, symbol=symbol)
+        chochs, bos_list, range_state = self.filter_internal_range_signals(
+            symbol, df, chochs, bos_list, range_state,
+        )
+        latest, strategy_type, current_trend, leg_choch = self._resolve_d1_leg(
+            df, chochs, bos_list, range_state=range_state,
+        )
+        latest, strategy_type, current_trend, leg_choch = self._coerce_d1_bias_to_major_structure(
+            df,
+            symbol,
+            latest,
+            strategy_type,
+            current_trend,
+            leg_choch,
+            chochs,
+            bos_list,
+            range_state,
+        )
+        macro_swings = self.macro_trend_from_swings(df)
+        if current_trend == 'neutral' and macro_swings != 'neutral':
+            current_trend = macro_swings
+            strategy_type = 'continuation'
+        if current_trend == 'neutral':
+            fallback = self.resolve_structural_bias_fallback(
+                df, chochs, bos_list, range_state,
+            )
+            if fallback != 'neutral':
+                current_trend = fallback
+                strategy_type = 'continuation'
+
+        trade_dir = ''
+        if current_trend == 'bullish':
+            trade_dir = 'buy'
+        elif current_trend == 'bearish':
+            trade_dir = 'sell'
+
+        return {
+            'trend': current_trend,
+            'strategy_type': strategy_type,
+            'macro_swings': macro_swings,
+            'direction': trade_dir,
+            'd1_bias_direction': current_trend,
+            'daily_bias': current_trend.upper() if current_trend != 'neutral' else 'NEUTRAL',
+            'latest_signal': latest,
+            'leg_choch': leg_choch,
+        }
+
+    def macro_authority_supports_direction(
+        self,
+        df: pd.DataFrame,
+        direction: str,
+        symbol: str = '?',
+    ) -> bool:
+        """V62: True when authoritative D1 bias matches normalized direction."""
+        auth = self.resolve_authoritative_d1_bias(df, symbol=symbol)
+        want = str(direction or '').strip().lower()
+        if want in ('buy', 'long', 'bullish'):
+            want = 'bullish'
+        elif want in ('sell', 'short', 'bearish'):
+            want = 'bearish'
+        else:
+            return False
+        return auth.get('trend') == want
 
     def _resolve_d1_leg(
         self,

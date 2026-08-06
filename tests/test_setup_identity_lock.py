@@ -116,3 +116,62 @@ def test_first_lock_stamps_from_empty_old():
     assert merged.get('setup_identity_locked') is True
     assert merged.get('leg_choch_bar') is not None
     assert merged.get('major_structure_floor') is not None
+
+
+def test_identity_lock_allows_v62_macro_flip_gbpcad():
+    """GBPCAD-class: locked SHORT, live scan LONG — macro authority allows flip."""
+    detector = SMCDetector(swing_lookback=5, atr_multiplier=0.5)
+    df = _load_d1("GBPCAD")
+    auth = detector.resolve_authoritative_d1_bias(df, symbol='GBPCAD')
+    if auth.get('trend') != 'bullish':
+        pytest.skip(f"GBPCAD cache not bullish in this snapshot ({auth})")
+
+    old = {
+        'symbol': 'GBPCAD',
+        'direction': 'sell',
+        'daily_bias': 'BEARISH',
+        'd1_bias_direction': 'bearish',
+        'strategy_type': 'reversal',
+        'setup_identity_locked': True,
+        'major_structure_floor': float(df['low'].iloc[-60:].min()),
+        'major_structure_ceiling': float(df['high'].iloc[-60:].max()),
+        'leg_choch_price': float(df['close'].iloc[-1]),
+        'entry_price': float(df['close'].iloc[-1]) + 0.01,
+        'poi_top': float(df['high'].iloc[-1]),
+        'poi_bottom': float(df['low'].iloc[-1]),
+    }
+    new_live = {
+        **old,
+        'direction': 'buy',
+        'daily_bias': 'BULLISH',
+        'd1_bias_direction': 'bullish',
+        'strategy_type': 'continuation',
+        'entry_price': float(df['close'].iloc[-1]),
+    }
+    merged = _apply_setup_identity_lock(old, new_live, df, detector, 'GBPCAD')
+    assert merged['direction'] == 'buy'
+    assert merged['strategy_type'] == 'continuation'
+
+
+def test_rehydrate_stored_macro_bias_gbpcad():
+    detector = SMCDetector(swing_lookback=5, atr_multiplier=0.5)
+    df = _load_d1("GBPCAD")
+    auth = detector.resolve_authoritative_d1_bias(df, symbol='GBPCAD')
+    if auth.get('trend') != 'bullish':
+        pytest.skip(f"GBPCAD cache not bullish ({auth})")
+
+    from daily_scanner import _rehydrate_stored_macro_bias
+
+    stored = {
+        'symbol': 'GBPCAD',
+        'direction': 'sell',
+        'daily_bias': 'BEARISH',
+        'strategy_type': 'reversal',
+        'status': 'MONITORING',
+        'radar_4h_choch_detected': True,
+        'EXECUTE_NOW': True,
+    }
+    out = _rehydrate_stored_macro_bias(detector, df, stored, 'GBPCAD')
+    assert out['direction'] == 'buy'
+    assert out.get('EXECUTE_NOW') is None
+    assert out.get('radar_4h_choch_detected') is None

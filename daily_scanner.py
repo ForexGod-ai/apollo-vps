@@ -370,9 +370,10 @@ class DailyScanner:
                     print(f"⚠️ Skipping {symbol} - no 4H data")
                     continue
 
-                # V40: înregistrăm bias D1 înainte de scan — folosit la SMART MERGE invalidare
+                # V62: bias autoritar din resolve_d1_leg + coerce (nu doar determine_daily_trend)
                 try:
-                    daily_bias_map[symbol] = self.smc_detector.determine_daily_trend(df_daily, symbol=symbol)
+                    _auth = self.smc_detector.resolve_authoritative_d1_bias(df_daily, symbol=symbol)
+                    daily_bias_map[symbol] = _auth.get('trend') or 'neutral'
                 except Exception as _dbm_err:
                     daily_bias_map[symbol] = 'neutral'
                     print(f"   ⚠️ [V40] bias map error {symbol}: {_dbm_err}")
@@ -1106,6 +1107,93 @@ def _identity_direction(entry: dict) -> str:
     return ''
 
 
+def _log_d1_bias_drift(symbol: str, stored: dict, auth: dict) -> None:
+    """V62: warn when JSON direction diverges from authoritative D1 classification."""
+    stored_dir = (stored.get('direction') or '').lower()
+    auth_dir = (auth.get('direction') or '').lower()
+    if not stored_dir or not auth_dir or stored_dir == auth_dir:
+        return
+    print(
+        f"  ⚠️ [D1 BIAS DRIFT] {symbol}: JSON={stored_dir.upper()} "
+        f"authoritative={auth_dir.upper()} "
+        f"strategy={auth.get('strategy_type')} macro={auth.get('macro_swings')}"
+    )
+
+
+def _rehydrate_stored_macro_bias(
+    detector: SMCDetector,
+    df_daily: Optional[pd.DataFrame],
+    stored: dict,
+    symbol: str,
+) -> dict:
+    """V62: refresh direction/strategy on preserved setups when authoritative D1 differs."""
+    if df_daily is None or df_daily.empty:
+        return stored
+    if stored.get('entry1_filled') or stored.get('status') in ('TRADE_OPEN', 'PARTIAL_OPEN'):
+        return stored
+
+    auth = detector.resolve_authoritative_d1_bias(df_daily, symbol=symbol)
+    _log_d1_bias_drift(symbol, stored, auth)
+
+    auth_dir = (auth.get('direction') or '').lower()
+    stored_dir = (stored.get('direction') or '').lower()
+    if not auth_dir or auth_dir == stored_dir:
+        return stored
+
+    out = dict(stored)
+    out['direction'] = auth_dir
+    out['d1_bias_direction'] = auth.get('d1_bias_direction', auth.get('trend'))
+    out['daily_bias'] = auth.get('daily_bias', auth.get('trend', 'neutral').upper())
+    out['strategy_type'] = auth.get('strategy_type', out.get('strategy_type'))
+    out['setup_type'] = _norm_strategy_type(out['strategy_type']).upper()
+
+    for key in list(out.keys()):
+        if key.startswith('radar_'):
+            out.pop(key, None)
+    for key in _RADAR_RESET_KEYS:
+        out.pop(key, None)
+    out.pop('EXECUTE_NOW', None)
+    out.pop('execute_now_trigger_tf', None)
+    out['h4_structure_locked'] = False
+    if out.get('status') not in ('TRADE_OPEN', 'PARTIAL_OPEN'):
+        out['status'] = 'WAITING_4H_CHOCH'
+
+    print(
+        f"  🔄 [V62 REHYDRATE] {symbol}: {stored_dir.upper()} → {auth_dir.upper()} "
+        f"({out.get('strategy_type')}) — radar reset for aligned 4H scan"
+    )
+    return out
+
+
+def _macro_authority_allows_identity_flip(
+    detector: SMCDetector,
+    df_daily: Optional[pd.DataFrame],
+    old: dict,
+    new_macro: dict,
+    symbol: str,
+) -> bool:
+    """
+    V62: Allow direction flip on pullback when authoritative D1 + macro swings
+    confirm the live scan — do not treat as noise (GBPCAD-class fix).
+    """
+    if df_daily is None or df_daily.empty:
+        return False
+    if not {'open', 'high', 'low', 'close'}.issubset(df_daily.columns):
+        return False
+    if not detector.macro_authority_supports_direction(
+        df_daily, new_macro.get('direction'), symbol=symbol,
+    ):
+        return False
+    old_dir = _identity_direction(old)
+    new_dir = _identity_direction(new_macro)
+    if not old_dir or not new_dir or old_dir == new_dir:
+        return False
+    if _structure_identity_breached(df_daily, old):
+        return True
+    auth = detector.resolve_authoritative_d1_bias(df_daily, symbol=symbol)
+    return auth.get('trend') == new_dir
+
+
 def _d1_identity_snapshot(
     detector: SMCDetector,
     df_daily: pd.DataFrame,
@@ -1124,6 +1212,10 @@ def _d1_identity_snapshot(
     )
     _latest, _strategy, current_trend, leg_choch = detector._resolve_d1_leg(
         df_daily, chochs, bos_list, debug=False, range_state=range_state,
+    )
+    _latest, _strategy, current_trend, leg_choch = detector._coerce_d1_bias_to_major_structure(
+        df_daily, sym, _latest, _strategy, current_trend, leg_choch,
+        chochs, bos_list, range_state,
     )
     if leg_choch is None:
         return {}
@@ -1243,6 +1335,15 @@ def _apply_setup_identity_lock(
         return out
 
     if contradicts:
+        if _macro_authority_allows_identity_flip(detector, df_daily, old, new_macro, sym):
+            out.update(_snapshot())
+            print(
+                f"  🔓 [V62 MACRO FLIP] {sym}: identity updated "
+                f"{old.get('direction', '').upper()} → "
+                f"{new_macro.get('direction', '').upper()} "
+                f"(macro authority + live D1)"
+            )
+            return out
         for key in _IDENTITY_MACRO_KEYS + _IDENTITY_BOUND_KEYS:
             if key in old and old.get(key) is not None:
                 out[key] = old[key]
@@ -1983,14 +2084,20 @@ def save_monitoring_setups(
         for sym in _soft_ttl_expired:
             existing_active.pop(sym, None)
 
-        # V40: Invalidează setup-uri stale când D1 bias contradictă direcția salvată
+        # V62: Invalidează sau re-hidratează setup-uri când D1 bias contradictă JSON
         _invalidated = []
         for sym, stored in list(existing_active.items()):
             st = stored.get('status', '')
             # V42.2: open trades — doar broker confirmă închiderea
             if st in ('PARTIAL_OPEN', 'TRADE_OPEN'):
                 continue
-            bias = daily_bias_map.get(sym)
+            df_d1 = symbol_df_daily_map.get(sym)
+            auth = (
+                detector.resolve_authoritative_d1_bias(df_d1, symbol=sym)
+                if df_d1 is not None and not df_d1.empty
+                else {}
+            )
+            bias = auth.get('trend') or daily_bias_map.get(sym)
             stored_dir = (stored.get('direction') or '').lower()
             if not stored_dir:
                 continue
@@ -2001,8 +2108,13 @@ def save_monitoring_setups(
             if bias in ('bullish', 'bearish'):
                 expected = 'buy' if bias == 'bullish' else 'sell'
                 if stored_dir != expected:
+                    if df_d1 is not None and not df_d1.empty:
+                        existing_active[sym] = _rehydrate_stored_macro_bias(
+                            detector, df_d1, stored, sym,
+                        )
+                        continue
                     _purge = True
-                    _reason = f"JSON {stored_dir.upper()} ≠ D1 {bias.upper()}"
+                    _reason = f"JSON {stored_dir.upper()} ≠ D1 {bias.upper()} (no df to rehydrate)"
 
             if _purge:
                 _invalidated.append(sym)
@@ -2015,6 +2127,7 @@ def save_monitoring_setups(
             price = symbol_price_map.get(sym)
             df_d1 = symbol_df_daily_map.get(sym)
             _d1_h, _d1_l = _d1_wick_from_df(df_d1)
+            stored = _rehydrate_stored_macro_bias(detector, df_d1, stored, sym)
             stored = _apply_v431_lifecycle_gates(stored, price, _d1_h, _d1_l)
             if stored.get('status') in _DEAD_STATUSES:
                 existing_active.pop(sym, None)
