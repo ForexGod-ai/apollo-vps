@@ -701,7 +701,7 @@ class DailyScanner:
                         )
                         _bias_dir = _auth.get('trend') or 'neutral'
                         _bf_strategy = _auth.get('strategy_type') or 'continuation'
-                        _bf_sig = (
+                        _bf_sig = _auth.get('d1_signal_type') or (
                             'CHoCH' if _bf_strategy == 'reversal' else 'BOS'
                         )
                         if _bias_dir not in ('bullish', 'bearish'):
@@ -1649,10 +1649,12 @@ def _rehydrate_poi_from_bos_range(
         sym, df_daily, chochs, bos_list, range_state
     )
     latest_signal, _strategy, current_trend, _leg = detector._resolve_d1_leg(
-        df_daily, chochs, bos_list, debug=False
+        df_daily, chochs, bos_list, debug=False, range_state=range_state,
     )
     if latest_signal is None:
         return setup_dict
+
+    _resolved_strategy = _strategy
 
     price = float(df_daily['close'].iloc[-1])
     adr = detector.build_active_dealing_range(
@@ -1665,7 +1667,7 @@ def _rehydrate_poi_from_bos_range(
         out['legacy_poi_bottom'] = out.get('poi_bottom')
 
     poi_res = detector.resolve_d1_poi(
-        df_daily, latest_signal, price, current_trend, 'continuation', adr,
+        df_daily, latest_signal, price, current_trend, _resolved_strategy, adr,
         symbol=sym,
         stored_poi_top=None,
         stored_poi_bottom=None,
@@ -1680,11 +1682,11 @@ def _rehydrate_poi_from_bos_range(
         out['adr_ll'] = float(adr.last_ll)
         out['adr_hl'] = float(adr.last_hl)
 
-    out['strategy_type'] = 'continuation'
-    out['setup_type'] = 'CONTINUATION'
+    out['strategy_type'] = _resolved_strategy
+    out['setup_type'] = _norm_strategy_type(_resolved_strategy).upper()
     out['poi_v43_source'] = poi_res.poi_source or poi_source_label
     out['preserve_stored_poi'] = False
-    out['d1_signal_type'] = 'BOS' if isinstance(latest_signal, BOS) else 'CHoCH'
+    out['d1_signal_type'] = 'CHoCH' if _resolved_strategy == 'reversal' else 'BOS'
     out['d1_signal_bar'] = getattr(latest_signal, 'index', None)
     out['d1_signal_price'] = getattr(latest_signal, 'break_price', None)
     out['d1_bias_direction'] = current_trend

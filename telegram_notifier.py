@@ -316,12 +316,12 @@ def _choch_monitoring_levels_line() -> str:
 def _strategy_chip_4h(strategy: str, d1_sig: str, signal_type: str) -> str:
     """REV (CHoCH) / CONT (BOS) for 4H structural alert caption."""
     strat_u = str(strategy or '').upper().replace('_COUNTER_W1', '')
-    sig = (signal_type or 'CHoCH').upper()
-    if sig == 'BOS' or strat_u.startswith('CONTINUATION') or strat_u.startswith('CONTINUITY'):
-        return 'CONT (BOS)'
     if strat_u.startswith('REVERSAL'):
         return 'REV (CHoCH)'
-    if str(d1_sig or '').upper() == 'BOS':
+    if strat_u.startswith('CONTINUATION') or strat_u.startswith('CONTINUITY'):
+        return 'CONT (BOS)'
+    sig = (signal_type or 'CHoCH').upper()
+    if sig == 'BOS' or str(d1_sig or '').upper() == 'BOS':
         return 'CONT (BOS)'
     return 'REV (CHoCH)'
 
