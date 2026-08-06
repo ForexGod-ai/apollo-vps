@@ -2529,6 +2529,61 @@ class SMCDetector:
             return level >= range_state.macro_range_low
         return False
 
+    def _protected_hl_level_after_leg(
+        self,
+        df: pd.DataFrame,
+        leg_choch: CHoCH,
+    ) -> Optional[float]:
+        """Ultimul HL (body low) format după leg bullish — podea structurală."""
+        if leg_choch is None or leg_choch.direction != 'bullish':
+            return None
+        swing_lows = self.detect_swing_lows(df)
+        post = [l for l in swing_lows if l.index > leg_choch.index]
+        if not post:
+            return None
+        hl = None
+        for i in range(1, len(post)):
+            if post[i].price > post[i - 1].price:
+                hl = post[i]
+        if hl is None:
+            hl = max(post, key=lambda l: l.price)
+        return self._swing_body_low(df, hl.index)
+
+    def _protected_lh_level_after_leg(
+        self,
+        df: pd.DataFrame,
+        leg_choch: CHoCH,
+    ) -> Optional[float]:
+        """Ultimul LH (body high) format după leg bearish — plafon structural."""
+        if leg_choch is None or leg_choch.direction != 'bearish':
+            return None
+        swing_highs = self.detect_swing_highs(df)
+        post = [h for h in swing_highs if h.index > leg_choch.index]
+        if not post:
+            return None
+        lh = None
+        for i in range(1, len(post)):
+            if post[i].price < post[i - 1].price:
+                lh = post[i]
+        if lh is None:
+            lh = min(post, key=lambda h: h.price)
+        return self._swing_body_high(df, lh.index)
+
+    def _leg_invalidated_by_protected_breach(
+        self,
+        df: pd.DataFrame,
+        leg_choch: CHoCH,
+    ) -> bool:
+        """Close curent sub HL / peste LH protejat — leg bullish/bearish mort structural."""
+        if leg_choch is None or df is None or len(df) == 0:
+            return False
+        close = float(df['close'].iloc[-1])
+        if leg_choch.direction == 'bullish':
+            level = self._protected_hl_level_after_leg(df, leg_choch)
+            return level is not None and close < level
+        level = self._protected_lh_level_after_leg(df, leg_choch)
+        return level is not None and close > level
+
     def _leg_superseded_by_opposite_major_flip(
         self,
         df: pd.DataFrame,
@@ -2550,17 +2605,7 @@ class SMCDetector:
                 continue
             if not self._major_reversal_confirmed(df, c):
                 continue
-            same_dir_bos = [
-                b for b in bos_list
-                if b.index > c.index and b.direction == c.direction
-            ]
-            if same_dir_bos:
-                return True
-            close = float(df['close'].iloc[-1])
-            if c.direction == 'bearish':
-                if close < c.break_price:
-                    return True
-            elif close > c.break_price:
+            if self._leg_choch_still_valid(df, c, bos_list, chochs):
                 return True
         return False
 
@@ -2571,23 +2616,38 @@ class SMCDetector:
         bos_list: List,
         chochs: Optional[List[CHoCH]] = None,
     ) -> bool:
-        """V42.5 + V63: leg active until reclaim, superseded flip, or same-dir BOS confirms."""
+        """V64.1: leg activ doar cât prețul respectă break + HL/LH protejat (fără BOS zombie)."""
         if df is None or len(df) == 0 or leg_choch is None:
             return False
         if chochs and self._leg_superseded_by_opposite_major_flip(
             df, leg_choch, chochs, bos_list,
         ):
             return False
+        close = float(df['close'].iloc[-1])
+        ref = float(leg_choch.break_price)
         same_dir_bos = [
             b for b in bos_list
             if b.index > leg_choch.index and b.direction == leg_choch.direction
         ]
         if same_dir_bos:
+            latest_bos = same_dir_bos[-1]
+            if leg_choch.direction == 'bullish':
+                ref = max(ref, float(latest_bos.break_price))
+            else:
+                ref = min(ref, float(latest_bos.break_price))
+        if leg_choch.direction == 'bullish':
+            protected = self._protected_hl_level_after_leg(df, leg_choch)
+            if protected is not None and close < protected:
+                return False
+            if same_dir_bos:
+                return True
+            return close >= ref
+        protected = self._protected_lh_level_after_leg(df, leg_choch)
+        if protected is not None and close > protected:
+            return False
+        if same_dir_bos:
             return True
-        close = float(df['close'].iloc[-1])
-        if leg_choch.direction == 'bearish':
-            return close < leg_choch.break_price
-        return close > leg_choch.break_price
+        return close <= ref
 
     @staticmethod
     def _dedupe_chochs_by_bar(chochs: List[CHoCH]) -> List[CHoCH]:
@@ -3043,11 +3103,26 @@ class SMCDetector:
             flipped = self._resolve_post_leg_flip(df, chochs, bos_list, leg_choch, debug=debug)
             if flipped[0] is not None:
                 return flipped
+            if (
+                leg_choch.direction == 'bullish'
+                and self._leg_invalidated_by_protected_breach(df, leg_choch)
+            ):
+                return leg_choch, 'reversal', 'bearish', leg_choch
             leg_choch = self._find_leg_choch(df, chochs, bos_list)
 
         chochs, bos_list = self._demote_post_leg_choch_to_bos(leg_choch, chochs, bos_list)
 
         if leg_choch is None:
+            flips = self._true_choch_flips(chochs)
+            if flips:
+                f = flips[-1]
+                st = (
+                    'reversal'
+                    if self._is_major_structural_choch(f)
+                    and self._major_reversal_confirmed(df, f)
+                    else 'continuation'
+                )
+                return f, st, f.direction, f
             if bos_list:
                 b = bos_list[-1]
                 return b, 'continuation', b.direction, None

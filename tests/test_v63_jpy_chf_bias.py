@@ -73,9 +73,10 @@ def test_audjpy_bearish_choch_moment_is_reversal_sell():
     assert strategy == "reversal"
 
 
-def test_usdchf_canonical_continuation_buy():
+def test_usdchf_bearish_when_close_below_protected_hl():
+    """Close sub HL protejat → leg bullish mort, bearish@246 cu BOS → CONTINUATION SELL."""
     df = _load_d1("USDCHF")
     auth = _auth("USDCHF", df)
-    assert auth["direction"] == "buy", auth
+    assert auth["direction"] == "sell", auth
     assert auth["strategy_type"] == "continuation", auth
-    assert auth["trend"] == "bullish", auth
+    assert auth["trend"] == "bearish", auth
