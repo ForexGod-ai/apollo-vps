@@ -1637,6 +1637,19 @@ class SMCDetector:
 
         return major_highs, major_lows
 
+    @staticmethod
+    def _last_swing_before(
+        bar_index: int,
+        preferred: List[SwingPoint],
+        fallback: List[SwingPoint],
+    ) -> Optional[SwingPoint]:
+        """V64: ultimul pivot înainte de bar — preferă majori, altfel geometrici."""
+        prior = [s for s in preferred if s.index < bar_index]
+        if prior:
+            return prior[-1]
+        prior_fb = [s for s in fallback if s.index < bar_index]
+        return prior_fb[-1] if prior_fb else None
+
     def detect_choch_and_bos(self, df: pd.DataFrame) -> Tuple[List[CHoCH], List[BOS]]:
         """🎯 GLITCH IN MATRIX - CHoCH & BOS DETECTION V24.0 (ORGANIC HH/HL/LH/LL)
 
@@ -1657,12 +1670,12 @@ class SMCDetector:
 
         swing_highs = self.detect_swing_highs(df)
         swing_lows = self.detect_swing_lows(df)
-        swing_highs, swing_lows = self.filter_major_swings(df, swing_highs, swing_lows)
+        major_highs, major_lows = self.filter_major_swings(df, swing_highs, swing_lows)
 
         if len(swing_highs) < 2 or len(swing_lows) < 2:
             return chochs, bos_list
 
-        # 🔥 INTERLEAVE swings (merge highs and lows in chronological order)
+        # V64: iterate ALL geometric swings; prev_high/prev_low for breaks prefer major pivots.
         all_swings = []
         for sh in swing_highs:
             all_swings.append(('high', sh))
@@ -1670,7 +1683,6 @@ class SMCDetector:
             all_swings.append(('low', sl))
         all_swings.sort(key=lambda x: x[1].index)
 
-        # V63: prev_trend from macro HH/HL/LH/LL on major pivots first.
         prev_trend = self.macro_trend_from_swings(df)
         if prev_trend == 'neutral':
             init_highs = swing_highs[:2]
@@ -1685,26 +1697,15 @@ class SMCDetector:
 
         for i in range(1, len(all_swings)):
             swing_type, swing = all_swings[i]
-            # V24.0: prev_trend NU se recalculează periodic din bare recente.
-            # El evoluează ORGANIC: rămâne fix până la CHoCH confirmat.
-
-            # ─────────────────────────────────────────────────────────────────────────
-            # 🆕 V9.0 V1: SEGREGARE High-vs-High / Low-vs-Low (eliminat interleaved)
-            # Comparăm ALWAYS ultimul HIGH cu ultimul HIGH anterior, NU cu o LOW adiacentă.
-            # Același principiu pentru LOW-vs-LOW.
-            # Interleaved comparison (high vs prev low) genera FALSE POSITIVES garantate.
-            # ─────────────────────────────────────────────────────────────────────────
 
             if swing_type == 'high':
-                # Găsim ultimul HIGH anterior (nu ultimul swing indiferent de tip)
                 prev_high = next(
                     (s for t, s in reversed(all_swings[:i]) if t == 'high'),
-                    None
+                    None,
                 )
                 if prev_high is None:
-                    continue  # Nu avem referință validă pentru High-vs-High
+                    continue
 
-                # 🎯 HH = Higher High vs prev HIGH
                 if swing.price > prev_high.price:
                     # V36.0 FIX B1: BODY CLOSE RULE CORECTATA — close > BODY_HIGH (nu > WICK)
                     # Motivul bug-ului V22: _prev_wick_h = prev_high.price = df['high'] (wick absolut)
@@ -1774,15 +1775,13 @@ class SMCDetector:
                         ))
 
             elif swing_type == 'low':
-                # Găsim ultimul LOW anterior (nu ultimul swing indiferent de tip)
                 prev_low = next(
                     (s for t, s in reversed(all_swings[:i]) if t == 'low'),
-                    None
+                    None,
                 )
                 if prev_low is None:
-                    continue  # Nu avem referință validă pentru Low-vs-Low
+                    continue
 
-                # 🎯 LL = Lower Low vs prev LOW
                 if swing.price < prev_low.price:
                     # V36.0 FIX B1: BODY CLOSE RULE CORECTATA — close < BODY_LOW (nu < WICK)
                     # Motivul bug-ului V22: _prev_wick_l = prev_low.price = df['low'] (wick absolut)
@@ -2741,14 +2740,16 @@ class SMCDetector:
         return float(lh.price) > float(latest_bos.break_price)
 
     def macro_trend_from_swings(self, df: pd.DataFrame) -> str:
-        """HH+HL vs LH+LL pe pivoți majori filtrați (Faza A)."""
+        """HH+HL vs LH+LL — majori dacă disponibili, altfel geometrici recenti (V64 JPY fix)."""
         swing_highs = self.detect_swing_highs(df)
         swing_lows = self.detect_swing_lows(df)
-        swing_highs, swing_lows = self.filter_major_swings(df, swing_highs, swing_lows)
-        if len(swing_highs) < 3 or len(swing_lows) < 3:
+        major_highs, major_lows = self.filter_major_swings(df, swing_highs, swing_lows)
+        trend_highs = major_highs if len(major_highs) >= 3 else swing_highs
+        trend_lows = major_lows if len(major_lows) >= 3 else swing_lows
+        if len(trend_highs) < 3 or len(trend_lows) < 3:
             return 'neutral'
-        recent_highs = swing_highs[-3:]
-        recent_lows = swing_lows[-3:]
+        recent_highs = trend_highs[-3:]
+        recent_lows = trend_lows[-3:]
         hh_count = sum(
             1 for i in range(1, len(recent_highs))
             if recent_highs[i].price > recent_highs[i - 1].price

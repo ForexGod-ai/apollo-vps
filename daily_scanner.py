@@ -434,7 +434,7 @@ class DailyScanner:
                     # D1 stabilește DIRECȚIA. 4H confirmă ENTRY-UL în aceeași direcție.
                     # Un CHoCH bullish pe 4H într-un D1 bearish = retracement intern, nu setup.
                     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-                    d1_direction = setup.daily_choch.direction if hasattr(setup, 'daily_choch') and setup.daily_choch else None
+                    d1_direction = _setup_d1_trend(setup) if hasattr(setup, 'daily_choch') and setup.daily_choch else None
                     h4_direction = setup.h4_choch.direction if hasattr(setup, 'h4_choch') and setup.h4_choch else None
 
                     if d1_direction and h4_direction and h4_direction != d1_direction:
@@ -507,7 +507,7 @@ class DailyScanner:
                     try:
                         setup.w1_bias = w1_result.get('bias', 'NEUTRAL')
                         setup.w1_last_bos_price = w1_result.get('last_bos_price')
-                        d1_dir = setup.daily_choch.direction
+                        d1_dir = _setup_d1_trend(setup)
                         w1_bias_lower = (w1_result.get('bias') or 'NEUTRAL').lower()
                         if w1_bias_lower != 'neutral' and w1_bias_lower != d1_dir:
                             print(
@@ -529,7 +529,7 @@ class DailyScanner:
                     # față de entry — eliminăm micro-pivoții / inside bars ca țintă.
                     try:
                         _current_px = float(df_daily['close'].iloc[-1])
-                        _d1_dir = setup.daily_choch.direction  # 'bullish' / 'bearish'
+                        _d1_dir = _setup_d1_trend(setup)  # 'bullish' / 'bearish'
                         # Calculăm ATR Daily (14 bare) pentru filtrul de distanță minimă
                         _tr = pd.concat([
                             df_daily['high'] - df_daily['low'],
@@ -584,7 +584,7 @@ class DailyScanner:
                     #   LONG:  close < daily_swing_low  (baza sparta -> structura bullish invalida)
                     #   SHORT: close > daily_swing_high (plafonul spart -> structura bearish invalida)
                     try:
-                        _gate1_dir = setup.daily_choch.direction  # 'bullish' / 'bearish'
+                        _gate1_dir = _setup_d1_trend(setup)  # 'bullish' / 'bearish'
                         _gate1_px  = float(df_daily['close'].iloc[-1])
                         if _gate1_dir == 'bullish':
                             _gate1_lows  = self.smc_detector.detect_swing_lows(df_daily)
@@ -611,7 +611,7 @@ class DailyScanner:
                             setup.swap_long        = swap_info['swap_long']
                             setup.swap_short       = swap_info['swap_short']
                             setup.swap_triple_day  = swap_info['swap_triple_day']
-                            direction_str_swap = "buy" if setup.daily_choch.direction == 'bullish' else "sell"
+                            direction_str_swap = _setup_trade_direction(setup)
                             relevant_swap = setup.swap_long if direction_str_swap == 'buy' else setup.swap_short
                             swap_label = "✅ POZITIV (credit)" if relevant_swap > 0 else "⚠️ NEGATIV (cost)"
                             print(f"   💱 CARRY: long={setup.swap_long:+.4f} short={setup.swap_short:+.4f} triple={setup.swap_triple_day} → {swap_label}")
@@ -623,7 +623,7 @@ class DailyScanner:
                         print(f"   💱 CARRY: eroare fetch swap — {swap_ex}")
                     
                     # V10.2: Log structural validation status
-                    direction_str = "LONG" if setup.daily_choch.direction == 'bullish' else "SHORT"
+                    direction_str = "LONG" if _setup_d1_trend(setup) == 'bullish' else "SHORT"
                     setup_status = getattr(setup, 'status', 'MONITORING')
                     entry_str = f"{setup.entry_price:.5f}" if setup.entry_price else "N/A"
                     sl_str = f"{setup.stop_loss:.5f}" if setup.stop_loss else "N/A"
@@ -641,9 +641,7 @@ class DailyScanner:
                     # V15.1 DEDUP: alertă Telegram doar setup NOU sau READY (nu re-evaluate MONITORING)
                     if self.scanner_settings.get('telegram_alerts', True):
                         is_reevaluation = symbol in monitoring_symbols
-                        _live_dir = (
-                            'buy' if setup.daily_choch.direction == 'bullish' else 'sell'
-                        )
+                        _live_dir = _setup_trade_direction(setup)
                         _stored_dir = (
                             existing_setups_by_symbol.get(symbol, {}).get('direction') or ''
                         ).lower()
@@ -839,7 +837,7 @@ class DailyScanner:
         filtered_setups = []
         skipped_conflict = []
         for s in setups_found:
-            setup_dir = "buy" if s.daily_choch.direction == "bullish" else "sell"
+            setup_dir = _setup_trade_direction(s)
             open_dir = open_position_direction.get(s.symbol)
             if open_dir and open_dir != setup_dir:
                 # CONFLICT: scanner found opposite direction to open position
@@ -965,7 +963,7 @@ class DailyScanner:
                 logger.warning(f"[V59] Could not build report from JSON: {_js_err}")
                 _json_syms = set()
                 for s in setups_found:
-                    direction_str = "buy" if s.daily_choch.direction == 'bullish' else "sell"
+                    direction_str = _setup_trade_direction(s)
                     setup_symbols.append({
                         'symbol': s.symbol,
                         'direction': direction_str,
@@ -1116,6 +1114,28 @@ def _v43_fields_from_setup(setup: TradeSetup) -> dict:
         "poi_v43_source": getattr(setup, 'poi_v43_source', None),
         "structural_breach": bool(getattr(setup, 'structural_breach', False)),
     }
+
+
+def _setup_d1_trend(setup: TradeSetup) -> str:
+    """V64 canonical D1 trend — d1_bias_direction, not raw latest signal."""
+    raw = getattr(setup, 'd1_bias_direction', None)
+    if not raw and getattr(setup, 'daily_choch', None) is not None:
+        raw = setup.daily_choch.direction
+    d = str(raw or '').lower()
+    if d in ('buy', 'long', 'bullish'):
+        return 'bullish'
+    if d in ('sell', 'short', 'bearish'):
+        return 'bearish'
+    return 'neutral'
+
+
+def _setup_trade_direction(setup: TradeSetup) -> str:
+    trend = _setup_d1_trend(setup)
+    if trend == 'bullish':
+        return 'buy'
+    if trend == 'bearish':
+        return 'sell'
+    return ''
 
 
 def _identity_direction(entry: dict) -> str:
@@ -1358,14 +1378,30 @@ def _apply_setup_identity_lock(
         return out
 
     if contradicts:
+        auth = detector.resolve_authoritative_d1_bias(df_daily, symbol=sym) if (
+            df_daily is not None and not df_daily.empty
+        ) else {}
+        auth_trend = auth.get('trend')
+        old_dir = _identity_direction(old)
+        new_dir = _identity_direction(new_macro)
+        # V64: authoritative D1 always wins over locked identity on direction flip
+        if auth_trend and auth_trend in ('bullish', 'bearish') and auth_trend != old_dir:
+            out.update(_snapshot())
+            out['direction'] = auth.get('direction') or ('buy' if auth_trend == 'bullish' else 'sell')
+            out['d1_bias_direction'] = auth_trend
+            out['daily_bias'] = auth.get('daily_bias', auth_trend.upper())
+            out['strategy_type'] = auth.get('strategy_type', out.get('strategy_type'))
+            out['setup_type'] = _norm_strategy_type(out['strategy_type']).upper()
+            print(
+                f"  🔓 [V64 AUTH FLIP] {sym}: identity {old_dir.upper()} → "
+                f"{auth_trend.upper()} (canonical D1 authority)"
+            )
+            return out
         allow_flip = _macro_authority_allows_identity_flip(
             detector, df_daily, old, new_macro, sym,
         )
-        if not allow_flip and df_daily is not None and not df_daily.empty:
-            auth = detector.resolve_authoritative_d1_bias(df_daily, symbol=sym)
-            want_trend = _identity_direction(new_macro)
-            if want_trend and auth.get('trend') == want_trend:
-                allow_flip = True
+        if not allow_flip and auth_trend and new_dir and auth_trend == new_dir:
+            allow_flip = True
         if allow_flip:
             out.update(_snapshot())
             print(
@@ -2183,7 +2219,7 @@ def save_monitoring_setups(
                 _skip_audit[setup.symbol] = f"scan_status={getattr(setup, 'status', '?')}_not_saveable"
                 continue
 
-            direction = "buy" if setup.daily_choch.direction == "bullish" else "sell"
+            direction = _setup_trade_direction(setup)
 
             # Conflict guard
             open_dir = open_position_dir_map.get(setup.symbol)
@@ -2380,7 +2416,7 @@ def main():
     if setups:
         print("\n📋 SETUPS SUMMARY:")
         for i, setup in enumerate(setups, 1):
-            direction = "LONG" if setup.daily_choch.direction == 'bullish' else "SHORT"
+            direction = "LONG" if _setup_d1_trend(setup) == 'bullish' else "SHORT"
             status = f"[{setup.status}]"
             # V8.4: Display strategy type (REVERSAL or CONTINUITY)
             strategy = setup.strategy_type.upper() if hasattr(setup, 'strategy_type') else "UNKNOWN"

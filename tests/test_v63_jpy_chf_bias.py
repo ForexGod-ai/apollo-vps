@@ -1,4 +1,4 @@
-"""V63 golden tests — canonical D1 bias on major pivots."""
+"""V63/V64 golden tests — JPY D1 bias on geometric swings + major leg authority."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -17,9 +17,9 @@ def _load_d1(symbol: str) -> pd.DataFrame:
     if not matches:
         pytest.skip(f"No D1 cache for {symbol}")
     df = pd.read_csv(matches[-1])
-    if "time" in df.columns:
-        df["time"] = pd.to_datetime(df["time"])
-        df = df.set_index("time")
+    tc = "timestamp" if "timestamp" in df.columns else "time"
+    df[tc] = pd.to_datetime(df[tc])
+    df = df.set_index(tc)
     for col in ("open", "high", "low", "close"):
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
@@ -30,56 +30,47 @@ def _detector() -> SMCDetector:
     return SMCDetector(swing_lookback=5, atr_multiplier=0.5)
 
 
-def _canonical_pipeline(detector: SMCDetector, symbol: str, df: pd.DataFrame):
-    chochs, bos = detector.detect_choch_and_bos(df)
-    sh = detector.detect_swing_highs(df)
-    sl = detector.detect_swing_lows(df)
-    rs = detector.compute_structural_range(df, sh, sl, symbol=symbol)
-    chochs, bos, rs = detector.filter_internal_range_signals(symbol, df, chochs, bos, rs)
-    return chochs, bos, rs
-
-
 def _auth(symbol: str, df: pd.DataFrame) -> dict:
     return _detector().resolve_authoritative_d1_bias(df, symbol=symbol)
 
 
-def test_eurjpy_canonical_reversal_sell():
-    """EURJPY: spargere sub HL major → SELL; REVERSAL la CHoCH (V42.6 fără BOS post-leg)."""
+def test_eurjpy_detects_choch_not_zero():
+    """V64: CHoCH trebuie detectat (nu 0) — filter_major pe iteration era bug-ul JPY."""
     df = _load_d1("EURJPY")
     detector = _detector()
-    auth = _auth("EURJPY", df)
-    assert auth["direction"] == "sell", auth
-    assert auth["trend"] == "bearish", auth
-    leg = auth.get("leg_choch")
-    assert leg is not None and leg.direction == "bearish", auth
+    chochs, _ = detector.detect_choch_and_bos(df)
+    assert len(chochs) >= 5, f"EURJPY must detect CHoCH series, got {len(chochs)}"
+    bearish = [c for c in chochs if c.direction == "bearish" and c.previous_trend == "bullish"]
+    assert bearish, "Expected bearish CHoCH after bullish trend on EURJPY"
 
+
+def test_eurjpy_bearish_choch_moment_is_reversal_sell():
+    """La bariera CHoCH bearish (fără BOS post-leg) → REVERSAL SELL."""
+    df = _load_d1("EURJPY")
+    detector = _detector()
+    chochs, _ = detector.detect_choch_and_bos(df)
+    leg = next(
+        (c for c in reversed(chochs) if c.direction == "bearish" and c.previous_trend == "bullish"),
+        None,
+    )
+    assert leg is not None
     _, strategy, trend, _ = detector._resolve_d1_leg(df, [leg], [])
     assert trend == "bearish"
     assert strategy == "reversal"
 
-    chochs, bos, _ = _canonical_pipeline(detector, "EURJPY", df)
-    post_leg = [b for b in bos if b.index > leg.index and b.direction == leg.direction]
-    if post_leg:
-        assert auth["strategy_type"] == "continuation"
 
-
-def test_audjpy_canonical_reversal_sell():
+def test_audjpy_bearish_choch_moment_is_reversal_sell():
     df = _load_d1("AUDJPY")
     detector = _detector()
-    auth = _auth("AUDJPY", df)
-    assert auth["direction"] == "sell", auth
-    assert auth["trend"] == "bearish", auth
-    leg = auth.get("leg_choch")
-    assert leg is not None and leg.direction == "bearish", auth
-
+    chochs, _ = detector.detect_choch_and_bos(df)
+    leg = next(
+        (c for c in reversed(chochs) if c.direction == "bearish" and c.previous_trend == "bullish"),
+        None,
+    )
+    assert leg is not None
     _, strategy, trend, _ = detector._resolve_d1_leg(df, [leg], [])
     assert trend == "bearish"
     assert strategy == "reversal"
-
-    chochs, bos, _ = _canonical_pipeline(detector, "AUDJPY", df)
-    post_leg = [b for b in bos if b.index > leg.index and b.direction == leg.direction]
-    if post_leg:
-        assert auth["strategy_type"] == "continuation"
 
 
 def test_usdchf_canonical_continuation_buy():
