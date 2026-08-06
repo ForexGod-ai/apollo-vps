@@ -13,13 +13,18 @@ CACHE = ROOT / "data" / "historical_cache"
 
 
 def _load_d1(symbol: str) -> pd.DataFrame:
-    matches = sorted(CACHE.glob(f"{symbol}_D1_*.csv"), key=lambda p: p.stat().st_mtime)
+    matches = list(CACHE.glob(f"{symbol}_D1_*.csv"))
     if not matches:
         pytest.skip(f"No D1 cache for {symbol}")
-    df = pd.read_csv(matches[-1])
-    tc = "timestamp" if "timestamp" in df.columns else "time"
-    df[tc] = pd.to_datetime(df[tc])
-    df = df.set_index(tc)
+    # Prefer longest history (stable CHoCH detection) over newest mtime alone
+    best = max(matches, key=lambda p: p.stat().st_size)
+    df = pd.read_csv(best)
+    if "time" in df.columns:
+        df["time"] = pd.to_datetime(df["time"])
+        df = df.set_index("time")
+    elif "timestamp" in df.columns:
+        df["timestamp"] = pd.to_datetime(df["timestamp"])
+        df = df.set_index("timestamp")
     for col in ("open", "high", "low", "close"):
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
@@ -74,9 +79,28 @@ def test_audjpy_bearish_choch_moment_is_reversal_sell():
 
 
 def test_usdchf_bearish_when_close_below_protected_hl():
-    """Close sub HL protejat → leg bullish mort, bearish@246 cu BOS → CONTINUATION SELL."""
+    """Close sub HL protejat → leg bullish mort, bearish CHoCH flip → REVERSAL SELL."""
     df = _load_d1("USDCHF")
     auth = _auth("USDCHF", df)
     assert auth["direction"] == "sell", auth
-    assert auth["strategy_type"] == "continuation", auth
+    assert auth["strategy_type"] == "reversal", auth
     assert auth["trend"] == "bearish", auth
+    assert auth["d1_signal_type"] == "CHoCH", auth
+
+
+def test_usdjpy_crash_leg_is_reversal_not_continuation():
+    """JPY crash: bearish CHoCH flip rămâne REVERSAL chiar cu BOS post-leg."""
+    df = _load_d1("USDJPY")
+    auth = _auth("USDJPY", df)
+    assert auth["trend"] == "bearish", auth
+    assert auth["strategy_type"] == "reversal", auth
+    assert auth["d1_signal_type"] == "CHoCH", auth
+
+
+def test_audjpy_bearish_flip_reversal_over_orphan_bos():
+    """AUDJPY: flip bearish recent bate BOS orphan vechi → REVERSAL."""
+    df = _load_d1("AUDJPY")
+    auth = _auth("AUDJPY", df)
+    assert auth["trend"] == "bearish", auth
+    assert auth["strategy_type"] == "reversal", auth
+    assert auth["d1_signal_type"] == "CHoCH", auth

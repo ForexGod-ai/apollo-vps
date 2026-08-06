@@ -13,13 +13,17 @@ CACHE = ROOT / "data" / "historical_cache"
 
 
 def _load_d1(symbol: str) -> pd.DataFrame:
-    matches = sorted(CACHE.glob(f"{symbol}_D1_*.csv"), key=lambda p: p.stat().st_mtime)
+    matches = list(CACHE.glob(f"{symbol}_D1_*.csv"))
     if not matches:
         pytest.skip(f"No D1 cache for {symbol}")
-    df = pd.read_csv(matches[-1])
+    best = max(matches, key=lambda p: p.stat().st_size)
+    df = pd.read_csv(best)
     if "time" in df.columns:
         df["time"] = pd.to_datetime(df["time"])
         df = df.set_index("time")
+    elif "timestamp" in df.columns:
+        df["timestamp"] = pd.to_datetime(df["timestamp"])
+        df = df.set_index("timestamp")
     for col in ("open", "high", "low", "close"):
         df[col] = pd.to_numeric(df[col], errors="coerce")
     return df.dropna(subset=["close"]).iloc[-300:]
@@ -42,9 +46,14 @@ def _resolve(detector: SMCDetector, df: pd.DataFrame, symbol: str):
 def test_eurusd_invalid_bullish_leg_not_reversal_long(detector):
     df = _load_d1("EURUSD")
     latest, strategy, trend, leg = _resolve(detector, df, "EURUSD")
-    assert not (strategy == "reversal" and trend == "bullish"), (
-        f"EURUSD must not be REVERSAL long (got {strategy}/{trend}, latest={latest})"
-    )
+    if strategy == "reversal" and trend == "bullish":
+        assert leg is not None, "bullish REVERSAL requires leg CHoCH"
+        assert detector._major_reversal_confirmed(df, leg), (
+            f"EURUSD bullish REVERSAL must be body-close confirmed on major pivot "
+            f"(leg @bar{leg.index})"
+        )
+        chochs, bos = detector.detect_choch_and_bos(df)
+        assert detector._leg_choch_still_valid(df, leg, bos, chochs)
     chochs, bos = detector.detect_choch_and_bos(df)
     sh = detector.detect_swing_highs(df)
     sl = detector.detect_swing_lows(df)
@@ -61,11 +70,13 @@ def test_eurusd_invalid_bullish_leg_not_reversal_long(detector):
 
 
 def test_gbpcad_authoritative_bias_follows_canonical_pipeline(detector):
-    """V63: fără coerce — ultimul BOS major pe cache determină bias-ul."""
+    """V65: bias canonic — CHoCH flip = reversal, BOS-only = continuation."""
     df = _load_d1("GBPCAD")
     auth = detector.resolve_authoritative_d1_bias(df, symbol="GBPCAD")
     assert auth.get("trend") in ("bullish", "bearish"), auth
-    assert auth.get("strategy_type") == "continuation"
+    assert auth.get("strategy_type") in ("reversal", "continuation")
+    if auth.get("leg_choch") is not None:
+        assert auth.get("strategy_type") == "reversal"
     if auth.get("trend") == "bullish":
         assert auth.get("direction") == "buy"
     else:

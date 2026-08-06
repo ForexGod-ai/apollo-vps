@@ -2674,6 +2674,36 @@ class SMCDetector:
             if c.previous_trend and c.previous_trend != c.direction
         ]
 
+    @staticmethod
+    def _classify_d1_strategy(
+        latest_signal: Optional[object],
+        leg_choch: Optional[CHoCH],
+    ) -> str:
+        """
+        V65 SMC canon (body-close CHoCH/BOS):
+        - CHoCH flip (HL/LH lichidat) = REVERSAL — o singură dată la schimbarea de caracter
+        - BOS fără leg CHoCH = CONTINUATION — trend continuity (HH/LL break)
+        Post-leg BOS nu re-etichetează un leg născut din CHoCH.
+        """
+        if leg_choch is not None:
+            return 'reversal'
+        if isinstance(latest_signal, CHoCH):
+            return 'reversal'
+        return 'continuation'
+
+    @staticmethod
+    def _d1_signal_for_strategy(
+        latest_signal: Optional[object],
+        leg_choch: Optional[CHoCH],
+        strategy_type: str,
+    ) -> Optional[object]:
+        """Semnal afișat: CHoCH pentru reversal, BOS/CHoCH pentru continuation."""
+        if strategy_type == 'reversal' and leg_choch is not None:
+            return leg_choch
+        if strategy_type == 'reversal' and isinstance(latest_signal, CHoCH):
+            return latest_signal
+        return latest_signal
+
     def _demote_post_leg_choch_to_bos(
         self,
         leg_choch: CHoCH,
@@ -2891,21 +2921,6 @@ class SMCDetector:
         ]
         if hist_chochs:
             new_leg = hist_chochs[-1]
-            post_bos = [
-                b for b in bos_list
-                if b.index > new_leg.index and b.direction == opposite
-            ]
-            if post_bos:
-                latest_signal = post_bos[-1]
-                msg = (
-                    f"   🔄 [V58 HIST FLIP] dead {dead_leg.direction.upper()} leg @bar{dead_leg.index} "
-                    f"→ {opposite.upper()} CONTINUATION BOS @bar{latest_signal.index} (historical)"
-                )
-                if debug:
-                    print(msg)
-                else:
-                    print(msg)
-                return latest_signal, 'continuation', opposite, new_leg
             msg = (
                 f"   🔄 [V58 HIST FLIP] dead {dead_leg.direction.upper()} leg @bar{dead_leg.index} "
                 f"→ {opposite.upper()} REVERSAL CHoCH @bar{new_leg.index} (historical)"
@@ -2925,7 +2940,7 @@ class SMCDetector:
         dead_leg: CHoCH,
         debug: bool = False,
     ) -> Tuple[Optional[object], str, str, Optional[CHoCH]]:
-        """V57 + V64.2: opposite CHoCH post-leg → V42.6 (BOS=CONT, fără BOS=REV)."""
+        """V57 + V65: opposite CHoCH post-leg = REVERSAL (body-close flip)."""
         opposite = 'bearish' if dead_leg.direction == 'bullish' else 'bullish'
         post_chochs = [
             c for c in chochs
@@ -2936,23 +2951,6 @@ class SMCDetector:
         ]
         if post_chochs:
             new_leg = post_chochs[-1]
-            post_bos = [
-                b for b in bos_list
-                if b.index > new_leg.index and b.direction == opposite
-            ]
-            if post_bos:
-                latest_signal = post_bos[-1]
-                if debug:
-                    print(
-                        f"   🔄 [V57 LEG FLIP] dead {dead_leg.direction.upper()} leg @bar{dead_leg.index} "
-                        f"→ {opposite.upper()} CONTINUATION BOS @bar{latest_signal.index}"
-                    )
-                else:
-                    print(
-                        f"   🔄 [V57 LEG FLIP] dead {dead_leg.direction.upper()} leg @bar{dead_leg.index} "
-                        f"→ {opposite.upper()} CONTINUATION @bar{latest_signal.index}"
-                    )
-                return latest_signal, 'continuation', opposite, new_leg
             if debug:
                 print(
                     f"   🔄 [V57 LEG FLIP] dead {dead_leg.direction.upper()} leg @bar{dead_leg.index} "
@@ -3052,17 +3050,21 @@ class SMCDetector:
         latest, strategy_type, current_trend, leg_choch = self._resolve_d1_leg(
             df, chochs, bos_list, range_state=range_state,
         )
+        strategy_type = self._classify_d1_strategy(latest, leg_choch)
+        latest = self._d1_signal_for_strategy(latest, leg_choch, strategy_type)
         macro_swings = self.macro_trend_from_swings(df)
         if current_trend == 'neutral' and macro_swings != 'neutral':
             current_trend = macro_swings
-            strategy_type = 'continuation'
+            if leg_choch is None:
+                strategy_type = 'continuation'
         if current_trend == 'neutral':
             fallback = self.resolve_structural_bias_fallback(
                 df, chochs, bos_list, range_state,
             )
             if fallback != 'neutral':
                 current_trend = fallback
-                strategy_type = 'continuation'
+                if leg_choch is None:
+                    strategy_type = 'continuation'
 
         trade_dir = ''
         if current_trend == 'bullish':
@@ -3115,7 +3117,7 @@ class SMCDetector:
         range_state: Optional[StructuralRangeState] = None,
     ) -> Optional[Tuple[Optional[object], str, str, Optional[CHoCH]]]:
         """
-        V64.3: Autoritate = ultimul CHoCH flip + V42.6 (fără BOS post-leg → REVERSAL).
+        V65: ultimul CHoCH flip (body-close) = REVERSAL; BOS orphan = CONTINUATION.
         """
         flips = self._true_choch_flips(self._dedupe_chochs_by_bar(chochs))
         if not flips:
@@ -3124,12 +3126,7 @@ class SMCDetector:
         close = float(df['close'].iloc[-1])
 
         def _pack_leg(flip: CHoCH) -> Tuple[Optional[object], str, str, CHoCH]:
-            post_bos = [
-                b for b in bos_list
-                if b.index > flip.index and b.direction == flip.direction
-            ]
-            if post_bos:
-                return post_bos[-1], 'continuation', flip.direction, flip
+            # V65: CHoCH = reversal; BOS post-leg confirmă trendul, nu schimbă eticheta
             return flip, 'reversal', flip.direction, flip
 
         def _bearish_authority() -> Optional[Tuple[Optional[object], str, str, Optional[CHoCH]]]:
@@ -3138,6 +3135,9 @@ class SMCDetector:
                 if not self._leg_choch_still_valid(df, bf, bos_list, chochs):
                     continue
                 return _pack_leg(bf)
+            # V65: flip bearish recent (HL lichidat) bate BOS orphan vechi
+            if bear_flips:
+                return _pack_leg(bear_flips[-1])
             aligned = [b for b in bos_list if b.direction == 'bearish']
             if aligned:
                 return aligned[-1], 'continuation', 'bearish', None
@@ -3146,6 +3146,23 @@ class SMCDetector:
         latest = flips[-1]
 
         if latest.direction == 'bullish':
+            # V65: dead-cat bounce CHoCH după bearish reversal fără body-close peste LH
+            bear_before = [f for f in flips if f.direction == 'bearish' and f.index < latest.index]
+            if bear_before:
+                last_bear = bear_before[-1]
+                swing_h = self.detect_swing_highs(df)
+                lh_reclaimed = False
+                for i in range(len(swing_h) - 1, 0, -1):
+                    if swing_h[i].index <= last_bear.index:
+                        continue
+                    if swing_h[i].price < swing_h[i - 1].price:
+                        lh_body = self._swing_body_high(df, swing_h[i].index)
+                        if self._bar_body_close_above(df, last_bar, lh_body):
+                            lh_reclaimed = True
+                        break
+                if not lh_reclaimed:
+                    return _pack_leg(last_bear)
+
             reject_bull = False
             if (
                 range_state
@@ -3188,6 +3205,10 @@ class SMCDetector:
                 bear = _bearish_authority()
                 if bear:
                     return bear
+            else:
+                bear = _bearish_authority()
+                if bear:
+                    return bear
             return None
 
         return _pack_leg(latest)
@@ -3201,9 +3222,10 @@ class SMCDetector:
         range_state: Optional[StructuralRangeState] = None,
     ) -> Tuple[Optional[object], str, str, Optional[CHoCH]]:
         """
-        V63 canonical + V42.6:
-        - leg CHoCH macro-valid + >=1 BOS post-leg same-dir → CONTINUATION
-        - leg CHoCH fără BOS post-leg → REVERSAL
+        V65 SMC canon (body-close):
+        - CHoCH flip (HL/LH lichidat) → REVERSAL
+        - BOS same-trend (HH/LL break) → CONTINUATION
+        Post-leg BOS nu promovează CHoCH la CONT.
         """
         chochs = self._dedupe_chochs_by_bar(chochs)
 
@@ -3228,7 +3250,7 @@ class SMCDetector:
 
         chochs, bos_list = self._demote_post_leg_choch_to_bos(leg_choch, chochs, bos_list)
 
-        # V64.2: flip mai nou same-dir fără BOS post-leg → REVERSAL (nu CONT de pe leg vechi)
+        # V65: flip same-dir mai nou = tot REVERSAL (CHoCH), indiferent de BOS post-leg
         if leg_choch is not None:
             flips = self._true_choch_flips(chochs)
             if flips:
@@ -3237,24 +3259,12 @@ class SMCDetector:
                     latest.direction == leg_choch.direction
                     and latest.index > leg_choch.index
                 ):
-                    post_bos = [
-                        b for b in bos_list
-                        if b.index > latest.index and b.direction == latest.direction
-                    ]
-                    if not post_bos:
-                        return latest, 'reversal', latest.direction, latest
-                    return post_bos[-1], 'continuation', latest.direction, latest
+                    return latest, 'reversal', latest.direction, latest
 
         if leg_choch is None:
             flips = self._true_choch_flips(chochs)
             if flips:
                 f = flips[-1]
-                same_dir = [
-                    b for b in bos_list
-                    if b.index > f.index and b.direction == f.direction
-                ]
-                if same_dir:
-                    return same_dir[-1], 'continuation', f.direction, f
                 return f, 'reversal', f.direction, f
             if bos_list:
                 if (
@@ -3283,25 +3293,13 @@ class SMCDetector:
                 return c, st, c.direction, c
             return None, 'continuation', 'neutral', None
 
-        same_dir_bos = [
-            b for b in bos_list
-            if b.index > leg_choch.index and b.direction == leg_choch.direction
-        ]
-        if len(same_dir_bos) >= 1:
-            latest_bos = same_dir_bos[-1]
+        if leg_choch is not None:
             if debug:
                 print(
-                    f"   📐 [V63/V42.6] post-leg BOS {latest_bos.direction.upper()} "
-                    f"@bar{latest_bos.index} → CONTINUATION"
+                    f"   📐 [V65] leg CHoCH {leg_choch.direction.upper()} "
+                    f"@bar{leg_choch.index} → REVERSAL"
                 )
-            return latest_bos, 'continuation', leg_choch.direction, leg_choch
-
-        if debug:
-            print(
-                f"   📐 [V63/V42.6] leg CHoCH {leg_choch.direction.upper()} "
-                f"@bar{leg_choch.index} → REVERSAL"
-            )
-        return leg_choch, 'reversal', leg_choch.direction, leg_choch
+            return leg_choch, 'reversal', leg_choch.direction, leg_choch
 
     def filter_internal_range_signals(
         self,
@@ -4280,11 +4278,13 @@ class SMCDetector:
         chochs, bos_list, rs = self.filter_internal_range_signals(
             symbol or '', df_daily, chochs, bos_list, rs
         )
-        latest_signal, strategy, current_trend, _ = self._resolve_d1_leg(
+        latest_signal, strategy, current_trend, leg_choch = self._resolve_d1_leg(
             df_daily, chochs, bos_list, range_state=rs
         )
-        if latest_signal:
-            signal_label = 'CHoCH' if isinstance(latest_signal, CHoCH) else 'BOS'
+        strategy = self._classify_d1_strategy(latest_signal, leg_choch)
+        signal = self._d1_signal_for_strategy(latest_signal, leg_choch, strategy)
+        if signal:
+            signal_label = 'CHoCH' if isinstance(signal, CHoCH) else 'BOS'
         else:
             signal_label = 'BOS'
             strategy = 'continuation'
