@@ -641,9 +641,30 @@ class DailyScanner:
                     # V15.1 DEDUP: alertă Telegram doar setup NOU sau READY (nu re-evaluate MONITORING)
                     if self.scanner_settings.get('telegram_alerts', True):
                         is_reevaluation = symbol in monitoring_symbols
-                        send_telegram_card = (not is_reevaluation) or setup_status == 'READY'
+                        _live_dir = (
+                            'buy' if setup.daily_choch.direction == 'bullish' else 'sell'
+                        )
+                        _stored_dir = (
+                            existing_setups_by_symbol.get(symbol, {}).get('direction') or ''
+                        ).lower()
+                        _drift_card = (
+                            is_reevaluation
+                            and _stored_dir
+                            and _stored_dir != _live_dir
+                        )
+                        send_telegram_card = (
+                            (not is_reevaluation)
+                            or setup_status == 'READY'
+                            or _drift_card
+                        )
                         if setup_status == 'READY':
                             tg_prefix = "🔥 READY TO EXECUTE"
+                        elif _drift_card:
+                            tg_prefix = "🔄 D1 BIAS DRIFT (actualizat)"
+                            print(
+                                f"   ⚠️ [V63 DRIFT CARD] {symbol}: JSON={_stored_dir.upper()} "
+                                f"→ live={_live_dir.upper()}"
+                            )
                         else:
                             tg_prefix = "👁️ MONITORING (PÂNDĂ)"
 
@@ -677,7 +698,14 @@ class DailyScanner:
                     # Nu mai scriem direct în JSON. Colectăm în bias_fallback_entries[].
                     # save_monitoring_setups() face WIPE&OVERWRITE la final cu tot.
                     try:
-                        _bias_dir = self.smc_detector.determine_daily_trend(df_daily, symbol=symbol)
+                        _auth = self.smc_detector.resolve_authoritative_d1_bias(
+                            df_daily, symbol=symbol,
+                        )
+                        _bias_dir = _auth.get('trend') or 'neutral'
+                        _bf_strategy = _auth.get('strategy_type') or 'continuation'
+                        _bf_sig = (
+                            'CHoCH' if _bf_strategy == 'reversal' else 'BOS'
+                        )
                         if _bias_dir not in ('bullish', 'bearish'):
                             _bias_dir = self.smc_detector.macro_trend_from_swings(df_daily)
                         if _bias_dir not in ('bullish', 'bearish'):
@@ -692,6 +720,9 @@ class DailyScanner:
                             )
                             _bias_dir = self.smc_detector.resolve_structural_bias_fallback(
                                 df_daily, _ch, _bo, _rs,
+                            )
+                            _bf_strategy, _bf_sig = self.smc_detector.infer_d1_strategy_type(
+                                df_daily, symbol=symbol,
                             )
                         if _bias_dir in ('bullish', 'bearish'):
                             _w1 = w1_bias_map.get(symbol, 'NEUTRAL')
@@ -715,13 +746,9 @@ class DailyScanner:
                                     f"⏸️ [W+D SOFT SYNC] {symbol}: bias fallback SHORT vs W1 BULLISH — "
                                     f"status=WAITING_W_D_SYNC (monitor only)"
                                 )
-                            # V37.15: strategy din semnal D1 real (CHoCH/BOS), nu hardcod continuation
-                            _bf_strategy, _bf_sig = self.smc_detector.infer_d1_strategy_type(
-                                df_daily, symbol=symbol
-                            )
                             _bf_setup_type = _bf_strategy.upper()
                             print(
-                                f"📡 [V31.0 BIAS FALLBACK] {symbol}: bias={_bias_dir.upper()} "
+                                f"📡 [V63 BIAS FALLBACK] {symbol}: bias={_bias_dir.upper()} "
                                 f"→ {_bf_sig}/{_bf_strategy.upper()} {_bf_status}"
                             )
                             _bf_entry = {
@@ -750,7 +777,7 @@ class DailyScanner:
                             bias_fallback_entries.append(
                                 _hydrate_bias_fallback_poi(self.smc_detector, _bf_entry, df_daily)
                             )
-                            print(f"   ✅ [V31.0] {symbol} {_bias_trade_dir.upper()} → bias_fallback_entries ({len(bias_fallback_entries)} total)")
+                            print(f"   ✅ [V63] {symbol} {_bias_trade_dir.upper()} → bias_fallback_entries ({len(bias_fallback_entries)} total)")
                         else:
                             print(f"⛔ {symbol} — NO SETUP + BIAS NEUTRAL [V10.2 REJECT: vezi log-ul ↑]")
                     except Exception as _bf_err:
@@ -1213,10 +1240,6 @@ def _d1_identity_snapshot(
     _latest, _strategy, current_trend, leg_choch = detector._resolve_d1_leg(
         df_daily, chochs, bos_list, debug=False, range_state=range_state,
     )
-    _latest, _strategy, current_trend, leg_choch = detector._coerce_d1_bias_to_major_structure(
-        df_daily, sym, _latest, _strategy, current_trend, leg_choch,
-        chochs, bos_list, range_state,
-    )
     if leg_choch is None:
         return {}
 
@@ -1335,13 +1358,21 @@ def _apply_setup_identity_lock(
         return out
 
     if contradicts:
-        if _macro_authority_allows_identity_flip(detector, df_daily, old, new_macro, sym):
+        allow_flip = _macro_authority_allows_identity_flip(
+            detector, df_daily, old, new_macro, sym,
+        )
+        if not allow_flip and df_daily is not None and not df_daily.empty:
+            auth = detector.resolve_authoritative_d1_bias(df_daily, symbol=sym)
+            want_trend = _identity_direction(new_macro)
+            if want_trend and auth.get('trend') == want_trend:
+                allow_flip = True
+        if allow_flip:
             out.update(_snapshot())
             print(
-                f"  🔓 [V62 MACRO FLIP] {sym}: identity updated "
+                f"  🔓 [V63 MACRO FLIP] {sym}: identity updated "
                 f"{old.get('direction', '').upper()} → "
                 f"{new_macro.get('direction', '').upper()} "
-                f"(macro authority + live D1)"
+                f"(canonical D1 authority)"
             )
             return out
         for key in _IDENTITY_MACRO_KEYS + _IDENTITY_BOUND_KEYS:
@@ -1922,7 +1953,6 @@ def _setup_time_to_iso(setup_time) -> str:
 
 def _trade_setup_to_monitoring_dict(setup: TradeSetup, setup_time_str: str) -> dict:
     """Construiește dict JSON din TradeSetup (scan proaspăt)."""
-    direction = "buy" if setup.daily_choch.direction == "bullish" else "sell"
     fvg_top = setup.fvg.top if setup.fvg and hasattr(setup.fvg, 'top') else None
     fvg_bottom = setup.fvg.bottom if setup.fvg and hasattr(setup.fvg, 'bottom') else None
     scan_status = getattr(setup, 'status', 'WAITING_D1_PULLBACK')
@@ -1932,15 +1962,19 @@ def _trade_setup_to_monitoring_dict(setup: TradeSetup, setup_time_str: str) -> d
     ):
         scan_status = 'WAITING_D1_PULLBACK'
     _d1_sig = setup.daily_choch
-    _d1_signal_type = 'CHoCH' if isinstance(_d1_sig, CHoCH) else 'BOS'
+    _d1_signal_type = getattr(setup, 'd1_signal_type', None) or (
+        'CHoCH' if isinstance(_d1_sig, CHoCH) else 'BOS'
+    )
+    _d1_bias = getattr(setup, 'd1_bias_direction', None) or setup.daily_choch.direction
+    direction = "buy" if _d1_bias == "bullish" else "sell"
     out = {
         "symbol": setup.symbol,
         "direction": direction,
-        "daily_bias": setup.daily_choch.direction.upper(),
+        "daily_bias": _d1_bias.upper(),
         "setup_type": (getattr(setup, 'strategy_type', 'reversal') or 'reversal').upper(),
         "strategy_type": getattr(setup, 'strategy_type', 'reversal'),
         "strategy_locked": True,
-        "d1_bias_direction": setup.daily_choch.direction,
+        "d1_bias_direction": _d1_bias,
         "daily_bias_active": bool(getattr(setup, 'daily_bias_active', False)),
         "confidence": getattr(setup, 'confidence', 'NORMAL'),
         "w1_bias": getattr(setup, 'w1_bias', 'NEUTRAL'),
@@ -1965,6 +1999,7 @@ def _trade_setup_to_monitoring_dict(setup: TradeSetup, setup_time_str: str) -> d
         "daily_swing_low": getattr(setup, 'daily_swing_low', None),
         "daily_swing_high": getattr(setup, 'daily_swing_high', None),
         "d1_signal_type": _d1_signal_type,
+        "d1_bias_direction": _d1_bias,
         "d1_signal_bar": getattr(_d1_sig, 'index', None),
         "d1_signal_price": getattr(_d1_sig, 'break_price', None),
         "d1_scan_date": datetime.now().isoformat(),

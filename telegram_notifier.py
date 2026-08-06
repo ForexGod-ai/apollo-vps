@@ -739,7 +739,11 @@ class TelegramNotifier:
         sep = UNIVERSAL_SEPARATOR
         symbol = setup.symbol
 
-        raw_dir = setup.daily_choch.direction
+        raw_dir = getattr(setup, 'd1_bias_direction', None) or setup.daily_choch.direction
+        if raw_dir in ('buy', 'long'):
+            raw_dir = 'bullish'
+        elif raw_dir in ('sell', 'short'):
+            raw_dir = 'bearish'
         direction = "🟢 LONG" if raw_dir == 'bullish' else "🔴 SHORT"
 
         pair_stats = self._load_pair_statistics(symbol)
@@ -787,9 +791,11 @@ class TelegramNotifier:
             poi_line += f" · {poi_relation}"
         block2_parts.append(poi_line)
 
-        daily_structure_label = "CHoCH" if strategy_type.startswith('REVERSAL') else "BOS"
+        daily_structure_label = getattr(setup, 'd1_signal_type', None) or (
+            "CHoCH" if strategy_type.startswith('REVERSAL') else "BOS"
+        )
         block2_parts.append(
-            f"📊 D1: <b>{setup.daily_choch.direction.upper()} {daily_structure_label}</b>"
+            f"📊 D1: <b>{raw_dir.upper()} {daily_structure_label}</b>"
         )
 
         w1_bias_val = getattr(setup, 'w1_bias', None)

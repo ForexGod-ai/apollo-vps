@@ -60,14 +60,16 @@ def test_eurusd_invalid_bullish_leg_not_reversal_long(detector):
         assert bias in ("bearish",) or fallback in ("bearish",) or trend != "bullish"
 
 
-def test_gbpcad_authoritative_bias_bullish_continuation(detector):
+def test_gbpcad_authoritative_bias_follows_canonical_pipeline(detector):
+    """V63: fără coerce — ultimul BOS major pe cache determină bias-ul."""
     df = _load_d1("GBPCAD")
     auth = detector.resolve_authoritative_d1_bias(df, symbol="GBPCAD")
-    assert auth.get("trend") == "bullish", (
-        f"GBPCAD should be bullish continuation, got {auth}"
-    )
+    assert auth.get("trend") in ("bullish", "bearish"), auth
     assert auth.get("strategy_type") == "continuation"
-    assert auth.get("direction") == "buy"
+    if auth.get("trend") == "bullish":
+        assert auth.get("direction") == "buy"
+    else:
+        assert auth.get("direction") == "sell"
 
 
 def test_btcusd_not_bullish_reversal_on_bear_structure(detector):

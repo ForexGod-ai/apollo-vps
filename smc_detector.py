@@ -141,6 +141,8 @@ class TradeSetup:
     adr_hl: Optional[float] = None
     poi_v43_source: Optional[str] = None
     preserve_stored_poi: bool = False
+    d1_bias_direction: Optional[str] = None  # V63 canonical trend
+    d1_signal_type: Optional[str] = None  # V63: CHoCH or BOS
 
 # ------------------- SMCDetector -------------------
 
@@ -1668,19 +1670,18 @@ class SMCDetector:
             all_swings.append(('low', sl))
         all_swings.sort(key=lambda x: x[1].index)
 
-        # V24.0 ORGANIC: prev_trend se inițializează din PRIMELE 2 highs + 2 lows
-        # (bootstrap minimal) și se schimbă EXCLUSIV prin CHoCH confirmat.
-        # NU mai există macro_lookback, NU mai există recalculare periodică.
-        prev_trend = None
-        init_highs = swing_highs[:2]
-        init_lows  = swing_lows[:2]
-        if len(init_highs) >= 2 and len(init_lows) >= 2:
-            h_asc = init_highs[1].price > init_highs[0].price
-            l_asc = init_lows[1].price  > init_lows[0].price
-            if h_asc and l_asc:
-                prev_trend = 'bullish'
-            elif not h_asc and not l_asc:
-                prev_trend = 'bearish'
+        # V63: prev_trend from macro HH/HL/LH/LL on major pivots first.
+        prev_trend = self.macro_trend_from_swings(df)
+        if prev_trend == 'neutral':
+            init_highs = swing_highs[:2]
+            init_lows = swing_lows[:2]
+            if len(init_highs) >= 2 and len(init_lows) >= 2:
+                h_asc = init_highs[1].price > init_highs[0].price
+                l_asc = init_lows[1].price > init_lows[0].price
+                if h_asc and l_asc:
+                    prev_trend = 'bullish'
+                elif not h_asc and not l_asc:
+                    prev_trend = 'bearish'
 
         for i in range(1, len(all_swings)):
             swing_type, swing = all_swings[i]
@@ -2396,7 +2397,13 @@ class SMCDetector:
         V40.1: pe crypto/metals/energy, macro_range_high = max(body-high) ultimele
         90–150 bare D1 — evită LH local ~63k care genera LOCK BULLISH fals pe BTCUSD.
         """
-        if df is None or len(df) < 20 or len(swing_highs) < 3 or len(swing_lows) < 2:
+        if df is None or len(df) < 20:
+            return None
+
+        major_highs, major_lows = self.filter_major_swings(df, swing_highs, swing_lows)
+        if len(major_highs) >= 2 and len(major_lows) >= 2:
+            swing_highs, swing_lows = major_highs, major_lows
+        elif len(swing_highs) < 3 or len(swing_lows) < 2:
             return None
 
         recent_highs = swing_highs[-3:]
@@ -2459,8 +2466,8 @@ class SMCDetector:
             locked_bias = 'bearish'
         elif macro_range_low < close < macro_range_high:
             locked = True
-            # V59: inside range — no implicit directional bias until breakout
-            locked_bias = 'neutral'
+            macro = self.macro_trend_from_swings(df)
+            locked_bias = macro if macro != 'neutral' else 'neutral'
         else:
             locked = False
 
@@ -2523,18 +2530,62 @@ class SMCDetector:
             return level >= range_state.macro_range_low
         return False
 
+    def _leg_superseded_by_opposite_major_flip(
+        self,
+        df: pd.DataFrame,
+        leg_choch: CHoCH,
+        chochs: List[CHoCH],
+        bos_list: Optional[List] = None,
+    ) -> bool:
+        """V63: later opposite major CHoCH retires this leg only when that flip is still active."""
+        if leg_choch is None or not chochs:
+            return False
+        bos_list = bos_list or []
+        opposite = 'bearish' if leg_choch.direction == 'bullish' else 'bullish'
+        for c in chochs:
+            if c.index <= leg_choch.index:
+                continue
+            if c.direction != opposite:
+                continue
+            if not self._is_major_structural_choch(c):
+                continue
+            if not self._major_reversal_confirmed(df, c):
+                continue
+            same_dir_bos = [
+                b for b in bos_list
+                if b.index > c.index and b.direction == c.direction
+            ]
+            if same_dir_bos:
+                return True
+            close = float(df['close'].iloc[-1])
+            if c.direction == 'bearish':
+                if close < c.break_price:
+                    return True
+            elif close > c.break_price:
+                return True
+        return False
+
     def _leg_choch_still_valid(
         self,
         df: pd.DataFrame,
         leg_choch: CHoCH,
         bos_list: List,
+        chochs: Optional[List[CHoCH]] = None,
     ) -> bool:
-        """V42.5: leg CHoCH active until price reclaims the leg break level."""
-        if df is None or len(df) == 0:
+        """V42.5 + V63: leg active until reclaim, superseded flip, or same-dir BOS confirms."""
+        if df is None or len(df) == 0 or leg_choch is None:
             return False
+        if chochs and self._leg_superseded_by_opposite_major_flip(
+            df, leg_choch, chochs, bos_list,
+        ):
+            return False
+        same_dir_bos = [
+            b for b in bos_list
+            if b.index > leg_choch.index and b.direction == leg_choch.direction
+        ]
+        if same_dir_bos:
+            return True
         close = float(df['close'].iloc[-1])
-        # Anchor on leg CHoCH break only — post-leg BOS pullbacks may trade above
-        # intermediate BOS levels without invalidating the leg (BTC continuation).
         if leg_choch.direction == 'bearish':
             return close < leg_choch.break_price
         return close > leg_choch.break_price
@@ -2593,33 +2644,47 @@ class SMCDetector:
         bos_list: List,
     ) -> Optional[CHoCH]:
         """
-        Leg = CHoCH-ul care a pornit direcția curentă (flip real), încă valid.
-        Nu ultimul micro-CHoCH — primul flip same-dir după ultimul opposite,
-        atâta timp cât close nu a invalidat leg-ul.
+        V63: Leg = ultimul CHoCH major confirmat (flip real pe pivot major).
         """
         if not chochs:
             return None
         chochs = self._dedupe_chochs_by_bar(chochs)
+        major_flips = [
+            c for c in chochs
+            if self._is_major_structural_choch(c) and self._major_reversal_confirmed(df, c)
+        ]
+        if major_flips:
+            for c in reversed(major_flips):
+                if not self._leg_choch_still_valid(df, c, bos_list, chochs):
+                    continue
+                later_opposite = [
+                    x for x in major_flips
+                    if x.index > c.index and x.direction != c.direction
+                    and self._leg_choch_still_valid(df, x, bos_list, chochs)
+                ]
+                if later_opposite:
+                    continue
+                return c
+
         flips = self._true_choch_flips(chochs)
         if not flips:
             for c in reversed(chochs):
-                if self._leg_choch_still_valid(df, c, bos_list):
+                if self._leg_choch_still_valid(df, c, bos_list, chochs):
                     return c
             return chochs[-1]
 
         active_dir = None
         for f in reversed(flips):
-            if self._leg_choch_still_valid(df, f, bos_list):
+            if self._leg_choch_still_valid(df, f, bos_list, chochs):
                 active_dir = f.direction
                 break
         if not active_dir:
             return flips[-1]
 
-        # Cel mai recent flip în active_dir care încă e leg valid (pullback CHoCH ≠ leg nou)
         for f in reversed(flips):
             if f.direction != active_dir:
                 continue
-            if not self._leg_choch_still_valid(df, f, bos_list):
+            if not self._leg_choch_still_valid(df, f, bos_list, chochs):
                 continue
             return f
 
@@ -2743,8 +2808,14 @@ class SMCDetector:
     ) -> Tuple[Optional[object], str, str, Optional[CHoCH]]:
         """V58: last opposite CHoCH/BOS in full series when post-leg flip finds nothing."""
         opposite = 'bearish' if dead_leg.direction == 'bullish' else 'bullish'
-        hist_bos = [b for b in bos_list if b.direction == opposite]
-        hist_chochs = [c for c in chochs if c.direction == opposite]
+        hist_bos = [
+            b for b in bos_list
+            if b.direction == opposite and b.index > dead_leg.index
+        ]
+        hist_chochs = [
+            c for c in chochs
+            if c.direction == opposite and c.index > dead_leg.index
+        ]
         if hist_bos:
             latest_signal = hist_bos[-1]
             new_leg = hist_chochs[-1] if hist_chochs else None
@@ -2871,124 +2942,14 @@ class SMCDetector:
         ref = self._swing_body_low(df, prior[-1].index)
         return self._body_close_below_after(df, prior[-1].index, ref)
 
-    def _coerce_d1_bias_to_major_structure(
-        self,
-        df: pd.DataFrame,
-        symbol: str,
-        latest_signal,
-        strategy_type: str,
-        current_trend: str,
-        leg_choch,
-        daily_chochs: List[CHoCH],
-        daily_bos_list: List,
-        range_state: Optional[StructuralRangeState],
-    ) -> Tuple[Optional[object], str, str, Optional[CHoCH]]:
-        """
-        V61: Daily bias transmis către radar trebuie să reflecte structura majoră reală.
-        În range bearish (LL < close <= LH) — fără REVERSAL bullish prematur.
-        """
-        if range_state is None or not range_state.locked:
-            return latest_signal, strategy_type, current_trend, leg_choch
-
-        close = float(df['close'].iloc[-1])
-        lh = float(range_state.macro_range_high)
-        ll = float(range_state.macro_range_low)
-        macro_swings = self.macro_trend_from_swings(df)
-        inside_bearish_range = ll < close <= lh
-        bullish_reversal_blocked = (
-            strategy_type == 'reversal'
-            and current_trend == 'bullish'
-            and close <= lh
-        )
-
-        if inside_bearish_range or (
-            macro_swings == 'bearish' and bullish_reversal_blocked
-        ):
-            bearish_bos = [b for b in daily_bos_list if b.direction == 'bearish']
-            bearish_chochs = [c for c in daily_chochs if c.direction == 'bearish']
-            if bearish_bos:
-                sig = bearish_bos[-1]
-                print(
-                    f"🔄 [V61 D1 BIAS COERCE] {symbol}: inside bearish range "
-                    f"→ BEARISH CONTINUATION BOS @bar{sig.index}"
-                )
-                return sig, 'continuation', 'bearish', leg_choch
-            if bearish_chochs:
-                sig = bearish_chochs[-1]
-                print(
-                    f"🔄 [V61 D1 BIAS COERCE] {symbol}: inside bearish range "
-                    f"→ BEARISH CONTINUATION CHoCH @bar{sig.index}"
-                )
-                return sig, 'continuation', 'bearish', leg_choch
-            if current_trend == 'bullish':
-                print(
-                    f"🔄 [V61 D1 BIAS COERCE] {symbol}: inside bearish range "
-                    f"→ force BEARISH trend (no opposite signal)"
-                )
-                return latest_signal, 'continuation', 'bearish', leg_choch
-
-        # V62: macro HH/HL bullish — bearish reversal pe pullback = misread
-        if (
-            macro_swings == 'bullish'
-            and current_trend == 'bearish'
-            and strategy_type == 'reversal'
-        ):
-            bullish_bos = [b for b in daily_bos_list if b.direction == 'bullish']
-            bullish_chochs = [c for c in daily_chochs if c.direction == 'bullish']
-            if bullish_bos:
-                sig = bullish_bos[-1]
-                print(
-                    f"🔄 [V62 D1 BIAS COERCE] {symbol}: macro swings BULLISH "
-                    f"→ BULLISH CONTINUATION BOS @bar{sig.index}"
-                )
-                return sig, 'continuation', 'bullish', leg_choch
-            if bullish_chochs:
-                sig = bullish_chochs[-1]
-                print(
-                    f"🔄 [V62 D1 BIAS COERCE] {symbol}: macro swings BULLISH "
-                    f"→ BULLISH CONTINUATION CHoCH @bar{sig.index}"
-                )
-                return sig, 'continuation', 'bullish', leg_choch
-            print(
-                f"🔄 [V62 D1 BIAS COERCE] {symbol}: macro swings BULLISH "
-                f"→ force BULLISH continuation"
-            )
-            return latest_signal, 'continuation', 'bullish', leg_choch
-
-        inside_bullish_breakout = close > lh and macro_swings == 'bullish'
-        bearish_reversal_blocked = (
-            strategy_type == 'reversal'
-            and current_trend == 'bearish'
-            and close >= ll
-        )
-        if inside_bullish_breakout and bearish_reversal_blocked:
-            bullish_bos = [b for b in daily_bos_list if b.direction == 'bullish']
-            bullish_chochs = [c for c in daily_chochs if c.direction == 'bullish']
-            if bullish_bos:
-                sig = bullish_bos[-1]
-                print(
-                    f"🔄 [V61 D1 BIAS COERCE] {symbol}: above LH bullish macro "
-                    f"→ BULLISH CONTINUATION BOS @bar{sig.index}"
-                )
-                return sig, 'continuation', 'bullish', leg_choch
-            if bullish_chochs:
-                sig = bullish_chochs[-1]
-                print(
-                    f"🔄 [V61 D1 BIAS COERCE] {symbol}: above LH bullish macro "
-                    f"→ BULLISH CONTINUATION CHoCH @bar{sig.index}"
-                )
-                return sig, 'continuation', 'bullish', leg_choch
-
-        return latest_signal, strategy_type, current_trend, leg_choch
-
     def resolve_authoritative_d1_bias(
         self,
         df: pd.DataFrame,
         symbol: str = '?',
     ) -> dict:
         """
-        V62: Single source of truth for D1 direction/strategy (scanner + identity lock + JSON).
-        Runs resolve_d1_leg + coerce + macro swing fallback.
+        V63: Single source of truth for D1 direction/strategy (scanner + identity lock + JSON).
+        Runs canonical resolve_d1_leg on major-filtered signals.
         """
         empty = {
             'trend': 'neutral',
@@ -3012,17 +2973,6 @@ class SMCDetector:
         )
         latest, strategy_type, current_trend, leg_choch = self._resolve_d1_leg(
             df, chochs, bos_list, range_state=range_state,
-        )
-        latest, strategy_type, current_trend, leg_choch = self._coerce_d1_bias_to_major_structure(
-            df,
-            symbol,
-            latest,
-            strategy_type,
-            current_trend,
-            leg_choch,
-            chochs,
-            bos_list,
-            range_state,
         )
         macro_swings = self.macro_trend_from_swings(df)
         if current_trend == 'neutral' and macro_swings != 'neutral':
@@ -3079,15 +3029,16 @@ class SMCDetector:
         range_state: Optional[StructuralRangeState] = None,
     ) -> Tuple[Optional[object], str, str, Optional[CHoCH]]:
         """
-        V59 SMC pur — body-close authority:
-        - CHoCH major (pivot opus spart) → reversal
-        - BOS (spargere în direcția trendului) → continuation
-        - Leg invalidat → V57 post-leg flip
+        V63 canonical + V42.6:
+        - leg CHoCH macro-valid + >=1 BOS post-leg same-dir → CONTINUATION
+        - leg CHoCH fără BOS post-leg → REVERSAL
         """
         chochs = self._dedupe_chochs_by_bar(chochs)
         leg_choch = self._find_leg_choch(df, chochs, bos_list)
 
-        if leg_choch is not None and not self._leg_choch_still_valid(df, leg_choch, bos_list):
+        if leg_choch is not None and not self._leg_choch_still_valid(
+            df, leg_choch, bos_list, chochs,
+        ):
             flipped = self._resolve_post_leg_flip(df, chochs, bos_list, leg_choch, debug=debug)
             if flipped[0] is not None:
                 return flipped
@@ -3095,87 +3046,40 @@ class SMCDetector:
 
         chochs, bos_list = self._demote_post_leg_choch_to_bos(leg_choch, chochs, bos_list)
 
-        if not chochs and not bos_list:
-            return None, 'continuation', 'neutral', leg_choch
-
-        latest_bos = bos_list[-1] if bos_list else None
-
-        reversal_choch = None
-        _close = float(df['close'].iloc[-1]) if len(df) else 0.0
-        _lh = float(range_state.macro_range_high) if range_state and range_state.locked else None
-        _ll = float(range_state.macro_range_low) if range_state and range_state.locked else None
-        for c in reversed(chochs):
-            if not self._is_major_structural_choch(c):
-                continue
-            if not self._major_reversal_confirmed(df, c):
-                continue
-            if not self._leg_choch_still_valid(df, c, bos_list):
-                continue
-            # V61: în range bearish locked — bullish CHoCH = extindere pullback, nu reversal
-            if (
-                range_state
-                and range_state.locked
-                and _ll is not None
-                and _lh is not None
-                and c.direction == 'bullish'
-                and _ll < _close <= _lh
-                and range_state.locked_bias == 'bearish'
-            ):
-                continue
-            if (
-                range_state
-                and range_state.locked
-                and _ll is not None
-                and _lh is not None
-                and c.direction == 'bearish'
-                and _close > _lh
-                and range_state.locked_bias == 'bullish'
-            ):
-                continue
-            reversal_choch = c
-            break
-
-        if reversal_choch is not None and latest_bos is not None:
-            if latest_bos.index > reversal_choch.index:
-                active_leg = reversal_choch if latest_bos.direction == reversal_choch.direction else leg_choch
-                if debug:
-                    print(
-                        f"   📐 [SMC V59] post-CHoCH BOS {latest_bos.direction.upper()} "
-                        f"@bar{latest_bos.index} → CONTINUATION"
-                    )
-                return latest_bos, 'continuation', latest_bos.direction, active_leg
-            if debug:
-                print(
-                    f"   📐 [SMC V59] major CHoCH {reversal_choch.direction.upper()} "
-                    f"@bar{reversal_choch.index} → REVERSAL"
+        if leg_choch is None:
+            if bos_list:
+                b = bos_list[-1]
+                return b, 'continuation', b.direction, None
+            if chochs:
+                c = chochs[-1]
+                st = (
+                    'reversal'
+                    if self._is_major_structural_choch(c)
+                    and self._major_reversal_confirmed(df, c)
+                    else 'continuation'
                 )
-            return reversal_choch, 'reversal', reversal_choch.direction, reversal_choch
+                return c, st, c.direction, c
+            return None, 'continuation', 'neutral', None
 
-        if reversal_choch is not None:
+        same_dir_bos = [
+            b for b in bos_list
+            if b.index > leg_choch.index and b.direction == leg_choch.direction
+        ]
+        if len(same_dir_bos) >= 1:
+            latest_bos = same_dir_bos[-1]
             if debug:
                 print(
-                    f"   📐 [SMC V59] major CHoCH {reversal_choch.direction.upper()} "
-                    f"@bar{reversal_choch.index} → REVERSAL"
-                )
-            return reversal_choch, 'reversal', reversal_choch.direction, reversal_choch
-
-        if latest_bos is not None:
-            if debug:
-                print(
-                    f"   📐 [SMC V59] BOS {latest_bos.direction.upper()} "
+                    f"   📐 [V63/V42.6] post-leg BOS {latest_bos.direction.upper()} "
                     f"@bar{latest_bos.index} → CONTINUATION"
                 )
-            return latest_bos, 'continuation', latest_bos.direction, leg_choch
+            return latest_bos, 'continuation', leg_choch.direction, leg_choch
 
-        latest_choch = chochs[-1]
-        if (
-            self._is_major_structural_choch(latest_choch)
-            and self._major_reversal_confirmed(df, latest_choch)
-            and self._leg_choch_still_valid(df, latest_choch, bos_list)
-        ):
-            return latest_choch, 'reversal', latest_choch.direction, latest_choch
-
-        return latest_choch, 'continuation', latest_choch.direction, leg_choch
+        if debug:
+            print(
+                f"   📐 [V63/V42.6] leg CHoCH {leg_choch.direction.upper()} "
+                f"@bar{leg_choch.index} → REVERSAL"
+            )
+        return leg_choch, 'reversal', leg_choch.direction, leg_choch
 
     def filter_internal_range_signals(
         self,
@@ -4300,20 +4204,6 @@ class SMCDetector:
                 print(f"❌ REJECTED: No Daily CHoCH or BOS found")
             return None
 
-        latest_signal, strategy_type, current_trend, leg_choch = (
-            self._coerce_d1_bias_to_major_structure(
-                df_daily,
-                symbol,
-                latest_signal,
-                strategy_type,
-                current_trend,
-                leg_choch,
-                daily_chochs,
-                daily_bos_list,
-                _range_state,
-            )
-        )
-
         _close = float(df_daily['close'].iloc[-1])
         _macro_swings = self.macro_trend_from_swings(df_daily)
         if (
@@ -4322,26 +4212,13 @@ class SMCDetector:
             and _range_state
             and _close <= float(_range_state.macro_range_high)
             and _close > float(_range_state.macro_range_low)
+            and _macro_swings != 'bullish'
         ):
             print(
-                f"⛔ [V58 MACRO GATE] {symbol}: REVERSAL LONG rejected — "
-                f"close {_close:.5f} inside range (LL–LH), no LH body-close break"
+                f"⛔ [V63 GATE] {symbol}: REVERSAL LONG rejected — "
+                f"close {_close:.5f} inside range without macro bullish confirmation"
             )
-            latest_signal, strategy_type, current_trend, leg_choch = (
-                self._coerce_d1_bias_to_major_structure(
-                    df_daily,
-                    symbol,
-                    latest_signal,
-                    strategy_type,
-                    current_trend,
-                    leg_choch,
-                    daily_chochs,
-                    daily_bos_list,
-                    _range_state,
-                )
-            )
-            if current_trend == 'bullish' and strategy_type == 'reversal':
-                return None
+            return None
         if (
             strategy_type == 'reversal'
             and current_trend == 'bullish'
@@ -4381,7 +4258,9 @@ class SMCDetector:
 
         if (
             leg_choch is not None
-            and not self._leg_choch_still_valid(df_daily, leg_choch, daily_bos_list)
+            and not self._leg_choch_still_valid(
+                df_daily, leg_choch, daily_bos_list, daily_chochs,
+            )
             and strategy_type == 'reversal'
             and current_trend == 'bullish'
         ):
@@ -5451,6 +5330,8 @@ class SMCDetector:
             adr_hl=float(_adr.last_hl) if _adr else None,
             poi_v43_source=_poi_res.poi_source,
             preserve_stored_poi=_poi_res.preserve_stored_poi,
+            d1_bias_direction=current_trend,
+            d1_signal_type=_signal_label,
         )
         
         # 💧 V4.0: Store liquidity sweep info (for Telegram reporting)
