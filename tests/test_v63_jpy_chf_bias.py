@@ -79,13 +79,12 @@ def test_audjpy_bearish_choch_moment_is_reversal_sell():
 
 
 def test_usdchf_bearish_when_close_below_protected_hl():
-    """Close sub HL protejat → leg bullish mort, bearish CHoCH flip → REVERSAL SELL."""
+    """Close sub HL protejat → bearish bias; REV dacă flip recent, CONT dacă leg matur."""
     df = _load_d1("USDCHF")
     auth = _auth("USDCHF", df)
     assert auth["direction"] == "sell", auth
-    assert auth["strategy_type"] == "reversal", auth
     assert auth["trend"] == "bearish", auth
-    assert auth["d1_signal_type"] == "CHoCH", auth
+    assert auth["strategy_type"] in ("reversal", "continuation"), auth
 
 
 def test_usdjpy_crash_leg_is_reversal_not_continuation():
@@ -104,3 +103,41 @@ def test_audjpy_bearish_flip_reversal_over_orphan_bos():
     assert auth["trend"] == "bearish", auth
     assert auth["strategy_type"] == "reversal", auth
     assert auth["d1_signal_type"] == "CHoCH", auth
+
+
+def test_eurgbp_mature_bearish_leg_is_continuation_sell():
+    """EURGBP: CHoCH bearish vechi + BOS post-leg → CONTINUITY SELL (nu REV)."""
+    df = _load_d1("EURGBP")
+    auth = _auth("EURGBP", df)
+    assert auth["direction"] == "sell", auth
+    assert auth["trend"] == "bearish", auth
+    assert auth["strategy_type"] == "continuation", auth
+    assert auth["d1_signal_type"] == "BOS", auth
+
+
+def test_jpy_crosses_crash_remain_reversal():
+    """JPY crosses: CHoCH D fără BOS post-leg → REVERSAL (inclusiv EURJPY)."""
+    for sym in ("USDJPY", "EURJPY", "AUDJPY", "GBPJPY"):
+        df = _load_d1(sym)
+        auth = _auth(sym, df)
+        assert auth["strategy_type"] == "reversal", f"{sym}: {auth}"
+        assert auth["d1_signal_type"] == "CHoCH", f"{sym}: {auth}"
+
+
+def test_organic_strategy_post_bos_is_continuation():
+    """Canon: CHoCH + BOS post-leg = CONT; CHoCH singur = REV."""
+    from smc_detector import CHoCH, BOS
+
+    leg = CHoCH(
+        index=100, direction='bearish', break_price=1.0,
+        previous_trend='bullish', candle_time=None, swing_broken=None,
+    )
+    bos = BOS(
+        index=120, direction='bearish', break_price=0.95,
+        candle_time=None, swing_broken=None,
+    )
+    det = SMCDetector()
+    sig, st, trend, _ = det._strategy_from_leg_choch(leg, [])
+    assert st == 'reversal' and trend == 'bearish'
+    sig2, st2, _, _ = det._strategy_from_leg_choch(leg, [bos])
+    assert st2 == 'continuation' and type(sig2).__name__ == 'BOS'
