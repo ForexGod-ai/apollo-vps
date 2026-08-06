@@ -2732,6 +2732,14 @@ class SMCDetector:
                     return c
             return chochs[-1]
 
+        latest = flips[-1]
+        if (
+            not self._leg_choch_still_valid(df, latest, bos_list, chochs)
+            and latest.direction == 'bullish'
+            and self._leg_invalidated_by_protected_breach(df, latest)
+        ):
+            return latest
+
         active_dir = None
         for f in reversed(flips):
             if self._leg_choch_still_valid(df, f, bos_list, chochs):
@@ -2877,20 +2885,23 @@ class SMCDetector:
             c for c in chochs
             if c.direction == opposite and c.index > dead_leg.index
         ]
-        if hist_bos:
-            latest_signal = hist_bos[-1]
-            new_leg = hist_chochs[-1] if hist_chochs else None
-            msg = (
-                f"   🔄 [V58 HIST FLIP] dead {dead_leg.direction.upper()} leg @bar{dead_leg.index} "
-                f"→ {opposite.upper()} CONTINUATION BOS @bar{latest_signal.index} (historical)"
-            )
-            if debug:
-                print(msg)
-            else:
-                print(msg)
-            return latest_signal, 'continuation', opposite, new_leg
         if hist_chochs:
             new_leg = hist_chochs[-1]
+            post_bos = [
+                b for b in bos_list
+                if b.index > new_leg.index and b.direction == opposite
+            ]
+            if post_bos:
+                latest_signal = post_bos[-1]
+                msg = (
+                    f"   🔄 [V58 HIST FLIP] dead {dead_leg.direction.upper()} leg @bar{dead_leg.index} "
+                    f"→ {opposite.upper()} CONTINUATION BOS @bar{latest_signal.index} (historical)"
+                )
+                if debug:
+                    print(msg)
+                else:
+                    print(msg)
+                return latest_signal, 'continuation', opposite, new_leg
             msg = (
                 f"   🔄 [V58 HIST FLIP] dead {dead_leg.direction.upper()} leg @bar{dead_leg.index} "
                 f"→ {opposite.upper()} REVERSAL CHoCH @bar{new_leg.index} (historical)"
@@ -2910,32 +2921,34 @@ class SMCDetector:
         dead_leg: CHoCH,
         debug: bool = False,
     ) -> Tuple[Optional[object], str, str, Optional[CHoCH]]:
-        """V57: invalidated leg — authority passes to opposite CHoCH/BOS after leg bar."""
+        """V57 + V64.2: opposite CHoCH post-leg → V42.6 (BOS=CONT, fără BOS=REV)."""
         opposite = 'bearish' if dead_leg.direction == 'bullish' else 'bullish'
         post_chochs = [
             c for c in chochs
-            if c.index > dead_leg.index and c.direction == opposite
+            if c.index > dead_leg.index
+            and c.direction == opposite
+            and c.previous_trend
+            and c.previous_trend != c.direction
         ]
-        post_bos = [
-            b for b in bos_list
-            if b.index > dead_leg.index and b.direction == opposite
-        ]
-        if post_bos:
-            new_leg = post_chochs[-1] if post_chochs else None
-            latest_signal = post_bos[-1]
-            if debug:
-                print(
-                    f"   🔄 [V57 LEG FLIP] dead {dead_leg.direction.upper()} leg @bar{dead_leg.index} "
-                    f"→ {opposite.upper()} CONTINUATION BOS @bar{latest_signal.index}"
-                )
-            else:
-                print(
-                    f"   🔄 [V57 LEG FLIP] dead {dead_leg.direction.upper()} leg @bar{dead_leg.index} "
-                    f"→ {opposite.upper()} CONTINUATION @bar{latest_signal.index}"
-                )
-            return latest_signal, 'continuation', opposite, new_leg
         if post_chochs:
             new_leg = post_chochs[-1]
+            post_bos = [
+                b for b in bos_list
+                if b.index > new_leg.index and b.direction == opposite
+            ]
+            if post_bos:
+                latest_signal = post_bos[-1]
+                if debug:
+                    print(
+                        f"   🔄 [V57 LEG FLIP] dead {dead_leg.direction.upper()} leg @bar{dead_leg.index} "
+                        f"→ {opposite.upper()} CONTINUATION BOS @bar{latest_signal.index}"
+                    )
+                else:
+                    print(
+                        f"   🔄 [V57 LEG FLIP] dead {dead_leg.direction.upper()} leg @bar{dead_leg.index} "
+                        f"→ {opposite.upper()} CONTINUATION @bar{latest_signal.index}"
+                    )
+                return latest_signal, 'continuation', opposite, new_leg
             if debug:
                 print(
                     f"   🔄 [V57 LEG FLIP] dead {dead_leg.direction.upper()} leg @bar{dead_leg.index} "
@@ -3100,30 +3113,60 @@ class SMCDetector:
         if leg_choch is not None and not self._leg_choch_still_valid(
             df, leg_choch, bos_list, chochs,
         ):
-            flipped = self._resolve_post_leg_flip(df, chochs, bos_list, leg_choch, debug=debug)
-            if flipped[0] is not None:
-                return flipped
             if (
                 leg_choch.direction == 'bullish'
                 and self._leg_invalidated_by_protected_breach(df, leg_choch)
             ):
                 return leg_choch, 'reversal', 'bearish', leg_choch
+            flipped = self._resolve_post_leg_flip(df, chochs, bos_list, leg_choch, debug=debug)
+            if flipped[0] is not None:
+                return flipped
             leg_choch = self._find_leg_choch(df, chochs, bos_list)
 
         chochs, bos_list = self._demote_post_leg_choch_to_bos(leg_choch, chochs, bos_list)
+
+        # V64.2: flip mai nou same-dir fără BOS post-leg → REVERSAL (nu CONT de pe leg vechi)
+        if leg_choch is not None:
+            flips = self._true_choch_flips(chochs)
+            if flips:
+                latest = flips[-1]
+                if (
+                    latest.direction == leg_choch.direction
+                    and latest.index > leg_choch.index
+                ):
+                    post_bos = [
+                        b for b in bos_list
+                        if b.index > latest.index and b.direction == latest.direction
+                    ]
+                    if not post_bos:
+                        return latest, 'reversal', latest.direction, latest
+                    return post_bos[-1], 'continuation', latest.direction, latest
 
         if leg_choch is None:
             flips = self._true_choch_flips(chochs)
             if flips:
                 f = flips[-1]
-                st = (
-                    'reversal'
-                    if self._is_major_structural_choch(f)
-                    and self._major_reversal_confirmed(df, f)
-                    else 'continuation'
-                )
-                return f, st, f.direction, f
+                same_dir = [
+                    b for b in bos_list
+                    if b.index > f.index and b.direction == f.direction
+                ]
+                if same_dir:
+                    return same_dir[-1], 'continuation', f.direction, f
+                return f, 'reversal', f.direction, f
             if bos_list:
+                if (
+                    range_state
+                    and range_state.locked
+                    and range_state.locked_bias in ('bullish', 'bearish')
+                ):
+                    aligned = [
+                        b for b in bos_list
+                        if b.direction == range_state.locked_bias
+                    ]
+                    if aligned:
+                        b = aligned[-1]
+                        return b, 'continuation', range_state.locked_bias, None
+                    return None, 'reversal', range_state.locked_bias, None
                 b = bos_list[-1]
                 return b, 'continuation', b.direction, None
             if chochs:
