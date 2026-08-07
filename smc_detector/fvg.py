@@ -235,6 +235,7 @@ class FvgMixin:
         strategy_type: Optional[str] = None,
         dealing_range: Optional[ActiveDealingRange] = None,
         force_in_range_rescan: bool = False,
+        debug: bool = False,
     ) -> Optional[FVG]:
         """🎯 GLITCH IN MATRIX - FVG DETECTION (V8.1 - ORDERFLOW ALIGNED)
         
@@ -519,9 +520,10 @@ class FvgMixin:
             if force_in_range_rescan:
                 _reason = "V43 in-range rescan after zombie reject"
 
-            print(f"  ✅ [V16.1 P/D FVG] {'Discount' if orderflow_direction == 'bullish' else 'Premium'} "
-                  f"FVG @ {selected.bottom:.5f}-{selected.top:.5f} "
-                  f"| EQ={equilibrium:.5f} | Index={selected.index}")
+            if debug:
+                print(f"  ✅ [V16.1 P/D FVG] {'Discount' if orderflow_direction == 'bullish' else 'Premium'} "
+                      f"FVG @ {selected.bottom:.5f}-{selected.top:.5f} "
+                      f"| EQ={equilibrium:.5f} | Index={selected.index}")
             _fill_audit(selected, _reason, equilibrium, pd_valid_fvgs, post_choch)
             return selected
 
@@ -530,9 +532,10 @@ class FvgMixin:
         # Returnăm None explicit pentru a lăsa sistemul să folosească
         # nivelul de Equilibrium (50%) al impulsului ca entry direct.
         _eq_display = f"{equilibrium:.5f}" if equilibrium else "N/A"
-        print(f"  ⚠️ [V16.1 P/D FVG] Niciun FVG în zona "
-              f"{'Discount' if orderflow_direction == 'bullish' else 'Premium'} "
-              f"(EQ={_eq_display}) → Fibo 50% Fallback activat")
+        if debug:
+            print(f"  ⚠️ [V16.1 P/D FVG] Niciun FVG în zona "
+                  f"{'Discount' if orderflow_direction == 'bullish' else 'Premium'} "
+                  f"(EQ={_eq_display}) → Fibo 50% Fallback activat")
         _fill_audit(None, "V16.1 no P/D valid — synthetic fallback", equilibrium, pd_valid_fvgs, [])
         return None
 

@@ -594,11 +594,8 @@ class PoiMixin:
                 'selected': self.fvg_audit_entry(selected) if selected else None,
             }
 
-        if selected is not None:
-            print(
-                f"  ✅ [CONTINUITY POI CASCADE] {reason} "
-                f"@ {selected.bottom:.5f}-{selected.top:.5f} (bar {selected.index})"
-            )
+        if selected is not None and audit_out is not None:
+            audit_out.setdefault('continuation_cascade', {})['logged'] = True
         return selected
 
     def resolve_d1_poi(

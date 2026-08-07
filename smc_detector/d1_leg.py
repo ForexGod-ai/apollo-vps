@@ -434,8 +434,6 @@ class D1LegMixin:
             )
             if debug:
                 print(msg)
-            else:
-                print(msg)
             return new_leg, 'reversal', opposite, new_leg
         return None, 'continuation', 'neutral', None
 
@@ -462,11 +460,6 @@ class D1LegMixin:
                 print(
                     f"   🔄 [V57 LEG FLIP] dead {dead_leg.direction.upper()} leg @bar{dead_leg.index} "
                     f"→ {opposite.upper()} REVERSAL CHoCH @bar{new_leg.index}"
-                )
-            else:
-                print(
-                    f"   🔄 [V57 LEG FLIP] dead {dead_leg.direction.upper()} leg @bar{dead_leg.index} "
-                    f"→ {opposite.upper()} REVERSAL @bar{new_leg.index}"
                 )
             return new_leg, 'reversal', opposite, new_leg
         hist = self._resolve_historical_opposite_bias(
