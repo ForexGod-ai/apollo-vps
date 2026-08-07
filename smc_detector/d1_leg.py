@@ -79,44 +79,18 @@ class D1LegMixin:
         level = self._protected_lh_level_after_leg(df, leg_choch)
         return level is not None and close > level
 
-    def _leg_superseded_by_opposite_major_flip(
-        self,
-        df: pd.DataFrame,
-        leg_choch: CHoCH,
-        chochs: List[CHoCH],
-        bos_list: Optional[List] = None,
-    ) -> bool:
-        """V63: later opposite major CHoCH retires this leg only when that flip is still active."""
-        if leg_choch is None or not chochs:
-            return False
-        bos_list = bos_list or []
-        opposite = 'bearish' if leg_choch.direction == 'bullish' else 'bullish'
-        for c in chochs:
-            if c.index <= leg_choch.index:
-                continue
-            if c.direction != opposite:
-                continue
-            if not self._is_major_structural_choch(c):
-                continue
-            if not self._major_reversal_confirmed(df, c):
-                continue
-            if self._leg_choch_still_valid(df, c, bos_list, chochs):
-                return True
-        return False
-
-    def _leg_choch_still_valid(
+    def _leg_choch_price_level_valid(
         self,
         df: pd.DataFrame,
         leg_choch: CHoCH,
         bos_list: List,
-        chochs: Optional[List[CHoCH]] = None,
     ) -> bool:
-        """V64.1: leg activ doar cât prețul respectă break + HL/LH protejat (fără BOS zombie)."""
+        """
+        V67.1: validare pură break + HL/LH protejat + BOS same-dir.
+        Fără apeluri la supersede — folosită de _leg_superseded_by_opposite_major_flip
+        ca să evite recursia infinită cu _leg_choch_still_valid.
+        """
         if df is None or len(df) == 0 or leg_choch is None:
-            return False
-        if chochs and self._leg_superseded_by_opposite_major_flip(
-            df, leg_choch, chochs, bos_list,
-        ):
             return False
         close = float(df['close'].iloc[-1])
         ref = float(leg_choch.break_price)
@@ -143,6 +117,48 @@ class D1LegMixin:
         if same_dir_bos:
             return True
         return close <= ref
+
+    def _leg_superseded_by_opposite_major_flip(
+        self,
+        df: pd.DataFrame,
+        leg_choch: CHoCH,
+        chochs: List[CHoCH],
+        bos_list: Optional[List] = None,
+    ) -> bool:
+        """V63: later opposite major CHoCH retires this leg only when that flip is still active."""
+        if leg_choch is None or not chochs:
+            return False
+        bos_list = bos_list or []
+        opposite = 'bearish' if leg_choch.direction == 'bullish' else 'bullish'
+        for c in chochs:
+            if c.index <= leg_choch.index:
+                continue
+            if c.direction != opposite:
+                continue
+            if not self._is_major_structural_choch(c):
+                continue
+            if not self._major_reversal_confirmed(df, c):
+                continue
+            # V67.1: price-level only — NU _leg_choch_still_valid (recursie infinită)
+            if self._leg_choch_price_level_valid(df, c, bos_list):
+                return True
+        return False
+
+    def _leg_choch_still_valid(
+        self,
+        df: pd.DataFrame,
+        leg_choch: CHoCH,
+        bos_list: List,
+        chochs: Optional[List[CHoCH]] = None,
+    ) -> bool:
+        """V64.1: leg activ doar cât prețul respectă break + HL/LH protejat (fără BOS zombie)."""
+        if df is None or len(df) == 0 or leg_choch is None:
+            return False
+        if chochs and self._leg_superseded_by_opposite_major_flip(
+            df, leg_choch, chochs, bos_list,
+        ):
+            return False
+        return self._leg_choch_price_level_valid(df, leg_choch, bos_list)
 
     @staticmethod
     def _dedupe_chochs_by_bar(chochs: List[CHoCH]) -> List[CHoCH]:
