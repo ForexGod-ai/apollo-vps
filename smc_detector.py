@@ -108,6 +108,39 @@ class POIResolution:
 
 
 @dataclass
+class D1AuthContext:
+    """V67: Single D1 authority snapshot per symbol per scan run."""
+    symbol: str
+    trend: str
+    strategy_type: str
+    macro_swings: str
+    direction: str
+    d1_bias_direction: str
+    daily_bias: str
+    latest_signal: Optional[object]
+    leg_choch: Optional['CHoCH']
+    d1_signal_type: str
+    chochs: List['CHoCH']
+    bos_list: List
+    range_state: Optional[StructuralRangeState]
+    swing_h: List['SwingPoint']
+    swing_l: List['SwingPoint']
+
+    def as_dict(self) -> dict:
+        return {
+            'trend': self.trend,
+            'strategy_type': self.strategy_type,
+            'macro_swings': self.macro_swings,
+            'direction': self.direction,
+            'd1_bias_direction': self.d1_bias_direction,
+            'daily_bias': self.daily_bias,
+            'latest_signal': self.latest_signal,
+            'leg_choch': self.leg_choch,
+            'd1_signal_type': self.d1_signal_type,
+        }
+
+
+@dataclass
 class TradeSetup:
     symbol: str
     daily_choch: CHoCH
@@ -457,7 +490,9 @@ class SMCDetector:
     def apply_w1_gate(self, setup: Optional['TradeSetup'], w1_bias: str) -> Optional['TradeSetup']:
         return self.apply_w_d_sync_gate(setup, w1_bias)
     
-    def store_fvg_magnet(self, symbol: str, timeframe: str, fvg: FVG) -> None:
+    def store_fvg_magnet(
+        self, symbol: str, timeframe: str, fvg: FVG, debug: bool = False,
+    ) -> None:
         """
         🎯 V3.4 ORDER BLOCKS: Store last 2 FVG zones per timeframe as price magnets
         These zones act as "zones of return" where price is likely to react
@@ -476,9 +511,9 @@ class SMCDetector:
         # Keep only last 2 FVGs (most recent zones)
         self.fvg_magnets[symbol][timeframe] = self.fvg_magnets[symbol][timeframe][-2:]
         
-        # DEBUG LOG
-        print(f"🎯 ORDER BLOCK MAGNET: {symbol} {timeframe} - Stored FVG zone {fvg.bottom:.5f}-{fvg.top:.5f}")
-        print(f"   Total magnets for {symbol} {timeframe}: {len(self.fvg_magnets[symbol][timeframe])}")
+        if debug:
+            print(f"🎯 ORDER BLOCK MAGNET: {symbol} {timeframe} - Stored FVG zone {fvg.bottom:.5f}-{fvg.top:.5f}")
+            print(f"   Total magnets for {symbol} {timeframe}: {len(self.fvg_magnets[symbol][timeframe])}")
     
     def calculate_atr(self, df: pd.DataFrame, period: int = 14) -> float:
         """🔥 Calculate Average True Range for prominence filtering
@@ -1873,6 +1908,7 @@ class SMCDetector:
         current_trend: str,
         range_state: Optional[StructuralRangeState] = None,
         symbol: Optional[str] = None,
+        debug: bool = False,
     ) -> Optional[ActiveDealingRange]:
         """V43.0 ADR — dynamic impulse bounds after latest valid D1 BOS/CHoCH.
 
@@ -2000,11 +2036,12 @@ class SMCDetector:
 
         price_inside = c_low <= close <= c_high
         _sym = symbol or ''
-        print(
-            f"   📐 [V43.0 ADR] {_sym}: container [{c_low:.5f} – {c_high:.5f}] "
-            f"| close={close:.5f} {'INSIDE' if price_inside else 'OUTSIDE'} "
-            f"| anchor=bar{anchor}"
-        )
+        if debug:
+            print(
+                f"   📐 [V43.0 ADR] {_sym}: container [{c_low:.5f} – {c_high:.5f}] "
+                f"| close={close:.5f} {'INSIDE' if price_inside else 'OUTSIDE'} "
+                f"| anchor=bar{anchor}"
+            )
 
         return ActiveDealingRange(
             container_low=c_low,
@@ -2309,6 +2346,7 @@ class SMCDetector:
         stored_poi_top: Optional[float] = None,
         stored_poi_bottom: Optional[float] = None,
         audit_out: Optional[dict] = None,
+        debug: bool = False,
     ) -> POIResolution:
         """Faza A — POI organic only; no JSON preserve, no synthetic Equilibrium clip."""
         _ = (current_price, stored_poi_top, stored_poi_bottom)
@@ -2359,7 +2397,7 @@ class SMCDetector:
 
         if selected is None:
             meta['poi_source'] = 'no organic FVG'
-            if symbol:
+            if symbol and debug:
                 print(f"   ⏸️ [Faza A] {symbol}: no organic FVG in P/D — WAITING_D1_PULLBACK")
 
         poi_zombie = bool(fvg_audit.get('v43', {}).get('poi_zombie'))
@@ -3051,23 +3089,30 @@ class SMCDetector:
         ref = self._swing_body_low(df, prior[-1].index)
         return self._body_close_below_after(df, prior[-1].index, ref)
 
-    def resolve_authoritative_d1_bias(
+    def build_d1_context(
         self,
         df: pd.DataFrame,
         symbol: str = '?',
-    ) -> dict:
-        """
-        V63: Single source of truth for D1 direction/strategy (scanner + identity lock + JSON).
-        Runs canonical resolve_d1_leg on major-filtered signals.
-        """
-        empty = {
-            'trend': 'neutral',
-            'strategy_type': 'continuation',
-            'macro_swings': 'neutral',
-            'direction': '',
-            'd1_bias_direction': 'neutral',
-            'daily_bias': 'NEUTRAL',
-        }
+        debug: bool = False,
+    ) -> D1AuthContext:
+        """V67: One canonical D1 pipeline per symbol — cache for scanner + JSON."""
+        empty = D1AuthContext(
+            symbol=symbol,
+            trend='neutral',
+            strategy_type='continuation',
+            macro_swings='neutral',
+            direction='',
+            d1_bias_direction='neutral',
+            daily_bias='NEUTRAL',
+            latest_signal=None,
+            leg_choch=None,
+            d1_signal_type='BOS',
+            chochs=[],
+            bos_list=[],
+            range_state=None,
+            swing_h=[],
+            swing_l=[],
+        )
         if df is None or df.empty:
             return empty
         if not {'open', 'high', 'low', 'close'}.issubset(df.columns):
@@ -3078,10 +3123,10 @@ class SMCDetector:
         swing_l = self.detect_swing_lows(df)
         range_state = self.compute_structural_range(df, swing_h, swing_l, symbol=symbol)
         chochs, bos_list, range_state = self.filter_internal_range_signals(
-            symbol, df, chochs, bos_list, range_state,
+            symbol, df, chochs, bos_list, range_state, debug=debug,
         )
         latest, strategy_type, current_trend, leg_choch = self._resolve_d1_leg(
-            df, chochs, bos_list, range_state=range_state,
+            df, chochs, bos_list, debug=debug, range_state=range_state,
         )
         strategy_type = self._classify_d1_strategy(
             latest, leg_choch, bos_list, df,
@@ -3117,17 +3162,34 @@ class SMCDetector:
         elif strategy_type == 'reversal' and leg_choch is not None:
             latest = leg_choch
 
-        return {
-            'trend': current_trend,
-            'strategy_type': strategy_type,
-            'macro_swings': macro_swings,
-            'direction': trade_dir,
-            'd1_bias_direction': current_trend,
-            'daily_bias': current_trend.upper() if current_trend != 'neutral' else 'NEUTRAL',
-            'latest_signal': latest,
-            'leg_choch': leg_choch,
-            'd1_signal_type': d1_signal_type,
-        }
+        return D1AuthContext(
+            symbol=symbol,
+            trend=current_trend,
+            strategy_type=strategy_type,
+            macro_swings=macro_swings,
+            direction=trade_dir,
+            d1_bias_direction=current_trend,
+            daily_bias=current_trend.upper() if current_trend != 'neutral' else 'NEUTRAL',
+            latest_signal=latest,
+            leg_choch=leg_choch,
+            d1_signal_type=d1_signal_type,
+            chochs=chochs,
+            bos_list=bos_list,
+            range_state=range_state,
+            swing_h=swing_h,
+            swing_l=swing_l,
+        )
+
+    def resolve_authoritative_d1_bias(
+        self,
+        df: pd.DataFrame,
+        symbol: str = '?',
+    ) -> dict:
+        """
+        V63: Single source of truth for D1 direction/strategy (scanner + identity lock + JSON).
+        Runs canonical resolve_d1_leg on major-filtered signals.
+        """
+        return self.build_d1_context(df, symbol=symbol).as_dict()
 
     def macro_authority_supports_direction(
         self,
@@ -3337,11 +3399,12 @@ class SMCDetector:
         chochs: List[CHoCH],
         bos_list: List[BOS],
         range_state: Optional[StructuralRangeState],
+        debug: bool = False,
     ) -> Tuple[List[CHoCH], List[BOS], Optional[StructuralRangeState]]:
         if range_state is None:
             return chochs, bos_list, range_state
 
-        if range_state.locked:
+        if range_state.locked and debug:
             _close = float(df['close'].iloc[-1])
             if _close > range_state.macro_range_high:
                 _zone = 'ABOVE (breakout)'
@@ -3358,18 +3421,20 @@ class SMCDetector:
         kept_chochs, kept_bos = [], []
         for c in chochs:
             if self._is_internal_range_signal(df, c, range_state):
-                print(
-                    f"   🧹 [V40 SUB-STRUCTURE] Ignor CHoCH {c.direction} bar{c.index} "
-                    f"@{c.break_price:.2f} — internal bounce in range"
-                )
+                if debug:
+                    print(
+                        f"   🧹 [V40 SUB-STRUCTURE] Ignor CHoCH {c.direction} bar{c.index} "
+                        f"@{c.break_price:.2f} — internal bounce in range"
+                    )
             else:
                 kept_chochs.append(c)
         for b in bos_list:
             if self._is_internal_range_signal(df, b, range_state):
-                print(
-                    f"   🧹 [V40 SUB-STRUCTURE] Ignor BOS {b.direction} bar{b.index} "
-                    f"@{b.break_price:.2f} — internal bounce in range"
-                )
+                if debug:
+                    print(
+                        f"   🧹 [V40 SUB-STRUCTURE] Ignor BOS {b.direction} bar{b.index} "
+                        f"@{b.break_price:.2f} — internal bounce in range"
+                    )
             else:
                 kept_bos.append(b)
         return kept_chochs, kept_bos, range_state
@@ -4334,6 +4399,7 @@ class SMCDetector:
         debug: bool = False,  # ✅ V10.4 FIX CRASH: param explicit — era UnboundLocalError!
         stored_poi_top: Optional[float] = None,  # V43.0: passive preserve signal (JSON in Etapa 2)
         stored_poi_bottom: Optional[float] = None,
+        d1_ctx: Optional[D1AuthContext] = None,  # V67: cached D1 authority from scanner
     ) -> Optional[TradeSetup]:
         """
         Main scanner: Check if "Glitch in Matrix" setup exists
@@ -4363,10 +4429,9 @@ class SMCDetector:
         4. Check 4H for CHoCH confirmation (pullback finished)
         5. Return complete setup
         """
-        # ✅ V10.4 FIX CRASH: current_debug = param extern + NZDCAD forțat
-        # Nu mai reasignăm 'debug' (parametrul) — folosim 'current_debug' în tot corpul funcției
-        current_debug = debug or (symbol == "NZDCAD")
-        debug = current_debug  # alias — tot codul existent folosește 'debug'
+        # ✅ V10.4 FIX CRASH: alias debug in corpul funcției
+        # V67: fără NZDCAD forțat — debug controlat de SCANNER_DEBUG env
+        debug = debug
 
         # ⚡ V13.1 PERFORMANCE: Re-init cache la fiecare pair nou (defensiv — nu .clear())
         self._swing_highs_cache = {}
@@ -4375,85 +4440,88 @@ class SMCDetector:
         # V4.0: Initialize variables early to avoid UnboundLocalError
         order_block = None  # Will be populated later with detect_order_block()
         h4_sync_fvg = None  # V10.4: FVG from 4H confirmation move (entry zone)
-        
-        # Step 1: Detect Daily CHoCH AND BOS
-        daily_chochs, daily_bos_list = self.detect_choch_and_bos(df_daily)
-        
-        if debug:
-            print(f"\n{'='*60}")
-            print(f"🔍 DEBUG: {symbol} - GLITCH IN MATRIX SCAN")
-            print(f"{'='*60}")
-            print(f"📊 Daily CHoCH detected: {len(daily_chochs)}")
-            print(f"📊 Daily BOS detected: {len(daily_bos_list)}")
-            if daily_chochs:
-                for i, choch in enumerate(daily_chochs[-3:]):  # Last 3
-                    print(f"   CHoCH [{i}] {choch.direction.upper()} @ {choch.break_price:.5f} (index {choch.index})")
-            if daily_bos_list:
-                for i, bos in enumerate(daily_bos_list[-3:]):  # Last 3
-                    print(f"   BOS [{i}] {bos.direction.upper()} @ {bos.break_price:.5f} (index {bos.index})")
-        
-        # ━━━ V11.9 UNCONFIRMED CHOCH DETECTION (UPDATED) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        # Fractal Window 10 necesită 10 bare bilaterale confirmate — CHoCH recent (±15 bare)
-        # poate să nu fie prins. Verificăm price action: dacă prețul a scăzut față de
-        # ultimul swing high cu ≥0.8% (bearish) sau urcat față de ultimul swing low (bullish),
-        # există o schimbare de caracter neconfirmată — blocăm setup-ul.
-        # FEREASTRA: 60 bare (nu 30) — prinde și swing-uri mai vechi dar relevante.
-        # Ex: GBPJPY swing high idx=162 (37 bare ago) cu drop 1.59% — trebuia prins!
-        _swing_highs_unconf = self.detect_swing_highs(df_daily)
-        _swing_lows_unconf  = self.detect_swing_lows(df_daily)
-        current_price_unconf = df_daily['close'].iloc[-1]
+
         _unconfirmed_bearish_choch = False
         _unconfirmed_bullish_choch = False
-        _unconf_bearish_drop_pct = 0.0
-        _unconf_bullish_rise_pct = 0.0
 
-        if _swing_highs_unconf:
-            # Căutăm cel mai recent swing high din ultimele 60 bare
-            # cu cel mai mare drop față de prețul curent (cel mai relevant)
-            for _sh_candidate in reversed(_swing_highs_unconf):
-                _sh_bars_ago = len(df_daily) - _sh_candidate.index - 1
-                if _sh_bars_ago > 60:
-                    break  # sunt sortate crescător, deci tot ce urmează e mai vechi
-                _wick_h = df_daily['high'].iloc[_sh_candidate.index] if _sh_candidate.index < len(df_daily) else _sh_candidate.price
-                _ref_h = max(_sh_candidate.price, _wick_h)
-                if _ref_h > 0:
-                    _drop = (_ref_h - current_price_unconf) / _ref_h * 100.0
-                    if _drop > _unconf_bearish_drop_pct:
-                        _unconf_bearish_drop_pct = _drop
-                        _unconf_bearish_ref = _ref_h
-            if _unconf_bearish_drop_pct >= 3.0:  # V24.5: era 0.8% — mișcare normală Forex, nu CHoCH real
-                _unconfirmed_bearish_choch = True
-                print(f"   ⚠️ [V11.9] {symbol}: CHoCH bearish neconfirmat — preț a scăzut {_unconf_bearish_drop_pct:.1f}% față de swing high @ {_unconf_bearish_ref:.3f} (în 60 bare)")
+        if d1_ctx is not None:
+            daily_chochs = list(d1_ctx.chochs)
+            daily_bos_list = list(d1_ctx.bos_list)
+            _range_state = d1_ctx.range_state
+            _swing_highs_unconf = d1_ctx.swing_h
+            _swing_lows_unconf = d1_ctx.swing_l
+            latest_signal = d1_ctx.latest_signal
+            strategy_type = d1_ctx.strategy_type
+            current_trend = d1_ctx.trend
+            leg_choch = d1_ctx.leg_choch
+        else:
+            # Step 1: Detect Daily CHoCH AND BOS
+            daily_chochs, daily_bos_list = self.detect_choch_and_bos(df_daily)
+            
+            if debug:
+                print(f"\n{'='*60}")
+                print(f"🔍 DEBUG: {symbol} - GLITCH IN MATRIX SCAN")
+                print(f"{'='*60}")
+                print(f"📊 Daily CHoCH detected: {len(daily_chochs)}")
+                print(f"📊 Daily BOS detected: {len(daily_bos_list)}")
+                if daily_chochs:
+                    for i, choch in enumerate(daily_chochs[-3:]):  # Last 3
+                        print(f"   CHoCH [{i}] {choch.direction.upper()} @ {choch.break_price:.5f} (index {choch.index})")
+                if daily_bos_list:
+                    for i, bos in enumerate(daily_bos_list[-3:]):  # Last 3
+                        print(f"   BOS [{i}] {bos.direction.upper()} @ {bos.break_price:.5f} (index {bos.index})")
+            
+            _swing_highs_unconf = self.detect_swing_highs(df_daily)
+            _swing_lows_unconf  = self.detect_swing_lows(df_daily)
+            current_price_unconf = df_daily['close'].iloc[-1]
+            _unconf_bearish_drop_pct = 0.0
+            _unconf_bullish_rise_pct = 0.0
 
-        if _swing_lows_unconf:
-            # Căutăm cel mai recent swing low din ultimele 60 bare
-            for _sl_candidate in reversed(_swing_lows_unconf):
-                _sl_bars_ago = len(df_daily) - _sl_candidate.index - 1
-                if _sl_bars_ago > 60:
-                    break
-                _wick_l = df_daily['low'].iloc[_sl_candidate.index] if _sl_candidate.index < len(df_daily) else _sl_candidate.price
-                _ref_l = min(_sl_candidate.price, _wick_l)
-                if _ref_l > 0:
-                    _rise = (current_price_unconf - _ref_l) / _ref_l * 100.0
-                    if _rise > _unconf_bullish_rise_pct:
-                        _unconf_bullish_rise_pct = _rise
-                        _unconf_bullish_ref = _ref_l
-            if _unconf_bullish_rise_pct >= 3.0:  # V24.5: era 0.8% — mișcare normală Forex, nu CHoCH real
-                _unconfirmed_bullish_choch = True
-                print(f"   ⚠️ [V11.9] {symbol}: CHoCH bullish neconfirmat — preț a urcat {_unconf_bullish_rise_pct:.1f}% față de swing low @ {_unconf_bullish_ref:.3f} (în 60 bare)")
-        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            if _swing_highs_unconf:
+                for _sh_candidate in reversed(_swing_highs_unconf):
+                    _sh_bars_ago = len(df_daily) - _sh_candidate.index - 1
+                    if _sh_bars_ago > 60:
+                        break
+                    _wick_h = df_daily['high'].iloc[_sh_candidate.index] if _sh_candidate.index < len(df_daily) else _sh_candidate.price
+                    _ref_h = max(_sh_candidate.price, _wick_h)
+                    if _ref_h > 0:
+                        _drop = (_ref_h - current_price_unconf) / _ref_h * 100.0
+                        if _drop > _unconf_bearish_drop_pct:
+                            _unconf_bearish_drop_pct = _drop
+                            _unconf_bearish_ref = _ref_h
+                if _unconf_bearish_drop_pct >= 3.0:
+                    _unconfirmed_bearish_choch = True
+                    if debug:
+                        print(f"   ⚠️ [V11.9] {symbol}: CHoCH bearish neconfirmat — preț a scăzut {_unconf_bearish_drop_pct:.1f}% față de swing high @ {_unconf_bearish_ref:.3f} (în 60 bare)")
 
-        # V40 — filter internal sub-structure before V25 bias
-        _range_state = self.compute_structural_range(
-            df_daily, _swing_highs_unconf, _swing_lows_unconf, symbol=symbol
-        )
-        daily_chochs, daily_bos_list, _range_state = self.filter_internal_range_signals(
-            symbol, df_daily, daily_chochs, daily_bos_list, _range_state
-        )
+            if _swing_lows_unconf:
+                for _sl_candidate in reversed(_swing_lows_unconf):
+                    _sl_bars_ago = len(df_daily) - _sl_candidate.index - 1
+                    if _sl_bars_ago > 60:
+                        break
+                    _wick_l = df_daily['low'].iloc[_sl_candidate.index] if _sl_candidate.index < len(df_daily) else _sl_candidate.price
+                    _ref_l = min(_sl_candidate.price, _wick_l)
+                    if _ref_l > 0:
+                        _rise = (current_price_unconf - _ref_l) / _ref_l * 100.0
+                        if _rise > _unconf_bullish_rise_pct:
+                            _unconf_bullish_rise_pct = _rise
+                            _unconf_bullish_ref = _ref_l
+                if _unconf_bullish_rise_pct >= 3.0:
+                    _unconfirmed_bullish_choch = True
+                    if debug:
+                        print(f"   ⚠️ [V11.9] {symbol}: CHoCH bullish neconfirmat — preț a urcat {_unconf_bullish_rise_pct:.1f}% față de swing low @ {_unconf_bullish_ref:.3f} (în 60 bare)")
 
-        latest_signal, strategy_type, current_trend, leg_choch = self._resolve_d1_leg(
-            df_daily, daily_chochs, daily_bos_list, debug=debug, range_state=_range_state
-        )
+            _range_state = self.compute_structural_range(
+                df_daily, _swing_highs_unconf, _swing_lows_unconf, symbol=symbol
+            )
+            daily_chochs, daily_bos_list, _range_state = self.filter_internal_range_signals(
+                symbol, df_daily, daily_chochs, daily_bos_list, _range_state, debug=debug,
+            )
+
+            latest_signal, strategy_type, current_trend, leg_choch = self._resolve_d1_leg(
+                df_daily, daily_chochs, daily_bos_list, debug=debug, range_state=_range_state
+            )
+
         if latest_signal is None or current_trend == 'neutral':
             if debug:
                 print(f"❌ REJECTED: No Daily CHoCH or BOS found")
@@ -4534,10 +4602,6 @@ class SMCDetector:
                 f"→ {strategy_type.upper()} / WAITING_D1_PULLBACK"
             )
 
-        print(
-            f"✅ [V42.5 LEG] {symbol}: {current_trend.upper()} | {_signal_label} "
-            f"@bar{latest_signal.index} → {strategy_type.upper()} / WAITING_D1_PULLBACK"
-        )
         current_price = df_daily['close'].iloc[-1]
 
         _swing_h = self.detect_swing_highs(df_daily)
@@ -4550,11 +4614,12 @@ class SMCDetector:
             current_trend,
             range_state=_range_state,
             symbol=symbol,
+            debug=debug,
         )
         _structural_breach = self.compute_structural_breach(
             float(current_price), current_trend, _adr,
         )
-        if _structural_breach:
+        if _structural_breach and debug:
             print(
                 f"   🚨 [V43.0 ADR] {symbol}: structural_breach=True — "
                 f"daily close breached protected structure (stateless signal for Etapa 2+)"
@@ -4569,11 +4634,13 @@ class SMCDetector:
             symbol=symbol,
             stored_poi_top=stored_poi_top,
             stored_poi_bottom=stored_poi_bottom,
+            debug=debug,
         )
         fvg = _poi_res.fvg
 
         if not fvg:
-            print(f"   ⏸️ [Faza A] {symbol}: no organic D1 FVG — setup withheld (WAITING_D1_PULLBACK)")
+            if debug:
+                print(f"   ⏸️ [Faza A] {symbol}: no organic D1 FVG — setup withheld (WAITING_D1_PULLBACK)")
             return None
 
         if debug:
@@ -5156,10 +5223,10 @@ class SMCDetector:
         current_price = df_daily['close'].iloc[-1]
         distance_to_tp = abs(current_price - tp)
         total_move = abs(entry - tp)
-        
-        # V27.0: Diagnostic TOO LATE — vizibil pentru FIECARE pereche
         _pct_ramas = (distance_to_tp / total_move * 100) if total_move > 0 else 100.0
-        print(f"📊 [V27 TOO-LATE {symbol}] {100 - _pct_ramas:.1f}% spre TP | h4={'DA' if h4_signal else 'NU (placeholder)'} | status={status} | curr={current_price:.5f} entry={entry:.5f} tp={tp:.5f}")
+        
+        if debug:
+            print(f"📊 [V27 TOO-LATE {symbol}] {100 - _pct_ramas:.1f}% spre TP | h4={'DA' if h4_signal else 'NU (placeholder)'} | status={status} | curr={current_price:.5f} entry={entry:.5f} tp={tp:.5f}")
         
         # V30.0: Prag relaxat 0.20→0.10 (90%+ spre TP = prea tarziu, nu 80%).
         # + WAITING_D1_PULLBACK exclus: entry/tp sunt placeholder, nu reale → filtrul era fals.
@@ -5512,7 +5579,7 @@ class SMCDetector:
         
         # 🎯 V3.4 ORDER BLOCKS: Store FVG as price magnet for future reference
         # This prepares infrastructure for Order Block detection in V3.5
-        self.store_fvg_magnet(symbol, '4H', fvg)  # Store from 4H timeframe
+        self.store_fvg_magnet(symbol, '4H', fvg, debug=debug)  # Store from 4H timeframe
         
         # ✅ V10.5 STRATEGY LOCK GUARD: Reject setup if strategy_type is ambiguous or default
         # Prevents the dataclass default 'reversal' from silently passing through

@@ -42,8 +42,8 @@ SCAN_HOUR = 7           # 07:00 ora București
 SCAN_MINUTE = 0         # :00
 SCAN_DAYS = {0, 2, 4}  # Monday=0, Wednesday=2, Friday=4
 CHECK_INTERVAL = 60     # Verifică la fiecare 60 secunde
-# V44.2: 15 perechi × 4 TF × cTrader API + SMC + charts Telegram → 5 min era prea puțin
-SCAN_TIMEOUT_SEC = int(os.getenv('AUTO_SCAN_TIMEOUT_SEC', '900'))  # 15 minute default
+        # V67: 16 perechi × cTrader + SMC — plasă de siguranță 20 min (perf target < 12 min)
+SCAN_TIMEOUT_SEC = int(os.getenv('AUTO_SCAN_TIMEOUT_SEC', '1200'))
 SCAN_WINDOW_END_MINUTE = 59  # retry până la 07:59 dacă scanul a eșuat
 
 # ── Weekly Report: Vineri 23:59 EET (după închiderea pieței Forex) ──
@@ -195,7 +195,7 @@ def run_auto_scan():
         f"{_sep}\n"
         f"📅 {day_name}, {timestamp}\n"
         f"🔄 Scanez piețele... (setup-urile vechi sunt pastrate)\n"
-        f"⏳ Scanul durează ~5-12 minute (15 perechi × cTrader API)\n"
+        f"⏳ Scanul durează ~5-12 minute (16 perechi × cTrader API)\n"
         f"{_sep}\n"
         f"🔱 AUTHORED BY <b>ФорексГод</b> 🔱\n"
         f"{_sep}\n"
@@ -218,6 +218,9 @@ def run_auto_scan():
         child_env['PYTHONIOENCODING'] = 'utf-8'
         child_env['PYTHONUTF8'] = '1'
         child_env['PYTHONUNBUFFERED'] = '1'
+        child_env['SCANNER_DEBUG'] = '0'
+        child_env['SCANNER_QUIET'] = '1'
+        child_env['AUTO_SCAN'] = '1'
 
         with open(subprocess_log_path, 'a', encoding='utf-8', errors='replace') as scan_log:
             scan_log.write(f"\n{'=' * 60}\n")

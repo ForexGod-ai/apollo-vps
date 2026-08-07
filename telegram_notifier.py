@@ -569,17 +569,26 @@ class TelegramNotifier:
         V43.9: fără butoane manuale — execuția rămâne autonomă (radar + executor).
         Alertele structurale 4H se trimit separat (send_4h_structural_alert).
         """
+        _skip_charts = (
+            os.getenv('AUTO_SCAN', '0') == '1'
+            or os.getenv('SCANNER_QUIET', '0') == '1'
+        )
+        _sleep_sec = 1 if _skip_charts else 3
+
         # 1. Send main alert message
         message = self.format_setup_alert(setup, radar_snapshot=radar_snapshot)
-        print(f"[DEBUG] Sending setup alert for {setup.symbol} | status: {getattr(setup, 'status', None)} | mode: {charts_mode}")
+        if not _skip_charts:
+            print(f"[DEBUG] Sending setup alert for {setup.symbol} | status: {getattr(setup, 'status', None)} | mode: {charts_mode}")
         if not self.send_message(message):
             print(f"[ERROR] Failed to send main message for {setup.symbol}")
             return False
         
-        # V11.9: Anti-flood delay — mărit la 3s (10 perechi × 3 chart-uri = 30+ req/scan)
-        time.sleep(3)
+        time.sleep(_sleep_sec)
         
-        # 2. Generate and send Daily chart (ALWAYS)
+        if _skip_charts:
+            return True
+        
+        # 2. Generate and send Daily chart (ALWAYS when not quiet/auto-scan)
         try:
             print(f"[INFO] Generating Daily chart for {setup.symbol}...")
             daily_chart = self._create_daily_chart(setup, df_daily)

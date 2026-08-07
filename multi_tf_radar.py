@@ -3350,6 +3350,12 @@ class MultiTFRadar:
 
         try:
             while True:
+                _scan_lock = _Path('data') / 'auto_scan_in_progress.lock'
+                if _scan_lock.exists():
+                    print("⏸️ [V67] Auto-scan in progress — radar paused 60s (avoid cBot port 8010 contention)")
+                    time.sleep(60)
+                    continue
+
                 self.run_scan(symbol=symbol, all_setups=all_setups)
 
                 # V25.2: Interval adaptiv bazat pe proximitate FVG (citire JSON fără HTTP extra)

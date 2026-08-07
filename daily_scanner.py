@@ -23,7 +23,7 @@ from typing import List, Optional, Dict, Tuple
 from dotenv import load_dotenv
 from loguru import logger
 
-from smc_detector import SMCDetector, TradeSetup, CHoCH, BOS
+from smc_detector import SMCDetector, TradeSetup, CHoCH, BOS, D1AuthContext
 from telegram_notifier import TelegramNotifier
 from ctrader_cbot_client import CTraderCBotClient
 from strategy_optimizer import StrategyOptimizer
@@ -35,6 +35,36 @@ load_dotenv()
 
 # Global flag for testing/audit - ignore open positions check
 IGNORE_OPEN_POSITIONS = False
+
+
+def _scanner_debug() -> bool:
+    return os.getenv('SCANNER_DEBUG', '0') == '1'
+
+
+def _scanner_quiet() -> bool:
+    return os.getenv('SCANNER_QUIET', '0') == '1'
+
+
+def _print_pair_scan_summary(
+    symbol: str,
+    ctx: D1AuthContext,
+    setup: Optional[TradeSetup],
+    elapsed_sec: float,
+    *,
+    bias_fallback: bool = False,
+) -> None:
+    """V67: one production line per pair (skipped when SCANNER_DEBUG=1)."""
+    if _scanner_debug():
+        return
+    strat = 'CONT' if ctx.strategy_type == 'continuation' else 'REV'
+    trend = ctx.trend.upper() if ctx.trend not in ('', 'neutral') else 'NEUTRAL'
+    if setup is not None:
+        status = getattr(setup, 'status', 'MONITORING')
+    elif bias_fallback:
+        status = 'BIAS_FALLBACK'
+    else:
+        status = 'NO_SETUP'
+    print(f"✓ {symbol} | {strat} {trend} | {status} | {elapsed_sec:.1f}s")
 
 
 def _clear_deep_sleep_on_resume() -> bool:
@@ -289,6 +319,10 @@ class DailyScanner:
         w1_bias_map = {}  # V40.3: W1 macro bias informativ (confidence flag)
         symbol_price_map = {}  # V40.3: preț D1 close per simbol — soft TTL POI
         symbol_df_daily_map: Dict[str, pd.DataFrame] = {}  # V43.1: post-TP evolution
+        d1_auth_cache: Dict[str, D1AuthContext] = {}  # V67: one D1 pipeline per pair
+        _scanner_debug_flag = _scanner_debug()
+        _scanner_quiet_flag = _scanner_quiet()
+        _deferred_tg_cards: List[dict] = []  # V67: charts after scan report
 
         # V3.0: Load existing monitoring setups to re-evaluate their status
         monitoring_symbols = set()
@@ -333,7 +367,11 @@ class DailyScanner:
                 is_monitoring = symbol in monitoring_symbols
                 scan_reason = "Re-evaluating MONITORING" if is_monitoring else f"Priority {priority}"
                 
-                print(f"\n🔍 Scanning {symbol} ({scan_reason})...")
+                if not _scanner_quiet_flag:
+                    print(f"\n🔍 Scanning {symbol} ({scan_reason})...")
+                _pair_t0 = time.time()
+                setup = None
+                _pair_bias_fallback = False
                 
                 # Download Daily data — V44.2: min 250 bare (~1 an), prefer config (365 în pairs_config)
                 _d1_lookback = max(
@@ -370,39 +408,49 @@ class DailyScanner:
                     print(f"⚠️ Skipping {symbol} - no 4H data")
                     continue
 
-                # V62: bias autoritar din resolve_d1_leg + coerce (nu doar determine_daily_trend)
+                # V67: single D1 authority build — cached for scan + bias fallback + save
                 try:
-                    _auth = self.smc_detector.resolve_authoritative_d1_bias(df_daily, symbol=symbol)
+                    _ctx = self.smc_detector.build_d1_context(
+                        df_daily, symbol=symbol, debug=_scanner_debug_flag,
+                    )
+                    d1_auth_cache[symbol] = _ctx
+                    _auth = _ctx.as_dict()
                     daily_bias_map[symbol] = _auth.get('trend') or 'neutral'
                 except Exception as _dbm_err:
                     daily_bias_map[symbol] = 'neutral'
-                    print(f"   ⚠️ [V40] bias map error {symbol}: {_dbm_err}")
+                    if _scanner_debug_flag:
+                        print(f"   ⚠️ [V40] bias map error {symbol}: {_dbm_err}")
                 
-                # V40.3: W1 = macro anchor informativ (confidence flag, fără reject)
-                print(f"   📅 Downloading W1 data (Weekly Anchor — 52 bars, ~1 an)...")
+                # V67: W1 lazy — only when D1 bias is directional
                 df_w1 = None
                 w1_poi = None
                 w1_result = {'bias': 'NEUTRAL', 'last_bos_direction': None, 'last_bos_price': None, 'last_bos_bar_idx': None}
-                try:
-                    df_w1 = self.data_provider.get_historical_data(symbol, "W1", 52)  # V31.0
-                    if df_w1 is not None:
-                        print(f"   ✅ W1 data: {len(df_w1)} bars")
-                        w1_result = self.smc_detector.calculate_w1_bias(df_w1)
-                        w1_bias_map[symbol] = w1_result.get('bias', 'NEUTRAL')
-                        w1_poi = self.smc_detector.resolve_w1_poi(
-                            df_w1, w1_result.get('bias', 'NEUTRAL'),
-                        )
-                    else:
-                        print(f"   ⚠️ W1 data unavailable for {symbol} — bias = NEUTRAL")
+                _d1_trend = daily_bias_map.get(symbol, 'neutral')
+                if _d1_trend in ('bullish', 'bearish'):
+                    if _scanner_debug_flag:
+                        print(f"   📅 Downloading W1 data (Weekly Anchor — 52 bars, ~1 an)...")
+                    try:
+                        df_w1 = self.data_provider.get_historical_data(symbol, "W1", 52)
+                        if df_w1 is not None:
+                            if _scanner_debug_flag:
+                                print(f"   ✅ W1 data: {len(df_w1)} bars")
+                            w1_result = self.smc_detector.calculate_w1_bias(df_w1)
+                            w1_bias_map[symbol] = w1_result.get('bias', 'NEUTRAL')
+                            w1_poi = self.smc_detector.resolve_w1_poi(
+                                df_w1, w1_result.get('bias', 'NEUTRAL'),
+                            )
+                        else:
+                            if _scanner_debug_flag:
+                                print(f"   ⚠️ W1 data unavailable for {symbol} — bias = NEUTRAL")
+                            w1_bias_map[symbol] = 'NEUTRAL'
+                    except Exception as w1_err:
+                        if _scanner_debug_flag:
+                            print(f"   ⚠️ W1 fetch error for {symbol}: {w1_err} — continuing")
                         w1_bias_map[symbol] = 'NEUTRAL'
-                except Exception as w1_err:
-                    print(f"   ⚠️ W1 fetch error for {symbol}: {w1_err} — continuing")
+                else:
                     w1_bias_map[symbol] = 'NEUTRAL'
                 
                 # V8.0: Run SMC detection with ATR + Premium/Discount filters
-                # These filters may reject setups:
-                # - ATR Filter: Eliminates micro-swings (not prominent enough)
-                # - Premium/Discount: Rejects shallow retracements (<50%)
                 try:
                     _stored = existing_setups_by_symbol.get(symbol, {})
                     setup = self.smc_detector.scan_for_setup(
@@ -410,9 +458,10 @@ class DailyScanner:
                         df_daily=df_daily,
                         df_4h=df_4h,
                         priority=priority,
-                        debug=True,    # ✅ V10.6: verbose reject messages
+                        debug=_scanner_debug_flag,
                         stored_poi_top=_stored.get('poi_top') if _stored.get('poi_top') is not None else _stored.get('fvg_top'),
                         stored_poi_bottom=_stored.get('poi_bottom') if _stored.get('poi_bottom') is not None else _stored.get('fvg_bottom'),
+                        d1_ctx=d1_auth_cache.get(symbol),
                     )
                 except Exception as scan_error:
                     print(f"⚠️  Error scanning {symbol}: {scan_error}")
@@ -467,7 +516,8 @@ class DailyScanner:
                     # V10.1: Display strategy type immediately
                     strategy = setup.strategy_type.upper() if hasattr(setup, 'strategy_type') else "UNKNOWN"
                     strategy_emoji = "🔄" if strategy == "REVERSAL" else "➡️"
-                    print(f"🎯 SETUP FOUND on {symbol}! {strategy_emoji} {strategy}")
+                    if not _scanner_quiet_flag:
+                        print(f"🎯 SETUP FOUND on {symbol}! {strategy_emoji} {strategy}")
                     
                     # NEW: ML SCORING - Calculate AI confidence score (0-100)
                     ml_score = self._calculate_ml_score(setup, df_4h)
@@ -488,18 +538,17 @@ class DailyScanner:
                     setup.ai_probability_factors = ai_prob['factors']
                     setup.ai_probability_warning = ai_prob['warning']
                     
-                    # Print ML analysis
-                    score_emoji = "🟢" if ml_score['score'] >= 75 else "🟡" if ml_score['score'] >= 60 else "🔴"
-                    print(f"   {score_emoji} ML SCORE: {ml_score['score']}/100 ({ml_score['confidence']})")
-                    print(f"   🤖 AI Recommendation: {ml_score['recommendation']}")
-                    for factor, desc in ml_score['factors'].items():
-                        print(f"      • {factor}: {desc}")
-                    
-                    # Print AI Probability analysis
-                    prob_emoji = "🟢" if ai_prob['score'] >= 7 else "🟡" if ai_prob['score'] >= 5 else "🔴"
-                    print(f"   {prob_emoji} AI PROBABILITY: {ai_prob['score']}/10 ({ai_prob['confidence']})")
-                    if ai_prob['warning']:
-                        print(f"   {ai_prob['warning']}")
+                    # Print ML analysis (verbose only unless quiet off)
+                    if not _scanner_quiet_flag:
+                        score_emoji = "🟢" if ml_score['score'] >= 75 else "🟡" if ml_score['score'] >= 60 else "🔴"
+                        print(f"   {score_emoji} ML SCORE: {ml_score['score']}/100 ({ml_score['confidence']})")
+                        print(f"   🤖 AI Recommendation: {ml_score['recommendation']}")
+                        for factor, desc in ml_score['factors'].items():
+                            print(f"      • {factor}: {desc}")
+                        prob_emoji = "🟢" if ai_prob['score'] >= 7 else "🟡" if ai_prob['score'] >= 5 else "🔴"
+                        print(f"   {prob_emoji} AI PROBABILITY: {ai_prob['score']}/10 ({ai_prob['confidence']})")
+                        if ai_prob['warning']:
+                            print(f"   {ai_prob['warning']}")
                     
                     setups_found.append(setup)
 
@@ -630,12 +679,13 @@ class DailyScanner:
                     tp_str = f"{setup.take_profit:.5f}" if setup.take_profit else "N/A"
                     rr_str = f"1:{setup.risk_reward:.2f}" if setup.risk_reward else "N/A"
                     status_emoji = "🔥 READY" if setup_status == "READY" else "👁️ PÂNDĂ"
-                    print(f"   ✅ [V10.2 STRUCTURAL PASS] {symbol} {direction_str}:")
-                    print(f"      • Status: {status_emoji}")
-                    print(f"      • Entry (FVG Edge 70-80% Fib): {entry_str}")
-                    print(f"      • SL (4H Body Close): {sl_str}")
-                    print(f"      • TP (D1 Structural Max): {tp_str}")
-                    print(f"      • RR: {rr_str}")
+                    if not _scanner_quiet_flag:
+                        print(f"   ✅ [V10.2 STRUCTURAL PASS] {symbol} {direction_str}:")
+                        print(f"      • Status: {status_emoji}")
+                        print(f"      • Entry (FVG Edge 70-80% Fib): {entry_str}")
+                        print(f"      • SL (4H Body Close): {sl_str}")
+                        print(f"      • TP (D1 Structural Max): {tp_str}")
+                        print(f"      • RR: {rr_str}")
                     
                     # V10.2: RAPORTARE FORȜATĂ MONITORING
                     # V15.1 DEDUP: alertă Telegram doar setup NOU sau READY (nu re-evaluate MONITORING)
@@ -667,7 +717,8 @@ class DailyScanner:
                             tg_prefix = "👁️ MONITORING (PÂNDĂ)"
 
                         if send_telegram_card:
-                            print(f"   📸 {tg_prefix} — Generez chart pentru {symbol}...")
+                            if _scanner_debug_flag:
+                                print(f"   📸 {tg_prefix} — Generez chart pentru {symbol}...")
                             try:
                                 setup.live_price = symbol_price_map.get(symbol)
                                 setup.live_price_source = 'ctrader_d1_close'
@@ -676,53 +727,51 @@ class DailyScanner:
                                     if setup_status == 'READY'
                                     else {}
                                 )
-                                self.telegram.send_setup_alert(
-                                    setup=setup,
-                                    df_daily=df_daily,
-                                    df_4h=df_4h,
-                                    charts_mode='daily_only',  # V43.9: info-only — no manual Execute/Skip buttons
-                                    radar_snapshot=_radar_snap,
-                                )
-                                print(f"   ✅ Chart trimis pe Telegram: {symbol} [{tg_prefix}] [DAILY ONLY]")
+                                _deferred_tg_cards.append({
+                                    'setup': setup,
+                                    'df_daily': df_daily,
+                                    'df_4h': df_4h,
+                                    'radar_snapshot': _radar_snap,
+                                    'prefix': tg_prefix,
+                                })
+                                if _scanner_debug_flag:
+                                    print(f"   📋 {symbol} card queued [{tg_prefix}]")
                             except Exception as e:
-                                print(f"   ⚠️ Failed to send charts: {e}")
+                                print(f"   ⚠️ Failed to queue chart: {e}")
                         elif is_reevaluation:
                             print(f"   ⏭️ [V15.1 DEDUP] {symbol}: re-evaluat MONITORING — skip card Telegram (radar LTF activ)")
                     
-                    print(f"✓ {symbol} adăugat în raportul de dimineață [{setup_status}]")
+                    if not _scanner_quiet_flag:
+                        print(f"✓ {symbol} adăugat în raportul de dimineață [{setup_status}]")
                 else:
                     # V10.2: Setup respins — motivul exact a fost printat de smc_detector
                     # ── V31.0 BIAS FALLBACK ──────────────────────────────────────────────────
                     # Nu mai scriem direct în JSON. Colectăm în bias_fallback_entries[].
                     # save_monitoring_setups() face WIPE&OVERWRITE la final cu tot.
                     try:
-                        _auth = self.smc_detector.resolve_authoritative_d1_bias(
-                            df_daily, symbol=symbol,
-                        )
-                        _bias_dir = _auth.get('trend') or 'neutral'
-                        _bf_strategy = _auth.get('strategy_type') or 'continuation'
-                        _bf_sig = _auth.get('d1_signal_type') or (
+                        _auth = d1_auth_cache.get(symbol)
+                        if _auth is None:
+                            _auth = self.smc_detector.build_d1_context(
+                                df_daily, symbol=symbol, debug=_scanner_debug_flag,
+                            )
+                            d1_auth_cache[symbol] = _auth
+                        _auth_dict = _auth.as_dict()
+                        _bias_dir = _auth_dict.get('trend') or 'neutral'
+                        _bf_strategy = _auth_dict.get('strategy_type') or 'continuation'
+                        _bf_sig = _auth_dict.get('d1_signal_type') or (
                             'CHoCH' if _bf_strategy == 'reversal' else 'BOS'
                         )
                         if _bias_dir not in ('bullish', 'bearish'):
-                            _bias_dir = self.smc_detector.macro_trend_from_swings(df_daily)
+                            _bias_dir = _auth.macro_swings if _auth.macro_swings in ('bullish', 'bearish') else 'neutral'
                         if _bias_dir not in ('bullish', 'bearish'):
-                            _sh = self.smc_detector.detect_swing_highs(df_daily)
-                            _sl = self.smc_detector.detect_swing_lows(df_daily)
-                            _ch, _bo = self.smc_detector.detect_choch_and_bos(df_daily)
-                            _rs = self.smc_detector.compute_structural_range(
-                                df_daily, _sh, _sl, symbol=symbol,
-                            )
-                            _ch, _bo, _rs = self.smc_detector.filter_internal_range_signals(
-                                symbol, df_daily, _ch, _bo, _rs,
-                            )
                             _bias_dir = self.smc_detector.resolve_structural_bias_fallback(
-                                df_daily, _ch, _bo, _rs,
+                                df_daily, _auth.chochs, _auth.bos_list, _auth.range_state,
                             )
-                            _bf_strategy, _bf_sig = self.smc_detector.infer_d1_strategy_type(
-                                df_daily, symbol=symbol,
-                            )
+                            if _bias_dir in ('bullish', 'bearish'):
+                                _bf_strategy = _auth.strategy_type
+                                _bf_sig = _auth.d1_signal_type
                         if _bias_dir in ('bullish', 'bearish'):
+                            _pair_bias_fallback = True
                             _w1 = w1_bias_map.get(symbol, 'NEUTRAL')
                             _bias_trade_dir = 'buy' if _bias_dir == 'bullish' else 'sell'
                             _bf_status = 'WAITING_D1_PULLBACK'
@@ -780,6 +829,16 @@ class DailyScanner:
                             print(f"⛔ {symbol} — NO SETUP + BIAS NEUTRAL [V10.2 REJECT: vezi log-ul ↑]")
                     except Exception as _bf_err:
                         print(f"⛔ {symbol} — NO SETUP [V10.2 REJECT: vezi log-ul ↑] | bias fallback error: {_bf_err}")
+
+                _ctx_out = d1_auth_cache.get(symbol)
+                if _ctx_out is not None:
+                    _print_pair_scan_summary(
+                        symbol,
+                        _ctx_out,
+                        setup,
+                        time.time() - _pair_t0,
+                        bias_fallback=_pair_bias_fallback,
+                    )
 
                 # V44.2: pauză scurtă — cBot main thread (radar + scanner simultan → HTTP 500 Timeout)
                 time.sleep(0.25)
@@ -914,9 +973,9 @@ class DailyScanner:
         print("="*60 + "\n")
 
         if self.scanner_settings['telegram_alerts']:
-            # ━━━ V10.1 SCAN REPORT — The Official Stamp ━━━
-            # Anti-flood: wait 2s after last chart before sending final report
-            time.sleep(2)
+            # ━━━ V10.1 SCAN REPORT — trimis IMEDIAT (V67: înainte de carduri deferred) ━━━
+            if not _scanner_quiet_flag:
+                time.sleep(1)
             
             # Check Deep Sleep status from disk state file
             deep_sleep_active = False
@@ -1002,13 +1061,28 @@ class DailyScanner:
                     )
                 except Exception as e2:
                     print(f"[ERROR] Fallback scan report failed: {e2}")
+
+            # V67: deferred setup cards — după raportul oficial Scan Complete
+            for _card in _deferred_tg_cards:
+                try:
+                    self.telegram.send_setup_alert(
+                        setup=_card['setup'],
+                        df_daily=_card['df_daily'],
+                        df_4h=_card['df_4h'],
+                        charts_mode='daily_only',
+                        radar_snapshot=_card.get('radar_snapshot'),
+                    )
+                    if _scanner_debug_flag:
+                        print(f"   ✅ Chart trimis: {_card['setup'].symbol} [{_card.get('prefix', '')}]")
+                except Exception as _card_err:
+                    print(f"   ⚠️ Deferred card failed {_card['setup'].symbol}: {_card_err}")
             
-        # DEBUG: Print status for each setup found
-        print('\n--- DEBUG: Status setup-uri returnate de run_daily_scan ---')
-        for s in all_active_setups:
-            status_tag = "🆕 NEW" if s.symbol not in open_position_symbols else "🔄 ACTIVE"
-            print(f"{status_tag} {getattr(s, 'symbol', 'N/A')}: status={getattr(s, 'status', 'N/A')}")
-        print('----------------------------------------------------------')
+        if _scanner_debug_flag:
+            print('\n--- DEBUG: Status setup-uri returnate de run_daily_scan ---')
+            for s in all_active_setups:
+                status_tag = "🆕 NEW" if s.symbol not in open_position_symbols else "🔄 ACTIVE"
+                print(f"{status_tag} {getattr(s, 'symbol', 'N/A')}: status={getattr(s, 'status', 'N/A')}")
+            print('----------------------------------------------------------')
         return all_active_setups  # Return ALL setups (new + active with positions)
     
     def scan_single_pair(self, symbol: str) -> Optional[TradeSetup]:
@@ -1044,7 +1118,7 @@ class DailyScanner:
                 df_daily=df_daily,
                 df_4h=df_4h,
                 priority=pair_config['priority'],
-                debug=True    # ✅ V10.6: verbose reject messages
+                debug=_scanner_debug(),
             )
             
             if setup:
