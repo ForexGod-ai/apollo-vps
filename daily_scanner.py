@@ -964,9 +964,23 @@ class DailyScanner:
         print("="*60 + "\n")
 
         if self.scanner_settings['telegram_alerts']:
-            # ━━━ V10.1 SCAN REPORT — trimis IMEDIAT (V67: înainte de carduri deferred) ━━━
+            # ━━━ V67.1: setup cards ÎNAINTE, MARKET_REPORT la final (ordinea corectă) ━━━
+            for _card in _deferred_tg_cards:
+                try:
+                    self.telegram.send_setup_alert(
+                        setup=_card['setup'],
+                        df_daily=_card['df_daily'],
+                        df_4h=_card['df_4h'],
+                        charts_mode='daily_only',
+                        radar_snapshot=_card.get('radar_snapshot'),
+                    )
+                    if _scanner_debug_flag:
+                        print(f"   ✅ Chart trimis: {_card['setup'].symbol} [{_card.get('prefix', '')}]")
+                except Exception as _card_err:
+                    print(f"   ⚠️ Setup card failed {_card['setup'].symbol}: {_card_err}")
+
             if not _scanner_quiet_flag:
-                time.sleep(1)
+                time.sleep(2)
             
             # Check Deep Sleep status from disk state file
             deep_sleep_active = False
@@ -1052,21 +1066,6 @@ class DailyScanner:
                     )
                 except Exception as e2:
                     print(f"[ERROR] Fallback scan report failed: {e2}")
-
-            # V67: deferred setup cards — după raportul oficial Scan Complete
-            for _card in _deferred_tg_cards:
-                try:
-                    self.telegram.send_setup_alert(
-                        setup=_card['setup'],
-                        df_daily=_card['df_daily'],
-                        df_4h=_card['df_4h'],
-                        charts_mode='daily_only',
-                        radar_snapshot=_card.get('radar_snapshot'),
-                    )
-                    if _scanner_debug_flag:
-                        print(f"   ✅ Chart trimis: {_card['setup'].symbol} [{_card.get('prefix', '')}]")
-                except Exception as _card_err:
-                    print(f"   ⚠️ Deferred card failed {_card['setup'].symbol}: {_card_err}")
             
         if _scanner_debug_flag:
             print('\n--- DEBUG: Status setup-uri returnate de run_daily_scan ---')
