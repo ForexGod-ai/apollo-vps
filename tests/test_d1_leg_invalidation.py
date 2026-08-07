@@ -61,7 +61,7 @@ def test_eurusd_invalid_bullish_leg_not_reversal_long(detector):
     chochs, bos, rs = detector.filter_internal_range_signals(
         "EURUSD", df, chochs, bos, rs,
     )
-    bias = detector.determine_daily_trend(df, symbol="EURUSD")
+    bias = detector.build_d1_context(df, symbol="EURUSD").trend
     fallback = detector.resolve_structural_bias_fallback(df, chochs, bos, rs)
     assert bias in ("bearish", "bullish", "neutral")
     assert fallback in ("bearish", "bullish", "neutral")

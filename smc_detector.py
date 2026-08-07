@@ -109,7 +109,11 @@ class POIResolution:
 
 @dataclass
 class D1AuthContext:
-    """V67: Single D1 authority snapshot per symbol per scan run."""
+    """V67 B: Single D1 authority snapshot per symbol per scan run.
+
+    Canonical replacement for legacy ``determine_daily_trend`` and
+    ``infer_d1_strategy_type`` — built exclusively via ``build_d1_context()``.
+    """
     symbol: str
     trend: str
     strategy_type: str
@@ -3440,175 +3444,6 @@ class SMCDetector:
         return kept_chochs, kept_bos, range_state
 
 
-    def determine_daily_trend(self, df: pd.DataFrame, debug: bool = False, symbol: Optional[str] = None) -> str:
-        """
-        🎯 GLITCH IN MATRIX - TREND DETECTION V6.2 (MACRO MEMORY UPGRADE)
-        
-        ✨ by ФорексГод ✨
-        
-        🆕 V6.2 PERFECTIONS:
-        - 📊 Analyzes last 150 bars (not 50) for MACRO trend identification
-        - 🔍 Multiple validation layers (swing structure + CHoCH/BOS analysis)
-        - 📝 Audit logging (explains WHY direction was chosen)
-        
-        PHILOSOPHY:
-        We analyze LONG-TERM structure (150 bars = ~5 months Daily) to determine
-        the REAL macro trend, not short-term noise. This prevents false reversals
-        when market is in a temporary pullback within a strong macro trend.
-        
-        LOGIC:
-        1. Analyze swing structure over 150 bars (HH+HL vs LL+LH)
-        2. Find LATEST CHoCH or BOS on Daily
-        3. Validate consistency between swing structure and latest signal
-        4. Return bias with audit trail
-        
-        Returns:
-            'bullish': Macro structure is BULLISH (HH + HL dominant)
-            'bearish': Macro structure is BEARISH (LL + LH dominant)
-            'neutral': No clear structure (choppy/ranging)
-        
-        Example:
-        - Last 150 bars show LL + LH pattern (bearish macro)
-        - Latest CHoCH is bullish (potential reversal attempt)
-        - But we're still in bearish zone → Bias = BEARISH
-        - We take ONLY short setups until macro structure changes
-        """
-        if df is None or len(df) < 20:
-            return 'neutral'
-
-        # V24.0 ORGANIC: Analiz\u0103m TOAT\u0102 seria disponibil\u0103 \u2014 f\u0103r\u0103 macro_lookback
-        # Pivo\u021bii structurali nu expir\u0103. Un LH format acum 30 de zile e VALID
-        # p\u00e2n\u0103 c\u00e2nd pre\u021bul \u00eel sparge cu body close.
-
-        if debug:
-            print(f"\n{'='*80}")
-            print("V24.0 ORGANIC TREND ANALYSIS (full series — no expiry)")
-            print(f"{'='*80}")
-            print(f"   Analyzing {len(df)} bars — all pivots valid until broken...")
-
-        # Detect swing highs and lows pe TOAT\u0102 seria
-        swing_highs = self.detect_swing_highs(df)
-        swing_lows = self.detect_swing_lows(df)
-        
-        if debug:
-            print(f"   Swing Highs detected: {len(swing_highs)}")
-            print(f"   Swing Lows detected: {len(swing_lows)}")
-        
-        # LAYER 1: Swing structure analysis (HH+HL vs LL+LH)
-        macro_trend_swings = self.macro_trend_from_swings(df)
-        
-        if debug and macro_trend_swings != 'neutral':
-            swing_highs = self.detect_swing_highs(df)
-            swing_lows = self.detect_swing_lows(df)
-            if len(swing_highs) >= 3 and len(swing_lows) >= 3:
-                recent_highs = swing_highs[-3:]
-                recent_lows = swing_lows[-3:]
-                hh_count = sum(1 for i in range(1, len(recent_highs)) if recent_highs[i].price > recent_highs[i-1].price)
-                lh_count = sum(1 for i in range(1, len(recent_highs)) if recent_highs[i].price < recent_highs[i-1].price)
-                hl_count = sum(1 for i in range(1, len(recent_lows)) if recent_lows[i].price > recent_lows[i-1].price)
-                ll_count = sum(1 for i in range(1, len(recent_lows)) if recent_lows[i].price < recent_lows[i-1].price)
-                print(f"\n   📈 Swing Analysis:")
-                print(f"      Last 3 Highs: HH={hh_count}, LH={lh_count}")
-                print(f"      Last 3 Lows:  HL={hl_count}, LL={ll_count}")
-                print(f"      Swing Pattern: {macro_trend_swings.upper()}")
-        
-        # LAYER 2: CHoCH/BOS analysis (latest signal direction)
-        daily_chochs, daily_bos_list = self.detect_choch_and_bos(df)
-
-        # V42: filter internal bounces, then use latest body-close signal (not blind range lock)
-        if symbol:
-            _v39_sh = self.detect_swing_highs(df)
-            _v39_sl = self.detect_swing_lows(df)
-            _v39_rs = self.compute_structural_range(df, _v39_sh, _v39_sl, symbol=symbol)
-            daily_chochs, daily_bos_list, _v39_rs = self.filter_internal_range_signals(
-                symbol, df, daily_chochs, daily_bos_list, _v39_rs
-            )
-            if _v39_rs and _v39_rs.locked and debug:
-                print(
-                    f"   🔒 [V42.5] determine_daily_trend range INSIDE/LOCK "
-                    f"→ leg authority (lock hint {_v39_rs.locked_bias.upper()})"
-                )
-        
-        _d1_signal, _d1_strategy, final_bias, _leg_choch = self._resolve_d1_leg(
-            df, daily_chochs, daily_bos_list, debug=debug, range_state=_v39_rs
-        )
-        latest_signal = _d1_signal
-        latest_index = latest_signal.index if latest_signal else -1
-        signal_type = (
-            'CHoCH' if isinstance(latest_signal, CHoCH)
-            else 'BOS' if latest_signal else None
-        )
-        
-        if debug and latest_signal:
-            print(f"\n   🎯 Latest Signal (V42.5 leg):")
-            print(f"      Type: {signal_type}")
-            print(f"      Strategy: {_d1_strategy.upper()}")
-            print(f"      Direction: {latest_signal.direction.upper()}")
-            print(f"      Index: {latest_index}/{len(df)}")
-            if _leg_choch and _leg_choch is not latest_signal:
-                print(
-                    f"      Leg CHoCH: {_leg_choch.direction.upper()} @bar{_leg_choch.index}"
-                )
-        
-        # V7.1 BOS sequence — diagnostic only (final_bias from _resolve_d1_leg)
-        consecutive_bos_count = 0
-        if len(daily_bos_list) >= 3:
-            recent_bos = daily_bos_list[-5:]
-            _dom_dir = None
-            for bos in reversed(recent_bos):
-                if _dom_dir is None:
-                    _dom_dir = bos.direction
-                    consecutive_bos_count = 1
-                elif bos.direction == _dom_dir:
-                    consecutive_bos_count += 1
-                else:
-                    break
-        
-        # 🆕 V7.1 LAYER 4: HIERARCHY - BOS Sequence > Swing Pattern > Latest Signal
-        # PHILOSOPHY by ФорексГод: "3+ BOS = Army. Swings = Structure. Signal = Noise."
-        
-        # V22 DAILY MATRIX PURITY + V42.5 leg authority
-        if latest_signal and final_bias != 'neutral':
-            if macro_trend_swings == final_bias:
-                confidence = f"VERY HIGH (V42.5 {_d1_strategy} {signal_type} + swing aligned: {final_bias.upper()})"
-            elif macro_trend_swings != 'neutral':
-                confidence = f"HIGH (V42.5 {signal_type} {final_bias.upper()} — swing {macro_trend_swings.upper()})"
-            else:
-                confidence = f"MEDIUM (V42.5 {signal_type} {final_bias.upper()}, swing neutral)"
-
-            if debug:
-                print(f"\n   🎯 V42.5 BODY-CLOSE LEG BIAS:")
-                print(f"      Latest {signal_type}: {final_bias.upper()} (index {latest_index})")
-                print(f"      Strategy: {_d1_strategy.upper()}")
-                print(f"      Swing structure: {macro_trend_swings.upper()}")
-                print(f"      Confidence: {confidence}")
-
-        elif macro_trend_swings != 'neutral':
-            # Fallback: niciun BOS/CHoCH confirmat → swing structure ca bias
-            final_bias = macro_trend_swings
-            confidence = "LOW (Swing pattern only — niciun BOS/CHoCH body-close confirmat)"
-
-        else:
-            _fb = self.resolve_structural_bias_fallback(
-                df, daily_chochs, daily_bos_list, _v39_rs if symbol else None,
-            )
-            if _fb != 'neutral':
-                final_bias = _fb
-                confidence = "LOW (V58 structural fallback — range + historical BOS/CHoCH)"
-            else:
-                final_bias = 'neutral'
-                confidence = "NONE (Choppy/Ranging)"
-        
-        if debug:
-            print(f"\n   ✅ FINAL VERDICT (V7.1 - BOS/SWING HIERARCHY):")
-            print(f"      Macro Bias: {final_bias.upper()}")
-            print(f"      Confidence: {confidence}")
-            if latest_signal and latest_signal.direction != final_bias:
-                print(f"      ⚠️  Latest signal ({latest_signal.direction.upper()}) OVERRIDDEN by {('BOS sequence' if consecutive_bos_count >= 3 else 'swing pattern')}")
-            print(f"{'='*80}\n")
-        
-        return final_bias
-    
     def has_confirmation_swing(self, df: pd.DataFrame, choch: CHoCH) -> bool:
         """
         V5.0 REVERSAL VALIDATION: Check if CHoCH has post-break confirmation
@@ -4355,39 +4190,6 @@ class SMCDetector:
 
         return entry, stop_loss, take_profit
     
-    # V37.0: strategy_type determinat EXCLUSIV de logica V25.0 UNIVERSAL BIAS
-    # din scan_for_setup() (index CHoCH vs BOS). detect_strategy_type() eliminat
-    # — era motor paralel neapelat; nu modifica Body Close detect_choch_and_bos().
-
-    def infer_d1_strategy_type(
-        self,
-        df_daily: pd.DataFrame,
-        symbol: Optional[str] = None,
-    ) -> Tuple[str, str]:
-        """V37.15 + urgent fix: macro trend + BOS → CONTINUITY; REVERSAL doar pe CHoCH major."""
-        sh = self.detect_swing_highs(df_daily)
-        sl = self.detect_swing_lows(df_daily)
-        chochs, bos_list = self.detect_choch_and_bos(df_daily)
-        rs = self.compute_structural_range(df_daily, sh, sl, symbol=symbol)
-        chochs, bos_list, rs = self.filter_internal_range_signals(
-            symbol or '', df_daily, chochs, bos_list, rs
-        )
-        latest_signal, strategy, current_trend, leg_choch = self._resolve_d1_leg(
-            df_daily, chochs, bos_list, range_state=rs
-        )
-        strategy = self._classify_d1_strategy(
-            latest_signal, leg_choch, bos_list, df_daily,
-        )
-        signal = self._d1_signal_for_strategy(
-            latest_signal, leg_choch, strategy, bos_list,
-        )
-        if signal:
-            signal_label = 'CHoCH' if isinstance(signal, CHoCH) else 'BOS'
-        else:
-            signal_label = 'BOS'
-            strategy = 'continuation'
-        return strategy, signal_label
-
     def scan_for_setup(
         self, 
         symbol: str,

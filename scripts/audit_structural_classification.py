@@ -149,7 +149,8 @@ def audit_symbol(
         df, chochs, bos_list, debug=debug, range_state=rs
     )
     reason = f"{strategy}_via_resolve_d1_leg"
-    bias = detector.determine_daily_trend(df, debug=debug, symbol=symbol)
+    ctx = detector.build_d1_context(df, symbol=symbol, debug=debug)
+    bias = ctx.trend
 
     leg_still_valid = None
     leg_break_price = None

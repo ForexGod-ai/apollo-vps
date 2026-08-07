@@ -755,25 +755,16 @@ class DailyScanner:
                                 df_daily, symbol=symbol, debug=_scanner_debug_flag,
                             )
                             d1_auth_cache[symbol] = _auth
-                        _auth_dict = _auth.as_dict()
-                        _bias_dir = _auth_dict.get('trend') or 'neutral'
-                        _bf_strategy = _auth_dict.get('strategy_type') or 'continuation'
-                        _bf_sig = _auth_dict.get('d1_signal_type') or (
-                            'CHoCH' if _bf_strategy == 'reversal' else 'BOS'
-                        )
-                        if _bias_dir not in ('bullish', 'bearish'):
-                            _bias_dir = _auth.macro_swings if _auth.macro_swings in ('bullish', 'bearish') else 'neutral'
-                        if _bias_dir not in ('bullish', 'bearish'):
-                            _bias_dir = self.smc_detector.resolve_structural_bias_fallback(
-                                df_daily, _auth.chochs, _auth.bos_list, _auth.range_state,
-                            )
-                            if _bias_dir in ('bullish', 'bearish'):
-                                _bf_strategy = _auth.strategy_type
-                                _bf_sig = _auth.d1_signal_type
+                        # V67 B: bias fallback reads canonical D1AuthContext only
+                        _bias_dir = _auth.trend
+                        _bf_strategy = _auth.strategy_type
+                        _bf_sig = _auth.d1_signal_type
                         if _bias_dir in ('bullish', 'bearish'):
                             _pair_bias_fallback = True
                             _w1 = w1_bias_map.get(symbol, 'NEUTRAL')
-                            _bias_trade_dir = 'buy' if _bias_dir == 'bullish' else 'sell'
+                            _bias_trade_dir = _auth.direction or (
+                                'buy' if _bias_dir == 'bullish' else 'sell'
+                            )
                             _bf_status = 'WAITING_D1_PULLBACK'
                             _bf_w_d_aligned = True
                             _bf_confidence = 'NORMAL'
