@@ -569,15 +569,18 @@ class TelegramNotifier:
         V43.9: fără butoane manuale — execuția rămâne autonomă (radar + executor).
         Alertele structurale 4H se trimit separat (send_4h_structural_alert).
         """
-        _skip_charts = (
+        # V67 autoscan: SCANNER_QUIET/AUTO_SCAN = mai puțin log în consolă, NU fără chart Daily.
+        # Chart-urile se omit doar cu SKIP_TELEGRAM_CHARTS=1 (test/audit explicit).
+        _skip_charts = os.getenv('SKIP_TELEGRAM_CHARTS', '0') == '1'
+        _quiet_mode = (
             os.getenv('AUTO_SCAN', '0') == '1'
             or os.getenv('SCANNER_QUIET', '0') == '1'
         )
-        _sleep_sec = 1 if _skip_charts else 3
+        _sleep_sec = 1 if _quiet_mode else 3
 
         # 1. Send main alert message
         message = self.format_setup_alert(setup, radar_snapshot=radar_snapshot)
-        if not _skip_charts:
+        if not _quiet_mode:
             print(f"[DEBUG] Sending setup alert for {setup.symbol} | status: {getattr(setup, 'status', None)} | mode: {charts_mode}")
         if not self.send_message(message):
             print(f"[ERROR] Failed to send main message for {setup.symbol}")
