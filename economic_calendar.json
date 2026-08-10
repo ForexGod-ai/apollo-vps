@@ -2875,5 +2875,159 @@
       "impact": "High",
       "tz": "UTC"
     }
+  ],
+  "custom_events_august_2026": [
+    {
+      "date": "2026-08-11",
+      "time": "04:30",
+      "currency": "AUD",
+      "event": "Cash Rate",
+      "impact": "High",
+      "tz": "UTC"
+    },
+    {
+      "date": "2026-08-11",
+      "time": "04:30",
+      "currency": "AUD",
+      "event": "RBA Monetary Policy Statement",
+      "impact": "High",
+      "tz": "UTC"
+    },
+    {
+      "date": "2026-08-11",
+      "time": "04:30",
+      "currency": "AUD",
+      "event": "RBA Rate Statement",
+      "impact": "High",
+      "tz": "UTC"
+    },
+    {
+      "date": "2026-08-11",
+      "time": "05:30",
+      "currency": "AUD",
+      "event": "RBA Press Conference",
+      "impact": "High",
+      "tz": "UTC"
+    },
+    {
+      "date": "2026-08-12",
+      "time": "12:30",
+      "currency": "USD",
+      "event": "Core CPI m/m",
+      "impact": "High",
+      "tz": "UTC"
+    },
+    {
+      "date": "2026-08-12",
+      "time": "12:30",
+      "currency": "USD",
+      "event": "Core CPI y/y",
+      "impact": "High",
+      "tz": "UTC"
+    },
+    {
+      "date": "2026-08-12",
+      "time": "12:30",
+      "currency": "USD",
+      "event": "CPI m/m",
+      "impact": "High",
+      "tz": "UTC"
+    },
+    {
+      "date": "2026-08-12",
+      "time": "12:30",
+      "currency": "USD",
+      "event": "CPI y/y",
+      "impact": "High",
+      "tz": "UTC"
+    },
+    {
+      "date": "2026-08-13",
+      "time": "06:00",
+      "currency": "GBP",
+      "event": "GDP m/m",
+      "impact": "High",
+      "tz": "UTC"
+    },
+    {
+      "date": "2026-08-13",
+      "time": "12:30",
+      "currency": "USD",
+      "event": "Core PPI m/m",
+      "impact": "High",
+      "tz": "UTC"
+    },
+    {
+      "date": "2026-08-13",
+      "time": "12:30",
+      "currency": "USD",
+      "event": "PPI m/m",
+      "impact": "High",
+      "tz": "UTC"
+    },
+    {
+      "date": "2026-08-17",
+      "time": "12:30",
+      "currency": "CAD",
+      "event": "CPI m/m",
+      "impact": "High",
+      "tz": "UTC"
+    },
+    {
+      "date": "2026-08-17",
+      "time": "12:30",
+      "currency": "CAD",
+      "event": "Median CPI y/y",
+      "impact": "High",
+      "tz": "UTC"
+    },
+    {
+      "date": "2026-08-17",
+      "time": "12:30",
+      "currency": "CAD",
+      "event": "Trimmed CPI y/y",
+      "impact": "High",
+      "tz": "UTC"
+    },
+    {
+      "date": "2026-08-18",
+      "time": "06:00",
+      "currency": "GBP",
+      "event": "Claimant Count Change",
+      "impact": "High",
+      "tz": "UTC"
+    },
+    {
+      "date": "2026-08-19",
+      "time": "06:00",
+      "currency": "GBP",
+      "event": "CPI y/y",
+      "impact": "High",
+      "tz": "UTC"
+    },
+    {
+      "date": "2026-08-19",
+      "time": "18:00",
+      "currency": "USD",
+      "event": "FOMC Meeting Minutes",
+      "impact": "High",
+      "tz": "UTC"
+    },
+    {
+      "date": "2026-08-20",
+      "time": "01:30",
+      "currency": "AUD",
+      "event": "Employment Change",
+      "impact": "High",
+      "tz": "UTC"
+    },
+    {
+      "date": "2026-08-20",
+      "time": "01:30",
+      "currency": "AUD",
+      "event": "Unemployment Rate",
+      "impact": "High",
+      "tz": "UTC"
+    }
   ]
 }

@@ -1368,48 +1368,18 @@ class TelegramCommandCenter:
             return f"❌ <b>RESUME ERROR:</b> {str(e)}"
 
     def handle_news_command(self) -> str:
-        """/news — Next 5 High Impact events (next 7 days). V12.2: dual-source with origin label."""
+        """/news — HIGH impact next 14 days. V67.2: upcoming_news.json (FF+manual) first."""
+        from news_calendar_utils import (
+            load_high_impact_events,
+            parse_event_datetime,
+            UPCOMING_NEWS_FILE,
+        )
+
         FLAG_MAP = {
             'USD': '🇺🇸', 'EUR': '🇪🇺', 'GBP': '🇬🇧', 'JPY': '🇯🇵',
             'AUD': '🇦🇺', 'NZD': '🇳🇿', 'CAD': '🇨🇦', 'CHF': '🇨🇭',
         }
-        MAJOR_CCY = set(FLAG_MAP.keys())
         now = datetime.now(timezone.utc)
-        cutoff = now + timedelta(days=14)  # V19.11: 14 zile în loc de 7 — acoperă săptămâna viitoare complet
-
-        def _parse_events_from_json() -> tuple[list, str]:
-            """Load from economic_calendar.json — returns (events, source_label)."""
-            script_dir = Path(__file__).parent.resolve()
-            cal_file = script_dir / 'economic_calendar.json'
-            if not cal_file.exists():
-                return [], ''
-            with open(cal_file, 'r') as f:
-                data = json.load(f)
-            raw = []
-            if isinstance(data, list):
-                raw = data
-            else:
-                for v in data.values():
-                    if isinstance(v, list):
-                        raw.extend(v)
-            result = []
-            for e in raw:
-                if str(e.get('impact', '')).lower() not in ('high', 'red'):
-                    continue
-                if e.get('currency') not in MAJOR_CCY:
-                    continue
-                t = e.get('time', '00:00') or '00:00'
-                if t in ('All Day', 'Tentative', ''):
-                    t = '00:00'
-                try:
-                    dt = datetime.strptime(
-                        f"{e['date']} {t}", '%Y-%m-%d %H:%M'
-                    ).replace(tzinfo=timezone.utc)
-                    if now <= dt <= cutoff:
-                        result.append((dt, e))
-                except Exception:
-                    continue
-            return result, '📂 economic_calendar.json'
 
         def _parse_events_from_ctrader() -> tuple[list, str]:
             """Load from cTrader EconomicCalendarBot port 8768."""
@@ -1422,11 +1392,12 @@ class TelegramCommandCenter:
                 raw = data.get('events', [])
                 if not raw:
                     return [], ''
+                cutoff = now + timedelta(days=14)
                 result = []
                 for e in raw:
                     if str(e.get('impact', '')).lower() not in ('high', 'red'):
                         continue
-                    if e.get('currency') not in MAJOR_CCY:
+                    if e.get('currency') not in FLAG_MAP:
                         continue
                     try:
                         dt = datetime.strptime(
@@ -1435,9 +1406,9 @@ class TelegramCommandCenter:
                         if now <= dt <= cutoff:
                             result.append((dt, {
                                 'currency': e.get('currency'),
-                                'event':    e.get('event'),
-                                'forecast': str(e.get('forecast', '')) if e.get('forecast') else '',
-                                'previous': str(e.get('previous', '')) if e.get('previous') else '',
+                                'event': e.get('event'),
+                                'forecast': str(e.get('forecast', '') or ''),
+                                'previous': str(e.get('previous', '') or ''),
                             }))
                     except Exception:
                         continue
@@ -1446,16 +1417,21 @@ class TelegramCommandCenter:
                 return [], ''
 
         try:
-            # ── Source 1: JSON file
-            upcoming, source = _parse_events_from_json()
+            events = load_high_impact_events(days_ahead=14)
+            source = '📡 data/upcoming_news.json (FF + manual)'
 
-            # ── Source 2: cTrader bot (fallback if JSON empty or stale)
+            upcoming: list = []
+            for e in events:
+                dt = parse_event_datetime(e)
+                if dt is None:
+                    continue
+                upcoming.append((dt, e))
+
             if not upcoming:
                 upcoming, source = _parse_events_from_ctrader()
 
             upcoming.sort(key=lambda x: x[0])
 
-            # ── Build header
             msg = (
                 f"<b>🚨 News HIGH IMPACT — 14 zile</b>\n"
                 f"{SLIM_FOOTER_SEP}\n\n"
@@ -1463,7 +1439,11 @@ class TelegramCommandCenter:
 
             if not upcoming:
                 msg += "✅ <b>All clear</b> — fără evenimente HIGH în următoarele 14 zile.\n"
-                msg += f"\n<i>Sursă: {source or 'economic_calendar.json'}</i>"
+                stale = ""
+                if UPCOMING_NEWS_FILE.exists():
+                    stale = " (fișier present dar gol/expirat)"
+                msg += f"\n<i>Sursă: {source or 'upcoming_news.json'}{stale}</i>"
+                msg += "\n<i>Rulează: python3 news_fetcher.py --days 14</i>"
                 return msg
 
             # ── Group by day and display ALL events

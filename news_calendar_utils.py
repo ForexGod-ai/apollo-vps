@@ -150,7 +150,12 @@ def load_from_manual_calendar(days_ahead: int = 14) -> List[Dict]:
 
 
 def load_high_impact_events(days_ahead: int = 14) -> List[Dict]:
-    """Unified loader — upcoming_news first, manual calendar fills gaps."""
+    """
+    Unified loader for /news, executor BE guard, and liquidity sniper blackout.
+
+    Priority: data/upcoming_news.json (FF daily sync) → economic_calendar.json gaps.
+    All consumers should use this — do not read economic_calendar.json directly.
+    """
     upcoming = load_from_upcoming_news(days_ahead=days_ahead)
     manual = load_from_manual_calendar(days_ahead=days_ahead)
 

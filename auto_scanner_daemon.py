@@ -205,6 +205,26 @@ def run_auto_scan():
     python = sys.executable
     scan_ok = False
 
+    # ── News sync before scan (upcoming_news.json for /news + blackout guard) ──
+    logger.info("[Step 0/1] Running news_fetcher.py --days 14...")
+    try:
+        news_result = subprocess.run(
+            [python, 'news_fetcher.py', '--days', '14'],
+            cwd=str(BASE_DIR),
+            capture_output=True,
+            text=True,
+            timeout=120,
+            env={**os.environ, 'PYTHONIOENCODING': 'utf-8', 'PYTHONUTF8': '1'},
+        )
+        if news_result.returncode == 0:
+            logger.success("[Step 0/1] news_fetcher.py DONE")
+        else:
+            logger.warning(
+                f"[Step 0/1] news_fetcher.py exit {news_result.returncode} — scan continues"
+            )
+    except Exception as news_err:
+        logger.warning(f"[Step 0/1] news_fetcher skipped: {news_err}")
+
     # ── Daily Scanner (SMCDetector — merge cu setups existente) ──────────────
     logger.info(
         f"[Step 1/1] Running daily_scanner.py (timeout={SCAN_TIMEOUT_SEC}s, "

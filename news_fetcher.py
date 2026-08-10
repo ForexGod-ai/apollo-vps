@@ -8,10 +8,10 @@
 Automatically downloads HIGH + MEDIUM impact economic events.
 Populates data/upcoming_news.json for executor, monitor, and reminders.
 
-Data Sources (in priority order):
-    1. Manual economic_calendar.json (authoritative — all custom_events_* sections)
-    2. ForexFactory mirror fallback (thisweek + nextweek JSON)
-    3. Trading Economics API fallback
+Data Sources (always merged into upcoming_news.json):
+    1. ForexFactory mirror (thisweek + nextweek JSON, nextweek cached on 404)
+    2. Manual economic_calendar.json (custom_events_* + recurring backbone)
+    3. Trading Economics API (only if merged result is empty)
 
 V39.5 Weekly pipeline:
     --weekly  → 14-day horizon, FF mirror merge, state file tracks last run (7-day cadence)
@@ -58,7 +58,13 @@ OUTPUT_FILE = SCRIPT_DIR / 'data' / 'upcoming_news.json'
 CALENDAR_FILE = SCRIPT_DIR / 'economic_calendar.json'
 LOGS_DIR = SCRIPT_DIR / 'logs'
 WEEKLY_STATE_FILE = SCRIPT_DIR / 'data' / 'news_fetcher_weekly_state.json'
+FF_MIRROR_CACHE_DIR = SCRIPT_DIR / 'data' / 'ff_mirror_cache'
 WEEKLY_INTERVAL_DAYS = 7
+
+FF_MIRROR_URLS = {
+    'thisweek': 'https://nfs.faireconomy.media/ff_calendar_thisweek.json',
+    'nextweek': 'https://nfs.faireconomy.media/ff_calendar_nextweek.json',
+}
 
 # Currencies we trade
 MAJOR_CURRENCIES = ['USD', 'EUR', 'GBP', 'JPY', 'AUD', 'NZD', 'CAD', 'CHF']
@@ -77,41 +83,85 @@ COUNTRY_TO_CURRENCY = {
 }
 
 
+def _ff_mirror_cache_path(label: str) -> Path:
+    FF_MIRROR_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    return FF_MIRROR_CACHE_DIR / f'{label}.json'
+
+
+def _load_ff_mirror_cache(label: str) -> List[Dict]:
+    cache_path = _ff_mirror_cache_path(label)
+    if not cache_path.exists():
+        return []
+    try:
+        with open(cache_path, 'r', encoding='utf-8') as f:
+            payload = json.load(f)
+        if isinstance(payload, list):
+            cached = payload
+        else:
+            cached = payload.get('events', [])
+        if cached:
+            logger.info(f"📂 FF mirror cache hit: {label} ({len(cached)} events)")
+        return cached
+    except Exception as e:
+        logger.warning(f"⚠️ FF mirror cache read failed ({label}): {e}")
+        return []
+
+
+def _save_ff_mirror_cache(label: str, events: List[Dict]) -> None:
+    if not events:
+        return
+    try:
+        cache_path = _ff_mirror_cache_path(label)
+        with open(cache_path, 'w', encoding='utf-8') as f:
+            json.dump({
+                'cached_at': datetime.now(timezone.utc).isoformat(),
+                'events': events,
+            }, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        logger.warning(f"⚠️ FF mirror cache write failed ({label}): {e}")
+
+
+def _fetch_ff_mirror_feed(label: str, url: str) -> List[Dict]:
+    """Fetch one FF mirror JSON; on failure use last good cache."""
+    if not HAS_REQUESTS:
+        return _load_ff_mirror_cache(label)
+
+    try:
+        resp = requests.get(url, timeout=15, headers={
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
+        })
+        if resp.status_code == 200:
+            data = resp.json()
+            if isinstance(data, list) and data:
+                _save_ff_mirror_cache(label, data)
+                logger.info(f"📥 {label}: {len(data)} events (live)")
+                return data
+            logger.warning(f"⚠️ {label}: empty JSON payload")
+        else:
+            logger.warning(f"⚠️ {label}: HTTP {resp.status_code} — trying cache")
+    except Exception as e:
+        logger.warning(f"⚠️ {label}: fetch error ({e}) — trying cache")
+
+    return _load_ff_mirror_cache(label)
+
+
 def fetch_forexfactory_mirror(days_ahead: int = 7) -> List[Dict]:
     """
-    Source #2 (fallback): ForexFactory calendar via faireconomy.media free JSON mirror.
-    No API key, no Selenium, no Cloudflare — just clean JSON.
-    Returns this week + next week events.
+    ForexFactory calendar via faireconomy.media free JSON mirror.
+    thisweek live + nextweek live; nextweek falls back to local cache on 404.
     """
     if not HAS_REQUESTS:
         return []
 
     try:
-        logger.info("📡 [Source 1] Fetching from ForexFactory mirror (faireconomy.media)...")
+        logger.info("📡 Fetching ForexFactory mirror (faireconomy.media)...")
 
         now = datetime.now(timezone.utc)
         end_date = now + timedelta(days=days_ahead)
 
-        # Fetch this week and next week
-        urls = [
-            'https://nfs.faireconomy.media/ff_calendar_thisweek.json',
-            'https://nfs.faireconomy.media/ff_calendar_nextweek.json',
-        ]
-
-        all_raw = []
-        for url in urls:
-            try:
-                resp = requests.get(url, timeout=15, headers={
-                    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
-                })
-                if resp.status_code == 200:
-                    data = resp.json()
-                    all_raw.extend(data)
-                    logger.info(f"📥 {url.split('/')[-1]}: {len(data)} events")
-                else:
-                    logger.warning(f"⚠️ {url.split('/')[-1]}: HTTP {resp.status_code}")
-            except Exception as e:
-                logger.warning(f"⚠️ Error fetching {url.split('/')[-1]}: {e}")
+        all_raw: List[Dict] = []
+        for label, url in FF_MIRROR_URLS.items():
+            all_raw.extend(_fetch_ff_mirror_feed(label, url))
 
         if not all_raw:
             return []
@@ -351,26 +401,39 @@ def mark_weekly_sync_done():
         logger.warning(f"⚠️ Could not write weekly state: {e}")
 
 
-def run_weekly_auto_sync(days_ahead: int = 14, force: bool = False) -> List[Dict]:
+def fetch_all_merged(days_ahead: int = 14) -> List[Dict]:
     """
-    V39.5 weekly pipeline: manual calendar + FF mirror merge → upcoming_news.json.
-    Designed for cron/Task Scheduler every 7 days.
+    V67.2 — Always merge FF mirror + manual calendar (never either/or).
+    Trading Economics only if both return nothing.
     """
-    if not should_run_weekly_sync(force=force):
-        logger.info("⏭️ Weekly sync not due yet — skipping FF mirror fetch")
-        return fetch_from_manual_calendar(days_ahead=days_ahead)
-
-    logger.info("🔄 V39.5 WEEKLY AUTO-SYNC — manual + ForexFactory mirror")
-
     manual = fetch_from_manual_calendar(days_ahead=days_ahead)
     ff = fetch_forexfactory_mirror(days_ahead=days_ahead)
-
-    merged = deduplicate_events(manual + ff)
-    mark_weekly_sync_done()
+    merged = deduplicate_events(ff + manual)
 
     logger.info(
-        f"📊 Weekly merge: {len(manual)} manual + {len(ff)} FF → {len(merged)} unique"
+        f"📊 Merge: {len(ff)} FF + {len(manual)} manual → {len(merged)} unique"
     )
+
+    if merged:
+        return merged
+
+    te = fetch_trading_economics(days_ahead=days_ahead)
+    if te:
+        logger.info(f"✅ Trading Economics (last resort): {len(te)} events")
+    return te
+
+
+def run_weekly_auto_sync(days_ahead: int = 14, force: bool = False) -> List[Dict]:
+    """
+    V39.5 weekly pipeline: same merge as daily; marks weekly state when forced/due.
+    """
+    if not should_run_weekly_sync(force=force):
+        logger.info("⏭️ Weekly sync not due — using daily merge pipeline")
+        return fetch_all_merged(days_ahead=days_ahead)
+
+    logger.info("🔄 V39.5 WEEKLY AUTO-SYNC — manual + ForexFactory mirror")
+    merged = fetch_all_merged(days_ahead=days_ahead)
+    mark_weekly_sync_done()
     return merged
 
 
@@ -514,34 +577,7 @@ def main():
     if args.weekly:
         all_events = run_weekly_auto_sync(days_ahead=days_ahead, force=args.force_weekly)
     else:
-        # Source 1 (PRIMARY): Manual calendar (authoritative schedule)
-        manual_events = fetch_from_manual_calendar(days_ahead=days_ahead)
-        if manual_events:
-            all_events.extend(manual_events)
-            logger.info(f"✅ Manual Calendar (primary): {len(manual_events)} events")
-        else:
-            logger.warning("⚠️ Manual Calendar: 0 events for selected window")
-
-        # Source 2 (fallback): ForexFactory mirror (used only when manual calendar is empty)
-        ff_events = []
-        if not manual_events:
-            ff_events = fetch_forexfactory_mirror(days_ahead=days_ahead)
-            if ff_events:
-                all_events.extend(ff_events)
-                logger.info(f"✅ ForexFactory mirror (fallback): {len(ff_events)} events")
-            else:
-                logger.warning("⚠️ ForexFactory mirror: 0 events")
-
-        # Source 3 (fallback): Trading Economics API (used only when previous sources are empty)
-        if not manual_events and not ff_events:
-            te_events = fetch_trading_economics(days_ahead=days_ahead)
-            if te_events:
-                all_events.extend(te_events)
-                logger.info(f"✅ Trading Economics (fallback): {len(te_events)} events")
-            else:
-                logger.warning("⚠️ Trading Economics: 0 events (API down or needs key)")
-
-        all_events = deduplicate_events(all_events)
+        all_events = fetch_all_merged(days_ahead=days_ahead)
 
     if not all_events:
         logger.error("❌ NO EVENTS from any source! Check API connectivity.")

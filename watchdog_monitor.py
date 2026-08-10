@@ -613,23 +613,25 @@ class WatchdogMonitor:
             logger.error(f"❌ Midnight auto-resume error: {e}")
 
     def _check_daily_news_fetch(self):
-        """Run news_fetcher.py once per day at 05:00 UTC to refresh upcoming_news.json"""
+        """Run news_fetcher.py once per day during 05:00 UTC hour → upcoming_news.json"""
         try:
             from datetime import timezone
             now_utc = datetime.now(timezone.utc)
             today = now_utc.strftime('%Y-%m-%d')
-            # Only run once per day, at 05:00 UTC (±1 min window)
-            if now_utc.hour == 5 and now_utc.minute == 0:
+            if now_utc.hour == 5:
                 last_fetch_date = getattr(self, '_last_news_fetch_date', '')
                 if last_fetch_date != today:
                     self._last_news_fetch_date = today
                     logger.info("📰 Running news_fetcher.py (daily 05:00 UTC sync)...")
                     import subprocess
+                    log_path = self.base_path / "logs" / "news_fetcher_watchdog.log"
+                    log_path.parent.mkdir(parents=True, exist_ok=True)
+                    log_fh = open(log_path, 'a', encoding='utf-8')
                     result = subprocess.Popen(
                         [self.python_path, 'news_fetcher.py', '--days', '14'],
                         cwd=str(self.base_path),
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL
+                        stdout=log_fh,
+                        stderr=subprocess.STDOUT,
                     )
                     logger.info(f"📰 news_fetcher.py started (PID {result.pid})")
         except Exception as e:

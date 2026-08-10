@@ -139,6 +139,29 @@ JULY_2026_EVENTS = [
     {"date": "2026-07-31", "time": "12:30", "currency": "CAD", "event": "GDP m/m", "impact": "High"},
 ]
 
+# HIGH IMPACT EVENTS FOR AUGUST 2026 — ForexFactory EEST → UTC (−3h)
+AUGUST_2026_EVENTS = [
+    {"date": "2026-08-11", "time": "04:30", "currency": "AUD", "event": "Cash Rate", "impact": "High"},
+    {"date": "2026-08-11", "time": "04:30", "currency": "AUD", "event": "RBA Monetary Policy Statement", "impact": "High"},
+    {"date": "2026-08-11", "time": "04:30", "currency": "AUD", "event": "RBA Rate Statement", "impact": "High"},
+    {"date": "2026-08-11", "time": "05:30", "currency": "AUD", "event": "RBA Press Conference", "impact": "High"},
+    {"date": "2026-08-12", "time": "12:30", "currency": "USD", "event": "Core CPI m/m", "impact": "High"},
+    {"date": "2026-08-12", "time": "12:30", "currency": "USD", "event": "Core CPI y/y", "impact": "High"},
+    {"date": "2026-08-12", "time": "12:30", "currency": "USD", "event": "CPI m/m", "impact": "High"},
+    {"date": "2026-08-12", "time": "12:30", "currency": "USD", "event": "CPI y/y", "impact": "High"},
+    {"date": "2026-08-13", "time": "06:00", "currency": "GBP", "event": "GDP m/m", "impact": "High"},
+    {"date": "2026-08-13", "time": "12:30", "currency": "USD", "event": "Core PPI m/m", "impact": "High"},
+    {"date": "2026-08-13", "time": "12:30", "currency": "USD", "event": "PPI m/m", "impact": "High"},
+    {"date": "2026-08-17", "time": "12:30", "currency": "CAD", "event": "CPI m/m", "impact": "High"},
+    {"date": "2026-08-17", "time": "12:30", "currency": "CAD", "event": "Median CPI y/y", "impact": "High"},
+    {"date": "2026-08-17", "time": "12:30", "currency": "CAD", "event": "Trimmed CPI y/y", "impact": "High"},
+    {"date": "2026-08-18", "time": "06:00", "currency": "GBP", "event": "Claimant Count Change", "impact": "High"},
+    {"date": "2026-08-19", "time": "06:00", "currency": "GBP", "event": "CPI y/y", "impact": "High"},
+    {"date": "2026-08-19", "time": "18:00", "currency": "USD", "event": "FOMC Meeting Minutes", "impact": "High"},
+    {"date": "2026-08-20", "time": "01:30", "currency": "AUD", "event": "Employment Change", "impact": "High"},
+    {"date": "2026-08-20", "time": "01:30", "currency": "AUD", "event": "Unemployment Rate", "impact": "High"},
+]
+
 
 def _with_tz(events: List[Dict]) -> List[Dict]:
     return [{**event, "tz": event.get("tz", "UTC")} for event in events]
@@ -155,15 +178,21 @@ def update_calendar():
 
         calendar_data["custom_events_june_2026"] = _with_tz(JUNE_2026_EVENTS)
         calendar_data["custom_events_july_2026"] = _with_tz(JULY_2026_EVENTS)
+        calendar_data["custom_events_august_2026"] = _with_tz(AUGUST_2026_EVENTS)
 
         with open(calendar_file, "w", encoding="utf-8") as f:
             json.dump(calendar_data, f, indent=2, ensure_ascii=False)
 
         print("✅ Calendar updated successfully!")
-        print(f"📅 June 2026: {len(JUNE_2026_EVENTS)} events")
-        print(f"📅 July 2026:  {len(JULY_2026_EVENTS)} events")
+        print(f"📅 June 2026:   {len(JUNE_2026_EVENTS)} events")
+        print(f"📅 July 2026:   {len(JULY_2026_EVENTS)} events")
+        print(f"📅 August 2026: {len(AUGUST_2026_EVENTS)} events")
 
-        for label, events in [("June", JUNE_2026_EVENTS), ("July", JULY_2026_EVENTS)]:
+        for label, events in [
+            ("June", JUNE_2026_EVENTS),
+            ("July", JULY_2026_EVENTS),
+            ("August", AUGUST_2026_EVENTS),
+        ]:
             high_impact = [e for e in events if e["impact"] == "High"]
             print(f"🚨 {label}: {len(high_impact)} HIGH impact events")
 
@@ -182,7 +211,7 @@ def update_calendar():
 
 if __name__ == "__main__":
     print("=" * 60)
-    print("📅 MANUAL CALENDAR UPDATE — JUNE + JULY 2026 (V39.5)")
+    print("📅 MANUAL CALENDAR UPDATE — JUNE + JULY + AUGUST 2026 (V67.2)")
     print("=" * 60)
     print()
 
