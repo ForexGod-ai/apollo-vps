@@ -25,19 +25,13 @@ class CoreStructureMixin:
     """V67 C: CHoCH/BOS + structural range."""
 
     def detect_choch_and_bos(self, df: pd.DataFrame) -> Tuple[List[CHoCH], List[BOS]]:
-        """🎯 GLITCH IN MATRIX - CHoCH & BOS DETECTION V24.0 (ORGANIC HH/HL/LH/LL)
+        """🎯 GLITCH IN MATRIX - CHoCH & BOS DETECTION V68.0 (MAJOR SWINGS ONLY)
 
-        🆕 V24.0 — COLONEL'S ORGANIC REFACTOR:
-        - ✅ Pivoții NU expiră — un LH format acum 30 de zile este VALID până când e spart
-        - ✅ Secvența organică HH/HL/LH/LL citită pe TOATĂ seria (fără macro_lookback)
-        - ✅ prev_trend se schimbă EXCLUSIV când CHoCH e confirmat — nu se recalculează periodic
-        - ✅ BODY CLOSE ONLY: confirmarea spargerii = close dincolo de wick-ul swing-ului
-        - ✅ High-vs-High / Low-vs-Low comparație (nu interleaved cross-comparison)
-
-        PHILOSOPHY by ФорексГод + Colonel:
-        "Piața NU are o regulă de timp. Dacă piața a stat în range 30 de zile și
-        sparge ultimul LH format acum o lună — este CHoCH Bullish VALID.
-        Algoritmul citește piața ca un om: poveste a extremelor, nu fereastră de timp."
+        V68 — MASTER SPEC alignment (Radar 4H + D1):
+        - ✅ CHoCH/BOS calculate STRICT pe pivoții majori (`filter_major_swings`)
+        - ✅ Micro-fractale geometrice NU generează CHoCH/BOS
+        - ✅ BODY CLOSE ONLY: close > body_high (bullish) / close < body_low (bearish)
+        - ✅ prev_trend se schimbă EXCLUSIV când CHoCH e confirmat
         """
         chochs = []
         bos_list = []
@@ -46,21 +40,21 @@ class CoreStructureMixin:
         swing_lows = self.detect_swing_lows(df)
         major_highs, major_lows = self.filter_major_swings(df, swing_highs, swing_lows)
 
-        if len(swing_highs) < 2 or len(swing_lows) < 2:
+        if len(major_highs) < 2 or len(major_lows) < 2:
             return chochs, bos_list
 
-        # V64: iterate ALL geometric swings; prev_high/prev_low for breaks prefer major pivots.
+        # V68: iterate MAJOR swings only — micro pivots are noise.
         all_swings = []
-        for sh in swing_highs:
+        for sh in major_highs:
             all_swings.append(('high', sh))
-        for sl in swing_lows:
+        for sl in major_lows:
             all_swings.append(('low', sl))
         all_swings.sort(key=lambda x: x[1].index)
 
         prev_trend = self.macro_trend_from_swings(df)
         if prev_trend == 'neutral':
-            init_highs = swing_highs[:2]
-            init_lows = swing_lows[:2]
+            init_highs = major_highs[:2]
+            init_lows = major_lows[:2]
             if len(init_highs) >= 2 and len(init_lows) >= 2:
                 h_asc = init_highs[1].price > init_highs[0].price
                 l_asc = init_lows[1].price > init_lows[0].price
@@ -115,14 +109,12 @@ class CoreStructureMixin:
                         # V24.4 VOLATILE FIX: prev_trend == 'bearish' E deja dovada structurii.
                         # Verificăm că cel puțin O pereche din ultimele 5 highs/lows arată LH sau LL
                         # (nu cerem secvența perfectă 2/2 pe ultimele 3 — zgomotul volatilelor o rupe).
-                        recent_highs = [s for s in swing_highs if s.index <= swing.index][-5:]
-                        recent_lows  = [s for s in swing_lows  if s.index <= swing.index][-5:]
-                        # LH = oricare high[i] < high[i-1] în serie (nu doar ultimele 2)
+                        recent_highs = [s for s in major_highs if s.index <= swing.index][-5:]
+                        recent_lows = [s for s in major_lows if s.index <= swing.index][-5:]
                         lh_any = any(
                             recent_highs[i].price < recent_highs[i-1].price
                             for i in range(1, len(recent_highs))
                         )
-                        # LL = oricare low[i] < low[i-1] în serie
                         ll_any = any(
                             recent_lows[i].price < recent_lows[i-1].price
                             for i in range(1, len(recent_lows))
@@ -137,7 +129,6 @@ class CoreStructureMixin:
                                 swing_broken=prev_high
                             ))
                             prev_trend = 'bullish'
-                        # ELSE: nicio urmă de structură bearish în ultimele 5 swings — skip
                     elif _body_close_confirmed_h:  # prev_trend == 'bullish'
                         # BOS bullish: continuare trend
                         bos_list.append(BOS(
@@ -189,14 +180,12 @@ class CoreStructureMixin:
                         # V24.4 VOLATILE FIX: prev_trend == 'bullish' E deja dovada structurii.
                         # Verificăm că cel puțin O pereche din ultimele 5 highs/lows arată HH sau HL
                         # (nu cerem secvența perfectă 2/2 pe ultimele 3 — zgomotul volatilelor o rupe).
-                        recent_highs = [s for s in swing_highs if s.index <= swing.index][-5:]
-                        recent_lows  = [s for s in swing_lows  if s.index <= swing.index][-5:]
-                        # HH = oricare high[i] > high[i-1] în serie
+                        recent_highs = [s for s in major_highs if s.index <= swing.index][-5:]
+                        recent_lows = [s for s in major_lows if s.index <= swing.index][-5:]
                         hh_any = any(
                             recent_highs[i].price > recent_highs[i-1].price
                             for i in range(1, len(recent_highs))
                         )
-                        # HL = oricare low[i] > low[i-1] în serie
                         hl_any = any(
                             recent_lows[i].price > recent_lows[i-1].price
                             for i in range(1, len(recent_lows))
@@ -211,7 +200,6 @@ class CoreStructureMixin:
                                 swing_broken=prev_low
                             ))
                             prev_trend = 'bearish'
-                        # ELSE: nicio urmă de structură bullish în ultimele 5 swings — skip
                     elif _body_close_confirmed_l:  # prev_trend == 'bearish'
                         # BOS bearish: continuare trend
                         bos_list.append(BOS(

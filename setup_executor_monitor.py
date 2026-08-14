@@ -403,6 +403,9 @@ class SetupExecutorMonitor:
         self._execute_now_block_alert_keys: set = set()
         self._execute_now_block_alert_file = Path("data/execute_now_block_alerts.json")
         self._load_execute_now_block_alert_state()
+
+        # V68: dedup Telegram for infrastructure offline alerts
+        self._infra_offline_alert_keys: set = set()
         
         # V9.3 DAILY REJECTION COUNTER (for /status dashboard)
         self.daily_rejections = 0
@@ -612,6 +615,7 @@ class SetupExecutorMonitor:
                 else:
                     logger.info("🌅 Deep Sleep state expired — system is ACTIVE")
                     self.deep_sleep_state_file.unlink(missing_ok=True)
+            self._reconcile_deep_sleep_state()
         except Exception as e:
             logger.error(f"⚠️  Error loading Deep Sleep state: {e}")
     
@@ -676,6 +680,71 @@ class SetupExecutorMonitor:
             f"🌅 Auto-resume la 00:05 ora României (new trading day)"
         )
     
+    def _deep_sleep_still_justified(self) -> bool:
+        """V68: True only when daily loss limit is actually breached."""
+        if self._loss_limit_bypassed():
+            return False
+        try:
+            rm = getattr(self.executor, 'risk_manager', None)
+            if rm is None:
+                return False
+            pnl = float(rm.get_daily_pnl())
+            bal = float(os.getenv('ACCOUNT_BALANCE', 1336))
+            if bal <= 0:
+                return False
+            loss_pct = (pnl / bal) * 100.0
+            limit = float(getattr(rm, 'max_daily_loss_pct', 10.0))
+            return loss_pct <= -limit
+        except Exception as exc:
+            logger.debug(f"[V68] deep sleep justification check failed: {exc}")
+            return True
+
+    def _reconcile_deep_sleep_state(self) -> None:
+        """V68: clear stale deep sleep when loss limit is not actually hit."""
+        if self.manual_resume_triggered or self._loss_limit_bypassed():
+            return
+        if self.deep_sleep_until is None and not self.deep_sleep_state_file.exists():
+            return
+        if self._deep_sleep_still_justified():
+            return
+        logger.warning(
+            "🌅 [V68] Deep Sleep cleared — no actual daily loss limit breach"
+        )
+        self.deep_sleep_until = None
+        try:
+            self.deep_sleep_state_file.unlink(missing_ok=True)
+        except Exception:
+            pass
+        self._send_deep_sleep_telegram(
+            "🌅 <b>DEEP SLEEP CLEARED (V68)</b>\n\n"
+            "Loss limit zilnic NU este atins — executorul reia procesarea."
+        )
+
+    def _check_execution_infrastructure(self, symbol: str) -> str:
+        """V68: return block reason when cBot 8010 or signals path unavailable."""
+        try:
+            from ctrader_cbot_client import get_cbot_client
+            if not get_cbot_client().is_available(retries=1, wait=0.5):
+                return 'cBot port 8010 OFFLINE — live data / execution path unavailable'
+        except Exception as exc:
+            return f'cBot check failed: {exc}'
+        signals_path = Path(__file__).parent / 'signals.json'
+        if not signals_path.parent.exists():
+            return 'signals.json directory missing'
+        return ''
+
+    def _notify_infrastructure_offline(self, symbol: str, reason: str) -> None:
+        """V68: Telegram alert when execution infra offline (deduped per symbol)."""
+        key = f"{symbol}:{reason[:40]}"
+        if key in self._infra_offline_alert_keys:
+            return
+        self._infra_offline_alert_keys.add(key)
+        logger.critical(f"[V68 INFRA] {symbol}: {reason}")
+        try:
+            self._notify_execute_now_blocked(symbol, '?', reason)
+        except Exception:
+            pass
+
     def _loss_limit_bypassed(self) -> bool:
         """V39.1: Colonel /resume sau force_bypass_loss_limit din daily_state.json."""
         if self.manual_resume_triggered:
@@ -703,6 +772,8 @@ class SetupExecutorMonitor:
             except Exception:
                 pass
             return False
+
+        self._reconcile_deep_sleep_state()
 
         if self.deep_sleep_until is None:
             return False
@@ -1402,6 +1473,11 @@ class SetupExecutorMonitor:
                     #   5. Sentinelă pe valorile REALE înainte de execuție
                     _exec_ok, _exec_skip = self._can_execute_execute_now(setup)
                     if _exec_ok:
+                        _infra_reason = self._check_execution_infrastructure(symbol)
+                        if _infra_reason:
+                            self._notify_infrastructure_offline(symbol, _infra_reason)
+                            self._defer_execute_now_retry(symbol, _infra_reason)
+                            continue
                         # ── V42.3: Scut absolut sincron structural D1 = 4H ───────────────
                         if setup.get('status') != 'TRADE_OPEN':
                             _sync_ok, _ltf_mismatch = self._v423_structural_sync_ok(setup)

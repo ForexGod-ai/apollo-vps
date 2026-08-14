@@ -158,6 +158,9 @@ _RETRACE_ENTRY_MAX = 0.80
 _RETRACE_ALERT_MAX = 2.0
 _RETRACE_ALERT_MIN = -0.05
 
+# V68: 4H CHoCH selection window — prevent zombie breaks from 300-bar history
+_H4_CHOCH_SELECTION_MAX_BARS = 50
+
 
 def _choch_impulse_retrace_pct(
     break_price: float,
@@ -394,6 +397,81 @@ def _is_structural_break_valid(latest, direction: str, df) -> bool:
         if (closes < swing_broken_price).any():
             return False
     return True
+
+
+def _body_high_at(df, bar_index: int) -> float:
+    return max(float(df['open'].iloc[bar_index]), float(df['close'].iloc[bar_index]))
+
+
+def _body_low_at(df, bar_index: int) -> float:
+    return min(float(df['open'].iloc[bar_index]), float(df['close'].iloc[bar_index]))
+
+
+def _opposite_bullish_invalidation_after(choch, df, major_highs) -> bool:
+    """V68: bearish CHoCH dead if later body-close clears a prior major LH body-high."""
+    after_start = int(choch.index) + 1
+    if after_start >= len(df):
+        return False
+    for mh in major_highs:
+        if mh.index > choch.index:
+            continue
+        level = _body_high_at(df, mh.index)
+        for i in range(after_start, len(df)):
+            if float(df['close'].iloc[i]) > level:
+                return True
+    return False
+
+
+def _opposite_bearish_invalidation_after(choch, df, major_lows) -> bool:
+    """V68: bullish CHoCH dead if later body-close clears below a prior major HL body-low."""
+    after_start = int(choch.index) + 1
+    if after_start >= len(df):
+        return False
+    for ml in major_lows:
+        if ml.index > choch.index:
+            continue
+        level = _body_low_at(df, ml.index)
+        for i in range(after_start, len(df)):
+            if float(df['close'].iloc[i]) < level:
+                return True
+    return False
+
+
+def _filter_events_in_recent_window(events: list, df, max_bars: int = _H4_CHOCH_SELECTION_MAX_BARS) -> list:
+    """V68: keep only structural events within recent 4H window."""
+    if not events or df is None or df.empty:
+        return events or []
+    min_idx = max(0, len(df) - max_bars)
+    return [e for e in events if int(e.index) >= min_idx]
+
+
+def _filter_structurally_valid_events(events: list, df) -> list:
+    """V50/V68: drop CHoCH/BOS invalidated by opposite structure after break."""
+    kept = []
+    for ev in events or []:
+        direction = getattr(ev, 'direction', None)
+        if direction and _is_structural_break_valid(ev, direction, df):
+            kept.append(ev)
+    return kept
+
+
+def _purge_chochs_invalidated_by_opposite_impulse(
+    chochs: list,
+    df,
+    major_highs: list,
+    major_lows: list,
+) -> list:
+    """V68: purge bearish CHoCH on bullish HH body-close; mirror for bullish."""
+    kept = []
+    for c in chochs or []:
+        if not _is_structural_break_valid(c, c.direction, df):
+            continue
+        if c.direction == 'bearish' and _opposite_bullish_invalidation_after(c, df, major_highs):
+            continue
+        if c.direction == 'bullish' and _opposite_bearish_invalidation_after(c, df, major_lows):
+            continue
+        kept.append(c)
+    return kept
 
 
 def _retrace_implies_stale_anchor(retrace_pct: float, impulse: float) -> bool:
@@ -1575,16 +1653,23 @@ class MultiTFRadar:
             )
         
         try:
-            # Detect CHoCH and BOS
+            # Detect CHoCH and BOS (V68: major swings only in smc_detector)
             choch_list, bos_list = smc_detector.detect_choch_and_bos(df)
+            _swing_h = smc_detector.detect_swing_highs(df)
+            _swing_l = smc_detector.detect_swing_lows(df)
+            _major_h, _major_l = smc_detector.filter_major_swings(df, _swing_h, _swing_l)
+            choch_list = _purge_chochs_invalidated_by_opposite_impulse(
+                choch_list, df, _major_h, _major_l,
+            )
+            bos_list = _filter_structurally_valid_events(bos_list, df)
 
-            # ── V25.1: BOS RECENCY — calculat INDEPENDENT, ÎNAINTE de orice filtrare ────────────
-            # MOTIVUL: CHoCH apare o singură dată (schimbare de caracter). Continuarea trendului
-            # e confirmată de BOS-uri succesive. Lacătul 4H trebuie să accepte și BOS recent aliniat
-            # chiar dacă CHoCH-ul original are >30 bare vechime (trend sănătos, nu trend stale).
+            # ── V25.1: BOS RECENCY — calculat INDEPENDENT, ÎNAINTE de filtrare fereastră ──
             _all_aligned_bos_for_lock = sorted(
                 [b for b in bos_list if b.direction == required_direction],
                 key=lambda x: x.index
+            )
+            _all_aligned_bos_for_lock = _filter_events_in_recent_window(
+                _all_aligned_bos_for_lock, df,
             )
             _bos_detected_val: bool = bool(_all_aligned_bos_for_lock)
             _bos_direction_val: Optional[str] = _all_aligned_bos_for_lock[-1].direction if _all_aligned_bos_for_lock else None
@@ -1617,6 +1702,8 @@ class MultiTFRadar:
                 [c for c in choch_list if c.direction == required_direction],
                 key=lambda x: x.index
             )
+            aligned_chochs = _filter_events_in_recent_window(aligned_chochs, df)
+            aligned_chochs = _filter_structurally_valid_events(aligned_chochs, df)
             rejected_count = all_chochs_count - len(aligned_chochs)
             if rejected_count > 0:
                 print(
@@ -1690,7 +1777,75 @@ class MultiTFRadar:
             _choch_bars_ago = len(df) - latest_choch.index
             choch_direction = latest_choch.direction
 
-            # V55: gate _is_structural_break_valid eliminat — V46/V53 gestionează retrace 60–80%.
+            # V68: reactivare V50 — CHoCH trebuie să supraviețuiască structurii live
+            if not _is_structural_break_valid(latest_choch, choch_direction, df):
+                print(
+                    f"  🛑 [{timeframe_display} V68 INVALID] {symbol}: "
+                    f"{choch_direction.upper()} CHoCH @ -{_choch_bars_ago}b invalidat "
+                    f"de structură opusă post-break"
+                )
+                sys.stdout.flush()
+                return TimeframeAnalysis(
+                    timeframe=timeframe_display,
+                    choch_detected=False,
+                    choch_direction=None,
+                    choch_time=None,
+                    choch_price=None,
+                    fvg_detected=False,
+                    fvg_top=None,
+                    fvg_bottom=None,
+                    fvg_entry=None,
+                    in_fvg=False,
+                    distance_to_fvg_pips=0.0,
+                    status=PullbackStatus.WAITING_4H_CHOCH,
+                    choch_bars_ago=9999,
+                )
+            if choch_direction == 'bearish' and _opposite_bullish_invalidation_after(
+                latest_choch, df, _major_h,
+            ):
+                print(
+                    f"  🛑 [{timeframe_display} V68 PURGE] {symbol}: "
+                    f"CHoCH bearish invalidat de HH body-close post-break"
+                )
+                sys.stdout.flush()
+                return TimeframeAnalysis(
+                    timeframe=timeframe_display,
+                    choch_detected=False,
+                    choch_direction=None,
+                    choch_time=None,
+                    choch_price=None,
+                    fvg_detected=False,
+                    fvg_top=None,
+                    fvg_bottom=None,
+                    fvg_entry=None,
+                    in_fvg=False,
+                    distance_to_fvg_pips=0.0,
+                    status=PullbackStatus.WAITING_4H_CHOCH,
+                    choch_bars_ago=9999,
+                )
+            if choch_direction == 'bullish' and _opposite_bearish_invalidation_after(
+                latest_choch, df, _major_l,
+            ):
+                print(
+                    f"  🛑 [{timeframe_display} V68 PURGE] {symbol}: "
+                    f"CHoCH bullish invalidat de LL body-close post-break"
+                )
+                sys.stdout.flush()
+                return TimeframeAnalysis(
+                    timeframe=timeframe_display,
+                    choch_detected=False,
+                    choch_direction=None,
+                    choch_time=None,
+                    choch_price=None,
+                    fvg_detected=False,
+                    fvg_top=None,
+                    fvg_bottom=None,
+                    fvg_entry=None,
+                    in_fvg=False,
+                    distance_to_fvg_pips=0.0,
+                    status=PullbackStatus.WAITING_4H_CHOCH,
+                    choch_bars_ago=9999,
+                )
 
             if signal_type == 'CHoCH':
                 print(
@@ -2515,6 +2670,20 @@ class MultiTFRadar:
                 f"preț {result.current_price:.5f} fără POI live și fără poi_touch_latched"
             )
             return
+        # V68: alert if cBot 8010 offline when arming EXECUTE_NOW
+        try:
+            if not self.ctrader.is_available(retries=1, wait=0.5):
+                _sym = setup.get('symbol', '?')
+                logger.critical(
+                    f"[V68 INFRA] {_sym}: EXECUTE_NOW armat — cBot port 8010 OFFLINE"
+                )
+                self._send_radar_telegram_alert(
+                    f"⚠️ <b>EXECUTE_NOW {_sym}</b>\n"
+                    f"cBot port <b>8010 OFFLINE</b> la armare.\n"
+                    f"Verifică MarketDataProvider + PythonSignalExecutor pe VPS."
+                )
+        except Exception as _infra_err:
+            logger.warning(f"[V68 INFRA] cBot availability check failed: {_infra_err}")
         if setup.get('status') != 'TRADE_OPEN':
             _macro, _issues = self._v423_ltf_misalignment(setup, result)
             if _issues:
