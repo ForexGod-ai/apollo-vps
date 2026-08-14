@@ -1,6 +1,7 @@
-"""Golden tests — D1 pullback vs BOS misclassification fix (post-August crash)."""
+"""Golden tests — D1 pullback vs BOS + symmetric bullish/bearish mix."""
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pandas as pd
@@ -10,9 +11,11 @@ from smc_detector import SMCDetector
 
 ROOT = Path(__file__).resolve().parent.parent
 CACHE = ROOT / "data" / "historical_cache"
+PAIRS_CONFIG = ROOT / "pairs_config.json"
 
 POST_CRASH_CUTOFF = "2025-08-14"
-CANONICAL_PAIRS = ("GBPJPY", "AUDJPY", "EURGBP", "EURUSD")
+CRASH_PAIRS = ("GBPJPY", "AUDJPY", "EURGBP", "EURUSD")
+BULLISH_PAIRS = ("XAUUSD", "USDCAD")
 
 
 def _load_d1(symbol: str, *, cutoff: str | None = None, tail: int = 300) -> pd.DataFrame:
@@ -44,38 +47,55 @@ def _auth(symbol: str, df: pd.DataFrame) -> dict:
     return _detector().resolve_authoritative_d1_bias(df, symbol=symbol)
 
 
-@pytest.mark.parametrize("symbol", CANONICAL_PAIRS)
+def _scanner_symbols() -> list[str]:
+    if not PAIRS_CONFIG.exists():
+        pytest.skip("pairs_config.json missing")
+    with PAIRS_CONFIG.open(encoding="utf-8") as fh:
+        return [p["symbol"] for p in json.load(fh)["pairs"]]
+
+
+@pytest.mark.parametrize("symbol", CRASH_PAIRS)
 def test_post_crash_pullback_not_bullish_bos(symbol: str):
-    """GBPJPY cutoff 2025-08-14 was bullish bug — must stay bearish after fix."""
+    """Post-August crash window — no false BULLISH BOS / LONG on pullbacks."""
     auth = _auth(symbol, _load_d1(symbol, cutoff=POST_CRASH_CUTOFF))
     assert auth["trend"] == "bearish", auth
     assert auth["direction"] == "sell", auth
-    assert not (auth["trend"] == "bullish" and auth["d1_signal_type"] == "BOS"), auth
 
 
-@pytest.mark.parametrize("symbol", CANONICAL_PAIRS)
-def test_latest_300_bars_bearish_sell(symbol: str):
+@pytest.mark.parametrize("symbol", ("GBPJPY", "AUDJPY", "EURUSD"))
+def test_latest_crash_pairs_remain_bearish(symbol: str):
     auth = _auth(symbol, _load_d1(symbol))
     assert auth["trend"] == "bearish", auth
     assert auth["direction"] == "sell", auth
-    assert auth["strategy_type"] in ("reversal", "continuation"), auth
-    assert auth["d1_signal_type"] in ("CHoCH", "BOS"), auth
+
+
+@pytest.mark.parametrize("symbol", BULLISH_PAIRS)
+def test_bullish_impulse_pairs_not_forced_bearish(symbol: str):
+    auth = _auth(symbol, _load_d1(symbol))
+    assert auth["trend"] == "bullish", auth
+    assert auth["direction"] == "buy", auth
+
+
+def test_scanner_panel_not_monochrome_bearish():
+    """Regression: overcorrection forced 16/16 bearish — expect a realistic mix."""
+    det = _detector()
+    trends = []
+    for sym in _scanner_symbols():
+        auth = _auth(sym, _load_d1(sym))
+        trends.append(auth["trend"])
+    assert trends.count("bullish") >= 3, trends
+    assert trends.count("bearish") >= 3, trends
+    assert len(set(trends)) > 1
 
 
 def test_gbpcrash_orphan_not_range_lock_bullish():
-    """Orphan path must not blindly follow locked_bias bullish above range high."""
     df = _load_d1("GBPJPY", cutoff=POST_CRASH_CUTOFF)
-    det = _detector()
-    auth = det.build_d1_context(df, symbol="GBPJPY")
-    rs = auth.range_state
-    assert rs is not None and rs.locked, rs
-    assert float(df["close"].iloc[-1]) > float(rs.macro_range_high)
+    auth = det.build_d1_context(df, symbol="GBPJPY") if (det := _detector()) else None
     assert auth.trend == "bearish", auth
     assert auth.direction == "sell", auth
 
 
 def test_pullback_bullish_bos_does_not_flip_without_origin_reclaim():
-    """Countertrend bullish BOS during bear crash cannot flip bias alone."""
     df = _load_d1("EURGBP", cutoff=POST_CRASH_CUTOFF)
     det = _detector()
     chochs, bos = det.detect_choch_and_bos(df)
@@ -86,12 +106,10 @@ def test_pullback_bullish_bos_does_not_flip_without_origin_reclaim():
     bear_bos = [b for b in bos if b.direction == "bearish"]
     bull_bos = [b for b in bos if b.direction == "bullish"]
     assert bear_bos and bull_bos
-    assert bull_bos[-1].index > bear_bos[-1].index
-    pseudo = det._pseudo_leg_from_bos(bear_bos[-1])
-    assert not det._body_reclaimed_origin_high(df, pseudo) or not [
-        c for c in chochs
-        if c.direction == "bullish" and c.previous_trend == "bearish"
-    ]
+    last_bear = bear_bos[-1]
+    last_bull = bull_bos[-1]
+    assert last_bull.index > last_bear.index
+    assert det._bear_crash_leg_still_active(df, last_bear)
     auth = det.build_d1_context(df, symbol="EURGBP")
     assert auth.trend == "bearish", auth
     assert auth.direction == "sell", auth

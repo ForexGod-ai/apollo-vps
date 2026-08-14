@@ -167,13 +167,23 @@ class D1AuthorityMixin:
             for bf in reversed(bear_flips):
                 if not self._leg_choch_still_valid(df, bf, bos_list, chochs):
                     continue
-                return _pack_leg(bf)
-            # V65: flip bearish recent (HL lichidat) bate BOS orphan vechi
-            if bear_flips:
-                return _pack_leg(bear_flips[-1])
+                filtered = self._filter_countertrend_pullback_bos(df, bf, bos_list)
+                return self._strategy_from_leg_choch(bf, filtered)
             aligned = [b for b in bos_list if b.direction == 'bearish']
             if aligned:
                 return aligned[-1], 'continuation', 'bearish', None
+            return None
+
+        def _bullish_authority() -> Optional[Tuple[Optional[object], str, str, Optional[CHoCH]]]:
+            bull_flips = [f for f in flips if f.direction == 'bullish']
+            for bf in reversed(bull_flips):
+                if not self._leg_choch_still_valid(df, bf, bos_list, chochs):
+                    continue
+                filtered = self._filter_countertrend_pullback_bos(df, bf, bos_list)
+                return self._strategy_from_leg_choch(bf, filtered)
+            aligned = [b for b in bos_list if b.direction == 'bullish']
+            if aligned:
+                return aligned[-1], 'continuation', 'bullish', None
             return None
 
         latest = flips[-1]
@@ -246,12 +256,19 @@ class D1AuthorityMixin:
                 if bear:
                     return bear
             else:
-                bear = _bearish_authority()
-                if bear:
-                    return bear
+                post_bear = [
+                    b for b in bos_list
+                    if b.direction == 'bearish' and b.index > latest.index
+                ]
+                if post_bear:
+                    return post_bear[-1], 'continuation', 'bearish', None
+                bull = _bullish_authority()
+                if bull:
+                    return bull
             return None
 
-        return _pack_leg(latest)
+        filtered = self._filter_countertrend_pullback_bos(df, latest, bos_list)
+        return self._strategy_from_leg_choch(latest, filtered)
 
     def _resolve_d1_leg(
         self,

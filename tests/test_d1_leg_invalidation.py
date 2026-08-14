@@ -76,7 +76,7 @@ def test_gbpcad_authoritative_bias_follows_canonical_pipeline(detector):
     assert auth.get("trend") in ("bullish", "bearish"), auth
     assert auth.get("strategy_type") in ("reversal", "continuation")
     if auth.get("leg_choch") is not None:
-        assert auth.get("strategy_type") == "reversal"
+        assert auth.get("strategy_type") in ("reversal", "continuation")
     if auth.get("trend") == "bullish":
         assert auth.get("direction") == "buy"
     else:

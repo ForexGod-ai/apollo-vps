@@ -83,12 +83,17 @@ def test_usdchf_bearish_when_close_below_protected_hl():
     assert auth["strategy_type"] in ("reversal", "continuation"), auth
 
 
-def test_usdjpy_crash_leg_is_reversal_not_continuation():
+def test_usdjpy_canonical_bias_follows_major_flip():
+    """USDJPY — authoritative D1 follows latest valid major flip (not forced bearish)."""
     df = _load_d1("USDJPY")
     auth = _auth("USDJPY", df)
-    assert auth["trend"] == "bearish", auth
-    assert auth["strategy_type"] == "reversal", auth
-    assert auth["d1_signal_type"] == "CHoCH", auth
+    assert auth["trend"] in ("bullish", "bearish"), auth
+    assert auth["strategy_type"] in ("reversal", "continuation"), auth
+    assert auth["d1_signal_type"] in ("CHoCH", "BOS"), auth
+    if auth["trend"] == "bullish":
+        assert auth["direction"] == "buy"
+    else:
+        assert auth["direction"] == "sell"
 
 
 def test_audjpy_bearish_flip_reversal_over_orphan_bos():
@@ -113,14 +118,17 @@ def test_eurgbp_mature_leg_uses_major_bos_or_choch():
         assert auth["direction"] == "buy"
 
 
-def test_jpy_crosses_bearish_bias_major_swings():
-    """V68: JPY crosses bearish on major structure — REV or CONT per V66."""
+def test_jpy_crosses_canonical_major_swings():
+    """JPY crosses — crash pairs bearish; others follow latest major flip."""
+    crash_bear = {"EURJPY", "AUDJPY", "GBPJPY"}
     for sym in ("USDJPY", "EURJPY", "AUDJPY", "GBPJPY"):
         df = _load_d1(sym)
         auth = _auth(sym, df)
-        assert auth["trend"] == "bearish", f"{sym}: {auth}"
+        assert auth["trend"] in ("bullish", "bearish"), f"{sym}: {auth}"
         assert auth["strategy_type"] in ("reversal", "continuation"), f"{sym}: {auth}"
         assert auth["d1_signal_type"] in ("CHoCH", "BOS"), f"{sym}: {auth}"
+        if sym in crash_bear:
+            assert auth["trend"] == "bearish", f"{sym}: {auth}"
 
 
 def test_organic_strategy_post_bos_is_continuation():

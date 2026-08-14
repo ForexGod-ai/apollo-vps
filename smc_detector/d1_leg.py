@@ -186,6 +186,85 @@ class D1LegMixin:
             ]
         return bos_list
 
+    def _crash_origin_major_high(
+        self,
+        df: pd.DataFrame,
+        bear_bos: BOS,
+    ) -> Optional[float]:
+        """Peak wick high before bearish crash BOS — ceiling for valid bullish reclaim."""
+        if bear_bos is None or df is None or len(df) == 0:
+            return None
+        end = min(int(bear_bos.index), len(df) - 1)
+        if end <= 0:
+            return None
+        return float(df['high'].iloc[:end].max())
+
+    def _crash_origin_major_low(
+        self,
+        df: pd.DataFrame,
+        bull_bos: BOS,
+    ) -> Optional[float]:
+        """Trough wick low before bullish rally BOS — floor for valid bearish reclaim."""
+        if bull_bos is None or df is None or len(df) == 0:
+            return None
+        end = min(int(bull_bos.index), len(df) - 1)
+        if end <= 0:
+            return None
+        return float(df['low'].iloc[:end].min())
+
+    def _bear_crash_leg_still_active(
+        self,
+        df: pd.DataFrame,
+        bear_bos: BOS,
+    ) -> bool:
+        """True while last body close remains below crash origin high."""
+        if df is None or len(df) == 0 or bear_bos is None:
+            return False
+        origin = self._crash_origin_major_high(df, bear_bos)
+        if origin is None:
+            return False
+        last_bar = len(df) - 1
+        return not self._bar_body_close_above(df, last_bar, origin)
+
+    def _bull_rally_leg_still_active(
+        self,
+        df: pd.DataFrame,
+        bull_bos: BOS,
+    ) -> bool:
+        """True while last body close remains above rally origin low."""
+        if df is None or len(df) == 0 or bull_bos is None:
+            return False
+        origin = self._crash_origin_major_low(df, bull_bos)
+        if origin is None:
+            return False
+        last_bar = len(df) - 1
+        return not self._bar_body_close_below(df, last_bar, origin)
+
+    def _countertrend_bos_is_pullback(
+        self,
+        df: pd.DataFrame,
+        prior_opposite_bos: BOS,
+        counter_bos: BOS,
+    ) -> bool:
+        """True when counter_bos is a retrace inside prior_opposite_bos leg (no origin reclaim)."""
+        if prior_opposite_bos is None or counter_bos is None:
+            return False
+        if counter_bos.index <= prior_opposite_bos.index:
+            return False
+        if prior_opposite_bos.direction == 'bearish':
+            if not self._bear_crash_leg_still_active(df, prior_opposite_bos):
+                return False
+            origin = self._crash_origin_major_high(df, prior_opposite_bos)
+            if origin is None:
+                return False
+            return not self._bar_body_close_above(df, counter_bos.index, origin)
+        if not self._bull_rally_leg_still_active(df, prior_opposite_bos):
+            return False
+        origin = self._crash_origin_major_low(df, prior_opposite_bos)
+        if origin is None:
+            return False
+        return not self._bar_body_close_below(df, counter_bos.index, origin)
+
     def _resolve_orphan_d1_bias(
         self,
         df: pd.DataFrame,
@@ -194,53 +273,64 @@ class D1LegMixin:
         range_state: Optional[StructuralRangeState] = None,
     ) -> Tuple[Optional[object], str, str, Optional[CHoCH]]:
         """
-        No leg CHoCH: prefer recent structural break over range lock alone.
-        Pullback BOS must not flip bias without origin reclaim.
+        No leg CHoCH: most recent major BOS wins; suppress countertrend pullback
+        only while the prior opposite crash leg is active (no origin reclaim).
         """
         bearish_bos = [b for b in bos_list if b.direction == 'bearish']
         bullish_bos = [b for b in bos_list if b.direction == 'bullish']
-        last_bear = bearish_bos[-1] if bearish_bos else None
-        last_bull = bullish_bos[-1] if bullish_bos else None
 
-        if last_bear is not None:
-            if last_bull is None or last_bull.index <= last_bear.index:
-                return last_bear, 'continuation', 'bearish', None
-            pseudo = self._pseudo_leg_from_bos(last_bear)
-            origin_reclaimed = self._body_reclaimed_origin_high(df, pseudo)
-            bull_flips = [
-                c for c in chochs
-                if c.direction == 'bullish'
-                and c.previous_trend == 'bearish'
-                and c.index > last_bear.index
-            ]
-            if origin_reclaimed and bull_flips:
-                active_flip = bull_flips[-1]
-                if self._leg_choch_still_valid(df, active_flip, bos_list, chochs):
-                    filtered = self._filter_countertrend_pullback_bos(
-                        df, active_flip, bos_list,
-                    )
-                    return self._strategy_from_leg_choch(active_flip, filtered)
-            return last_bear, 'continuation', 'bearish', None
+        flips = self._true_choch_flips(chochs)
+        for flip in reversed(flips):
+            if not self._leg_choch_still_valid(df, flip, bos_list, chochs):
+                continue
+            filtered = self._filter_countertrend_pullback_bos(df, flip, bos_list)
+            return self._strategy_from_leg_choch(flip, filtered)
 
-        if last_bull is not None:
-            if last_bear is None or last_bear.index <= last_bull.index:
-                return last_bull, 'continuation', 'bullish', None
-            pseudo = self._pseudo_leg_from_bos(last_bull)
-            origin_reclaimed = self._body_reclaimed_origin_low(df, pseudo)
-            bear_flips = [
-                c for c in chochs
-                if c.direction == 'bearish'
-                and c.previous_trend == 'bullish'
-                and c.index > last_bull.index
-            ]
-            if origin_reclaimed and bear_flips:
-                active_flip = bear_flips[-1]
-                if self._leg_choch_still_valid(df, active_flip, bos_list, chochs):
-                    filtered = self._filter_countertrend_pullback_bos(
-                        df, active_flip, bos_list,
+        if bos_list:
+            last_signal = bos_list[-1]
+            if last_signal.direction == 'bullish' and bearish_bos:
+                prior_bear = [b for b in bearish_bos if b.index < last_signal.index]
+                bear_leg = next(
+                    (
+                        f for f in reversed(flips)
+                        if f.direction == 'bearish'
+                        and self._leg_choch_still_valid(df, f, bos_list, chochs)
+                    ),
+                    None,
+                )
+                if bear_leg is not None and prior_bear:
+                    if self._countertrend_bos_is_pullback(
+                        df, prior_bear[-1], last_signal,
+                    ):
+                        filtered = self._filter_countertrend_pullback_bos(
+                            df, bear_leg, bos_list,
+                        )
+                        return self._strategy_from_leg_choch(bear_leg, filtered)
+                elif prior_bear:
+                    swing_lows = self.detect_swing_lows(df)
+                    swing_highs = self.detect_swing_highs(df)
+                    forming_hl = (
+                        len(swing_lows) >= 2
+                        and swing_lows[-1].price > swing_lows[-2].price
                     )
-                    return self._strategy_from_leg_choch(active_flip, filtered)
-            return last_bull, 'continuation', 'bullish', None
+                    forming_lh = (
+                        len(swing_highs) >= 2
+                        and swing_highs[-1].price < swing_highs[-2].price
+                    )
+                    crash_active = self._bear_crash_leg_still_active(
+                        df, prior_bear[-1],
+                    )
+                    if forming_hl:
+                        pass
+                    elif crash_active or forming_lh:
+                        origin = self._crash_origin_major_high(df, prior_bear[-1])
+                        last_bar = len(df) - 1
+                        if (
+                            origin is not None
+                            and not self._bar_body_close_above(df, last_bar, origin)
+                        ):
+                            return prior_bear[-1], 'continuation', 'bearish', None
+            return last_signal, 'continuation', last_signal.direction, None
 
         if (
             range_state
