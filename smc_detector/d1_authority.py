@@ -186,16 +186,20 @@ class D1AuthorityMixin:
                 # Bounce bullish nu promovează la CONT decât după BOS bearish post-leg.
                 if not self._post_leg_bos(last_bear, bos_list):
                     return _pack_leg(last_bear)
-                swing_h = self.detect_swing_highs(df)
+                origin_high = self._leg_origin_major_high(df, last_bear)
                 lh_reclaimed = False
-                for i in range(len(swing_h) - 1, 0, -1):
-                    if swing_h[i].index <= last_bear.index:
-                        continue
-                    if swing_h[i].price < swing_h[i - 1].price:
-                        lh_body = self._swing_body_high(df, swing_h[i].index)
-                        if self._bar_body_close_above(df, last_bar, lh_body):
-                            lh_reclaimed = True
-                        break
+                if origin_high is not None:
+                    lh_reclaimed = self._bar_body_close_above(df, last_bar, origin_high)
+                else:
+                    swing_h = self.detect_swing_highs(df)
+                    for i in range(len(swing_h) - 1, 0, -1):
+                        if swing_h[i].index <= last_bear.index:
+                            continue
+                        if swing_h[i].price < swing_h[i - 1].price:
+                            lh_body = self._swing_body_high(df, swing_h[i].index)
+                            if self._bar_body_close_above(df, last_bar, lh_body):
+                                lh_reclaimed = True
+                            break
                 if not lh_reclaimed:
                     return _pack_leg(last_bear)
 
@@ -289,35 +293,12 @@ class D1AuthorityMixin:
             flips = self._true_choch_flips(chochs)
             if flips:
                 f = flips[-1]
-                return self._strategy_from_leg_choch(f, bos_list)
-            if bos_list:
-                if (
-                    range_state
-                    and range_state.locked
-                    and range_state.locked_bias in ('bullish', 'bearish')
-                ):
-                    aligned = [
-                        b for b in bos_list
-                        if b.direction == range_state.locked_bias
-                    ]
-                    if aligned:
-                        b = aligned[-1]
-                        return b, 'continuation', range_state.locked_bias, None
-                    return None, 'reversal', range_state.locked_bias, None
-                b = bos_list[-1]
-                return b, 'continuation', b.direction, None
-            if chochs:
-                c = chochs[-1]
-                st = (
-                    'reversal'
-                    if self._is_major_structural_choch(c)
-                    and self._major_reversal_confirmed(df, c)
-                    else 'continuation'
-                )
-                return c, st, c.direction, c
-            return None, 'continuation', 'neutral', None
+                filtered_bos = self._filter_countertrend_pullback_bos(df, f, bos_list)
+                return self._strategy_from_leg_choch(f, filtered_bos)
+            return self._resolve_orphan_d1_bias(df, chochs, bos_list, range_state)
 
         if leg_choch is not None:
+            bos_list = self._filter_countertrend_pullback_bos(df, leg_choch, bos_list)
             sig, st, trend, leg = self._strategy_from_leg_choch(leg_choch, bos_list)
             if debug:
                 label = 'CONTINUATION' if st == 'continuation' else 'REVERSAL'
