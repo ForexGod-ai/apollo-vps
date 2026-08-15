@@ -148,9 +148,131 @@ class D1LegMixin:
         last_bar = len(df) - 1
         return self._bar_body_close_below(df, last_bar, origin)
 
+
+    def _latest_major_high_body(
+        self,
+        df: pd.DataFrame,
+        major_highs: List,
+        bar_idx: int,
+    ) -> Optional[float]:
+        prior = [h for h in major_highs if h.index <= bar_idx]
+        if not prior:
+            return None
+        return self._swing_body_high(df, prior[-1].index)
+
+    def _latest_major_low_body(
+        self,
+        df: pd.DataFrame,
+        major_lows: List,
+        bar_idx: int,
+    ) -> Optional[float]:
+        prior = [l for l in major_lows if l.index <= bar_idx]
+        if not prior:
+            return None
+        return self._swing_body_low(df, prior[-1].index)
+
+    def _flip_threshold_for_bearish_leg(
+        self,
+        df: pd.DataFrame,
+        leg_choch: CHoCH,
+        major_highs: List,
+        bar_idx: int,
+    ) -> Optional[float]:
+        """Ultimul Major High at bar — for flip confirmation on that bar."""
+        latest = self._latest_major_high_body(df, major_highs, bar_idx)
+        if latest is not None:
+            return latest
+        return self._leg_origin_major_high(df, leg_choch)
+
+    def _flip_threshold_for_bullish_leg(
+        self,
+        df: pd.DataFrame,
+        leg_choch: CHoCH,
+        major_lows: List,
+        bar_idx: int,
+    ) -> Optional[float]:
+        """Ultimul Major Low at bar — for flip confirmation on that bar."""
+        latest = self._latest_major_low_body(df, major_lows, bar_idx)
+        if latest is not None:
+            return latest
+        return self._leg_origin_major_low(df, leg_choch)
+
+    def _leg_invalidation_level_bearish(
+        self,
+        df: pd.DataFrame,
+        leg_choch: CHoCH,
+        major_highs: List,
+        bar_idx: int,
+    ) -> Optional[float]:
+        """Range ceiling — ultimul Major High at bar (pure SMC flip boundary)."""
+        latest = self._latest_major_high_body(df, major_highs, bar_idx)
+        if latest is not None:
+            return latest
+        return self._leg_origin_major_high(df, leg_choch)
+
+    def _leg_invalidation_level_bullish(
+        self,
+        df: pd.DataFrame,
+        leg_choch: CHoCH,
+        major_lows: List,
+        bar_idx: int,
+    ) -> Optional[float]:
+        """Range floor — ultimul Major Low at bar (pure SMC flip boundary)."""
+        latest = self._latest_major_low_body(df, major_lows, bar_idx)
+        if latest is not None:
+            return latest
+        return self._leg_origin_major_low(df, leg_choch)
+
+    def _pure_leg_still_valid_at(
+        self,
+        df: pd.DataFrame,
+        leg_choch: CHoCH,
+        major_highs: List,
+        major_lows: List,
+        bar_idx: int,
+    ) -> bool:
+        if leg_choch is None or df is None or len(df) == 0:
+            return False
+        bar_idx = min(max(int(bar_idx), 0), len(df) - 1)
+        if leg_choch.direction == 'bullish':
+            protected = self._protected_hl_level_after_leg(df, leg_choch)
+            if protected is not None and self._bar_body_close_below(
+                df, bar_idx, protected,
+            ):
+                return False
+            threshold = self._leg_invalidation_level_bullish(
+                df, leg_choch, major_lows, bar_idx,
+            )
+            if threshold is None:
+                return True
+            return not self._bar_body_close_below(df, bar_idx, threshold)
+        protected = self._protected_lh_level_after_leg(df, leg_choch)
+        if protected is not None and self._bar_body_close_above(
+            df, bar_idx, protected,
+        ):
+            return False
+        threshold = self._leg_invalidation_level_bearish(
+            df, leg_choch, major_highs, bar_idx,
+        )
+        if threshold is None:
+            return True
+        return not self._bar_body_close_above(df, bar_idx, threshold)
+
+    def _pure_leg_still_valid(
+        self,
+        df: pd.DataFrame,
+        leg_choch: CHoCH,
+        major_highs: List,
+        major_lows: List,
+    ) -> bool:
+        if leg_choch is None or df is None or len(df) == 0:
+            return False
+        return self._pure_leg_still_valid_at(
+            df, leg_choch, major_highs, major_lows, len(df) - 1,
+        )
+
     @staticmethod
-    def _pseudo_leg_from_bos(bos: BOS) -> CHoCH:
-        """Synthetic CHoCH anchor for orphan BOS origin / reclaim checks."""
+    def _leg_anchor_from_bos(bos: BOS) -> CHoCH:
         prev = 'bullish' if bos.direction == 'bearish' else 'bearish'
         return CHoCH(
             index=bos.index,
@@ -161,191 +283,311 @@ class D1LegMixin:
             swing_broken=getattr(bos, 'swing_broken', None),
         )
 
+    def _structural_break_level_for_signal(
+        self,
+        df: pd.DataFrame,
+        signal,
+        major_highs: List,
+        major_lows: List,
+    ) -> Optional[float]:
+        """Body-close threshold from the pivot broken by this CHoCH/BOS."""
+        broken = getattr(signal, 'swing_broken', None)
+        if broken is not None:
+            if signal.direction == 'bullish':
+                return self._swing_body_high(df, broken.index)
+            return self._swing_body_low(df, broken.index)
+        if signal.direction == 'bullish':
+            prior = [h for h in major_highs if h.index < signal.index]
+            if not prior:
+                return None
+            return self._swing_body_high(df, prior[-1].index)
+        prior = [l for l in major_lows if l.index < signal.index]
+        if not prior:
+            return None
+        return self._swing_body_low(df, prior[-1].index)
+
+    def _opposite_flip_confirms_leg_change(
+        self,
+        df: pd.DataFrame,
+        active: CHoCH,
+        flip: CHoCH,
+        major_highs: List,
+        major_lows: List,
+    ) -> bool:
+        if flip.direction == active.direction:
+            return True
+        level = self._structural_break_level_for_signal(
+            df, flip, major_highs, major_lows,
+        )
+        if level is None:
+            return False
+        if flip.direction == 'bullish':
+            return self._bar_body_close_above(df, flip.index, level)
+        return self._bar_body_close_below(df, flip.index, level)
+
+    def _active_leg_range_boundary_for_flip(
+        self,
+        df: pd.DataFrame,
+        active: BOS,
+        major_highs: List,
+        major_lows: List,
+        bar_idx: int,
+    ) -> Optional[float]:
+        """Ultimul Major High/Low inainte de bar — flip boundary vs pullback range."""
+        anchor = self._leg_anchor_from_bos(active)
+        if active.direction == 'bearish':
+            prior = [h for h in major_highs if h.index < bar_idx]
+            if prior:
+                return self._swing_body_high(df, prior[-1].index)
+            return self._leg_invalidation_level_bearish(
+                df, anchor, major_highs, bar_idx,
+            )
+        prior = [l for l in major_lows if l.index < bar_idx]
+        if prior:
+            return self._swing_body_low(df, prior[-1].index)
+        return self._leg_invalidation_level_bullish(
+            df, anchor, major_lows, bar_idx,
+        )
+
+    def _opposite_bos_confirms_leg_change(
+        self,
+        df: pd.DataFrame,
+        active: BOS,
+        counter: BOS,
+        major_highs: List,
+        major_lows: List,
+    ) -> bool:
+        if counter.direction == active.direction:
+            return True
+        level = self._structural_break_level_for_signal(
+            df, counter, major_highs, major_lows,
+        )
+        if level is None:
+            return False
+        structural = (
+            self._bar_body_close_above(df, counter.index, level)
+            if counter.direction == 'bullish'
+            else self._bar_body_close_below(df, counter.index, level)
+        )
+        if not structural:
+            return False
+        boundary = self._active_leg_range_boundary_for_flip(
+            df, active, major_highs, major_lows, counter.index,
+        )
+        if boundary is None:
+            return True
+        if counter.direction == 'bullish':
+            return self._bar_body_close_above(df, counter.index, boundary)
+        return self._bar_body_close_below(df, counter.index, boundary)
+
+    def _resolve_active_leg_from_flips(
+        self,
+        df: pd.DataFrame,
+        flips: List[CHoCH],
+        major_highs: List,
+        major_lows: List,
+        bos_list: Optional[List] = None,
+    ) -> Optional[CHoCH]:
+        if not flips:
+            return None
+        confirmed = [
+            f for f in flips
+            if self._is_major_structural_choch(f)
+            and self._major_reversal_confirmed(df, f)
+        ]
+        candidates = confirmed if confirmed else flips
+        active = candidates[0]
+        for flip in candidates[1:]:
+            if flip.direction == active.direction:
+                active = flip
+                continue
+            if not self._is_major_structural_choch(flip):
+                continue
+            if not self._opposite_flip_confirms_leg_change(
+                df, active, flip, major_highs, major_lows,
+            ):
+                continue
+            active = flip
+        if self._pure_leg_still_valid(df, active, major_highs, major_lows):
+            return active
+        bos_list = bos_list or []
+        for flip in reversed(candidates):
+            if not self._pure_leg_still_valid(df, flip, major_highs, major_lows):
+                continue
+            if flip.direction == 'bullish':
+                post_bear = [
+                    b for b in bos_list
+                    if b.index > flip.index and b.direction == 'bearish'
+                ]
+                if post_bear:
+                    continue
+            else:
+                post_bull = [
+                    b for b in bos_list
+                    if b.index > flip.index and b.direction == 'bullish'
+                ]
+                if post_bull:
+                    continue
+            return flip
+        return None
+
     def _filter_countertrend_pullback_bos(
         self,
         df: pd.DataFrame,
         leg_choch: CHoCH,
         bos_list: List,
     ) -> List:
-        """Strip countertrend BOS during active leg until origin level is reclaimed."""
         if leg_choch is None or not bos_list:
             return bos_list
-        if leg_choch.direction == 'bearish':
-            if self._body_reclaimed_origin_high(df, leg_choch):
-                return bos_list
-            return [
-                b for b in bos_list
-                if not (b.index > leg_choch.index and b.direction == 'bullish')
-            ]
-        if leg_choch.direction == 'bullish':
-            if self._body_reclaimed_origin_low(df, leg_choch):
-                return bos_list
-            return [
-                b for b in bos_list
-                if not (b.index > leg_choch.index and b.direction == 'bearish')
-            ]
-        return bos_list
+        swing_highs = self.detect_swing_highs(df)
+        swing_lows = self.detect_swing_lows(df)
+        major_highs, major_lows = self.filter_major_swings(
+            df, swing_highs, swing_lows,
+        )
+        filtered: List = []
+        for b in bos_list:
+            if b.index <= leg_choch.index:
+                filtered.append(b)
+                continue
+            if b.direction == leg_choch.direction:
+                filtered.append(b)
+                continue
+            if leg_choch.direction == 'bearish':
+                prior = [h for h in major_highs if h.index < b.index]
+                if prior and self._bar_body_close_above(
+                    df, b.index, self._swing_body_high(df, prior[-1].index),
+                ):
+                    filtered.append(b)
+            else:
+                prior = [l for l in major_lows if l.index < b.index]
+                if prior and self._bar_body_close_below(
+                    df, b.index, self._swing_body_low(df, prior[-1].index),
+                ):
+                    filtered.append(b)
+        return filtered
 
-    def _crash_origin_major_high(
+    @staticmethod
+    def _forming_higher_low(swing_lows: List) -> bool:
+        return len(swing_lows) >= 2 and swing_lows[-1].price > swing_lows[-2].price
+
+    @staticmethod
+    def _forming_lower_high(swing_highs: List) -> bool:
+        return len(swing_highs) >= 2 and swing_highs[-1].price < swing_highs[-2].price
+
+    def _resolve_active_direction_from_bos(
         self,
         df: pd.DataFrame,
-        bear_bos: BOS,
-    ) -> Optional[float]:
-        """Peak wick high before bearish crash BOS — ceiling for valid bullish reclaim."""
-        if bear_bos is None or df is None or len(df) == 0:
-            return None
-        end = min(int(bear_bos.index), len(df) - 1)
-        if end <= 0:
-            return None
-        return float(df['high'].iloc[:end].max())
+        bos_list: List,
+        major_highs: List,
+        major_lows: List,
+    ) -> Tuple[Optional[BOS], Optional[str]]:
+        if not bos_list:
+            return None, None
+        swing_highs = self.detect_swing_highs(df)
+        swing_lows = self.detect_swing_lows(df)
+        active = bos_list[0]
+        for counter in bos_list[1:]:
+            if counter.direction == active.direction:
+                active = counter
+                continue
+            if self._opposite_bos_confirms_leg_change(
+                df, active, counter, major_highs, major_lows,
+            ):
+                active = counter
+        last = bos_list[-1]
+        active_anchor = self._leg_anchor_from_bos(active)
+        if self._pure_leg_still_valid(df, active_anchor, major_highs, major_lows):
+            return active, active.direction
+        prior_opposite: Optional[BOS] = None
+        for b in reversed(bos_list):
+            if b.index <= active.index and b.direction != active.direction:
+                prior_opposite = b
+                break
+        if (
+            not self._pure_leg_still_valid(df, active_anchor, major_highs, major_lows)
+            and prior_opposite is not None
+        ):
+            prior_anchor = self._leg_anchor_from_bos(prior_opposite)
+            if self._pure_leg_still_valid(
+                df, prior_anchor, major_highs, major_lows,
+            ):
+                if (
+                    last.direction == 'bullish'
+                    and prior_opposite.direction == 'bearish'
+                    and not self._forming_higher_low(swing_lows)
+                ):
+                    return prior_opposite, prior_opposite.direction
+                if (
+                    last.direction == 'bearish'
+                    and prior_opposite.direction == 'bullish'
+                    and not self._forming_lower_high(swing_highs)
+                ):
+                    return last, last.direction
+        return last, last.direction
 
-    def _crash_origin_major_low(
-        self,
-        df: pd.DataFrame,
-        bull_bos: BOS,
-    ) -> Optional[float]:
-        """Trough wick low before bullish rally BOS — floor for valid bearish reclaim."""
-        if bull_bos is None or df is None or len(df) == 0:
-            return None
-        end = min(int(bull_bos.index), len(df) - 1)
-        if end <= 0:
-            return None
-        return float(df['low'].iloc[:end].min())
-
-    def _bear_crash_leg_still_active(
-        self,
-        df: pd.DataFrame,
-        bear_bos: BOS,
-    ) -> bool:
-        """True while last body close remains below crash origin high."""
-        if df is None or len(df) == 0 or bear_bos is None:
-            return False
-        origin = self._crash_origin_major_high(df, bear_bos)
-        if origin is None:
-            return False
-        last_bar = len(df) - 1
-        return not self._bar_body_close_above(df, last_bar, origin)
-
-    def _bull_rally_leg_still_active(
-        self,
-        df: pd.DataFrame,
-        bull_bos: BOS,
-    ) -> bool:
-        """True while last body close remains above rally origin low."""
-        if df is None or len(df) == 0 or bull_bos is None:
-            return False
-        origin = self._crash_origin_major_low(df, bull_bos)
-        if origin is None:
-            return False
-        last_bar = len(df) - 1
-        return not self._bar_body_close_below(df, last_bar, origin)
-
-    def _countertrend_bos_is_pullback(
-        self,
-        df: pd.DataFrame,
-        prior_opposite_bos: BOS,
-        counter_bos: BOS,
-    ) -> bool:
-        """True when counter_bos is a retrace inside prior_opposite_bos leg (no origin reclaim)."""
-        if prior_opposite_bos is None or counter_bos is None:
-            return False
-        if counter_bos.index <= prior_opposite_bos.index:
-            return False
-        if prior_opposite_bos.direction == 'bearish':
-            if not self._bear_crash_leg_still_active(df, prior_opposite_bos):
-                return False
-            origin = self._crash_origin_major_high(df, prior_opposite_bos)
-            if origin is None:
-                return False
-            return not self._bar_body_close_above(df, counter_bos.index, origin)
-        if not self._bull_rally_leg_still_active(df, prior_opposite_bos):
-            return False
-        origin = self._crash_origin_major_low(df, prior_opposite_bos)
-        if origin is None:
-            return False
-        return not self._bar_body_close_below(df, counter_bos.index, origin)
-
-    def _resolve_orphan_d1_bias(
+    def _resolve_pure_d1_matrix(
         self,
         df: pd.DataFrame,
         chochs: List[CHoCH],
         bos_list: List,
+        debug: bool = False,
         range_state: Optional[StructuralRangeState] = None,
     ) -> Tuple[Optional[object], str, str, Optional[CHoCH]]:
-        """
-        No leg CHoCH: most recent major BOS wins; suppress countertrend pullback
-        only while the prior opposite crash leg is active (no origin reclaim).
-        """
-        bearish_bos = [b for b in bos_list if b.direction == 'bearish']
-        bullish_bos = [b for b in bos_list if b.direction == 'bullish']
-
+        del range_state
+        chochs = self._dedupe_chochs_by_bar(chochs)
+        swing_highs = self.detect_swing_highs(df)
+        swing_lows = self.detect_swing_lows(df)
+        major_highs, major_lows = self.filter_major_swings(
+            df, swing_highs, swing_lows,
+        )
         flips = self._true_choch_flips(chochs)
-        for flip in reversed(flips):
-            if not self._leg_choch_still_valid(df, flip, bos_list, chochs):
-                continue
-            filtered = self._filter_countertrend_pullback_bos(df, flip, bos_list)
-            return self._strategy_from_leg_choch(flip, filtered)
-
-        if bos_list:
-            last_signal = bos_list[-1]
-            if last_signal.direction == 'bullish' and bearish_bos:
-                prior_bear = [b for b in bearish_bos if b.index < last_signal.index]
-                bear_leg = next(
-                    (
-                        f for f in reversed(flips)
-                        if f.direction == 'bearish'
-                        and self._leg_choch_still_valid(df, f, bos_list, chochs)
-                    ),
-                    None,
-                )
-                if bear_leg is not None and prior_bear:
-                    if self._countertrend_bos_is_pullback(
-                        df, prior_bear[-1], last_signal,
-                    ):
-                        filtered = self._filter_countertrend_pullback_bos(
-                            df, bear_leg, bos_list,
-                        )
-                        return self._strategy_from_leg_choch(bear_leg, filtered)
-                elif prior_bear:
-                    swing_lows = self.detect_swing_lows(df)
-                    swing_highs = self.detect_swing_highs(df)
-                    forming_hl = (
-                        len(swing_lows) >= 2
-                        and swing_lows[-1].price > swing_lows[-2].price
-                    )
-                    forming_lh = (
-                        len(swing_highs) >= 2
-                        and swing_highs[-1].price < swing_highs[-2].price
-                    )
-                    crash_active = self._bear_crash_leg_still_active(
-                        df, prior_bear[-1],
-                    )
-                    if forming_hl:
-                        pass
-                    elif crash_active or forming_lh:
-                        origin = self._crash_origin_major_high(df, prior_bear[-1])
-                        last_bar = len(df) - 1
-                        if (
-                            origin is not None
-                            and not self._bar_body_close_above(df, last_bar, origin)
-                        ):
-                            return prior_bear[-1], 'continuation', 'bearish', None
-            return last_signal, 'continuation', last_signal.direction, None
-
-        if (
-            range_state
-            and range_state.locked
-            and range_state.locked_bias in ('bullish', 'bearish')
-        ):
-            aligned = [
-                b for b in bos_list
-                if b.direction == range_state.locked_bias
+        leg_choch = self._resolve_active_leg_from_flips(
+            df, flips, major_highs, major_lows, bos_list=bos_list,
+        )
+        if leg_choch is not None and leg_choch.direction == 'bullish':
+            bear_before = [
+                f for f in flips
+                if f.direction == 'bearish' and f.index < leg_choch.index
             ]
-            if aligned:
-                b = aligned[-1]
-                return b, 'continuation', range_state.locked_bias, None
-            return None, 'reversal', range_state.locked_bias, None
-
+            if bear_before:
+                last_bear = bear_before[-1]
+                swing_lows = self.detect_swing_lows(df)
+                if not self._post_leg_bos(last_bear, bos_list):
+                    if not self._forming_higher_low(swing_lows):
+                        leg_choch = last_bear
+                else:
+                    swing_h = self.detect_swing_highs(df)
+                    lh_reclaimed = False
+                    for i in range(len(swing_h) - 1, 0, -1):
+                        if swing_h[i].index <= last_bear.index:
+                            continue
+                        if swing_h[i].price < swing_h[i - 1].price:
+                            lh_body = self._swing_body_high(df, swing_h[i].index)
+                            if self._bar_body_close_above(df, len(df) - 1, lh_body):
+                                lh_reclaimed = True
+                            break
+                    if not lh_reclaimed:
+                        leg_choch = last_bear
+        if leg_choch is not None:
+            chochs, bos_list = self._demote_post_leg_choch_to_bos(
+                leg_choch, chochs, bos_list,
+            )
+            bos_list = self._filter_countertrend_pullback_bos(
+                df, leg_choch, bos_list,
+            )
+            sig, st, trend, leg = self._strategy_from_leg_choch(leg_choch, bos_list)
+            if debug:
+                label = 'CONTINUATION' if st == 'continuation' else 'REVERSAL'
+                print(
+                    f"   📐 [PURE SMC] leg CHoCH {leg_choch.direction.upper()} "
+                    f"@bar{leg_choch.index} → {label}"
+                )
+            return sig, st, trend, leg
+        active_bos, bos_trend = self._resolve_active_direction_from_bos(
+            df, bos_list, major_highs, major_lows,
+        )
+        if active_bos is not None and bos_trend is not None:
+            return active_bos, 'continuation', bos_trend, None
         if bos_list:
             b = bos_list[-1]
             return b, 'continuation', b.direction, None
@@ -357,7 +599,7 @@ class D1LegMixin:
                 and self._major_reversal_confirmed(df, c)
                 else 'continuation'
             )
-            return c, st, c.direction, c
+            return c, st, c.direction, c if st == 'reversal' else None
         return None, 'continuation', 'neutral', None
 
     def _leg_invalidated_by_protected_breach(
@@ -365,23 +607,16 @@ class D1LegMixin:
         df: pd.DataFrame,
         leg_choch: CHoCH,
     ) -> bool:
-        """Close curent sub HL / peste LH protejat — leg bullish/bearish mort structural."""
         if leg_choch is None or df is None or len(df) == 0:
             return False
-        if leg_choch.direction == 'bullish':
-            if self._body_reclaimed_origin_low(df, leg_choch):
-                return True
-            level = self._protected_hl_level_after_leg(df, leg_choch)
-            if level is not None:
-                return float(df['close'].iloc[-1]) < level
-            return False
-        if self._body_reclaimed_origin_high(df, leg_choch):
-            return True
-        origin = self._leg_origin_major_high(df, leg_choch)
-        if origin is not None:
-            return False
-        level = self._protected_lh_level_after_leg(df, leg_choch)
-        return level is not None and float(df['close'].iloc[-1]) > level
+        swing_highs = self.detect_swing_highs(df)
+        swing_lows = self.detect_swing_lows(df)
+        major_highs, major_lows = self.filter_major_swings(
+            df, swing_highs, swing_lows,
+        )
+        return not self._pure_leg_still_valid(
+            df, leg_choch, major_highs, major_lows,
+        )
 
     def _leg_choch_price_level_valid(
         self,
@@ -408,8 +643,16 @@ class D1LegMixin:
                 ref = max(ref, float(latest_bos.break_price))
             else:
                 ref = min(ref, float(latest_bos.break_price))
+        swing_highs = self.detect_swing_highs(df)
+        swing_lows = self.detect_swing_lows(df)
+        major_highs, major_lows = self.filter_major_swings(
+            df, swing_highs, swing_lows,
+        )
         if leg_choch.direction == 'bullish':
-            if self._body_reclaimed_origin_low(df, leg_choch):
+            threshold = self._leg_invalidation_level_bullish(
+                df, leg_choch, major_lows, len(df) - 1,
+            )
+            if threshold is not None and close < threshold:
                 return False
             protected = self._protected_hl_level_after_leg(df, leg_choch)
             if protected is not None and close < protected:
@@ -417,10 +660,10 @@ class D1LegMixin:
             if same_dir_bos:
                 return True
             return close >= ref
-        if self._body_reclaimed_origin_high(df, leg_choch):
-            return False
-        origin = self._leg_origin_major_high(df, leg_choch)
-        if origin is not None and close > origin:
+        threshold = self._leg_invalidation_level_bearish(
+            df, leg_choch, major_highs, len(df) - 1,
+        )
+        if threshold is not None and close > threshold:
             return False
         if same_dir_bos:
             return True
@@ -584,60 +827,20 @@ class D1LegMixin:
         chochs: List[CHoCH],
         bos_list: List,
     ) -> Optional[CHoCH]:
-        """
-        V63: Leg = ultimul CHoCH major confirmat (flip real pe pivot major).
-        """
+        del bos_list
         if not chochs:
             return None
         chochs = self._dedupe_chochs_by_bar(chochs)
-        major_flips = [
-            c for c in chochs
-            if self._is_major_structural_choch(c) and self._major_reversal_confirmed(df, c)
-        ]
-        if major_flips:
-            for c in reversed(major_flips):
-                if not self._leg_choch_still_valid(df, c, bos_list, chochs):
-                    continue
-                later_opposite = [
-                    x for x in major_flips
-                    if x.index > c.index and x.direction != c.direction
-                    and self._leg_choch_still_valid(df, x, bos_list, chochs)
-                ]
-                if later_opposite:
-                    continue
-                return c
-
+        swing_highs = self.detect_swing_highs(df)
+        swing_lows = self.detect_swing_lows(df)
+        major_highs, major_lows = self.filter_major_swings(
+            df, swing_highs, swing_lows,
+        )
         flips = self._true_choch_flips(chochs)
-        if not flips:
-            for c in reversed(chochs):
-                if self._leg_choch_still_valid(df, c, bos_list, chochs):
-                    return c
-            return chochs[-1]
+        return self._resolve_active_leg_from_flips(
+            df, flips, major_highs, major_lows,
+        )
 
-        latest = flips[-1]
-        if (
-            not self._leg_choch_still_valid(df, latest, bos_list, chochs)
-            and latest.direction == 'bullish'
-            and self._leg_invalidated_by_protected_breach(df, latest)
-        ):
-            return latest
-
-        active_dir = None
-        for f in reversed(flips):
-            if self._leg_choch_still_valid(df, f, bos_list, chochs):
-                active_dir = f.direction
-                break
-        if not active_dir:
-            return flips[-1]
-
-        for f in reversed(flips):
-            if f.direction != active_dir:
-                continue
-            if not self._leg_choch_still_valid(df, f, bos_list, chochs):
-                continue
-            return f
-
-        return flips[-1]
 
     def _expansion_bos_confirms_new_range(
         self,

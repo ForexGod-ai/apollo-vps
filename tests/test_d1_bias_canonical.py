@@ -95,7 +95,7 @@ def test_gbpcrash_orphan_not_range_lock_bullish():
     assert auth.direction == "sell", auth
 
 
-def test_pullback_bullish_bos_does_not_flip_without_origin_reclaim():
+def test_pullback_bullish_bos_does_not_flip_without_major_high_reclaim():
     df = _load_d1("EURGBP", cutoff=POST_CRASH_CUTOFF)
     det = _detector()
     chochs, bos = det.detect_choch_and_bos(df)
@@ -109,7 +109,6 @@ def test_pullback_bullish_bos_does_not_flip_without_origin_reclaim():
     last_bear = bear_bos[-1]
     last_bull = bull_bos[-1]
     assert last_bull.index > last_bear.index
-    assert det._bear_crash_leg_still_active(df, last_bear)
     auth = det.build_d1_context(df, symbol="EURGBP")
     assert auth.trend == "bearish", auth
     assert auth.direction == "sell", auth

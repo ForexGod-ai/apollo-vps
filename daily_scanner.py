@@ -813,7 +813,9 @@ class DailyScanner:
                                 'bias_fallback': True,
                             }
                             bias_fallback_entries.append(
-                                _hydrate_bias_fallback_poi(self.smc_detector, _bf_entry, df_daily)
+                                _hydrate_bias_fallback_poi(
+                                    self.smc_detector, _bf_entry, df_daily, ctx=_auth,
+                                )
                             )
                             print(f"   ✅ [V63] {symbol} {_bias_trade_dir.upper()} → bias_fallback_entries ({len(bias_fallback_entries)} total)")
                         else:
@@ -1231,6 +1233,15 @@ def _log_d1_bias_drift(symbol: str, stored: dict, auth: dict) -> None:
     )
 
 
+def _d1_ctx_auth_dict(
+    detector: SMCDetector,
+    df_daily: pd.DataFrame,
+    symbol: str,
+) -> dict:
+    """Canonical D1 authority — always via build_d1_context (MASTER SPEC §2.2)."""
+    return detector.build_d1_context(df_daily, symbol=symbol).as_dict()
+
+
 def _rehydrate_stored_macro_bias(
     detector: SMCDetector,
     df_daily: Optional[pd.DataFrame],
@@ -1243,7 +1254,7 @@ def _rehydrate_stored_macro_bias(
     if stored.get('entry1_filled') or stored.get('status') in ('TRADE_OPEN', 'PARTIAL_OPEN'):
         return stored
 
-    auth = detector.resolve_authoritative_d1_bias(df_daily, symbol=symbol)
+    auth = _d1_ctx_auth_dict(detector, df_daily, symbol=symbol)
     _log_d1_bias_drift(symbol, stored, auth)
 
     auth_dir = (auth.get('direction') or '').lower()
@@ -1301,7 +1312,7 @@ def _macro_authority_allows_identity_flip(
         return False
     if _structure_identity_breached(df_daily, old):
         return True
-    auth = detector.resolve_authoritative_d1_bias(df_daily, symbol=symbol)
+    auth = _d1_ctx_auth_dict(detector, df_daily, symbol=symbol)
     return auth.get('trend') == new_dir
 
 
@@ -1314,16 +1325,11 @@ def _d1_identity_snapshot(
     if df_daily is None or df_daily.empty:
         return {}
     sym = symbol or '?'
-    swing_h = detector.detect_swing_highs(df_daily)
-    swing_l = detector.detect_swing_lows(df_daily)
-    chochs, bos_list = detector.detect_choch_and_bos(df_daily)
-    range_state = detector.compute_structural_range(df_daily, swing_h, swing_l, symbol=sym)
-    chochs, bos_list, range_state = detector.filter_internal_range_signals(
-        sym, df_daily, chochs, bos_list, range_state,
-    )
-    _latest, _strategy, current_trend, leg_choch = detector._resolve_d1_leg(
-        df_daily, chochs, bos_list, debug=False, range_state=range_state,
-    )
+    ctx = detector.build_d1_context(df_daily, symbol=sym)
+    leg_choch = ctx.leg_choch
+    range_state = ctx.range_state
+    swing_h = ctx.swing_h
+    swing_l = ctx.swing_l
     if leg_choch is None:
         return {}
 
@@ -1442,7 +1448,7 @@ def _apply_setup_identity_lock(
         return out
 
     if contradicts:
-        auth = detector.resolve_authoritative_d1_bias(df_daily, symbol=sym) if (
+        auth = _d1_ctx_auth_dict(detector, df_daily, sym) if (
             df_daily is not None and not df_daily.empty
         ) else {}
         auth_trend = auth.get('trend')
@@ -1671,13 +1677,8 @@ def _has_expansion_bos_after_tp(
     symbol: str,
 ) -> bool:
     """Post-TP: confirm new BOS in trend direction on Daily."""
-    swing_h = detector.detect_swing_highs(df_daily)
-    swing_l = detector.detect_swing_lows(df_daily)
-    chochs, bos_list = detector.detect_choch_and_bos(df_daily)
-    range_state = detector.compute_structural_range(df_daily, swing_h, swing_l, symbol=symbol)
-    chochs, bos_list, _ = detector.filter_internal_range_signals(
-        symbol, df_daily, chochs, bos_list, range_state
-    )
+    ctx = detector.build_d1_context(df_daily, symbol=symbol)
+    bos_list = ctx.bos_list
     if not bos_list:
         return False
     last_bos = bos_list[-1]
@@ -1705,20 +1706,16 @@ def _rehydrate_poi_from_bos_range(
 ) -> dict:
     """V44.1 — rebuild ADR + POI from live BOS anchor (no stored POI)."""
     sym = setup_dict.get('symbol', symbol)
-    swing_h = detector.detect_swing_highs(df_daily)
-    swing_l = detector.detect_swing_lows(df_daily)
-    chochs, bos_list = detector.detect_choch_and_bos(df_daily)
-    range_state = detector.compute_structural_range(df_daily, swing_h, swing_l, symbol=sym)
-    chochs, bos_list, range_state = detector.filter_internal_range_signals(
-        sym, df_daily, chochs, bos_list, range_state
-    )
-    latest_signal, _strategy, current_trend, _leg = detector._resolve_d1_leg(
-        df_daily, chochs, bos_list, debug=False, range_state=range_state,
-    )
+    ctx = detector.build_d1_context(df_daily, symbol=sym)
+    latest_signal = ctx.latest_signal
     if latest_signal is None:
         return setup_dict
 
-    _resolved_strategy = _strategy
+    _resolved_strategy = ctx.strategy_type
+    current_trend = ctx.trend
+    swing_h = ctx.swing_h
+    swing_l = ctx.swing_l
+    range_state = ctx.range_state
 
     price = float(df_daily['close'].iloc[-1])
     adr = detector.build_active_dealing_range(
@@ -1782,16 +1779,13 @@ def _try_bos_new_range_evolution(
         return setup_dict
 
     sym = setup_dict.get('symbol', symbol)
-    swing_h = detector.detect_swing_highs(df_daily)
-    swing_l = detector.detect_swing_lows(df_daily)
-    chochs, bos_list = detector.detect_choch_and_bos(df_daily)
-    range_state = detector.compute_structural_range(df_daily, swing_h, swing_l, symbol=sym)
-    chochs, bos_list, range_state = detector.filter_internal_range_signals(
-        sym, df_daily, chochs, bos_list, range_state
-    )
-    latest_signal, strategy_type, current_trend, leg_choch = detector._resolve_d1_leg(
-        df_daily, chochs, bos_list, debug=False
-    )
+    ctx = detector.build_d1_context(df_daily, symbol=sym)
+    latest_signal = ctx.latest_signal
+    leg_choch = ctx.leg_choch
+    current_trend = ctx.trend
+    swing_h = ctx.swing_h
+    swing_l = ctx.swing_l
+    range_state = ctx.range_state
     if latest_signal is None or leg_choch is None:
         return setup_dict
     if not isinstance(latest_signal, BOS):
@@ -1882,31 +1876,26 @@ def _hydrate_bias_fallback_poi(
     detector: SMCDetector,
     entry: dict,
     df_daily: pd.DataFrame,
+    ctx: Optional[D1AuthContext] = None,
 ) -> dict:
     """V43.1 E2-T4: populate POI for bias-fallback entries missing coordinates."""
     if entry.get('poi_top') is not None and entry.get('poi_bottom') is not None:
         return entry
     sym = entry.get('symbol', '?')
     try:
-        swing_h = detector.detect_swing_highs(df_daily)
-        swing_l = detector.detect_swing_lows(df_daily)
-        chochs, bos_list = detector.detect_choch_and_bos(df_daily)
-        range_state = detector.compute_structural_range(df_daily, swing_h, swing_l, symbol=sym)
-        chochs, bos_list, range_state = detector.filter_internal_range_signals(
-            sym, df_daily, chochs, bos_list, range_state
-        )
-        latest_signal, strategy_type, current_trend, _ = detector._resolve_d1_leg(
-            df_daily, chochs, bos_list, debug=False
-        )
+        if ctx is None:
+            ctx = detector.build_d1_context(df_daily, symbol=sym)
+        latest_signal = ctx.latest_signal
         if latest_signal is None:
             return entry
+        current_trend = ctx.trend
         price = float(df_daily['close'].iloc[-1])
         adr = detector.build_active_dealing_range(
-            df_daily, swing_h, swing_l, latest_signal.index, current_trend,
-            range_state=range_state, symbol=sym,
+            df_daily, ctx.swing_h, ctx.swing_l, latest_signal.index, current_trend,
+            range_state=ctx.range_state, symbol=sym,
         )
         poi_res = detector.resolve_d1_poi(
-            df_daily, latest_signal, price, current_trend, strategy_type, adr, symbol=sym,
+            df_daily, latest_signal, price, current_trend, ctx.strategy_type, adr, symbol=sym,
         )
         out = dict(entry)
         if poi_res.fvg:
@@ -2230,7 +2219,7 @@ def save_monitoring_setups(
                 continue
             df_d1 = symbol_df_daily_map.get(sym)
             auth = (
-                detector.resolve_authoritative_d1_bias(df_d1, symbol=sym)
+                _d1_ctx_auth_dict(detector, df_d1, sym)
                 if df_d1 is not None and not df_d1.empty
                 else {}
             )
