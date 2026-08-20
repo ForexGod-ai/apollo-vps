@@ -89,8 +89,7 @@ class D1AuthorityMixin:
             current_trend = macro_swings
             strategy_type = 'continuation'
             aligned = [b for b in bos_list if b.direction == macro_swings]
-            if aligned:
-                latest = aligned[-1]
+            latest = aligned[-1] if aligned else latest
 
         trade_dir = ''
         if current_trend == 'bullish':

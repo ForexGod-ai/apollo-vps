@@ -235,17 +235,15 @@ class D1LegMixin:
         major_highs: List,
         major_lows: List,
     ) -> Tuple[BOS, str]:
-        """When last BOS is a pullback against macro HH+HL / LH+LL, prefer macro trend."""
+        """When last BOS is a pullback against macro HH+HL / LH+LL, macro trend wins."""
         macro = self.macro_trend_from_swings(df)
-        if macro not in ('bullish', 'bearish') or last.direction == macro:
+        if macro not in ('bullish', 'bearish'):
             return last, last.direction
+        if last.direction == macro:
+            return last, macro
         aligned = [b for b in bos_list if b.direction == macro]
         if aligned:
-            candidate = aligned[-1]
-            anchor = self._leg_anchor_from_bos(candidate)
-            if self._pure_leg_still_valid(df, anchor, major_highs, major_lows):
-                return candidate, macro
-            return candidate, macro
+            return aligned[-1], macro
         return last, macro
 
     def _latest_major_high_body(
@@ -551,6 +549,10 @@ class D1LegMixin:
             if b.direction == leg_choch.direction:
                 filtered.append(b)
                 continue
+            if self._counter_bos_is_leg_pullback(
+                df, leg_choch, b, major_highs, major_lows,
+            ):
+                continue
             if leg_choch.direction == 'bearish':
                 prior = [h for h in major_highs if h.index < b.index]
                 if prior and self._bar_body_close_above(
@@ -566,12 +568,77 @@ class D1LegMixin:
         return filtered
 
     @staticmethod
-    def _forming_higher_low(swing_lows: List) -> bool:
-        return len(swing_lows) >= 2 and swing_lows[-1].price > swing_lows[-2].price
+    def _forming_higher_low(major_lows: List, since_index: int = 0) -> bool:
+        """Major-only HL forming after anchor — no weak geometric pivots."""
+        scoped = [l for l in major_lows if l.index > since_index]
+        if len(scoped) < 2:
+            return False
+        return scoped[-1].price > scoped[-2].price
 
     @staticmethod
-    def _forming_lower_high(swing_highs: List) -> bool:
-        return len(swing_highs) >= 2 and swing_highs[-1].price < swing_highs[-2].price
+    def _forming_lower_high(major_highs: List, since_index: int = 0) -> bool:
+        """Major-only LH forming after anchor — no weak geometric pivots."""
+        scoped = [h for h in major_highs if h.index > since_index]
+        if len(scoped) < 2:
+            return False
+        return scoped[-1].price < scoped[-2].price
+
+    def _forming_higher_low_at_edge(
+        self,
+        df: pd.DataFrame,
+        major_lows: List,
+        since_index: int,
+    ) -> bool:
+        """Major HL after anchor; if majors still printing, use tail swing lows."""
+        if self._forming_higher_low(major_lows, since_index):
+            return True
+        if len([l for l in major_lows if l.index > since_index]) >= 2:
+            return False
+        swing_lows = self.detect_swing_lows(df)
+        return (
+            len(swing_lows) >= 2
+            and swing_lows[-1].price > swing_lows[-2].price
+        )
+
+    def _forming_lower_high_at_edge(
+        self,
+        df: pd.DataFrame,
+        major_highs: List,
+        since_index: int,
+    ) -> bool:
+        """Major LH after anchor; if majors still printing, use tail swing highs."""
+        if self._forming_lower_high(major_highs, since_index):
+            return True
+        if len([h for h in major_highs if h.index > since_index]) >= 2:
+            return False
+        swing_highs = self.detect_swing_highs(df)
+        return (
+            len(swing_highs) >= 2
+            and swing_highs[-1].price < swing_highs[-2].price
+        )
+
+    def _counter_bos_is_leg_pullback(
+        self,
+        df: pd.DataFrame,
+        leg_choch: CHoCH,
+        bos: BOS,
+        major_highs: List,
+        major_lows: List,
+    ) -> bool:
+        """Counter-trend BOS inside active leg without origin reclaim = pullback only."""
+        if bos.index <= leg_choch.index or bos.direction == leg_choch.direction:
+            return False
+        if leg_choch.direction == 'bearish':
+            if self._body_reclaimed_origin_high(df, leg_choch):
+                return False
+            return self._close_inside_active_leg_boundary(
+                df, leg_choch, major_highs, major_lows, bar_idx=bos.index,
+            )
+        if self._body_reclaimed_origin_low(df, leg_choch):
+            return False
+        return self._close_inside_active_leg_boundary(
+            df, leg_choch, major_highs, major_lows, bar_idx=bos.index,
+        )
 
     def _resolve_active_direction_from_bos(
         self,
@@ -582,8 +649,6 @@ class D1LegMixin:
     ) -> Tuple[Optional[BOS], Optional[str]]:
         if not bos_list:
             return None, None
-        swing_highs = self.detect_swing_highs(df)
-        swing_lows = self.detect_swing_lows(df)
         active = bos_list[0]
         for counter in bos_list[1:]:
             if counter.direction == active.direction:
@@ -594,14 +659,28 @@ class D1LegMixin:
             ):
                 active = counter
         last = bos_list[-1]
-        active_anchor = self._leg_anchor_from_bos(active)
-        if self._pure_leg_still_valid(df, active_anchor, major_highs, major_lows):
-            return active, active.direction
         prior_opposite: Optional[BOS] = None
         for b in reversed(bos_list):
             if b.index <= active.index and b.direction != active.direction:
                 prior_opposite = b
                 break
+        active_anchor = self._leg_anchor_from_bos(active)
+        if self._pure_leg_still_valid(df, active_anchor, major_highs, major_lows):
+            if (
+                active.direction == 'bullish'
+                and prior_opposite is not None
+                and prior_opposite.direction == 'bearish'
+            ):
+                bear_anchor = self._leg_anchor_from_bos(prior_opposite)
+                if (
+                    self._pure_leg_still_valid(df, bear_anchor, major_highs, major_lows)
+                    and not self._body_reclaimed_origin_high(df, bear_anchor)
+                    and self._close_inside_active_leg_boundary(
+                        df, bear_anchor, major_highs, major_lows,
+                    )
+                ):
+                    return prior_opposite, 'bearish'
+            return active, active.direction
         if (
             not self._pure_leg_still_valid(df, active_anchor, major_highs, major_lows)
             and prior_opposite is not None
@@ -613,13 +692,17 @@ class D1LegMixin:
                 if (
                     last.direction == 'bullish'
                     and prior_opposite.direction == 'bearish'
-                    and not self._forming_higher_low(swing_lows)
+                    and not self._forming_higher_low_at_edge(
+                        df, major_lows, active.index,
+                    )
                 ):
                     return prior_opposite, prior_opposite.direction
                 if (
                     last.direction == 'bearish'
                     and prior_opposite.direction == 'bullish'
-                    and not self._forming_lower_high(swing_highs)
+                    and not self._forming_lower_high_at_edge(
+                        df, major_highs, active.index,
+                    )
                 ):
                     return self._macro_tiebreak_bos_direction(
                         df, bos_list, last, major_highs, major_lows,
@@ -654,18 +737,16 @@ class D1LegMixin:
             ]
             if bear_before:
                 last_bear = bear_before[-1]
-                swing_lows = self.detect_swing_lows(df)
                 if not self._post_leg_bos(last_bear, bos_list):
-                    if not self._forming_higher_low(swing_lows):
+                    if not self._forming_higher_low(major_lows, leg_choch.index):
                         leg_choch = last_bear
                 else:
-                    swing_h = self.detect_swing_highs(df)
                     lh_reclaimed = False
-                    for i in range(len(swing_h) - 1, 0, -1):
-                        if swing_h[i].index <= last_bear.index:
+                    for i in range(len(major_highs) - 1, 0, -1):
+                        if major_highs[i].index <= last_bear.index:
                             continue
-                        if swing_h[i].price < swing_h[i - 1].price:
-                            lh_body = self._swing_body_high(df, swing_h[i].index)
+                        if major_highs[i].price < major_highs[i - 1].price:
+                            lh_body = self._swing_body_high(df, major_highs[i].index)
                             if self._bar_body_close_above(df, len(df) - 1, lh_body):
                                 lh_reclaimed = True
                             break
