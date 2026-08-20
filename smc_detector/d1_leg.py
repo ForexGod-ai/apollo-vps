@@ -148,6 +148,105 @@ class D1LegMixin:
         last_bar = len(df) - 1
         return self._bar_body_close_below(df, last_bar, origin)
 
+    def _active_leg_boundary(
+        self,
+        df: pd.DataFrame,
+        leg_choch: CHoCH,
+        major_highs: List,
+        major_lows: List,
+    ) -> Tuple[Optional[float], Optional[float]]:
+        """Return (floor, ceiling) body levels bounding the active leg range."""
+        if leg_choch is None:
+            return None, None
+        if leg_choch.direction == 'bearish':
+            ceiling = self._leg_origin_major_high(df, leg_choch)
+            lows_after = [l for l in major_lows if l.index >= leg_choch.index]
+            floor = None
+            if lows_after:
+                trough = min(lows_after, key=lambda l: l.price)
+                floor = self._swing_body_low(df, trough.index)
+            return floor, ceiling
+        floor = self._leg_origin_major_low(df, leg_choch)
+        highs_after = [h for h in major_highs if h.index >= leg_choch.index]
+        ceiling = None
+        if highs_after:
+            peak = max(highs_after, key=lambda h: h.price)
+            ceiling = self._swing_body_high(df, peak.index)
+        return floor, ceiling
+
+    def _close_inside_active_leg_boundary(
+        self,
+        df: pd.DataFrame,
+        leg_choch: CHoCH,
+        major_highs: List,
+        major_lows: List,
+        bar_idx: Optional[int] = None,
+    ) -> bool:
+        """True when close sits inside [Major Low, Major High] of the active leg."""
+        if df is None or len(df) == 0 or leg_choch is None:
+            return False
+        bar_idx = len(df) - 1 if bar_idx is None else bar_idx
+        floor, ceiling = self._active_leg_boundary(
+            df, leg_choch, major_highs, major_lows,
+        )
+        if floor is None or ceiling is None:
+            return False
+        close = float(df['close'].iloc[bar_idx])
+        lo, hi = min(floor, ceiling), max(floor, ceiling)
+        return lo <= close <= hi
+
+    def _coerce_leg_with_boundary_gate(
+        self,
+        df: pd.DataFrame,
+        leg_choch: Optional[CHoCH],
+        flips: List[CHoCH],
+        major_highs: List,
+        major_lows: List,
+    ) -> Optional[CHoCH]:
+        """
+        V68 Pilon 1: retrace inside leg range without origin reclaim → keep prior leg.
+        Bullish CHoCH inside bearish crash range without MH body-close = pullback (stay SHORT).
+        """
+        if leg_choch is None:
+            return leg_choch
+        if leg_choch.direction == 'bullish':
+            bears = [
+                f for f in flips
+                if f.direction == 'bearish' and f.index < leg_choch.index
+            ]
+            if not bears:
+                return leg_choch
+            last_bear = bears[-1]
+            if not self._pure_leg_still_valid(df, last_bear, major_highs, major_lows):
+                return leg_choch
+            if self._body_reclaimed_origin_high(df, last_bear):
+                return leg_choch
+            if self._close_inside_active_leg_boundary(
+                df, last_bear, major_highs, major_lows,
+            ):
+                return last_bear
+        return leg_choch
+
+    def _macro_tiebreak_bos_direction(
+        self,
+        df: pd.DataFrame,
+        bos_list: List,
+        last: BOS,
+        major_highs: List,
+        major_lows: List,
+    ) -> Tuple[BOS, str]:
+        """When last BOS is a pullback against macro HH+HL / LH+LL, prefer macro trend."""
+        macro = self.macro_trend_from_swings(df)
+        if macro not in ('bullish', 'bearish') or last.direction == macro:
+            return last, last.direction
+        aligned = [b for b in bos_list if b.direction == macro]
+        if aligned:
+            candidate = aligned[-1]
+            anchor = self._leg_anchor_from_bos(candidate)
+            if self._pure_leg_still_valid(df, anchor, major_highs, major_lows):
+                return candidate, macro
+            return candidate, macro
+        return last, macro
 
     def _latest_major_high_body(
         self,
@@ -522,8 +621,12 @@ class D1LegMixin:
                     and prior_opposite.direction == 'bullish'
                     and not self._forming_lower_high(swing_highs)
                 ):
-                    return last, last.direction
-        return last, last.direction
+                    return self._macro_tiebreak_bos_direction(
+                        df, bos_list, last, major_highs, major_lows,
+                    )
+        return self._macro_tiebreak_bos_direction(
+            df, bos_list, last, major_highs, major_lows,
+        )
 
     def _resolve_pure_d1_matrix(
         self,
@@ -568,6 +671,9 @@ class D1LegMixin:
                             break
                     if not lh_reclaimed:
                         leg_choch = last_bear
+        leg_choch = self._coerce_leg_with_boundary_gate(
+            df, leg_choch, flips, major_highs, major_lows,
+        )
         if leg_choch is not None:
             chochs, bos_list = self._demote_post_leg_choch_to_bos(
                 leg_choch, chochs, bos_list,
@@ -575,7 +681,9 @@ class D1LegMixin:
             bos_list = self._filter_countertrend_pullback_bos(
                 df, leg_choch, bos_list,
             )
-            sig, st, trend, leg = self._strategy_from_leg_choch(leg_choch, bos_list)
+            sig, st, trend, leg = self._strategy_from_leg_choch(
+                df, leg_choch, bos_list, major_highs, major_lows,
+            )
             if debug:
                 label = 'CONTINUATION' if st == 'continuation' else 'REVERSAL'
                 print(
@@ -590,7 +698,10 @@ class D1LegMixin:
             return active_bos, 'continuation', bos_trend, None
         if bos_list:
             b = bos_list[-1]
-            return b, 'continuation', b.direction, None
+            b, bos_trend = self._macro_tiebreak_bos_direction(
+                df, bos_list, b, major_highs, major_lows,
+            )
+            return b, 'continuation', bos_trend, None
         if chochs:
             c = chochs[-1]
             st = (
@@ -745,20 +856,54 @@ class D1LegMixin:
             if b.index > leg_choch.index and b.direction == leg_choch.direction
         ]
 
-    @staticmethod
     def _strategy_from_leg_choch(
+        self,
+        df: pd.DataFrame,
         leg_choch: CHoCH,
         bos_list: Optional[List],
+        major_highs: List,
+        major_lows: List,
     ) -> Tuple[object, str, str, CHoCH]:
         """
         Canon SMC organic (fără praguri de timp):
         - CHoCH flip = singurul eveniment de schimbare de caracter → REVERSAL dacă 0 BOS post-leg
         - Orice LL/HH break same-dir după CHoCH = BOS → CONTINUITY (semnal = ultimul BOS)
+        V68 Pilon 1: counter-trend BOS inside active leg boundary = pullback (trend unchanged).
         """
-        post_bos = D1LegMixin._post_leg_bos(leg_choch, bos_list)
+        bos_list = bos_list or []
+        trend = leg_choch.direction
+
+        if leg_choch.direction == 'bearish':
+            if not self._body_reclaimed_origin_high(df, leg_choch):
+                counter_bull = [
+                    b for b in bos_list
+                    if b.index > leg_choch.index and b.direction == 'bullish'
+                ]
+                if counter_bull and self._close_inside_active_leg_boundary(
+                    df, leg_choch, major_highs, major_lows,
+                ):
+                    post_bos = self._post_leg_bos(leg_choch, bos_list)
+                    if post_bos:
+                        return post_bos[-1], 'continuation', 'bearish', leg_choch
+                    return leg_choch, 'reversal', 'bearish', leg_choch
+        elif leg_choch.direction == 'bullish':
+            if not self._body_reclaimed_origin_low(df, leg_choch):
+                counter_bear = [
+                    b for b in bos_list
+                    if b.index > leg_choch.index and b.direction == 'bearish'
+                ]
+                if counter_bear and self._close_inside_active_leg_boundary(
+                    df, leg_choch, major_highs, major_lows,
+                ):
+                    post_bos = self._post_leg_bos(leg_choch, bos_list)
+                    if post_bos:
+                        return post_bos[-1], 'continuation', 'bullish', leg_choch
+                    return leg_choch, 'reversal', 'bullish', leg_choch
+
+        post_bos = self._post_leg_bos(leg_choch, bos_list)
         if post_bos:
-            return post_bos[-1], 'continuation', leg_choch.direction, leg_choch
-        return leg_choch, 'reversal', leg_choch.direction, leg_choch
+            return post_bos[-1], 'continuation', trend, leg_choch
+        return leg_choch, 'reversal', trend, leg_choch
 
     @staticmethod
     def _classify_d1_strategy(

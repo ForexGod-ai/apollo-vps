@@ -79,6 +79,19 @@ class D1AuthorityMixin:
                 if leg_choch is None:
                     strategy_type = 'continuation'
 
+        # V68 Pilon 1: BOS-only pullback vs macro HH+HL / LH+LL — macro wins when leg absent
+        if (
+            leg_choch is None
+            and macro_swings in ('bullish', 'bearish')
+            and current_trend in ('bullish', 'bearish')
+            and current_trend != macro_swings
+        ):
+            current_trend = macro_swings
+            strategy_type = 'continuation'
+            aligned = [b for b in bos_list if b.direction == macro_swings]
+            if aligned:
+                latest = aligned[-1]
+
         trade_dir = ''
         if current_trend == 'bullish':
             trade_dir = 'buy'

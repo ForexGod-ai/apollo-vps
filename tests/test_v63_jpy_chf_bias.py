@@ -16,7 +16,7 @@ def _load_d1(symbol: str) -> pd.DataFrame:
     matches = list(CACHE.glob(f"{symbol}_D1_*.csv"))
     if not matches:
         pytest.skip(f"No D1 cache for {symbol}")
-    best = max(matches, key=lambda p: p.stat().st_size)
+    best = sorted(matches, key=lambda p: p.stat().st_mtime)[-1]
     df = pd.read_csv(best)
     if "time" in df.columns:
         df["time"] = pd.to_datetime(df["time"])
@@ -75,11 +75,12 @@ def test_audjpy_bearish_choch_moment_is_reversal_sell():
     assert strategy == "reversal"
 
 
-def test_usdchf_bearish_when_close_below_protected_hl():
+def test_usdchf_bullish_when_macro_hh_hl_overrides_pullback_bos():
+    """V68: macro HH+HL tie-break — pullback bearish BOS does not force SHORT."""
     df = _load_d1("USDCHF")
     auth = _auth("USDCHF", df)
-    assert auth["direction"] == "sell", auth
-    assert auth["trend"] == "bearish", auth
+    assert auth["direction"] == "buy", auth
+    assert auth["trend"] == "bullish", auth
     assert auth["strategy_type"] in ("reversal", "continuation"), auth
 
 
@@ -144,7 +145,13 @@ def test_organic_strategy_post_bos_is_continuation():
         candle_time=None, swing_broken=None,
     )
     det = SMCDetector()
-    sig, st, trend, _ = det._strategy_from_leg_choch(leg, [])
+    stub_df = pd.DataFrame({
+        'open': [1.05, 1.04],
+        'high': [1.06, 1.05],
+        'low': [1.03, 1.02],
+        'close': [1.04, 1.03],
+    })
+    sig, st, trend, _ = det._strategy_from_leg_choch(stub_df, leg, [], [], [])
     assert st == 'reversal' and trend == 'bearish'
-    sig2, st2, _, _ = det._strategy_from_leg_choch(leg, [bos])
+    sig2, st2, _, _ = det._strategy_from_leg_choch(stub_df, leg, [bos], [], [])
     assert st2 == 'continuation' and type(sig2).__name__ == 'BOS'
