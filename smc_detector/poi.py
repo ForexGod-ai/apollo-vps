@@ -503,7 +503,24 @@ class PoiMixin:
 
         return equilibrium, origin_idx, sig_idx
 
-    def _fvg_in_pd_zone(self, fvg: FVG, equilibrium: float, direction: str) -> bool:
+    def _fvg_in_pd_zone(
+        self,
+        fvg: FVG,
+        equilibrium: float,
+        direction: str,
+        impulse_low: Optional[float] = None,
+        impulse_high: Optional[float] = None,
+    ) -> bool:
+        """Prefer P/D half; accept any FVG overlapping the impulse span."""
+        if impulse_low is not None and impulse_high is not None:
+            if fvg.bottom <= impulse_high and fvg.top >= impulse_low:
+                if equilibrium is None:
+                    return True
+                if direction == 'bullish' and fvg.middle < equilibrium:
+                    return True
+                if direction == 'bearish' and fvg.middle > equilibrium:
+                    return True
+                return True
         if equilibrium is None:
             return True
         if direction == 'bullish':
@@ -532,10 +549,23 @@ class PoiMixin:
         all_fvgs = self._scan_organic_fvgs(df, origin_idx, scan_end, direction)
         impulse_fvgs = [f for f in all_fvgs if origin_idx <= f.index <= scan_end]
 
+        impulse_low = impulse_high = None
+        break_price = float(getattr(latest_signal, 'break_price', 0) or 0)
+        broken = getattr(latest_signal, 'swing_broken', None)
+        if broken is not None and break_price:
+            try:
+                origin_p = float(broken.price)
+                impulse_low = min(origin_p, break_price)
+                impulse_high = max(origin_p, break_price)
+            except Exception:
+                pass
+
         unmitigated = [f for f in impulse_fvgs if not self._fvg_body_mitigated(df, f)]
         pd_unmitigated = [
             f for f in unmitigated
-            if self._fvg_in_pd_zone(f, equilibrium, direction)
+            if self._fvg_in_pd_zone(
+                f, equilibrium, direction, impulse_low, impulse_high,
+            )
         ]
 
         selected: Optional[FVG] = None
@@ -544,7 +574,11 @@ class PoiMixin:
         if pd_unmitigated:
             pd_unmitigated.sort(key=lambda f: (f.index, f.top - f.bottom), reverse=True)
             selected = pd_unmitigated[0]
-            reason = 'continuation cascade: unmitigated FVG in impulse P/D'
+            reason = 'continuation cascade: unmitigated FVG in impulse'
+        elif unmitigated:
+            unmitigated.sort(key=lambda f: (f.index, f.top - f.bottom), reverse=True)
+            selected = unmitigated[0]
+            reason = 'continuation cascade: organic FVG in impulse span'
         else:
             # (b) OB la originea impulsului — semnalul BOS/CHoCH ancorat pe impuls
             pseudo_choch = latest_signal
@@ -570,6 +604,8 @@ class PoiMixin:
                         ),
                         equilibrium,
                         direction,
+                        impulse_low,
+                        impulse_high,
                     ):
                         selected = FVG(
                             index=ob.index,

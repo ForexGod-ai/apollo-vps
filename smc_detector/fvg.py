@@ -102,8 +102,8 @@ class FvgMixin:
         """
         if equilibrium is None:
             if debug:
-                print("⚠️  No equilibrium level - skipping Premium/Discount validation")
-            return True  # Can't validate without equilibrium
+                print("⚠️  No equilibrium level - accepting organic FVG (no P/D gate)")
+            return True  # Can't validate without equilibrium — keep valid imbalance
         
         # Extract FVG price levels
         fvg_top = fvg.top
@@ -118,7 +118,8 @@ class FvgMixin:
             # Logica: prețul a retras 45% din range (55% din macro rămâne deasupra) = valid SHORT
             # Buffer extins de la 10% la 20% — eliminăm respingerile false pentru SELL la 48-50%
             # Exemplu: equilibrium 1.0600, FVG.top 1.0490 (10% sub) → acum VALID
-            eq_threshold_bearish = equilibrium * 0.80
+            # V69 Pilon 1: organic imbalance — accept anywhere in impulse, not only premium half
+            eq_threshold_bearish = equilibrium * 0.55
             is_valid = fvg_top >= eq_threshold_bearish
             
             if debug:
@@ -163,7 +164,8 @@ class FvgMixin:
             # Logica: prețul a retras 55% din range (45% din macro rămâne sub) = valid LONG
             # Buffer extins de la 10% la 20% — eliminăm respingerile false pentru BUY la 50-55%
             # Exemplu: equilibrium 1.0600, FVG.bottom 1.0720 (12% deasupra) → acum VALID
-            eq_threshold_bullish = equilibrium * 1.20
+            # V69 Pilon 1: organic imbalance — accept anywhere in impulse, not only discount half
+            eq_threshold_bullish = equilibrium * 1.45
             is_valid = fvg_bottom <= eq_threshold_bullish
             
             if debug:
@@ -458,25 +460,29 @@ class FvgMixin:
             except Exception:
                 pass
 
-        # ── STEP 2: Filtrare prin P/D Array ──────────────────────────────────
-        pd_valid_fvgs = []
+        # ── STEP 2: Filtrare — prefer P/D, accept orice FVG organic în span-ul impulsului ──
+        pd_valid_fvgs: List[FVG] = []
+        impulse_fvgs: List[FVG] = []
         if equilibrium is not None and impulse_size > 0:
+            impulse_low = min(swing_broken_price, choch_break_price)
+            impulse_high = max(swing_broken_price, choch_break_price)
             for fvg in all_fvgs:
+                if fvg.bottom > impulse_high or fvg.top < impulse_low:
+                    continue
+                impulse_fvgs.append(fvg)
                 if orderflow_direction == 'bullish':
-                    # LONG: Discount = FVG cu middle SUB Equilibrium (sub 50%)
                     if fvg.middle < equilibrium:
                         pd_valid_fvgs.append(fvg)
-                else:
-                    # SHORT: Premium = FVG cu middle PESTE Equilibrium (peste 50%)
-                    if fvg.middle > equilibrium:
-                        pd_valid_fvgs.append(fvg)
+                elif fvg.middle > equilibrium:
+                    pd_valid_fvgs.append(fvg)
 
-        # ── STEP 3: Dacă există FVG-uri în zona P/D validă ───────────────────
-        if pd_valid_fvgs:
+        # ── STEP 3: Prefer P/D; fallback la orice imbalance valid din impuls ─────────
+        pool = pd_valid_fvgs if pd_valid_fvgs else impulse_fvgs
+        if pool:
             # Preferăm FVG-uri formate DUPĂ CHoCH (impuls proaspăt)
             choch_idx = choch.index if hasattr(choch, 'index') else 0
-            post_choch = [f for f in pd_valid_fvgs if f.index >= choch_idx]
-            candidates = post_choch if post_choch else pd_valid_fvgs
+            post_choch = [f for f in pool if f.index >= choch_idx]
+            candidates = post_choch if post_choch else pool
 
             if _v43_continuation:
                 in_adr = [f for f in candidates if _v43_adr_allows(f)]
@@ -514,9 +520,11 @@ class FvgMixin:
                 )
                 return None
 
-            _reason = "V16.1 freshest+largest"
+            _reason = "V69 organic impulse FVG"
+            if pd_valid_fvgs:
+                _reason = "V16.1 freshest+largest P/D"
             if _v43_continuation:
-                _reason = "V43 ADR in-range + V16.1 freshest+largest"
+                _reason = "V43 ADR in-range + V69 organic FVG"
             if force_in_range_rescan:
                 _reason = "V43 in-range rescan after zombie reject"
 
@@ -527,16 +535,12 @@ class FvgMixin:
             _fill_audit(selected, _reason, equilibrium, pd_valid_fvgs, post_choch)
             return selected
 
-        # ── FALLBACK → None (activează Fibo 50% Fallback din analyze_timeframe) ──
-        # Nu există FVG valid în zona P/D corectă.
-        # Returnăm None explicit pentru a lăsa sistemul să folosească
-        # nivelul de Equilibrium (50%) al impulsului ca entry direct.
+        # ── FALLBACK → None: niciun FVG ne-mitigat în impuls ──
         _eq_display = f"{equilibrium:.5f}" if equilibrium else "N/A"
         if debug:
-            print(f"  ⚠️ [V16.1 P/D FVG] Niciun FVG în zona "
-                  f"{'Discount' if orderflow_direction == 'bullish' else 'Premium'} "
-                  f"(EQ={_eq_display}) → Fibo 50% Fallback activat")
-        _fill_audit(None, "V16.1 no P/D valid — synthetic fallback", equilibrium, pd_valid_fvgs, [])
+            print(f"  ⚠️ [V69 FVG] Niciun FVG organic în impuls "
+                  f"(EQ={_eq_display}) → WAITING_D1_PULLBACK")
+        _fill_audit(None, "V69 no organic FVG in impulse span", equilibrium, pd_valid_fvgs, impulse_fvgs)
         return None
 
     def calculate_fvg_quality_score(
