@@ -153,39 +153,14 @@ class CoreStructureMixin:
                                 ))
                                 prev_trend = 'bullish'
                     elif _body_close_confirmed_h:  # prev_trend == 'bullish'
-                        # Rule 1: no bullish BOS below Major LH of active bearish range
-                        _mh = [h for h in major_highs if h.index <= swing.index]
-                        _ml = [l for l in major_lows if l.index <= swing.index]
-                        _structural_lh = None
-                        if _ml:
-                            _last_low = _ml[-1]
-                            _hb = [h for h in _mh if h.index < _last_low.index]
-                            if len(_hb) >= 2:
-                                for _j in range(len(_hb) - 1, 0, -1):
-                                    if _hb[_j].price < _hb[_j - 1].price:
-                                        _structural_lh = self._swing_body_high(
-                                            df, _hb[_j].index,
-                                        )
-                                        break
-                            if _structural_lh is None and _hb:
-                                _structural_lh = self._swing_body_high(df, _hb[-1].index)
-                        _confirm_bar = _confirm_bar_h if _confirm_bar_h is not None else swing.index
-                        if (
-                            _structural_lh is not None
-                            and not self._bar_body_close_above(
-                                df, _confirm_bar, _structural_lh,
-                            )
-                            and float(df['close'].iloc[_confirm_bar]) < _structural_lh
-                        ):
-                            pass
-                        else:
-                            bos_list.append(BOS(
-                                index=swing.index,
-                                direction='bullish',
-                                break_price=prev_high.price,
-                                candle_time=swing.candle_time,
-                                swing_broken=prev_high
-                            ))
+                        # BOS bullish = HH continuation only (macro high break in uptrend)
+                        bos_list.append(BOS(
+                            index=swing.index,
+                            direction='bullish',
+                            break_price=prev_high.price,
+                            candle_time=swing.candle_time,
+                            swing_broken=prev_high
+                        ))
 
             elif swing_type == 'low':
                 prev_low = next(
@@ -272,39 +247,14 @@ class CoreStructureMixin:
                                 ))
                                 prev_trend = 'bearish'
                     elif _body_close_confirmed_l:  # prev_trend == 'bearish'
-                        # Rule 1: no bearish BOS above Major HL of active bullish range
-                        _mh = [h for h in major_highs if h.index <= swing.index]
-                        _ml = [l for l in major_lows if l.index <= swing.index]
-                        _structural_hl = None
-                        if _mh:
-                            _last_high = _mh[-1]
-                            _lb = [l for l in _ml if l.index < _last_high.index]
-                            if len(_lb) >= 2:
-                                for _j in range(len(_lb) - 1, 0, -1):
-                                    if _lb[_j].price > _lb[_j - 1].price:
-                                        _structural_hl = self._swing_body_low(
-                                            df, _lb[_j].index,
-                                        )
-                                        break
-                            if _structural_hl is None and _lb:
-                                _structural_hl = self._swing_body_low(df, _lb[-1].index)
-                        _confirm_bar = _confirm_bar_l if _confirm_bar_l is not None else swing.index
-                        if (
-                            _structural_hl is not None
-                            and not self._bar_body_close_below(
-                                df, _confirm_bar, _structural_hl,
-                            )
-                            and float(df['close'].iloc[_confirm_bar]) > _structural_hl
-                        ):
-                            pass
-                        else:
-                            bos_list.append(BOS(
-                                index=swing.index,
-                                direction='bearish',
-                                break_price=prev_low.price,
-                                candle_time=swing.candle_time,
-                                swing_broken=prev_low
-                            ))
+                        # BOS bearish = LL continuation only (macro low break in downtrend)
+                        bos_list.append(BOS(
+                            index=swing.index,
+                            direction='bearish',
+                            break_price=prev_low.price,
+                            candle_time=swing.candle_time,
+                            swing_broken=prev_low
+                        ))
 
         return chochs, bos_list
 

@@ -517,6 +517,78 @@ class CoreSwingsMixin:
                 return True
         return False
 
+    def _structural_bearish_range_at(
+        self,
+        df: pd.DataFrame,
+        major_highs: List[SwingPoint],
+        major_lows: List[SwingPoint],
+        bar_idx: int,
+    ) -> Tuple[Optional[float], Optional[float], Optional[int]]:
+        """Major LH body + Major LL body bounding bearish displacement at bar."""
+        mh = [h for h in major_highs if h.index <= bar_idx]
+        ml = [l for l in major_lows if l.index <= bar_idx]
+        if not ml:
+            return None, None, None
+        last_ll = ml[-1]
+        ll_body = self._swing_body_low(df, last_ll.index)
+        highs_before = [h for h in mh if h.index < last_ll.index]
+        lh_body = None
+        lh_bar = None
+        if len(highs_before) >= 2:
+            for i in range(len(highs_before) - 1, 0, -1):
+                if highs_before[i].price < highs_before[i - 1].price:
+                    lh_bar = highs_before[i].index
+                    lh_body = self._swing_body_high(df, lh_bar)
+                    break
+        if lh_body is None and highs_before:
+            lh_bar = highs_before[-1].index
+            lh_body = self._swing_body_high(df, lh_bar)
+        return lh_body, ll_body, lh_bar
+
+    def _structural_bullish_range_at(
+        self,
+        df: pd.DataFrame,
+        major_highs: List[SwingPoint],
+        major_lows: List[SwingPoint],
+        bar_idx: int,
+    ) -> Tuple[Optional[float], Optional[float], Optional[int]]:
+        """Major HL body + Major HH body bounding bullish displacement at bar."""
+        mh = [h for h in major_highs if h.index <= bar_idx]
+        ml = [l for l in major_lows if l.index <= bar_idx]
+        if not mh:
+            return None, None, None
+        last_hh = mh[-1]
+        hh_body = self._swing_body_high(df, last_hh.index)
+        lows_before = [l for l in ml if l.index < last_hh.index]
+        hl_body = None
+        hl_bar = None
+        if len(lows_before) >= 2:
+            for i in range(len(lows_before) - 1, 0, -1):
+                if lows_before[i].price > lows_before[i - 1].price:
+                    hl_bar = lows_before[i].index
+                    hl_body = self._swing_body_low(df, hl_bar)
+                    break
+        if hl_body is None and lows_before:
+            hl_bar = lows_before[-1].index
+            hl_body = self._swing_body_low(df, hl_bar)
+        return hl_body, hh_body, hl_bar
+
+    def _pivot_body_inside_range(
+        self,
+        df: pd.DataFrame,
+        pivot: SwingPoint,
+        floor_body: float,
+        ceiling_body: float,
+    ) -> bool:
+        if floor_body is None or ceiling_body is None:
+            return False
+        if pivot.swing_type == 'high':
+            body = self._swing_body_high(df, pivot.index)
+        else:
+            body = self._swing_body_low(df, pivot.index)
+        lo, hi = min(floor_body, ceiling_body), max(floor_body, ceiling_body)
+        return lo < body < hi
+
     def filter_major_swings(
         self,
         df: pd.DataFrame,
@@ -524,16 +596,16 @@ class CoreSwingsMixin:
         swing_lows: List[SwingPoint],
     ) -> Tuple[List[SwingPoint], List[SwingPoint]]:
         """
-        Faza A — Leg authority: pivot major confirmat cu impuls LL/HH (body-close).
+        Macro pivots only — displacement + outside active [LL,LH] / [HL,HH] range.
 
-        Swing High major = impuls descendent cu close sub ultimul Swing Low anterior.
-        Swing Low major = impuls ascendent cu close peste ultimul Swing High anterior.
+        Rule: pivot inside bearish macro range [LL, LH] without body-close above LH
+        = sub-structure (never promoted). Symmetric for bullish [HL, HH].
         """
         if not swing_highs or not swing_lows:
             return [], []
 
-        major_highs: List[SwingPoint] = []
-        major_lows: List[SwingPoint] = []
+        displacement_highs: List[SwingPoint] = []
+        displacement_lows: List[SwingPoint] = []
 
         for sh in swing_highs:
             prior_lows = [sl for sl in swing_lows if sl.index < sh.index]
@@ -541,7 +613,7 @@ class CoreSwingsMixin:
                 continue
             ref_level = self._swing_body_low(df, prior_lows[-1].index)
             if self._body_close_below_after(df, sh.index, ref_level):
-                major_highs.append(sh)
+                displacement_highs.append(sh)
 
         for sl in swing_lows:
             prior_highs = [sh for sh in swing_highs if sh.index < sl.index]
@@ -549,7 +621,75 @@ class CoreSwingsMixin:
                 continue
             ref_level = self._swing_body_high(df, prior_highs[-1].index)
             if self._body_close_above_after(df, sl.index, ref_level):
-                major_lows.append(sl)
+                displacement_lows.append(sl)
+
+        candidates: List[Tuple[str, SwingPoint]] = []
+        for sh in displacement_highs:
+            candidates.append(('high', sh))
+        for sl in displacement_lows:
+            candidates.append(('low', sl))
+        candidates.sort(key=lambda x: x[1].index)
+
+        major_highs: List[SwingPoint] = []
+        major_lows: List[SwingPoint] = []
+
+        for kind, sp in candidates:
+            if kind == 'high':
+                lh, ll, lh_bar = self._structural_bearish_range_at(
+                    df, major_highs, major_lows, sp.index,
+                )
+                if lh is not None and ll is not None:
+                    if self._pivot_body_inside_range(df, sp, ll, lh):
+                        if lh_bar is None or not self._body_close_above_after(
+                            df, max(sp.index, lh_bar), lh,
+                        ):
+                            continue
+                _, hh, _ = self._structural_bullish_range_at(
+                    df, major_highs, major_lows, sp.index,
+                )
+                if hh is not None:
+                    hl, _, hl_bar = self._structural_bullish_range_at(
+                        df, major_highs, major_lows, sp.index,
+                    )
+                    if hl is not None and self._pivot_body_inside_range(df, sp, hl, hh):
+                        if hl_bar is None or not self._body_close_above_after(
+                            df, sp.index, hh,
+                        ):
+                            continue
+                major_highs.append(sp)
+                prior_lows = [l for l in swing_lows if l.index < sp.index]
+                if prior_lows:
+                    origin = prior_lows[-1]
+                    if all(l.index != origin.index for l in major_lows):
+                        major_lows.append(origin)
+                        major_lows.sort(key=lambda x: x.index)
+            else:
+                lh, ll, lh_bar = self._structural_bearish_range_at(
+                    df, major_highs, major_lows, sp.index,
+                )
+                if lh is not None and ll is not None:
+                    if self._pivot_body_inside_range(df, sp, ll, lh):
+                        if not self._body_close_below_after(df, sp.index, ll):
+                            continue
+                _, hh, _ = self._structural_bullish_range_at(
+                    df, major_highs, major_lows, sp.index,
+                )
+                if hh is not None:
+                    hl, _, hl_bar = self._structural_bullish_range_at(
+                        df, major_highs, major_lows, sp.index,
+                    )
+                    if hl is not None and self._pivot_body_inside_range(df, sp, hl, hh):
+                        if hl_bar is None or not self._body_close_below_after(
+                            df, max(sp.index, hl_bar), hl,
+                        ):
+                            continue
+                major_lows.append(sp)
+                prior_highs = [h for h in swing_highs if h.index < sp.index]
+                if prior_highs:
+                    origin = prior_highs[-1]
+                    if all(h.index != origin.index for h in major_highs):
+                        major_highs.append(origin)
+                        major_highs.sort(key=lambda x: x.index)
 
         return major_highs, major_lows
 

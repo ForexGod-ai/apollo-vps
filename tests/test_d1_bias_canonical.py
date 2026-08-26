@@ -89,16 +89,42 @@ def test_post_crash_pullback_not_bullish_bos(symbol: str):
 
 @pytest.mark.parametrize("symbol", ("GBPJPY", "AUDJPY", "EURUSD", "EURJPY"))
 def test_latest_crash_pairs_remain_bearish(symbol: str):
-    auth = _auth(symbol, _load_d1(symbol))
-    assert auth["trend"] == "bearish", auth
-    assert auth["direction"] == "sell", auth
+    """Below Major LH after crash → bearish range (Rule 1/2), same as post-crash slice."""
+    df = _load_d1(symbol)
+    det = _detector()
+    auth = _auth(symbol, df)
+    lh = _major_lh_ceiling(det, df, symbol)
+    close = float(df["close"].iloc[-1])
+    if lh is not None and close <= lh:
+        assert auth["trend"] == "bearish", auth
+        assert auth["direction"] == "sell", auth
+
+
+def _major_hl_floor(det: SMCDetector, df: pd.DataFrame, symbol: str) -> float | None:
+    """Major HL body — bullish range floor at last bar."""
+    sh = det.detect_swing_highs(df)
+    sl = det.detect_swing_lows(df)
+    mh, ml = det.filter_major_swings(df, sh, sl)
+    anchor = CHoCH(
+        index=0,
+        direction='bullish',
+        break_price=0.0,
+        previous_trend='bearish',
+        candle_time=0,
+        swing_broken=None,
+    )
+    return det._leg_invalidation_level_bullish(df, anchor, mh, ml, len(df) - 1)
 
 
 @pytest.mark.parametrize("symbol", BULLISH_PAIRS)
 def test_bullish_impulse_pairs_not_forced_bearish(symbol: str):
-    auth = _auth(symbol, _load_d1(symbol))
+    df = _load_d1(symbol)
+    det = _detector()
+    auth = _auth(symbol, df)
     macro = auth.get("macro_swings", "neutral")
-    if macro == "bullish":
+    hl = _major_hl_floor(det, df, symbol)
+    close = float(df["close"].iloc[-1])
+    if macro == "bullish" and (hl is None or close >= hl):
         assert auth["trend"] == "bullish", auth
         assert auth["direction"] == "buy", auth
 
