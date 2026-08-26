@@ -8,6 +8,7 @@ Resilient read/write for monitoring_setups.json — shared by radar, executor, T
 from __future__ import annotations
 
 import json
+import math
 import os
 import time
 from contextlib import contextmanager
@@ -23,6 +24,9 @@ DEFAULT_LOCK_POLL_SEC = 0.05
 
 def monitoring_json_default(obj: Any) -> Any:
     """json.dump default: numpy scalars/arrays + str fallback."""
+    if isinstance(obj, float):
+        if math.isnan(obj) or math.isinf(obj):
+            return None
     try:
         import numpy as np
         if isinstance(obj, (np.bool_,)):
@@ -30,7 +34,10 @@ def monitoring_json_default(obj: Any) -> Any:
         if isinstance(obj, (np.integer,)):
             return int(obj)
         if isinstance(obj, (np.floating,)):
-            return float(obj)
+            val = float(obj)
+            if math.isnan(val) or math.isinf(val):
+                return None
+            return val
         if isinstance(obj, (np.ndarray,)):
             return obj.tolist()
     except ImportError:

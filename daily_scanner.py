@@ -11,6 +11,7 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() != 'utf-8':
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
+import math
 import requests
 import pandas as pd
 from datetime import datetime
@@ -35,6 +36,49 @@ load_dotenv()
 
 # Global flag for testing/audit - ignore open positions check
 IGNORE_OPEN_POSITIONS = False
+
+
+def _sanitize_monitoring_value(obj):
+    """Convert NaN/Inf/numpy/pandas types to JSON-safe Python natives."""
+    if obj is None:
+        return None
+    if isinstance(obj, dict):
+        return {k: _sanitize_monitoring_value(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_sanitize_monitoring_value(v) for v in obj]
+    if isinstance(obj, bool):
+        return obj
+    try:
+        import numpy as np
+        if isinstance(obj, (np.bool_,)):
+            return bool(obj)
+        if isinstance(obj, (np.integer,)):
+            return int(obj)
+        if isinstance(obj, (np.floating,)):
+            val = float(obj)
+            if math.isnan(val) or math.isinf(val):
+                return None
+            return val
+        if isinstance(obj, np.ndarray):
+            return _sanitize_monitoring_value(obj.tolist())
+    except ImportError:
+        pass
+    if isinstance(obj, float):
+        if math.isnan(obj) or math.isinf(obj):
+            return None
+        return obj
+    if isinstance(obj, (int, str)):
+        return obj
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    if isinstance(obj, pd.Timestamp):
+        return obj.isoformat()
+    if hasattr(obj, 'item') and callable(getattr(obj, 'item')):
+        try:
+            return _sanitize_monitoring_value(obj.item())
+        except (ValueError, TypeError):
+            pass
+    return obj
 
 
 def _scanner_debug() -> bool:
@@ -1912,10 +1956,10 @@ def _hydrate_bias_fallback_poi(
             price, current_trend, adr,
         )
         print(f"  [V43.1 LIFECYCLE] {sym}: bias fallback POI hydrated")
-        return out
+        return _sanitize_monitoring_value(out)
     except Exception as exc:
         print(f"  ⚠️ [V43.1 LIFECYCLE] {sym}: bias fallback POI hydrate failed: {exc}")
-        return entry
+        return _sanitize_monitoring_value(entry)
 
 
 def _apply_v431_lifecycle_gates(
@@ -2096,7 +2140,7 @@ def _trade_setup_to_monitoring_dict(setup: TradeSetup, setup_time_str: str) -> d
         "d1_scan_date": datetime.now().isoformat(),
     }
     out.update(_v43_fields_from_setup(setup))
-    return out
+    return _sanitize_monitoring_value(out)
 
 
 def save_monitoring_setups(
@@ -2365,6 +2409,7 @@ def save_monitoring_setups(
                             f"  ⚠️ [V42 CONFLICT] Skipping macro overwrite for {sym} fallback "
                             f"due to active TRADE_OPEN/PARTIAL_OPEN"
                         )
+                        _skip_audit[sym] = 'macro_overwrite_blocked_trade_open'
                         continue
                     merged_fb = _apply_v42_macro_override(_old, _new_fb)
                     _df_fb = symbol_df_daily_map.get(sym)
@@ -2378,9 +2423,11 @@ def save_monitoring_setups(
                         merged_fb = _try_bos_new_range_evolution(detector, df_d1, merged_fb, sym)
                         merged_fb = _try_post_tp_evolution(detector, df_d1, merged_fb, sym)
                     if merged_fb.get('status') in _DEAD_STATUSES:
+                        _skip_audit[sym] = f"lifecycle_{merged_fb.get('status')}"
                         monitoring_setups = [s for s in monitoring_setups if s.get('symbol') != sym]
                         existing_active.pop(sym, None)
                         preserved_symbols.discard(sym)
+                        print(f"  ⚠️ [V59 PERSIST SKIP] {sym}: {_skip_audit[sym]}")
                         continue
                     monitoring_setups = [s for s in monitoring_setups if s.get('symbol') != sym]
                     monitoring_setups.append(merged_fb)
@@ -2394,18 +2441,26 @@ def save_monitoring_setups(
             if open_dir and open_dir != direction:
                 print(f"⛔ SAVE GUARD: {sym} — NOT saving bias fallback {direction.upper()}, "
                       f"open {open_dir.upper()} position exists")
+                _skip_audit[sym] = f'conflict_open_{open_dir}'
+                print(f"  ⚠️ [V59 PERSIST SKIP] {sym}: {_skip_audit[sym]}")
                 continue
             _live_fb = symbol_price_map.get(sym)
             _df_fb = symbol_df_daily_map.get(sym)
             entry = _apply_v431_lifecycle_gates(entry, _live_fb, *_d1_wick_from_df(_df_fb))
             entry = _apply_setup_identity_lock({}, entry, _df_fb, detector, sym)
             if entry.get('status') in _DEAD_STATUSES:
+                _skip_audit[sym] = f"lifecycle_{entry.get('status')}"
+                print(f"  ⚠️ [V59 PERSIST SKIP] {sym}: {_skip_audit[sym]}")
                 continue
+            entry = _sanitize_monitoring_value(entry)
             monitoring_setups.append(entry)
             if sym:
                 preserved_symbols.add(sym)
 
         # Atomic write
+        monitoring_setups = [
+            _sanitize_monitoring_value(s) for s in monitoring_setups
+        ]
         _ms_write = {
             "setups": monitoring_setups,
             "last_updated": datetime.now().isoformat()
