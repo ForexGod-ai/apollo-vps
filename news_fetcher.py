@@ -64,8 +64,33 @@ WEEKLY_INTERVAL_DAYS = 7
 
 FF_MIRROR_URLS = {
     'thisweek': 'https://nfs.faireconomy.media/ff_calendar_thisweek.json',
+}
+
+# Deprecated on faireconomy (404) — tried optionally; do not fail sync if missing.
+FF_MIRROR_OPTIONAL_URLS = {
     'nextweek': 'https://nfs.faireconomy.media/ff_calendar_nextweek.json',
 }
+
+_AGENT_DEBUG_LOG = Path(__file__).resolve().parent / '.cursor' / 'debug-ef6f10.log'
+
+
+def _agent_debug_log(hypothesis_id: str, location: str, message: str, data: Optional[dict] = None) -> None:
+    # #region agent log
+    try:
+        import json as _json_dbg
+        _AGENT_DEBUG_LOG.parent.mkdir(parents=True, exist_ok=True)
+        with open(_AGENT_DEBUG_LOG, 'a', encoding='utf-8') as _df:
+            _df.write(_json_dbg.dumps({
+                'sessionId': 'ef6f10',
+                'hypothesisId': hypothesis_id,
+                'location': location,
+                'message': message,
+                'data': data or {},
+                'timestamp': int(time.time() * 1000),
+            }) + '\n')
+    except Exception:
+        pass
+    # #endregion
 
 FF_MIRROR_RETRY_DELAYS_S = (2, 5, 10)
 FF_MIRROR_CACHE_MAX_AGE_HOURS = 48
@@ -331,19 +356,32 @@ def fetch_forexfactory_mirror(days_ahead: int = 7) -> Tuple[List[Dict], bool]:
         logger.info("📡 Fetching ForexFactory mirror (faireconomy.media)...")
 
         all_raw: List[Dict] = []
-        all_feeds_live = True
+        thisweek_live = False
         for label, url in FF_MIRROR_URLS.items():
             chunk, live = _fetch_ff_mirror_feed(label, url, days_ahead)
-            if not live:
-                all_feeds_live = False
+            thisweek_live = live
             all_raw.extend(chunk)
 
+        for label, url in FF_MIRROR_OPTIONAL_URLS.items():
+            chunk, _live = _fetch_ff_mirror_feed(label, url, days_ahead)
+            if chunk:
+                all_raw.extend(chunk)
+
         if not all_raw:
-            return [], all_feeds_live
+            _agent_debug_log('H4', 'fetch_forexfactory_mirror', 'no raw FF rows', {
+                'thisweek_live': thisweek_live, 'days_ahead': days_ahead,
+            })
+            return [], thisweek_live
 
         events = parse_ff_mirror_items(all_raw, days_ahead=days_ahead)
+        _agent_debug_log('H4', 'fetch_forexfactory_mirror', 'FF parse result', {
+            'raw_count': len(all_raw),
+            'parsed_count': len(events),
+            'high_count': sum(1 for e in events if e.get('impact') == 'High'),
+            'thisweek_live': thisweek_live,
+        })
         logger.info(f"✅ Parsed {len(events)} HIGH/MEDIUM events from ForexFactory mirror")
-        return events, all_feeds_live
+        return events, thisweek_live
 
     except Exception as e:
         logger.error(f"❌ ForexFactory mirror error: {e}")
@@ -468,6 +506,9 @@ def fetch_trading_economics(days_ahead: int = 7) -> List[Dict]:
             'd1': now.strftime('%Y-%m-%d'),
             'd2': end_date.strftime('%Y-%m-%d'),
         }
+        te_key = (os.getenv('TRADING_ECONOMICS_API_KEY') or os.getenv('TE_API_KEY') or '').strip()
+        if te_key:
+            params['c'] = te_key
 
         response = requests.get(url, params=params, timeout=20, headers={
             'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
@@ -631,7 +672,8 @@ def fetch_all_merged(days_ahead: int = 14, debug: bool = False) -> List[Dict]:
     ff, ff_all_feeds_live = fetch_forexfactory_mirror(days_ahead=days_ahead)
 
     ctrader: List[Dict] = []
-    if not ff or not ff_all_feeds_live:
+    # cTrader bot serves upcoming_news.json (not live FF) — only when FF parse is empty.
+    if not ff:
         ctrader = fetch_ctrader_calendar(days_ahead=days_ahead)
 
     manual = fetch_from_manual_calendar(days_ahead=days_ahead)
@@ -641,6 +683,10 @@ def fetch_all_merged(days_ahead: int = 14, debug: bool = False) -> List[Dict]:
         f"📊 Merge: FF {len(ff)} | cTrader {len(ctrader)} | manual {len(manual)} "
         f"→ {len(merged)} unique (ff_all_feeds_live={ff_all_feeds_live})"
     )
+    _agent_debug_log('H2', 'fetch_all_merged', 'merge totals', {
+        'ff': len(ff), 'ctrader': len(ctrader), 'manual': len(manual),
+        'merged': len(merged), 'ff_all_feeds_live': ff_all_feeds_live,
+    })
 
     if debug:
         for label, chunk in (
@@ -835,10 +881,12 @@ def main():
     if not all_events:
         logger.error("❌ Failed to fetch news: all sources returned 0 events")
         logger.error(
-            "💡 Check: FF mirror (rate limit), EconomicCalendarBot on 8768 "
-            f"({resolve_ctrader_calendar_url()}), curl http://localhost:8768/health"
+            "💡 Check: FF mirror (rate limit / weekend gap — nextweek JSON removed by host), "
+            f"CalendarBOT :8768 ({resolve_ctrader_calendar_url()}), "
+            "TRADING_ECONOMICS_API_KEY in .env, add_monthly_events.py"
         )
-        logger.error("💡 Manual backup: python3 add_monthly_events.py")
+        logger.error("💡 Windows VPS: py news_fetcher.py --days 14 --debug")
+        _agent_debug_log('H2', 'news_fetcher.main', 'fetch failed exit 1', {'days_ahead': days_ahead})
         sys.exit(1)
 
     logger.info(f"📊 Total unique events: {len(all_events)}")

@@ -1416,9 +1416,68 @@ class TelegramCommandCenter:
             except Exception:
                 return [], ''
 
+        def _agent_news_debug(hypothesis_id: str, message: str, data: dict) -> None:
+            # #region agent log
+            try:
+                import json as _j
+                import time as _t
+                _p = Path(__file__).resolve().parent / '.cursor' / 'debug-ef6f10.log'
+                _p.parent.mkdir(parents=True, exist_ok=True)
+                with open(_p, 'a', encoding='utf-8') as _f:
+                    _f.write(_j.dumps({
+                        'sessionId': 'ef6f10',
+                        'hypothesisId': hypothesis_id,
+                        'location': 'telegram_command_center.handle_news_command',
+                        'message': message,
+                        'data': data,
+                        'timestamp': int(_t.time() * 1000),
+                    }) + '\n')
+            except Exception:
+                pass
+            # #endregion
+
+        def _news_cache_age_hours() -> tuple[bool, float]:
+            if not UPCOMING_NEWS_FILE.exists():
+                return True, 9999.0
+            try:
+                import json as _json_news
+                with open(UPCOMING_NEWS_FILE, 'r', encoding='utf-8') as _nf:
+                    _payload = _json_news.load(_nf)
+                _lu = _payload.get('last_updated')
+                if not _lu:
+                    return True, 9999.0
+                _lu_dt = datetime.fromisoformat(str(_lu).replace('Z', '+00:00'))
+                if _lu_dt.tzinfo is None:
+                    _lu_dt = _lu_dt.replace(tzinfo=timezone.utc)
+                _age_h = (now - _lu_dt.astimezone(timezone.utc)).total_seconds() / 3600.0
+                return _age_h > 48, _age_h
+            except Exception:
+                return True, 9999.0
+
         try:
+            cache_expired_pre, cache_age_h = _news_cache_age_hours()
+            if cache_expired_pre:
+                try:
+                    from news_fetcher import fetch_all_merged, save_events
+                    _merged = fetch_all_merged(days_ahead=14, debug=False)
+                    _saved = bool(_merged and save_events(_merged))
+                    if _saved:
+                        logger.info(f"[/news] Auto-refreshed upcoming_news.json ({len(_merged)} events)")
+                    _agent_news_debug('H3', 'auto refresh on stale cache', {
+                        'cache_age_h': round(cache_age_h, 1),
+                        'merged': len(_merged) if _merged else 0,
+                        'saved': _saved,
+                    })
+                except Exception as _refresh_err:
+                    logger.warning(f"[/news] Auto refresh failed: {_refresh_err}")
+                    _agent_news_debug('H1', 'auto refresh exception', {'error': str(_refresh_err)[:200]})
+
             events = load_high_impact_events(days_ahead=14)
             source = '📡 data/upcoming_news.json (FF + manual)'
+            _agent_news_debug('H3', 'loaded high impact events', {
+                'count': len(events),
+                'cache_age_h': round(cache_age_h, 1),
+            })
 
             upcoming: list = []
             for e in events:
@@ -1467,7 +1526,14 @@ class TelegramCommandCenter:
                 elif UPCOMING_NEWS_FILE.exists() and cache_expired:
                     stale = " (upcoming_news.json expirat)"
                 msg += f"\n<i>Sursă: {source or 'upcoming_news.json'}{stale}</i>"
-                msg += "\n<i>Rulează: python3 news_fetcher.py --days 14 --debug</i>"
+                msg += (
+                    "\n<i>Windows VPS: <code>py news_fetcher.py --days 14 --debug</code> "
+                    "sau <code>python news_fetcher.py --days 14 --debug</code></i>"
+                )
+                msg += (
+                    "\n<i>FF mirror: doar săpt. curentă (nextweek 404); "
+                    "actualizează <code>economic_calendar.json</code> (oct 2026) sau TE API key.</i>"
+                )
                 return msg
 
             # ── Group by day and display ALL events

@@ -3029,5 +3029,111 @@
       "impact": "High",
       "tz": "UTC"
     }
+  ],
+  "custom_events_october_2026": [
+    {
+      "date": "2026-10-06",
+      "time": "14:00",
+      "currency": "USD",
+      "event": "ISM Services PMI",
+      "impact": "High",
+      "tz": "UTC"
+    },
+    {
+      "date": "2026-10-08",
+      "time": "12:30",
+      "currency": "USD",
+      "event": "Unemployment Claims",
+      "impact": "High",
+      "tz": "UTC"
+    },
+    {
+      "date": "2026-10-14",
+      "time": "12:30",
+      "currency": "USD",
+      "event": "Core CPI m/m",
+      "impact": "High",
+      "tz": "UTC"
+    },
+    {
+      "date": "2026-10-14",
+      "time": "12:30",
+      "currency": "USD",
+      "event": "Core CPI y/y",
+      "impact": "High",
+      "tz": "UTC"
+    },
+    {
+      "date": "2026-10-14",
+      "time": "12:30",
+      "currency": "USD",
+      "event": "CPI m/m",
+      "impact": "High",
+      "tz": "UTC"
+    },
+    {
+      "date": "2026-10-14",
+      "time": "12:30",
+      "currency": "USD",
+      "event": "CPI y/y",
+      "impact": "High",
+      "tz": "UTC"
+    },
+    {
+      "date": "2026-10-15",
+      "time": "12:30",
+      "currency": "USD",
+      "event": "Core PPI m/m",
+      "impact": "High",
+      "tz": "UTC"
+    },
+    {
+      "date": "2026-10-15",
+      "time": "12:30",
+      "currency": "USD",
+      "event": "PPI m/m",
+      "impact": "High",
+      "tz": "UTC"
+    },
+    {
+      "date": "2026-10-16",
+      "time": "12:30",
+      "currency": "USD",
+      "event": "Import Prices m/m",
+      "impact": "High",
+      "tz": "UTC"
+    },
+    {
+      "date": "2026-10-16",
+      "time": "12:30",
+      "currency": "USD",
+      "event": "Export Prices m/m",
+      "impact": "High",
+      "tz": "UTC"
+    },
+    {
+      "date": "2026-10-14",
+      "time": "01:30",
+      "currency": "AUD",
+      "event": "Employment Change",
+      "impact": "High",
+      "tz": "UTC"
+    },
+    {
+      "date": "2026-10-14",
+      "time": "01:30",
+      "currency": "AUD",
+      "event": "Unemployment Rate",
+      "impact": "High",
+      "tz": "UTC"
+    },
+    {
+      "date": "2026-10-15",
+      "time": "06:00",
+      "currency": "GBP",
+      "event": "GDP m/m",
+      "impact": "High",
+      "tz": "UTC"
+    }
   ]
 }
