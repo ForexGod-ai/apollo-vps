@@ -1,0 +1,34 @@
+[
+  {
+    "title": "BOJ Gov Ueda Speaks",
+    "country": "JPY",
+    "date": "2026-10-06T06:35:00-04:00",
+    "impact": "High",
+    "forecast": "",
+    "previous": ""
+  },
+  {
+    "title": "FOMC Meeting Minutes",
+    "country": "USD",
+    "date": "2026-10-07T18:00:00-04:00",
+    "impact": "High",
+    "forecast": "",
+    "previous": ""
+  },
+  {
+    "title": "Employment Change",
+    "country": "CAD",
+    "date": "2026-10-09T12:30:00-04:00",
+    "impact": "High",
+    "forecast": "9.0K",
+    "previous": "-41.7K"
+  },
+  {
+    "title": "Low Impact Noise",
+    "country": "USD",
+    "date": "2026-10-08T12:00:00-04:00",
+    "impact": "Low",
+    "forecast": "",
+    "previous": ""
+  }
+]

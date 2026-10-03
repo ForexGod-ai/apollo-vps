@@ -1438,12 +1438,36 @@ class TelegramCommandCenter:
             )
 
             if not upcoming:
-                msg += "✅ <b>All clear</b> — fără evenimente HIGH în următoarele 14 zile.\n"
-                stale = ""
+                cache_expired = False
                 if UPCOMING_NEWS_FILE.exists():
+                    try:
+                        import json as _json_news
+                        with open(UPCOMING_NEWS_FILE, 'r', encoding='utf-8') as _nf:
+                            _payload = _json_news.load(_nf)
+                        _lu = _payload.get('last_updated')
+                        if _lu:
+                            _lu_dt = datetime.fromisoformat(str(_lu).replace('Z', '+00:00'))
+                            if _lu_dt.tzinfo is None:
+                                _lu_dt = _lu_dt.replace(tzinfo=timezone.utc)
+                            _age_h = (now - _lu_dt.astimezone(timezone.utc)).total_seconds() / 3600.0
+                            cache_expired = _age_h > 48
+                    except Exception:
+                        cache_expired = True
+
+                if cache_expired:
+                    msg += (
+                        "⚠️ <b>News cache expirat</b> — fetch eșuat sau fișier vechi.\n"
+                        "Nu există evenimente HIGH valide în fereastra de 14 zile.\n"
+                    )
+                else:
+                    msg += "✅ <b>All clear</b> — fără evenimente HIGH în următoarele 14 zile.\n"
+                stale = ""
+                if UPCOMING_NEWS_FILE.exists() and not cache_expired:
                     stale = " (fișier present dar gol/expirat)"
+                elif UPCOMING_NEWS_FILE.exists() and cache_expired:
+                    stale = " (upcoming_news.json expirat)"
                 msg += f"\n<i>Sursă: {source or 'upcoming_news.json'}{stale}</i>"
-                msg += "\n<i>Rulează: python3 news_fetcher.py --days 14</i>"
+                msg += "\n<i>Rulează: python3 news_fetcher.py --days 14 --debug</i>"
                 return msg
 
             # ── Group by day and display ALL events

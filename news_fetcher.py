@@ -8,10 +8,11 @@
 Automatically downloads HIGH + MEDIUM impact economic events.
 Populates data/upcoming_news.json for executor, monitor, and reminders.
 
-Data Sources (always merged into upcoming_news.json):
-    1. ForexFactory mirror (thisweek + nextweek JSON, nextweek cached on 404)
-    2. Manual economic_calendar.json (custom_events_* + recurring backbone)
-    3. Trading Economics API (only if merged result is empty)
+Data Sources (merged into upcoming_news.json):
+    1. ForexFactory mirror (thisweek + nextweek JSON; stale cache rejected after 48h)
+    2. cTrader EconomicCalendarBot :8768 (if FF empty or any mirror feed failed)
+    3. Manual economic_calendar.json (custom_events_*)
+    4. Trading Economics API (only if merged result is empty)
 
 V39.5 Weekly pipeline:
     --weekly  → 14-day horizon, FF mirror merge, state file tracks last run (7-day cadence)
@@ -31,7 +32,7 @@ import argparse
 import logging
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple
 
 # Setup logging — UTF-8 safe stdout for Windows cp1252 compatibility
 import io as _io
@@ -66,6 +67,66 @@ FF_MIRROR_URLS = {
     'nextweek': 'https://nfs.faireconomy.media/ff_calendar_nextweek.json',
 }
 
+FF_MIRROR_RETRY_DELAYS_S = (2, 5, 10)
+FF_MIRROR_CACHE_MAX_AGE_HOURS = 48
+
+_BROWSER_HEADERS = {
+    'User-Agent': (
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+        '(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
+    ),
+    'Accept': 'application/json, text/plain, */*',
+    'Accept-Language': 'en-US,en;q=0.9',
+    'Cache-Control': 'no-cache',
+    'Pragma': 'no-cache',
+}
+
+IMPACT_MAP_FF = {
+    'High': 'High',
+    'Medium': 'Medium',
+    'Low': 'Low',
+    'Holiday': 'Low',
+    'Non-Economic': 'Low',
+}
+
+
+def resolve_ctrader_calendar_url() -> str:
+    raw = (os.getenv('CTRADER_CALENDAR_URL') or 'http://localhost:8768/calendar').strip()
+    return raw
+
+
+def horizon_end(now: datetime, days_ahead: int) -> datetime:
+    """Inclusive end of fetch window (through end of day N)."""
+    return now + timedelta(days=days_ahead, hours=23, minutes=59)
+
+
+def event_in_horizon(event_dt_utc: datetime, now: datetime, days_ahead: int) -> bool:
+    if event_dt_utc.tzinfo is None:
+        event_dt_utc = event_dt_utc.replace(tzinfo=timezone.utc)
+    event_dt_utc = event_dt_utc.astimezone(timezone.utc)
+    return now <= event_dt_utc <= horizon_end(now, days_ahead)
+
+
+def _parse_ff_mirror_datetime(date_str: str) -> Optional[datetime]:
+    try:
+        event_dt = datetime.fromisoformat(date_str)
+        if event_dt.tzinfo is None:
+            event_dt = event_dt.replace(tzinfo=timezone.utc)
+        return event_dt.astimezone(timezone.utc)
+    except Exception:
+        return None
+
+
+def _raw_ff_events_in_horizon(raw_items: List[Dict], days_ahead: int) -> int:
+    """Count raw mirror rows with parseable dates inside the horizon."""
+    now = datetime.now(timezone.utc)
+    count = 0
+    for item in raw_items:
+        dt = _parse_ff_mirror_datetime(item.get('date', '') or '')
+        if dt and event_in_horizon(dt, now, days_ahead):
+            count += 1
+    return count
+
 # Currencies we trade
 MAJOR_CURRENCIES = ['USD', 'EUR', 'GBP', 'JPY', 'AUD', 'NZD', 'CAD', 'CHF']
 
@@ -88,19 +149,40 @@ def _ff_mirror_cache_path(label: str) -> Path:
     return FF_MIRROR_CACHE_DIR / f'{label}.json'
 
 
-def _load_ff_mirror_cache(label: str) -> List[Dict]:
+def _load_ff_mirror_cache(label: str, days_ahead: int = 14) -> List[Dict]:
     cache_path = _ff_mirror_cache_path(label)
     if not cache_path.exists():
         return []
     try:
         with open(cache_path, 'r', encoding='utf-8') as f:
             payload = json.load(f)
+        cached_at_str = None
         if isinstance(payload, list):
             cached = payload
         else:
+            cached_at_str = payload.get('cached_at')
             cached = payload.get('events', [])
-        if cached:
-            logger.info(f"📂 FF mirror cache hit: {label} ({len(cached)} events)")
+        if cached_at_str:
+            cached_at = datetime.fromisoformat(str(cached_at_str).replace('Z', '+00:00'))
+            if cached_at.tzinfo is None:
+                cached_at = cached_at.replace(tzinfo=timezone.utc)
+            age_h = (datetime.now(timezone.utc) - cached_at).total_seconds() / 3600.0
+            if age_h > FF_MIRROR_CACHE_MAX_AGE_HOURS:
+                logger.warning(
+                    f"⚠️ FF mirror cache rejected ({label}): "
+                    f"cached_at {age_h:.0f}h ago (max {FF_MIRROR_CACHE_MAX_AGE_HOURS}h)"
+                )
+                return []
+        in_window = _raw_ff_events_in_horizon(cached, days_ahead)
+        if not in_window:
+            logger.warning(
+                f"⚠️ FF mirror cache rejected ({label}): "
+                f"0 events in next {days_ahead}d window"
+            )
+            return []
+        logger.info(
+            f"📂 FF mirror cache hit: {label} ({len(cached)} raw, {in_window} in horizon)"
+        )
         return cached
     except Exception as e:
         logger.warning(f"⚠️ FF mirror cache read failed ({label}): {e}")
@@ -121,108 +203,248 @@ def _save_ff_mirror_cache(label: str, events: List[Dict]) -> None:
         logger.warning(f"⚠️ FF mirror cache write failed ({label}): {e}")
 
 
-def _fetch_ff_mirror_feed(label: str, url: str) -> List[Dict]:
-    """Fetch one FF mirror JSON; on failure use last good cache."""
-    if not HAS_REQUESTS:
-        return _load_ff_mirror_cache(label)
-
+def _parse_ff_mirror_json_body(text: str) -> Optional[List[Dict]]:
+    stripped = (text or '').lstrip()
+    if not stripped.startswith('['):
+        return None
     try:
-        resp = requests.get(url, timeout=15, headers={
-            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return None
+    if isinstance(data, list):
+        return data
+    return None
+
+
+def _fetch_ff_mirror_feed(
+    label: str, url: str, days_ahead: int = 14,
+) -> Tuple[List[Dict], bool]:
+    """Fetch one FF mirror JSON; on failure use last good cache. Returns (events, got_live_json)."""
+    if not HAS_REQUESTS:
+        return _load_ff_mirror_cache(label, days_ahead), False
+
+    last_error = ''
+    for attempt, delay in enumerate((0,) + FF_MIRROR_RETRY_DELAYS_S):
+        if delay:
+            time.sleep(delay)
+        try:
+            resp = requests.get(url, timeout=15, headers=_BROWSER_HEADERS)
+            ctype = resp.headers.get('Content-Type', '')
+            preview = (resp.text or '')[:120]
+            logger.debug(
+                f"{label} attempt {attempt + 1}: HTTP {resp.status_code} "
+                f"Content-Type={ctype!r} preview={preview!r}"
+            )
+
+            if resp.status_code in (429, 500, 502, 503, 504):
+                last_error = f"HTTP {resp.status_code}"
+                continue
+
+            if resp.status_code != 200:
+                last_error = f"HTTP {resp.status_code}"
+                logger.warning(
+                    f"⚠️ {label}: HTTP {resp.status_code} — "
+                    f"Failed to fetch news: mirror error (preview={preview!r})"
+                )
+                break
+
+            data = _parse_ff_mirror_json_body(resp.text)
+            if data is None:
+                last_error = 'non-JSON or HTML response'
+                logger.error(
+                    f"❌ {label}: Failed to fetch news: mirror returned HTML or invalid JSON "
+                    f"(Content-Type={ctype!r}, preview={preview!r})"
+                )
+                continue
+
+            if not data:
+                last_error = 'empty JSON list'
+                logger.warning(f"⚠️ {label}: empty JSON payload")
+                break
+
+            _save_ff_mirror_cache(label, data)
+            logger.info(f"📥 {label}: {len(data)} events (live)")
+            return data, True
+
+        except requests.exceptions.RequestException as exc:
+            last_error = str(exc)
+            logger.warning(f"⚠️ {label}: fetch error ({exc})")
+            continue
+
+    if last_error:
+        logger.warning(f"⚠️ {label}: live fetch failed ({last_error}) — trying cache")
+    return _load_ff_mirror_cache(label, days_ahead), False
+
+
+def parse_ff_mirror_items(
+    all_raw: List[Dict],
+    days_ahead: int = 14,
+    now: Optional[datetime] = None,
+) -> List[Dict]:
+    """Parse raw faireconomy FF mirror rows into normalized event dicts."""
+    now = now or datetime.now(timezone.utc)
+    events: List[Dict] = []
+    for item in all_raw:
+        impact = IMPACT_MAP_FF.get(item.get('impact', ''), 'Low')
+        if impact not in ('High', 'Medium'):
+            continue
+
+        currency = item.get('country', '')
+        if currency not in MAJOR_CURRENCIES:
+            continue
+
+        date_str = item.get('date', '')
+        if not date_str:
+            continue
+
+        event_dt_utc = _parse_ff_mirror_datetime(date_str)
+        if event_dt_utc is None:
+            continue
+
+        if not event_in_horizon(event_dt_utc, now, days_ahead):
+            continue
+
+        title = item.get('title', 'Unknown').strip()
+        events.append({
+            'date': event_dt_utc.strftime('%Y-%m-%d'),
+            'time': event_dt_utc.strftime('%H:%M'),
+            'datetime_utc': event_dt_utc.isoformat(),
+            'currency': currency,
+            'event': title,
+            'impact': impact,
+            'forecast': str(item.get('forecast', '') or ''),
+            'previous': str(item.get('previous', '') or ''),
+            'source': 'forexfactory_mirror',
         })
-        if resp.status_code == 200:
-            data = resp.json()
-            if isinstance(data, list) and data:
-                _save_ff_mirror_cache(label, data)
-                logger.info(f"📥 {label}: {len(data)} events (live)")
-                return data
-            logger.warning(f"⚠️ {label}: empty JSON payload")
-        else:
-            logger.warning(f"⚠️ {label}: HTTP {resp.status_code} — trying cache")
-    except Exception as e:
-        logger.warning(f"⚠️ {label}: fetch error ({e}) — trying cache")
-
-    return _load_ff_mirror_cache(label)
+    return events
 
 
-def fetch_forexfactory_mirror(days_ahead: int = 7) -> List[Dict]:
+def fetch_forexfactory_mirror(days_ahead: int = 7) -> Tuple[List[Dict], bool]:
     """
     ForexFactory calendar via faireconomy.media free JSON mirror.
-    thisweek live + nextweek live; nextweek falls back to local cache on 404.
+    Returns (parsed_events, any_feed_got_live_json).
     """
     if not HAS_REQUESTS:
-        return []
+        return [], False
 
     try:
         logger.info("📡 Fetching ForexFactory mirror (faireconomy.media)...")
 
-        now = datetime.now(timezone.utc)
-        end_date = now + timedelta(days=days_ahead)
-
         all_raw: List[Dict] = []
+        all_feeds_live = True
         for label, url in FF_MIRROR_URLS.items():
-            all_raw.extend(_fetch_ff_mirror_feed(label, url))
+            chunk, live = _fetch_ff_mirror_feed(label, url, days_ahead)
+            if not live:
+                all_feeds_live = False
+            all_raw.extend(chunk)
 
         if not all_raw:
-            return []
+            return [], all_feeds_live
 
-        # Impact mapping from ForexFactory format
-        impact_map = {
-            'High': 'High',
-            'Medium': 'Medium',
-            'Low': 'Low',
-            'Holiday': 'Low',
-            'Non-Economic': 'Low',
-        }
-
-        events = []
-        for item in all_raw:
-            impact = impact_map.get(item.get('impact', ''), 'Low')
-            # Only HIGH + MEDIUM
-            if impact not in ('High', 'Medium'):
-                continue
-
-            currency = item.get('country', '')
-            if currency not in MAJOR_CURRENCIES:
-                continue
-
-            date_str = item.get('date', '')
-            if not date_str:
-                continue
-
-            # Parse ISO date: "2026-03-11T13:30:00-04:00" or "2026-03-11T13:30:00+00:00"
-            try:
-                event_dt = datetime.fromisoformat(date_str)
-                # V15.6 FIX: if naive (no tzinfo), assume UTC — don't let VPS local timezone corrupt the offset
-                if event_dt.tzinfo is None:
-                    event_dt = event_dt.replace(tzinfo=timezone.utc)
-                event_dt_utc = event_dt.astimezone(timezone.utc)
-            except Exception:
-                continue
-
-            # Filter by date range
-            if event_dt_utc < now or event_dt_utc > end_date:
-                continue
-
-            title = item.get('title', 'Unknown').strip()
-
-            events.append({
-                'date': event_dt_utc.strftime('%Y-%m-%d'),
-                'time': event_dt_utc.strftime('%H:%M'),
-                'datetime_utc': event_dt_utc.isoformat(),
-                'currency': currency,
-                'event': title,
-                'impact': impact,
-                'forecast': str(item.get('forecast', '') or ''),
-                'previous': str(item.get('previous', '') or ''),
-                'source': 'forexfactory_mirror',
-            })
-
+        events = parse_ff_mirror_items(all_raw, days_ahead=days_ahead)
         logger.info(f"✅ Parsed {len(events)} HIGH/MEDIUM events from ForexFactory mirror")
-        return events
+        return events, all_feeds_live
 
     except Exception as e:
         logger.error(f"❌ ForexFactory mirror error: {e}")
+        return [], False
+
+
+def _normalize_ctrader_impact(raw: str) -> Optional[str]:
+    s = str(raw or '').strip()
+    if not s:
+        return None
+    if s.lower() in ('high', 'high impact expected', 'red'):
+        return 'High'
+    if s.lower() in ('medium', 'medium impact expected', 'orange', 'ora'):
+        return 'Medium'
+    if s in ('High', 'Medium'):
+        return s
+    return None
+
+
+def fetch_ctrader_calendar(days_ahead: int = 14) -> List[Dict]:
+    """EconomicCalendarBot HTTP feed (localhost:8768 by default)."""
+    if not HAS_REQUESTS:
+        return []
+
+    url = resolve_ctrader_calendar_url()
+    try:
+        logger.info(f"📅 Fetching cTrader economic calendar ({url})...")
+        resp = requests.get(url, timeout=10, headers=_BROWSER_HEADERS)
+        if resp.status_code != 200:
+            logger.error(
+                f"❌ cTrader calendar HTTP {resp.status_code} — "
+                f"Failed to fetch news (preview={(resp.text or '')[:120]!r})"
+            )
+            return []
+
+        try:
+            data = resp.json()
+        except json.JSONDecodeError as exc:
+            logger.error(f"❌ cTrader calendar JSONDecodeError: {exc}")
+            return []
+
+        if not data.get('success'):
+            logger.error(
+                f"❌ cTrader calendar success=false: {data.get('error', data.get('message', '?'))}"
+            )
+            return []
+
+        raw_events = data.get('events', [])
+        logger.info(f"📊 cTrader returned {len(raw_events)} raw events")
+
+        now = datetime.now(timezone.utc)
+        events: List[Dict] = []
+        for item in raw_events:
+            impact = _normalize_ctrader_impact(item.get('impact', ''))
+            if impact not in ('High', 'Medium'):
+                continue
+
+            currency = str(item.get('currency', '')).upper()
+            if currency not in MAJOR_CURRENCIES:
+                continue
+
+            time_str = item.get('time', '')
+            if not time_str:
+                continue
+            try:
+                event_dt = datetime.strptime(time_str, '%Y-%m-%d %H:%M:%S')
+                event_dt = event_dt.replace(tzinfo=timezone.utc)
+            except Exception:
+                continue
+
+            if not event_in_horizon(event_dt, now, days_ahead):
+                continue
+
+            def _fmt_val(v) -> str:
+                if v is None or v == 'null':
+                    return ''
+                return str(v)
+
+            events.append({
+                'date': event_dt.strftime('%Y-%m-%d'),
+                'time': event_dt.strftime('%H:%M'),
+                'datetime_utc': event_dt.isoformat(),
+                'currency': currency,
+                'event': str(item.get('event', 'Unknown')).strip(),
+                'impact': impact,
+                'forecast': _fmt_val(item.get('forecast')),
+                'previous': _fmt_val(item.get('previous')),
+                'source': 'ctrader_calendar',
+            })
+
+        logger.info(f"✅ Parsed {len(events)} HIGH/MEDIUM events from cTrader calendar")
+        return events
+
+    except requests.exceptions.ConnectionError:
+        logger.error(
+            f"❌ Cannot connect to cTrader calendar at {url} — "
+            "is EconomicCalendarBot running on port 8768?"
+        )
+        return []
+    except Exception as e:
+        logger.error(f"❌ cTrader calendar error: {e}")
         return []
 
 
@@ -324,7 +546,6 @@ def fetch_from_manual_calendar(days_ahead: int = 7) -> List[Dict]:
             data = json.load(f)
 
         now = datetime.now(timezone.utc)
-        end_date = now + timedelta(days=days_ahead)
 
         events = []
         for section_name, section_events in data.items():
@@ -340,7 +561,9 @@ def fetch_from_manual_calendar(days_ahead: int = 7) -> List[Dict]:
                     event_dt = datetime.strptime(f"{date_str} {time_str}", '%Y-%m-%d %H:%M')
                     event_dt = event_dt.replace(tzinfo=timezone.utc)
 
-                    if event_dt < now - timedelta(hours=1) or event_dt > end_date:
+                    if event_dt < now - timedelta(hours=1):
+                        continue
+                    if not event_in_horizon(event_dt, now, days_ahead):
                         continue
 
                     impact = e.get('impact', 'High')
@@ -401,18 +624,33 @@ def mark_weekly_sync_done():
         logger.warning(f"⚠️ Could not write weekly state: {e}")
 
 
-def fetch_all_merged(days_ahead: int = 14) -> List[Dict]:
+def fetch_all_merged(days_ahead: int = 14, debug: bool = False) -> List[Dict]:
     """
-    V67.2 — Always merge FF mirror + manual calendar (never either/or).
-    Trading Economics only if both return nothing.
+    V67.3 — FF mirror, cTrader fallback, manual calendar, TE last resort.
     """
+    ff, ff_all_feeds_live = fetch_forexfactory_mirror(days_ahead=days_ahead)
+
+    ctrader: List[Dict] = []
+    if not ff or not ff_all_feeds_live:
+        ctrader = fetch_ctrader_calendar(days_ahead=days_ahead)
+
     manual = fetch_from_manual_calendar(days_ahead=days_ahead)
-    ff = fetch_forexfactory_mirror(days_ahead=days_ahead)
-    merged = deduplicate_events(ff + manual)
+    merged = deduplicate_events(ff + ctrader + manual)
 
     logger.info(
-        f"📊 Merge: {len(ff)} FF + {len(manual)} manual → {len(merged)} unique"
+        f"📊 Merge: FF {len(ff)} | cTrader {len(ctrader)} | manual {len(manual)} "
+        f"→ {len(merged)} unique (ff_all_feeds_live={ff_all_feeds_live})"
     )
+
+    if debug:
+        for label, chunk in (
+            ('FF', ff), ('cTrader', ctrader), ('manual', manual),
+        ):
+            if not chunk:
+                continue
+            logger.debug(f"DEBUG {label} first: {chunk[:3]}")
+            if len(chunk) > 3:
+                logger.debug(f"DEBUG {label} last: {chunk[-3:]}")
 
     if merged:
         return merged
@@ -451,6 +689,9 @@ def deduplicate_events(events: List[Dict]) -> List[Dict]:
 
 def save_events(events: List[Dict]) -> bool:
     """Save fetched events to data/upcoming_news.json"""
+    if not events:
+        logger.error("❌ Refusing to write empty upcoming_news.json")
+        return False
     try:
         OUTPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
 
@@ -550,7 +791,13 @@ def main():
     parser.add_argument('--days', type=int, default=7, help='Days ahead to fetch (default: 7)')
     parser.add_argument('--weekly', action='store_true', help='Weekly auto-sync (14 days, FF merge)')
     parser.add_argument('--force-weekly', action='store_true', help='Force weekly sync even if not due')
+    parser.add_argument('--debug', action='store_true', help='Verbose logging + sample parsed events')
     args = parser.parse_args()
+
+    if args.debug:
+        logger.setLevel(logging.DEBUG)
+        for h in logger.handlers:
+            h.setLevel(logging.DEBUG)
 
     days_ahead = 14 if args.weekly else args.days
 
@@ -575,21 +822,31 @@ def main():
     all_events = []
 
     if args.weekly:
-        all_events = run_weekly_auto_sync(days_ahead=days_ahead, force=args.force_weekly)
+        if not should_run_weekly_sync(force=args.force_weekly):
+            logger.info("⏭️ Weekly sync not due — using daily merge pipeline")
+            all_events = fetch_all_merged(days_ahead=days_ahead, debug=args.debug)
+        else:
+            logger.info("🔄 V39.5 WEEKLY AUTO-SYNC — FF + cTrader + manual")
+            all_events = fetch_all_merged(days_ahead=days_ahead, debug=args.debug)
+            mark_weekly_sync_done()
     else:
-        all_events = fetch_all_merged(days_ahead=days_ahead)
+        all_events = fetch_all_merged(days_ahead=days_ahead, debug=args.debug)
 
     if not all_events:
-        logger.error("❌ NO EVENTS from any source! Check API connectivity.")
-        logger.error("💡 Update economic_calendar.json: python3 add_monthly_events.py")
-        return
+        logger.error("❌ Failed to fetch news: all sources returned 0 events")
+        logger.error(
+            "💡 Check: FF mirror (rate limit), EconomicCalendarBot on 8768 "
+            f"({resolve_ctrader_calendar_url()}), curl http://localhost:8768/health"
+        )
+        logger.error("💡 Manual backup: python3 add_monthly_events.py")
+        sys.exit(1)
 
     logger.info(f"📊 Total unique events: {len(all_events)}")
 
-    # Save to data/upcoming_news.json
-    if save_events(all_events):
-        logger.info(f"💾 Output: {OUTPUT_FILE}")
+    if not save_events(all_events):
+        sys.exit(1)
 
+    logger.info(f"💾 Output: {OUTPUT_FILE}")
     logger.info("=" * 60)
     logger.info("✅ NEWS FETCHER V39.5 — SYNC COMPLETE")
     logger.info("=" * 60)

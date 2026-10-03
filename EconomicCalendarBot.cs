@@ -14,6 +14,9 @@ namespace cAlgo.Robots
         [Parameter("HTTP Port", DefaultValue = 8768)]
         public int HttpPort { get; set; }
 
+        [Parameter("Days Ahead", DefaultValue = 14)]
+        public int DaysAhead { get; set; }
+
         private HttpListener _httpListener;
         private Thread _listenerThread;
 
@@ -139,9 +142,9 @@ namespace cAlgo.Robots
 }";
                 }
 
-                // Get events for next 7 days
+                var horizonDays = Math.Max(1, DaysAhead);
                 var now = Server.Time;
-                var endDate = now.AddDays(7);
+                var endDate = now.AddDays(horizonDays);
 
                 var upcomingEvents = calendarEvents
                     .Where(e => e.DateTime >= now && e.DateTime <= endDate)
@@ -190,7 +193,7 @@ namespace cAlgo.Robots
                 json.AppendLine("    \"period\": {");
                 json.AppendLine($"        \"start\": \"{now:yyyy-MM-dd}\",");
                 json.AppendLine($"        \"end\": \"{endDate:yyyy-MM-dd}\",");
-                json.AppendLine("        \"days\": 7");
+                json.AppendLine($"        \"days\": {horizonDays}");
                 json.AppendLine("    }");
                 json.AppendLine("}");
 
