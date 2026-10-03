@@ -4,9 +4,22 @@ V56: Validate TradeHistorySyncer (8767) payloads — reject stale zombie cache.
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
+
+
+def resolve_trade_sync_url() -> str:
+    """TradeHistorySyncer base URL — TRADE_SYNC_URL or CTRADER_API_URL from .env."""
+    raw = (
+        os.getenv('TRADE_SYNC_URL')
+        or os.getenv('CTRADER_API_URL')
+        or 'http://localhost:8767/'
+    ).strip()
+    if not raw.endswith('/'):
+        raw += '/'
+    return raw
 
 # cBot UpdateInterval default 10s — allow 2 min before calling data stale
 MAX_BROKER_AGE_SECONDS = 120
