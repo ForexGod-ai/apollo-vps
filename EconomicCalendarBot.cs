@@ -13,7 +13,7 @@ namespace cAlgo.Robots
     /// <summary>
     /// HTTP :8768 — serves economic events for news_fetcher.py and /news.
     /// cAlgo does NOT expose Application.EconomicCalendar (Spotware policy).
-    /// Reads data/upcoming_news.json written by news_fetcher.py on the VPS.
+    /// Reads data/upcoming_news.json (ForexFactory High via news_fetcher HTML/mirror) on the VPS.
     /// </summary>
     [Robot(TimeZone = TimeZones.UTC, AccessRights = AccessRights.FullAccess)]
     public class EconomicCalendarBot : Robot

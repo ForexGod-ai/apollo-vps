@@ -9,6 +9,7 @@ All datetimes normalized to UTC.
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
@@ -149,14 +150,43 @@ def load_from_manual_calendar(days_ahead: int = 14) -> List[Dict]:
     return events
 
 
+def news_strict_ff_enabled() -> bool:
+    return os.getenv("NEWS_STRICT_FF", "1").strip().lower() not in ("0", "false", "no")
+
+
+def upcoming_news_ff_sourced(payload: dict) -> bool:
+    provider = str(payload.get("source_provider") or "").lower()
+    if provider in ("forexfactory_html", "forexfactory_mirror"):
+        return True
+    raw = payload.get("events") or []
+    if not raw:
+        return False
+    return all(
+        str(e.get("source", "")).startswith("forexfactory")
+        for e in raw
+        if isinstance(e, dict)
+    )
+
+
 def load_high_impact_events(days_ahead: int = 14) -> List[Dict]:
     """
     Unified loader for /news, executor BE guard, and liquidity sniper blackout.
 
-    Priority: data/upcoming_news.json (FF daily sync) → economic_calendar.json gaps.
+    Priority: data/upcoming_news.json (FF scrape/sync) → manual calendar only when not strict FF.
     All consumers should use this — do not read economic_calendar.json directly.
     """
     upcoming = load_from_upcoming_news(days_ahead=days_ahead)
+
+    if news_strict_ff_enabled() and UPCOMING_NEWS_FILE.exists():
+        try:
+            with open(UPCOMING_NEWS_FILE, "r", encoding="utf-8") as f:
+                payload = json.load(f)
+            if isinstance(payload, dict) and upcoming_news_ff_sourced(payload):
+                upcoming.sort(key=lambda e: e.get("datetime_utc", ""))
+                return upcoming
+        except Exception:
+            pass
+
     manual = load_from_manual_calendar(days_ahead=days_ahead)
 
     seen: Set[str] = set()

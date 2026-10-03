@@ -1368,9 +1368,10 @@ class TelegramCommandCenter:
             return f"❌ <b>RESUME ERROR:</b> {str(e)}"
 
     def handle_news_command(self) -> str:
-        """/news — HIGH impact next 14 days. V67.2: upcoming_news.json (FF+manual) first."""
+        """/news — HIGH impact next 14 days (ForexFactory red folder via news_fetcher)."""
         from news_calendar_utils import (
             load_high_impact_events,
+            news_strict_ff_enabled,
             parse_event_datetime,
             UPCOMING_NEWS_FILE,
         )
@@ -1380,61 +1381,6 @@ class TelegramCommandCenter:
             'AUD': '🇦🇺', 'NZD': '🇳🇿', 'CAD': '🇨🇦', 'CHF': '🇨🇭',
         }
         now = datetime.now(timezone.utc)
-
-        def _parse_events_from_ctrader() -> tuple[list, str]:
-            """Load from cTrader EconomicCalendarBot port 8768."""
-            try:
-                import requests as _req
-                resp = _req.get('http://localhost:8768/calendar', timeout=5)
-                if resp.status_code != 200:
-                    return [], ''
-                data = resp.json()
-                raw = data.get('events', [])
-                if not raw:
-                    return [], ''
-                cutoff = now + timedelta(days=14)
-                result = []
-                for e in raw:
-                    if str(e.get('impact', '')).lower() not in ('high', 'red'):
-                        continue
-                    if e.get('currency') not in FLAG_MAP:
-                        continue
-                    try:
-                        dt = datetime.strptime(
-                            e['time'], '%Y-%m-%d %H:%M:%S'
-                        ).replace(tzinfo=timezone.utc)
-                        if now <= dt <= cutoff:
-                            result.append((dt, {
-                                'currency': e.get('currency'),
-                                'event': e.get('event'),
-                                'forecast': str(e.get('forecast', '') or ''),
-                                'previous': str(e.get('previous', '') or ''),
-                            }))
-                    except Exception:
-                        continue
-                return result, '🤖 cTrader Live Bot (8768)'
-            except Exception:
-                return [], ''
-
-        def _agent_news_debug(hypothesis_id: str, message: str, data: dict) -> None:
-            # #region agent log
-            try:
-                import json as _j
-                import time as _t
-                _p = Path(__file__).resolve().parent / '.cursor' / 'debug-ef6f10.log'
-                _p.parent.mkdir(parents=True, exist_ok=True)
-                with open(_p, 'a', encoding='utf-8') as _f:
-                    _f.write(_j.dumps({
-                        'sessionId': 'ef6f10',
-                        'hypothesisId': hypothesis_id,
-                        'location': 'telegram_command_center.handle_news_command',
-                        'message': message,
-                        'data': data,
-                        'timestamp': int(_t.time() * 1000),
-                    }) + '\n')
-            except Exception:
-                pass
-            # #endregion
 
         def _news_cache_age_hours() -> tuple[bool, float]:
             if not UPCOMING_NEWS_FILE.exists():
@@ -1463,21 +1409,11 @@ class TelegramCommandCenter:
                     _saved = bool(_merged and save_events(_merged))
                     if _saved:
                         logger.info(f"[/news] Auto-refreshed upcoming_news.json ({len(_merged)} events)")
-                    _agent_news_debug('H3', 'auto refresh on stale cache', {
-                        'cache_age_h': round(cache_age_h, 1),
-                        'merged': len(_merged) if _merged else 0,
-                        'saved': _saved,
-                    })
                 except Exception as _refresh_err:
                     logger.warning(f"[/news] Auto refresh failed: {_refresh_err}")
-                    _agent_news_debug('H1', 'auto refresh exception', {'error': str(_refresh_err)[:200]})
 
             events = load_high_impact_events(days_ahead=14)
-            source = '📡 data/upcoming_news.json (FF + manual)'
-            _agent_news_debug('H3', 'loaded high impact events', {
-                'count': len(events),
-                'cache_age_h': round(cache_age_h, 1),
-            })
+            source = '📡 forexfactory.com (High only)'
 
             upcoming: list = []
             for e in events:
@@ -1485,9 +1421,6 @@ class TelegramCommandCenter:
                 if dt is None:
                     continue
                 upcoming.append((dt, e))
-
-            if not upcoming:
-                upcoming, source = _parse_events_from_ctrader()
 
             upcoming.sort(key=lambda x: x[0])
 
@@ -1527,13 +1460,11 @@ class TelegramCommandCenter:
                     stale = " (upcoming_news.json expirat)"
                 msg += f"\n<i>Sursă: {source or 'upcoming_news.json'}{stale}</i>"
                 msg += (
-                    "\n<i>Windows VPS: <code>py news_fetcher.py --days 14 --debug</code> "
-                    "sau <code>python news_fetcher.py --days 14 --debug</code></i>"
+                    "\n<i>Windows VPS: <code>.\\scripts\\run_news_fetcher.ps1</code> "
+                    "(pip install cloudscraper beautifulsoup4)</i>"
                 )
-                msg += (
-                    "\n<i>FF mirror: doar săpt. curentă (nextweek 404); "
-                    "actualizează <code>economic_calendar.json</code> (oct 2026) sau TE API key.</i>"
-                )
+                if news_strict_ff_enabled():
+                    msg += "\n<i>Strict FF: fără manual / cTrader fallback pentru listă.</i>"
                 return msg
 
             # ── Group by day and display ALL events

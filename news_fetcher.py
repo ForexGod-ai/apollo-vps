@@ -1,26 +1,24 @@
 #!/usr/bin/env python3
 """
-📡 NEWS FETCHER V39.5 — DAILY + WEEKLY AUTO-SYNC
+📡 NEWS FETCHER V68 — FOREXFACTORY HIGH IMPACT ONLY
 ────────────────
 🔱 AUTHORED BY ФорексГод 🔱
 🏛️ Глитч Ин Матрикс 🏛️
 
-Automatically downloads HIGH + MEDIUM impact economic events.
-Populates data/upcoming_news.json for executor, monitor, and reminders.
+Scrapes ForexFactory calendar (red folder / High impact) via cloudscraper HTML.
+Writes data/upcoming_news.json for /news, executor, EconomicCalendarBot :8768.
 
-Data Sources (merged into upcoming_news.json):
-    1. ForexFactory mirror (thisweek + nextweek JSON; stale cache rejected after 48h)
-    2. cTrader EconomicCalendarBot :8768 (if FF empty or any mirror feed failed)
-    3. Manual economic_calendar.json (custom_events_*)
-    4. Trading Economics API (only if merged result is empty)
+Primary: forexfactory.com week views (parse calendar__impact-icon--high).
+Fallback: faireconomy FF mirror JSON (High field only). No manual/cTrader merge.
 
-V39.5 Weekly pipeline:
-    --weekly  → 14-day horizon, FF mirror merge, state file tracks last run (7-day cadence)
+VPS validation:
+    pip install cloudscraper beautifulsoup4
+    .\\scripts\\run_news_fetcher.ps1
+    Compare Telegram /news with FF calendar (two week views, 14-day horizon).
 
 Usage:
-    python3 news_fetcher.py              # Fetch today + 7 days
-    python3 news_fetcher.py --days 14    # Fetch today + 14 days
-    python3 news_fetcher.py --weekly     # Weekly auto-sync (14 days, FF merge)
+    python3 news_fetcher.py --days 14 --debug
+    python3 news_fetcher.py --weekly
 ────────────────
 """
 
@@ -71,26 +69,7 @@ FF_MIRROR_OPTIONAL_URLS = {
     'nextweek': 'https://nfs.faireconomy.media/ff_calendar_nextweek.json',
 }
 
-_AGENT_DEBUG_LOG = Path(__file__).resolve().parent / '.cursor' / 'debug-ef6f10.log'
-
-
-def _agent_debug_log(hypothesis_id: str, location: str, message: str, data: Optional[dict] = None) -> None:
-    # #region agent log
-    try:
-        import json as _json_dbg
-        _AGENT_DEBUG_LOG.parent.mkdir(parents=True, exist_ok=True)
-        with open(_AGENT_DEBUG_LOG, 'a', encoding='utf-8') as _df:
-            _df.write(_json_dbg.dumps({
-                'sessionId': 'ef6f10',
-                'hypothesisId': hypothesis_id,
-                'location': location,
-                'message': message,
-                'data': data or {},
-                'timestamp': int(time.time() * 1000),
-            }) + '\n')
-    except Exception:
-        pass
-    # #endregion
+LAST_SOURCE_PROVIDER = ""
 
 FF_MIRROR_RETRY_DELAYS_S = (2, 5, 10)
 FF_MIRROR_CACHE_MAX_AGE_HOURS = 48
@@ -368,18 +347,9 @@ def fetch_forexfactory_mirror(days_ahead: int = 7) -> Tuple[List[Dict], bool]:
                 all_raw.extend(chunk)
 
         if not all_raw:
-            _agent_debug_log('H4', 'fetch_forexfactory_mirror', 'no raw FF rows', {
-                'thisweek_live': thisweek_live, 'days_ahead': days_ahead,
-            })
             return [], thisweek_live
 
         events = parse_ff_mirror_items(all_raw, days_ahead=days_ahead)
-        _agent_debug_log('H4', 'fetch_forexfactory_mirror', 'FF parse result', {
-            'raw_count': len(all_raw),
-            'parsed_count': len(events),
-            'high_count': sum(1 for e in events if e.get('impact') == 'High'),
-            'thisweek_live': thisweek_live,
-        })
         logger.info(f"✅ Parsed {len(events)} HIGH/MEDIUM events from ForexFactory mirror")
         return events, thisweek_live
 
@@ -665,46 +635,58 @@ def mark_weekly_sync_done():
         logger.warning(f"⚠️ Could not write weekly state: {e}")
 
 
+def fetch_forexfactory_high_impact(days_ahead: int = 14) -> Tuple[List[Dict], str]:
+    """Primary path: FF HTML scrape (High impact rows only)."""
+    from ff_calendar_scraper import fetch_forexfactory_high_impact_html
+
+    events, meta = fetch_forexfactory_high_impact_html(
+        days_ahead=days_ahead,
+        event_in_horizon=event_in_horizon,
+    )
+    if events:
+        return events, "forexfactory_html"
+    return [], meta
+
+
 def fetch_all_merged(days_ahead: int = 14, debug: bool = False) -> List[Dict]:
     """
-    V67.3 — FF mirror, cTrader fallback, manual calendar, TE last resort.
+    V68 — ForexFactory High only: HTML scrape, then mirror JSON fallback.
     """
-    ff, ff_all_feeds_live = fetch_forexfactory_mirror(days_ahead=days_ahead)
+    global LAST_SOURCE_PROVIDER
+    LAST_SOURCE_PROVIDER = ""
 
-    ctrader: List[Dict] = []
-    # cTrader bot serves upcoming_news.json (not live FF) — only when FF parse is empty.
-    if not ff:
-        ctrader = fetch_ctrader_calendar(days_ahead=days_ahead)
+    html_events, html_meta = fetch_forexfactory_high_impact(days_ahead=days_ahead)
+    if html_events:
+        LAST_SOURCE_PROVIDER = "forexfactory_html"
+        logger.info(f"📊 FF HTML: {len(html_events)} High events")
+        if debug:
+            logger.debug(f"DEBUG FF HTML sample: {html_events[:3]}")
+        return html_events
 
-    manual = fetch_from_manual_calendar(days_ahead=days_ahead)
-    merged = deduplicate_events(ff + ctrader + manual)
+    logger.warning(f"⚠️ FF HTML scrape unavailable: {html_meta}")
 
-    logger.info(
-        f"📊 Merge: FF {len(ff)} | cTrader {len(ctrader)} | manual {len(manual)} "
-        f"→ {len(merged)} unique (ff_all_feeds_live={ff_all_feeds_live})"
-    )
-    _agent_debug_log('H2', 'fetch_all_merged', 'merge totals', {
-        'ff': len(ff), 'ctrader': len(ctrader), 'manual': len(manual),
-        'merged': len(merged), 'ff_all_feeds_live': ff_all_feeds_live,
-    })
-
-    if debug:
-        for label, chunk in (
-            ('FF', ff), ('cTrader', ctrader), ('manual', manual),
-        ):
-            if not chunk:
-                continue
-            logger.debug(f"DEBUG {label} first: {chunk[:3]}")
-            if len(chunk) > 3:
-                logger.debug(f"DEBUG {label} last: {chunk[-3:]}")
-
-    if merged:
+    ff, ff_live = fetch_forexfactory_mirror(days_ahead=days_ahead)
+    ff_high = [e for e in ff if e.get("impact") == "High"]
+    if ff_high:
+        LAST_SOURCE_PROVIDER = "forexfactory_mirror"
+        merged = deduplicate_events(ff_high)
+        logger.info(
+            f"📊 FF mirror fallback: {len(merged)} High (live={ff_live})"
+        )
+        if debug:
+            logger.debug(f"DEBUG FF mirror sample: {merged[:3]}")
         return merged
 
-    te = fetch_trading_economics(days_ahead=days_ahead)
-    if te:
-        logger.info(f"✅ Trading Economics (last resort): {len(te)} events")
-    return te
+    if os.getenv("ALLOW_TE_NEWS_FALLBACK", "").strip() == "1":
+        te = fetch_trading_economics(days_ahead=days_ahead)
+        te_high = [e for e in te if e.get("impact") == "High"]
+        if te_high:
+            LAST_SOURCE_PROVIDER = "trading_economics"
+            logger.info(f"✅ Trading Economics fallback: {len(te_high)} High events")
+            return te_high
+
+    logger.error("❌ No ForexFactory High events (HTML + mirror both empty)")
+    return []
 
 
 def run_weekly_auto_sync(days_ahead: int = 14, force: bool = False) -> List[Dict]:
@@ -715,7 +697,7 @@ def run_weekly_auto_sync(days_ahead: int = 14, force: bool = False) -> List[Dict
         logger.info("⏭️ Weekly sync not due — using daily merge pipeline")
         return fetch_all_merged(days_ahead=days_ahead)
 
-    logger.info("🔄 V39.5 WEEKLY AUTO-SYNC — manual + ForexFactory mirror")
+    logger.info("🔄 V68 WEEKLY AUTO-SYNC — ForexFactory High (HTML / mirror)")
     merged = fetch_all_merged(days_ahead=days_ahead)
     mark_weekly_sync_done()
     return merged
@@ -733,29 +715,42 @@ def deduplicate_events(events: List[Dict]) -> List[Dict]:
     return unique
 
 
-def save_events(events: List[Dict]) -> bool:
-    """Save fetched events to data/upcoming_news.json"""
+def save_events(events: List[Dict], source_provider: Optional[str] = None) -> bool:
+    """Save fetched High impact events to data/upcoming_news.json"""
     if not events:
         logger.error("❌ Refusing to write empty upcoming_news.json")
         return False
     try:
         OUTPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
 
-        # Sort by datetime
-        events.sort(key=lambda e: e.get('datetime_utc', ''))
+        high_events = [e for e in events if e.get("impact") == "High"]
+        if not high_events:
+            logger.error("❌ Refusing to write upcoming_news.json with zero High events")
+            return False
+
+        provider = (source_provider or LAST_SOURCE_PROVIDER or "").strip()
+        if not provider:
+            sources = {str(e.get("source", "")) for e in high_events}
+            if sources == {"forexfactory_html"}:
+                provider = "forexfactory_html"
+            elif sources == {"forexfactory_mirror"}:
+                provider = "forexfactory_mirror"
+
+        high_events.sort(key=lambda e: e.get('datetime_utc', ''))
 
         output = {
             'last_updated': datetime.now(timezone.utc).isoformat(),
-            'event_count': len(events),
-            'high_count': sum(1 for e in events if e['impact'] == 'High'),
-            'medium_count': sum(1 for e in events if e['impact'] == 'Medium'),
-            'events': events,
+            'source_provider': provider,
+            'event_count': len(high_events),
+            'high_count': len(high_events),
+            'medium_count': 0,
+            'events': high_events,
         }
 
         with open(OUTPUT_FILE, 'w', encoding='utf-8') as f:
             json.dump(output, f, indent=2, ensure_ascii=False)
 
-        logger.info(f"💾 Saved {len(events)} events to {OUTPUT_FILE}")
+        logger.info(f"💾 Saved {len(high_events)} High events to {OUTPUT_FILE} ({provider})")
         return True
 
     except Exception as e:
@@ -855,7 +850,7 @@ def main():
     logger.info(f"⏰ {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')} UTC")
     logger.info(f"📅 Fetching next {days_ahead} days")
     if args.weekly:
-        logger.info("🔄 Mode: WEEKLY (manual + FF mirror merge)")
+        logger.info("🔄 Mode: WEEKLY (FF High HTML / mirror)")
     logger.info("=" * 60)
 
     # Load .env for Telegram credentials
@@ -872,7 +867,7 @@ def main():
             logger.info("⏭️ Weekly sync not due — using daily merge pipeline")
             all_events = fetch_all_merged(days_ahead=days_ahead, debug=args.debug)
         else:
-            logger.info("🔄 V39.5 WEEKLY AUTO-SYNC — FF + cTrader + manual")
+            logger.info("🔄 V68 WEEKLY AUTO-SYNC — FF High HTML / mirror")
             all_events = fetch_all_merged(days_ahead=days_ahead, debug=args.debug)
             mark_weekly_sync_done()
     else:
@@ -881,12 +876,10 @@ def main():
     if not all_events:
         logger.error("❌ Failed to fetch news: all sources returned 0 events")
         logger.error(
-            "💡 Check: FF mirror (rate limit / weekend gap — nextweek JSON removed by host), "
-            f"CalendarBOT :8768 ({resolve_ctrader_calendar_url()}), "
-            "TRADING_ECONOMICS_API_KEY in .env, add_monthly_events.py"
+            "💡 Check: cloudscraper + beautifulsoup4, FF HTML (Cloudflare), "
+            "FF mirror thisweek JSON, optional ALLOW_TE_NEWS_FALLBACK=1 + TE API key"
         )
-        logger.error("💡 Windows VPS: py news_fetcher.py --days 14 --debug")
-        _agent_debug_log('H2', 'news_fetcher.main', 'fetch failed exit 1', {'days_ahead': days_ahead})
+        logger.error("💡 Windows VPS: .\\scripts\\run_news_fetcher.ps1")
         sys.exit(1)
 
     logger.info(f"📊 Total unique events: {len(all_events)}")

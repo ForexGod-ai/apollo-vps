@@ -14,9 +14,6 @@ if (-not $py) {
 }
 
 Write-Host "Using: $py"
-Write-Host "Step 1/2: merge manual calendar (incl. October 2026 if present in add_monthly_events.py)..."
-& $py add_monthly_events.py
-if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-Write-Host "Step 2/2: news_fetcher -> data/upcoming_news.json"
+Write-Host "news_fetcher -> data/upcoming_news.json (ForexFactory High HTML / mirror)"
 & $py news_fetcher.py --days 14 --debug
 exit $LASTEXITCODE
