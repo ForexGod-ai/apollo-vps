@@ -1404,9 +1404,22 @@ class TelegramCommandCenter:
             cache_expired_pre, cache_age_h = _news_cache_age_hours()
             if cache_expired_pre:
                 try:
-                    from news_fetcher import fetch_all_merged, save_events
+                    from news_fetcher import (
+                        fetch_all_merged,
+                        LAST_HTML_PAGES_FETCHED,
+                        LAST_SOURCE_PROVIDER,
+                        save_events,
+                    )
                     _merged = fetch_all_merged(days_ahead=14, debug=False)
-                    _saved = bool(_merged and save_events(_merged))
+                    if _merged:
+                        _saved = save_events(_merged, source_provider=LAST_SOURCE_PROVIDER or None)
+                    else:
+                        _saved = save_events(
+                            [],
+                            source_provider=LAST_SOURCE_PROVIDER or "sync_failed",
+                            allow_empty=True,
+                            sync_note="auto-refresh: no High events",
+                        )
                     if _saved:
                         logger.info(f"[/news] Auto-refreshed upcoming_news.json ({len(_merged)} events)")
                 except Exception as _refresh_err:

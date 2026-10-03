@@ -100,7 +100,11 @@ def test_fetch_all_merged_html_primary_no_manual_ctrader():
         "previous": "",
         "source": "forexfactory_html",
     }
-    with patch.object(nf, "fetch_forexfactory_high_impact", return_value=([html_event], "forexfactory_html")):
+    with patch.object(
+        nf,
+        "fetch_forexfactory_high_impact",
+        return_value=([html_event], "forexfactory_html", 2),
+    ):
         with patch.object(nf, "fetch_forexfactory_mirror") as mock_mirror:
             with patch.object(nf, "fetch_ctrader_calendar") as mock_ct:
                 with patch.object(nf, "fetch_from_manual_calendar") as mock_man:
@@ -139,7 +143,7 @@ def test_fetch_all_merged_mirror_fallback_high_only():
             "source": "forexfactory_mirror",
         },
     ]
-    with patch.object(nf, "fetch_forexfactory_high_impact", return_value=([], "scrape failed")):
+    with patch.object(nf, "fetch_forexfactory_high_impact", return_value=([], "scrape failed", 0)):
         with patch.object(nf, "fetch_forexfactory_mirror", return_value=(mirror_events, True)):
             with patch.object(nf, "fetch_ctrader_calendar") as mock_ct:
                 with patch.object(nf, "fetch_from_manual_calendar") as mock_man:
@@ -150,6 +154,16 @@ def test_fetch_all_merged_mirror_fallback_high_only():
     mock_ct.assert_not_called()
     mock_man.assert_not_called()
     assert nf.LAST_SOURCE_PROVIDER == "forexfactory_mirror"
+
+
+def test_save_events_allow_empty_clears_stale(tmp_path, monkeypatch):
+    out = tmp_path / "upcoming_news.json"
+    out.write_text('{"events": [{"event": "stale manual"}]}', encoding="utf-8")
+    monkeypatch.setattr(nf, "OUTPUT_FILE", out)
+    assert nf.save_events([], source_provider="forexfactory_html", allow_empty=True)
+    payload = json.loads(out.read_text(encoding="utf-8"))
+    assert payload["events"] == []
+    assert payload["source_provider"] == "forexfactory_html"
 
 
 def test_save_events_writes_source_provider(tmp_path, monkeypatch):

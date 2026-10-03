@@ -156,7 +156,7 @@ def news_strict_ff_enabled() -> bool:
 
 def upcoming_news_ff_sourced(payload: dict) -> bool:
     provider = str(payload.get("source_provider") or "").lower()
-    if provider in ("forexfactory_html", "forexfactory_mirror"):
+    if provider in ("forexfactory_html", "forexfactory_mirror", "sync_failed"):
         return True
     raw = payload.get("events") or []
     if not raw:

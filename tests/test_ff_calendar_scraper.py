@@ -45,3 +45,22 @@ def test_build_week_urls_covers_horizon():
 def test_ff_week_slug():
     sunday = datetime(2026, 10, 4, tzinfo=timezone.utc)
     assert ffs.ff_week_slug(sunday) == "oct4.2026"
+
+
+def test_write_debug_html_on_empty_parse(tmp_path, monkeypatch):
+    html = FIXTURE.read_text(encoding="utf-8")
+    debug_path = tmp_path / "debug_ff.html"
+    monkeypatch.setattr(ffs, "DEFAULT_DEBUG_HTML", debug_path)
+    monkeypatch.setenv("FF_DEBUG_HTML", str(debug_path))
+
+    events, _, pages = ffs.fetch_forexfactory_high_impact_html(
+        days_ahead=14,
+        now=FIXED_NOW,
+        event_in_horizon=lambda *_a, **_k: False,
+    )
+    assert events == []
+    assert pages == 0
+
+    ffs.write_debug_html(html, "fixture://test")
+    assert debug_path.exists()
+    assert "icon--ff-impact-red" in debug_path.read_text(encoding="utf-8")

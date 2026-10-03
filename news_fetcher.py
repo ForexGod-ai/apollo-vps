@@ -70,6 +70,7 @@ FF_MIRROR_OPTIONAL_URLS = {
 }
 
 LAST_SOURCE_PROVIDER = ""
+LAST_HTML_PAGES_FETCHED = 0
 
 FF_MIRROR_RETRY_DELAYS_S = (2, 5, 10)
 FF_MIRROR_CACHE_MAX_AGE_HOURS = 48
@@ -635,33 +636,44 @@ def mark_weekly_sync_done():
         logger.warning(f"⚠️ Could not write weekly state: {e}")
 
 
-def fetch_forexfactory_high_impact(days_ahead: int = 14) -> Tuple[List[Dict], str]:
+def fetch_forexfactory_high_impact(days_ahead: int = 14) -> Tuple[List[Dict], str, int]:
     """Primary path: FF HTML scrape (High impact rows only)."""
     from ff_calendar_scraper import fetch_forexfactory_high_impact_html
 
-    events, meta = fetch_forexfactory_high_impact_html(
+    events, meta, pages_ok = fetch_forexfactory_high_impact_html(
         days_ahead=days_ahead,
         event_in_horizon=event_in_horizon,
     )
     if events:
-        return events, "forexfactory_html"
-    return [], meta
+        return events, "forexfactory_html", pages_ok
+    return [], meta, pages_ok
 
 
 def fetch_all_merged(days_ahead: int = 14, debug: bool = False) -> List[Dict]:
     """
     V68 — ForexFactory High only: HTML scrape, then mirror JSON fallback.
     """
-    global LAST_SOURCE_PROVIDER
+    global LAST_SOURCE_PROVIDER, LAST_HTML_PAGES_FETCHED
     LAST_SOURCE_PROVIDER = ""
+    LAST_HTML_PAGES_FETCHED = 0
 
-    html_events, html_meta = fetch_forexfactory_high_impact(days_ahead=days_ahead)
+    html_events, html_meta, pages_ok = fetch_forexfactory_high_impact(days_ahead=days_ahead)
+    LAST_HTML_PAGES_FETCHED = pages_ok
+
     if html_events:
         LAST_SOURCE_PROVIDER = "forexfactory_html"
         logger.info(f"📊 FF HTML: {len(html_events)} High events")
         if debug:
             logger.debug(f"DEBUG FF HTML sample: {html_events[:3]}")
         return html_events
+
+    if pages_ok > 0:
+        LAST_SOURCE_PROVIDER = "forexfactory_html"
+        logger.warning(
+            f"⚠️ FF HTML returned 0 High events after {pages_ok} page(s) — "
+            f"see debug_ff.html ({html_meta})"
+        )
+        return []
 
     logger.warning(f"⚠️ FF HTML scrape unavailable: {html_meta}")
 
@@ -685,6 +697,7 @@ def fetch_all_merged(days_ahead: int = 14, debug: bool = False) -> List[Dict]:
             logger.info(f"✅ Trading Economics fallback: {len(te_high)} High events")
             return te_high
 
+    LAST_SOURCE_PROVIDER = "sync_failed"
     logger.error("❌ No ForexFactory High events (HTML + mirror both empty)")
     return []
 
@@ -715,21 +728,25 @@ def deduplicate_events(events: List[Dict]) -> List[Dict]:
     return unique
 
 
-def save_events(events: List[Dict], source_provider: Optional[str] = None) -> bool:
-    """Save fetched High impact events to data/upcoming_news.json"""
-    if not events:
-        logger.error("❌ Refusing to write empty upcoming_news.json")
-        return False
+def save_events(
+    events: List[Dict],
+    source_provider: Optional[str] = None,
+    *,
+    allow_empty: bool = False,
+    sync_note: Optional[str] = None,
+) -> bool:
+    """Save fetched High impact events to data/upcoming_news.json (overwrites stale cache)."""
     try:
         OUTPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
 
         high_events = [e for e in events if e.get("impact") == "High"]
-        if not high_events:
-            logger.error("❌ Refusing to write upcoming_news.json with zero High events")
+
+        if not high_events and not allow_empty:
+            logger.error("❌ Refusing to write empty upcoming_news.json (use allow_empty=True)")
             return False
 
         provider = (source_provider or LAST_SOURCE_PROVIDER or "").strip()
-        if not provider:
+        if not provider and high_events:
             sources = {str(e.get("source", "")) for e in high_events}
             if sources == {"forexfactory_html"}:
                 provider = "forexfactory_html"
@@ -746,11 +763,18 @@ def save_events(events: List[Dict], source_provider: Optional[str] = None) -> bo
             'medium_count': 0,
             'events': high_events,
         }
+        if sync_note:
+            output['sync_note'] = sync_note
 
         with open(OUTPUT_FILE, 'w', encoding='utf-8') as f:
             json.dump(output, f, indent=2, ensure_ascii=False)
 
-        logger.info(f"💾 Saved {len(high_events)} High events to {OUTPUT_FILE} ({provider})")
+        if high_events:
+            logger.info(f"💾 Saved {len(high_events)} High events to {OUTPUT_FILE} ({provider})")
+        else:
+            logger.warning(
+                f"💾 Cleared stale upcoming_news.json — 0 High events ({provider})"
+            )
         return True
 
     except Exception as e:
@@ -873,18 +897,33 @@ def main():
     else:
         all_events = fetch_all_merged(days_ahead=days_ahead, debug=args.debug)
 
+    provider = LAST_SOURCE_PROVIDER
+    pages_ok = LAST_HTML_PAGES_FETCHED
+
     if not all_events:
+        note = (
+            "FF HTML pages fetched but 0 High events parsed"
+            if pages_ok > 0
+            else "HTML and mirror produced no High events in horizon"
+        )
+        if save_events(
+            [],
+            source_provider=provider or "sync_failed",
+            allow_empty=True,
+            sync_note=note,
+        ):
+            logger.warning(f"⚠️ {note} — stale upcoming_news.json cleared")
         logger.error("❌ Failed to fetch news: all sources returned 0 events")
         logger.error(
-            "💡 Check: cloudscraper + beautifulsoup4, FF HTML (Cloudflare), "
-            "FF mirror thisweek JSON, optional ALLOW_TE_NEWS_FALLBACK=1 + TE API key"
+            "💡 Inspect debug_ff.html, cloudscraper, FF mirror thisweek JSON; "
+            "optional ALLOW_TE_NEWS_FALLBACK=1 + TE API key"
         )
         logger.error("💡 Windows VPS: .\\scripts\\run_news_fetcher.ps1")
         sys.exit(1)
 
     logger.info(f"📊 Total unique events: {len(all_events)}")
 
-    if not save_events(all_events):
+    if not save_events(all_events, source_provider=provider or None):
         sys.exit(1)
 
     logger.info(f"💾 Output: {OUTPUT_FILE}")
