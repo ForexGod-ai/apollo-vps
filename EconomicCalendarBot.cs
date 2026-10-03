@@ -174,7 +174,7 @@ namespace cAlgo.Robots
         private List<CalendarRow> LoadEventsFromJson(DateTime now, DateTime endDate)
         {
             var result = new List<CalendarRow>();
-            if (string.IsNullOrWhiteSpace(EventsJsonPath) || !File.Exists(EventsJsonPath))
+            if (string.IsNullOrWhiteSpace(EventsJsonPath) || !System.IO.File.Exists(EventsJsonPath))
             {
                 Print($"⚠️ Events file missing: {EventsJsonPath} — run news_fetcher.py on VPS");
                 return result;
@@ -182,7 +182,7 @@ namespace cAlgo.Robots
 
             try
             {
-                var text = File.ReadAllText(EventsJsonPath);
+                var text = System.IO.File.ReadAllText(EventsJsonPath);
                 var events = ExtractEventsArray(text);
                 foreach (var block in events)
                 {
