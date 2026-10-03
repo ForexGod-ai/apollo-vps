@@ -147,9 +147,9 @@ def _fmt_price(val: Optional[float], digits: int = 5) -> str:
     return f"{val:.{digits}f}"
 
 
-# V46: Premium/Discount entry band on CHoCH impulse (Daily POI pullback model)
-_RETRACE_ENTRY_MIN = 0.60
-_RETRACE_ENTRY_MAX = 0.80
+# V46.1: Premium/Discount entry band on CHoCH impulse (Daily POI pullback model)
+_RETRACE_ENTRY_MIN = 0.55
+_RETRACE_ENTRY_MAX = 0.85
 
 # V47: max bars for Telegram structural alerts (NOT an EXECUTE gate — V46 unchanged)
 # Constants imported from radar_gates
@@ -184,7 +184,7 @@ def _choch_premium_discount_zone(
     impulse: float,
     direction: str,
 ) -> tuple[float, float, float]:
-    """V46: 60–80% retrace zone (bottom, top, midpoint)."""
+    """V46.1: 55–85% retrace zone (bottom, top, midpoint)."""
     if direction == 'bullish':
         z_top = break_price - impulse * _RETRACE_ENTRY_MIN
         z_bottom = break_price - impulse * _RETRACE_ENTRY_MAX
@@ -203,7 +203,7 @@ def _v46_entry_status_and_note(
     retrace_pct: float,
     choch_bars_ago: int,
 ) -> tuple['PullbackStatus', str]:
-    """V46: EXECUTE on POI + 60–80% retrace — 4H only, no ≤3 bar gate."""
+    """V46.1: EXECUTE on POI + 55–85% retrace or CHoCH FVG — 4H only, no ≤3 bar gate."""
     exec_st = PullbackStatus.EXECUTE_NOW_4H
     wait_st = PullbackStatus.WAITING_4H_PULLBACK
     if in_poi_entry:
@@ -218,20 +218,20 @@ def _v46_entry_status_and_note(
         )
     if not in_poi_entry and _RETRACE_ENTRY_MIN <= retrace_pct <= _RETRACE_ENTRY_MAX:
         note = (
-            f"⏳ retrace {retrace_pct * 100:.1f}% in 60–80% dar POI Daily inactiv"
+            f"⏳ retrace {retrace_pct * 100:.1f}% in 55–85% dar POI Daily inactiv"
         )
     elif retrace_pct > _RETRACE_ENTRY_MAX:
         note = (
             f"⏳ retrace {retrace_pct * 100:.1f}% > {_RETRACE_ENTRY_MAX * 100:.0f}% — "
-            f"asteptam re-intrare in Premium/Discount 60–80%"
+            f"asteptam re-intrare in Premium/Discount 55–85% sau FVG CHoCH"
         )
     elif retrace_pct < _RETRACE_ENTRY_MIN:
         note = (
             f"⏳ retrace {retrace_pct * 100:.1f}% < {_RETRACE_ENTRY_MIN * 100:.0f}% — "
-            f"asteptam Premium/Discount 60–80%"
+            f"asteptam Premium/Discount 55–85% sau FVG CHoCH"
         )
     else:
-        note = f"⏳ retrace {retrace_pct * 100:.1f}% — asteptam POI + 60–80%"
+        note = f"⏳ retrace {retrace_pct * 100:.1f}% — asteptam POI + 55–85% / FVG CHoCH"
     return wait_st, note
 
 
@@ -502,7 +502,7 @@ def _retrace_is_alert_valid(retrace_pct: Optional[float]) -> bool:
 # V54: erori tranzitorie executor — fără cooldown re-arm 30 min (F5)
 _TRANSIENT_BLOCK_PREFIXES = (
     'V48: live data', 'V54: live data', 'SPREAD GUARD', '8010', 'broker feed',
-    '[EXEC RETRY]', 'ROLLOVER',
+    '[EXEC RETRY]', 'ROLLOVER', 'V42.3 alignment',
 )
 
 
@@ -1505,7 +1505,15 @@ class MultiTFRadar:
             zone_bottom <= current_price <= zone_top
             and _RETRACE_ENTRY_MIN <= retrace_pct <= _RETRACE_ENTRY_MAX
         )
-        in_poi_entry = in_retrace_band and (daily_in_poi or poi_touch_latched)
+        in_choch_fvg = False
+        fvg_top_out, fvg_bottom_out = zone_top, zone_bottom
+        if latest_fvg is not None:
+            fvg_lo = min(float(latest_fvg.bottom), float(latest_fvg.top))
+            fvg_hi = max(float(latest_fvg.bottom), float(latest_fvg.top))
+            in_choch_fvg = fvg_lo <= current_price <= fvg_hi
+            fvg_top_out, fvg_bottom_out = fvg_hi, fvg_lo
+        _poi_ok = daily_in_poi or poi_touch_latched
+        in_poi_entry = _poi_ok and (in_retrace_band or in_choch_fvg)
 
         status, sniper_note = _v46_entry_status_and_note(
             timeframe_display,
@@ -1541,9 +1549,9 @@ class MultiTFRadar:
             f"({impulse_size / pip_size:.1f}p)"
         )
         print(
-            f"     Zone 60–80%: [{zone_bottom:.5f}–{zone_top:.5f}] | "
-            f"Retrace={retrace_pct * 100:.1f}% | in_poi={daily_in_poi} | "
-            f"latched={poi_touch_latched} | {sniper_note}"
+            f"     Zone 55–85%: [{zone_bottom:.5f}–{zone_top:.5f}] | "
+            f"Retrace={retrace_pct * 100:.1f}% | in_fvg={in_choch_fvg} | "
+            f"in_poi={daily_in_poi} | latched={poi_touch_latched} | {sniper_note}"
         )
         sys.stdout.flush()
 
@@ -1554,10 +1562,10 @@ class MultiTFRadar:
             choch_time=choch_time_str,
             choch_price=choch_price,
             fvg_detected=True,
-            fvg_top=zone_top,
-            fvg_bottom=zone_bottom,
+            fvg_top=fvg_top_out,
+            fvg_bottom=fvg_bottom_out,
             fvg_entry=zone_entry,
-            in_fvg=in_poi_entry,
+            in_fvg=in_choch_fvg or in_poi_entry,
             in_poi_entry_zone=in_poi_entry,
             retrace_pct=retrace_pct,
             distance_to_fvg_pips=distance_to_fvg_pips,
@@ -2246,7 +2254,7 @@ class MultiTFRadar:
         if tf_4h.status == PullbackStatus.EXECUTE_NOW_4H or tf_4h.in_poi_entry_zone:
             execution_ready = True
             priority_timeframe = "4H"
-            verdict = "🔥 EXECUTE NOW (4H POI + Premium/Discount 60–80%!)"
+            verdict = "🔥 EXECUTE NOW (4H POI + Premium/Discount 55–85% / FVG CHoCH!)"
         elif tf_4h.choch_detected and tf_4h.fvg_detected:
             verdict = f"⏳ WAITING FOR 4H PULLBACK ({tf_4h.distance_to_fvg_pips:.1f} pips away)"
         elif tf_4h.choch_detected:
@@ -2361,9 +2369,14 @@ class MultiTFRadar:
             return None
         return '4H'
 
+    @staticmethod
+    def _note_radar_skip_reason(setup: dict, reason: str) -> None:
+        setup['last_radar_skip_reason'] = reason[:240]
+        setup['last_radar_skip_at'] = datetime.now(timezone.utc).isoformat()
+
     def _rr_shield_blocks_execute(self, setup: dict, result: 'MultiTFResult',
                                   exec_tf_data=None) -> bool:
-        """V37.7: Blocheaza EXECUTE_NOW daca RR entry→TP vs SL < 2.0."""
+        """V37.7 / DEBLOCARE sec.8: avertisment RR — nu blocheaza EXECUTE_NOW."""
         _rr_entry = (
             setup.get('radar_4h_fvg_entry')
             or setup.get('entry_price') or result.current_price
@@ -2384,21 +2397,27 @@ class MultiTFRadar:
                 return False
             _rr_val = _rr_dist_tp / _rr_dist_sl
             if _rr_val < 2.0:
-                logger.warning(
-                    f"[V37.7 RR SHIELD] {result.symbol}: EXECUTE BLOCAT — "
-                    f"RR={_rr_val:.2f} < 2.0 "
+                msg = (
+                    f"[V37.7 RR SHIELD WARN] {result.symbol}: RR={_rr_val:.2f} < 2.0 "
                     f"(TP dist={_rr_dist_tp/_pip_rr:.0f}p, SL dist={_rr_dist_sl/_pip_rr:.0f}p) — "
-                    f"TP prea aproape / lichiditate deja atinsa"
+                    f"EXECUTE permis (warn-only sec.8)"
                 )
-                print(f"  ⛔ [RADAR SKIP EXECUTE] {result.symbol}: RR Shield RR={_rr_val:.2f}<2.0")
-                sys.stdout.flush()
-                return True
+                logger.warning(msg)
+                try:
+                    self._send_radar_telegram_alert(
+                        f"⚠️ <b>RR Shield {result.symbol}</b>\n"
+                        f"RR <b>{_rr_val:.2f}</b> (sub 1:2) — radar armeaza oricum.\n"
+                        f"Verifica TP/SL live la executor."
+                    )
+                except Exception:
+                    pass
+                return False
             logger.info(f"[V37.7 RR SHIELD] {result.symbol}: RR={_rr_val:.2f} >= 2.0 OK")
         except Exception as _rr_err:
             logger.warning(
-                f"[V37.7 RR SHIELD] {result.symbol}: calcul RR eșuat ({_rr_err}) — EXECUTE BLOCAT (fail-closed)"
+                f"[V37.7 RR SHIELD] {result.symbol}: calcul RR eșuat ({_rr_err}) — warn-only, EXECUTE permis"
             )
-            return True
+            return False
         return False
 
     _EXECUTE_NOW_FLUSH_KEYS = (
@@ -2455,7 +2474,7 @@ class MultiTFRadar:
         return macro, issues
 
     def _w_d_sync_blocks_execute(self, setup: dict, result: 'MultiTFResult') -> bool:
-        """Faza 2: blocare EXECUTE_NOW când W1 ≠ D1 sau preț în afara zonei W1 macro."""
+        """W+D soft sync: actualizează status/monitor — nu blochează EXECUTE (sec.8 2026-10-03)."""
         sym = setup.get('symbol', '?')
         d1_dir = (
             setup.get('d1_bias_direction')
@@ -2481,16 +2500,28 @@ class MultiTFRadar:
                     f"(w_d_aligned={setup['w_d_aligned']})"
                 )
 
-        if setup.get('status') == 'WAITING_W_D_SYNC' or setup.get('w_d_aligned') is False:
-            logger.debug(
-                f"[W+D SOFT SYNC] {sym}: Așteptăm alinierea D1 în POI Weekly"
+        misaligned = (
+            setup.get('status') == 'WAITING_W_D_SYNC'
+            or setup.get('w_d_aligned') is False
+            or setup.get('status') == 'WAITING_W_ZONE'
+        )
+        if misaligned:
+            logger.info(
+                f"[W+D SOFT SYNC WARN] {sym}: W≠D sau preț în afara zonei W — "
+                f"monitor only (EXECUTE neblocat)"
             )
-            return True
-        if setup.get('status') == 'WAITING_W_ZONE':
-            logger.debug(
-                f"[W+D SOFT SYNC] {sym}: Așteptăm alinierea D1 în POI Weekly"
-            )
-            return True
+            if not setup.get('w_d_sync_warn_sent'):
+                setup['w_d_sync_warn_sent'] = True
+                try:
+                    self._send_radar_telegram_alert(
+                        f"⚠️ <b>W+D sync {sym}</b>\n"
+                        f"Status: <code>{setup.get('status', '?')}</code> — "
+                        f"counter-trend W1; EXECUTE permis dacă D+POI+4H OK."
+                    )
+                except Exception:
+                    pass
+        else:
+            setup.pop('w_d_sync_warn_sent', None)
         return False
 
     def _v423_force_disarm_execute_now(
@@ -2654,21 +2685,16 @@ class MultiTFRadar:
     def _arm_execute_now(self, setup: dict, result: 'MultiTFResult', exec_tf: str,
                          source: str = 'trigger') -> None:
         """V37.5/6: Seteaza EXECUTE_NOW, flush instant JSON, Telegram o singura data per setup."""
-        if setup.get('status') == 'WAITING_W_D_SYNC' or setup.get('w_d_aligned') is False:
-            logger.debug(
-                f"[W+D SOFT SYNC] {setup.get('symbol', '?')}: "
-                f"Așteptăm alinierea D1 în POI Weekly — skip EXECUTE_NOW arm"
-            )
-            return
-        # V49: armare secvențială — touch POI latched + retrace 60–80% (fără overlap simultan)
+        # V49: armare secvențială — touch POI latched + retrace 55–85% / FVG CHoCH
         _poi_arm_ok = bool(
             result.daily_zone_validated or setup.get('poi_touch_latched')
         )
         if not _poi_arm_ok:
-            logger.info(
-                f"[V49 POI GATE] {setup.get('symbol', '?')}: skip EXECUTE_NOW arm — "
-                f"preț {result.current_price:.5f} fără POI live și fără poi_touch_latched"
+            reason = (
+                f"V49 POI gate: preț {result.current_price:.5f} fără POI live/latch"
             )
+            logger.info(f"[V49 POI GATE] {setup.get('symbol', '?')}: skip EXECUTE_NOW arm — {reason}")
+            self._note_radar_skip_reason(setup, reason)
             return
         # V68: alert if cBot 8010 offline when arming EXECUTE_NOW
         try:
@@ -2691,6 +2717,9 @@ class MultiTFRadar:
                 self._v423_force_disarm_execute_now(
                     setup, result, f"arm blocked — {_detail} vs D1 {_macro}",
                 )
+                self._note_radar_skip_reason(
+                    setup, f"V42.3 LTF misalignment {_detail} vs D1 {_macro}",
+                )
                 return
         # V40.9/V54: cooldown 30 min — skip pentru erori tranzitorie rețea/spread
         _blocked_at = setup.get('execute_now_blocked_at')
@@ -2701,6 +2730,9 @@ class MultiTFRadar:
                 try:
                     _bt = datetime.fromisoformat(str(_blocked_at).replace('Z', '+00:00'))
                     if datetime.now(timezone.utc) - _bt < timedelta(minutes=30):
+                        self._note_radar_skip_reason(
+                            setup, f"V40.9 cooldown: {_rej[:120]}",
+                        )
                         logger.debug(
                             f"[V40.9] {setup.get('symbol', '?')}: skip EXECUTE_NOW re-arm — "
                             f"executor block cooldown ({_rej[:60]})"
@@ -2792,6 +2824,12 @@ class MultiTFRadar:
             setup['radar_4h_choch_bars_ago'] = result.tf_4h.choch_bars_ago
         else:
             setup['radar_4h_choch_detected'] = False
+
+        if getattr(result.tf_4h, 'bos_detected', False):
+            setup['radar_4h_bos_detected'] = True
+            setup['radar_4h_bos_direction'] = result.tf_4h.bos_direction
+        else:
+            setup['radar_4h_bos_detected'] = False
 
         if getattr(result.tf_4h, 'overshoot_stale', False):
             setup['radar_4h_overshoot_stale'] = True
@@ -2932,11 +2970,7 @@ class MultiTFRadar:
         # înainte ca executorul să apuce să citească True-ul din T+00s → semnal pierdut.
         # Excepție V42.2: TRADE_OPEN = toate intrările complete; PARTIAL_OPEN = radar poate re-arma 4H.
         # V42.3: nu arma EXECUTE_NOW dacă LTF CHoCH ≠ Daily bias.
-        if self._w_d_sync_blocks_execute(setup, result) and setup.get('status') != 'TRADE_OPEN':
-            if setup.get('EXECUTE_NOW') or setup.get('radar_execution_ready'):
-                self._v423_force_disarm_execute_now(
-                    setup, result, 'W+D soft sync — așteptăm alinierea D1 în POI Weekly',
-                )
+        self._w_d_sync_blocks_execute(setup, result)
         _v423_macro, _v423_issues = self._v423_ltf_misalignment(setup, result)
         if _v423_issues and setup.get('status') != 'TRADE_OPEN':
             _detail = '/'.join(f"{tf}={d}" for tf, d in _v423_issues)

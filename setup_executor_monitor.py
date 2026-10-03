@@ -291,7 +291,8 @@ class SetupExecutorMonitor:
     @classmethod
     def _v423_structural_sync_ok(cls, setup: dict) -> tuple:
         """
-        V42.3/W→D→4H: Scut absolut D1 = 4H — EXECUTE_NOW doar cu CHoCH 4H aliniat cu Daily.
+        V42.3/W→D→4H: D1 = 4H structural direction.
+        CONTINUATION: acceptă BOS 4H aliniat (DEBLOCARE sec.8 / Faza B).
         TRADE_OPEN: nu blocăm (poziție deja deschisă).
         """
         if setup.get('status') == 'TRADE_OPEN':
@@ -299,6 +300,14 @@ class SetupExecutorMonitor:
         macro = cls._v423_norm_daily_bias(setup.get('direction', ''))
         if not macro:
             return False, 'invalid D1 direction'
+
+        st = (setup.get('setup_type') or setup.get('strategy_type') or 'reversal').upper()
+        if 'CONTINUATION' in st and setup.get('radar_4h_bos_detected'):
+            bos_dir = setup.get('radar_4h_bos_direction')
+            if bos_dir and bos_dir == macro:
+                return True, ''
+            if bos_dir and bos_dir != macro:
+                return False, bos_dir
 
         h4_dir = setup.get('radar_4h_choch_direction')
 
@@ -1489,6 +1498,10 @@ class SetupExecutorMonitor:
                                 )
                                 setups[i]['EXECUTE_NOW'] = False
                                 setups[i].pop('execute_now_trigger_tf', None)
+                                setups[i].pop('execute_now_blocked_at', None)
+                                setups[i]['last_rejection_reason'] = (
+                                    f"V42.3 alignment: LTF {_ltf_mismatch} vs Daily"
+                                )
                                 setups[i]['v42_3_alignment_block'] = _ltf_mismatch
                                 setups[i]['v42_3_alignment_block_at'] = (
                                     datetime.now(timezone.utc).isoformat()

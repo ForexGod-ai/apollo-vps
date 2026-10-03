@@ -22,6 +22,31 @@ DEFAULT_LOCK_TIMEOUT_SEC = 10.0
 DEFAULT_LOCK_POLL_SEC = 0.05
 
 
+def normalize_setup_legacy_1h(setup: Dict[str, Any]) -> bool:
+    """Post–1H removal: force multi_entry_plan to 4H-only (idempotent)."""
+    if not isinstance(setup, dict):
+        return False
+    plan = setup.get("multi_entry_plan")
+    changed = False
+    if plan == "1H" or plan == "1h":
+        setup["multi_entry_plan"] = ["4H"]
+        changed = True
+    elif isinstance(plan, list):
+        upper = [str(p).upper() for p in plan]
+        if "1H" in upper or "H1" in upper:
+            setup["multi_entry_plan"] = ["4H"]
+            changed = True
+    return changed
+
+
+def normalize_setups_legacy_1h(setups: List[Dict[str, Any]]) -> int:
+    n = 0
+    for s in setups:
+        if normalize_setup_legacy_1h(s):
+            n += 1
+    return n
+
+
 def monitoring_json_default(obj: Any) -> Any:
     """json.dump default: numpy scalars/arrays + str fallback."""
     if isinstance(obj, float):
@@ -118,11 +143,14 @@ def load_monitoring_json(
             return {}, [], False
 
     if isinstance(data, list):
-        return {"setups": data}, data, had_trailing_junk
+        setups = data
+        normalize_setups_legacy_1h(setups)
+        return {"setups": setups}, setups, had_trailing_junk
     if isinstance(data, dict):
         setups = data.get("setups", [])
         if not isinstance(setups, list):
             setups = []
+        normalize_setups_legacy_1h(setups)
         return data, setups, had_trailing_junk
     return {}, [], had_trailing_junk
 

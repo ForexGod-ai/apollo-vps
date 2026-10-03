@@ -84,9 +84,11 @@ def test_apply_w_d_sync_gate_aligned_bearish():
     assert out.status == 'MONITORING'
 
 
-def test_arm_execute_now_blocked_on_w_d_mismatch():
+def test_arm_execute_now_allowed_on_w_d_mismatch_warn_only():
     radar = mtr.MultiTFRadar.__new__(mtr.MultiTFRadar)
     radar.smc_4h = SMCDetector()
+    radar._execute_now_alert_keys = set()
+    radar.ctrader = SimpleNamespace(is_available=lambda **kwargs: True)
     setup = {
         'symbol': 'EURGBP',
         'direction': 'buy',
@@ -113,11 +115,13 @@ def test_arm_execute_now_blocked_on_w_d_mismatch():
     )
     with patch.object(radar, '_flush_execute_now_to_json'):
         with patch.object(radar, '_v423_ltf_misalignment', return_value=('bullish', [])):
-            radar._arm_execute_now(setup, result, '4H', source='test')
-    assert setup.get('EXECUTE_NOW') is not True
+            with patch.object(radar, '_send_radar_telegram_alert'):
+                with patch.object(mtr, 'logger'):
+                    radar._arm_execute_now(setup, result, '4H', source='test')
+    assert setup.get('EXECUTE_NOW') is True
 
 
-def test_w_d_sync_radar_blocks_execute():
+def test_w_d_sync_radar_monitor_only_does_not_block():
     radar = mtr.MultiTFRadar.__new__(mtr.MultiTFRadar)
     radar.smc_4h = SMCDetector()
     setup = {
@@ -131,7 +135,7 @@ def test_w_d_sync_radar_blocks_execute():
         'status': 'MONITORING',
     }
     result = SimpleNamespace(symbol='GBPUSD', current_price=1.262)
-    assert radar._w_d_sync_blocks_execute(setup, result) is True
+    assert radar._w_d_sync_blocks_execute(setup, result) is False
     assert setup['status'] == 'WAITING_W_D_SYNC'
 
 

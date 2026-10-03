@@ -171,6 +171,58 @@ def test_execute_now_pipeline_flush():
     assert flushed[0]['execute_now_trigger_tf'] == '4H'
 
 
+def test_v46_1_retrace_band_constants():
+    assert mtr._RETRACE_ENTRY_MIN == 0.55
+    assert mtr._RETRACE_ENTRY_MAX == 0.85
+
+
+def test_rr_shield_warn_only_does_not_block():
+    radar = mtr.MultiTFRadar.__new__(mtr.MultiTFRadar)
+    setup = {
+        'symbol': 'BTCUSD',
+        'direction': 'buy',
+        'entry_price': 100.0,
+        'daily_tp_price': 100.5,
+        'stop_loss': 99.0,
+    }
+    result = SimpleNamespace(symbol='BTCUSD', current_price=100.0)
+    tf = SimpleNamespace(h4_sl_price=99.0)
+    with patch.object(radar, '_get_pip_size', return_value=1.0):
+        with patch.object(radar, '_send_radar_telegram_alert'):
+            blocked = radar._rr_shield_blocks_execute(setup, result, tf)
+    assert blocked is False
+
+
+def test_w_d_misalignment_does_not_block_arm_execute_now():
+    radar = mtr.MultiTFRadar.__new__(mtr.MultiTFRadar)
+    radar.smc_4h = SMCDetector()
+    radar._execute_now_alert_keys = set()
+    radar.ctrader = SimpleNamespace(is_available=lambda **kwargs: True)
+    setup = {
+        'symbol': 'EURGBP',
+        'direction': 'buy',
+        'w_d_aligned': False,
+        'status': 'WAITING_W_D_SYNC',
+        'poi_touch_latched': True,
+    }
+    result = SimpleNamespace(
+        symbol='EURGBP',
+        direction='LONG',
+        current_price=1.103,
+        daily_zone_validated=True,
+        tf_4h=SimpleNamespace(
+            fvg_top=1.104, fvg_bottom=1.101, equilibrium=1.1025,
+            h4_sl_price=1.098, retrace_pct=0.7, in_poi_entry_zone=True,
+        ),
+    )
+    with patch.object(radar, '_flush_execute_now_to_json'):
+        with patch.object(radar, '_v423_ltf_misalignment', return_value=('bullish', [])):
+            with patch.object(radar, '_send_radar_telegram_alert'):
+                with patch.object(mtr, 'logger'):
+                    radar._arm_execute_now(setup, result, '4H', source='test')
+    assert setup.get('EXECUTE_NOW') is True
+
+
 def test_filter_events_in_recent_window():
     df = _make_ohlc([100 + i * 0.1 for i in range(80)], spread=0.05)
     old = CHoCH(
