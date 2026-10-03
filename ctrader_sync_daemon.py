@@ -25,12 +25,14 @@ from loguru import logger
 
 from broker_data_freshness import (
     MAX_BROKER_AGE_SECONDS,
+    disk_payload_fresh,
     format_stale_reason,
     incoming_is_newer_or_equal,
     is_payload_fresh,
     load_local_trade_history,
     payload_age_seconds,
     resolve_trade_sync_url,
+    trade_sync_fetch_attempts,
 )
 
 load_dotenv()
@@ -75,8 +77,22 @@ def _stale_telegram_cooldown_seconds(alerts_already_sent: int) -> int:
         return STALE_ALERT_COOLDOWN_2ND_S
     return STALE_ALERT_COOLDOWN_3RD_PLUS_S
 
-_last_fetch_failure: Optional[str] = None  # stale | offline | invalid | error
+_last_fetch_failure: Optional[str] = None  # stale | offline | timeout | hostname_mismatch | invalid | error
 _last_stale_payload: Optional[dict] = None
+
+_HTTP_HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (compatible; ApolloTradeSync/57.1)',
+    'Accept': 'application/json, text/plain, */*',
+}
+
+
+def _telegram_alert_eligible(failure_kind: Optional[str]) -> bool:
+    """V57.1: STALE Telegram only for true outage/stale data — not parse/400 glitches."""
+    if not failure_kind:
+        return False
+    if failure_kind in ('invalid', 'hostname_mismatch', 'error'):
+        return False
+    return failure_kind in ('offline', 'timeout', 'stale')
 
 
 def convert_volume_to_lots(symbol: str, volume_units: float) -> float:
@@ -261,97 +277,113 @@ def _log_http_body_preview(response: requests.Response, label: str) -> None:
 
 
 def fetch_ctrader_data():
-    """Fetch live account data from TradeHistorySyncer HTTP server.
-
-    TradeHistorySyncer.cs serves:
-      { "account": { "balance", "equity", ... }, "open_positions": [...], "closed_trades": [...] }
-
-    Port 8010 = MarketDataProvider (OHLCV bars only — different bot, different port).
-    """
+    """Fetch live account data from TradeHistorySyncer HTTP server (V57.1 multi-attempt)."""
     global _last_fetch_failure, _last_stale_payload
-    url = _trade_sync_url()
-    response: Optional[requests.Response] = None
-    try:
-        logger.debug(f"📡 Fetching from {url}")
-        response = requests.get(url, timeout=10)
-    except requests.exceptions.ConnectionError as exc:
-        _last_fetch_failure = 'offline'
-        logger.error(
-            f"❌ ConnectionError to TradeHistorySyncer {url}: {exc!r} "
-            f"(Docker? set TRADE_SYNC_URL=http://host.docker.internal:8767/)"
-        )
-        return None
-    except requests.exceptions.Timeout as exc:
-        _last_fetch_failure = 'offline'
-        logger.error(f"⏱️ Timeout after 10s fetching {url}: {exc!r}")
-        return None
-    except requests.exceptions.RequestException as exc:
-        _last_fetch_failure = 'error'
-        logger.error(f"❌ HTTP request failed for {url}: {exc!r}")
-        return None
 
-    try:
-        if not response.ok:
-            _last_fetch_failure = 'error'
-            _log_http_body_preview(response, 'HTTP error from TradeHistorySyncer')
-            return None
+    had_transport_failure = False
+    last_non_transport_kind: Optional[str] = None
+
+    for url, extra_headers in trade_sync_fetch_attempts():
+        headers = {**_HTTP_HEADERS, **extra_headers}
+        response: Optional[requests.Response] = None
+        try:
+            logger.debug(f"📡 Fetching from {url} headers={extra_headers!r}")
+            response = requests.get(url, timeout=10, headers=headers)
+        except requests.exceptions.ConnectionError as exc:
+            had_transport_failure = True
+            logger.error(
+                f"❌ ConnectionError to TradeHistorySyncer {url}: {exc!r} "
+                f"(set CTRADER_SYNC_URL=http://localhost:8767/ or 127.0.0.1 + Host localhost)"
+            )
+            continue
+        except requests.exceptions.Timeout as exc:
+            had_transport_failure = True
+            last_non_transport_kind = 'timeout'
+            logger.error(f"⏱️ Timeout after 10s fetching {url}: {exc!r}")
+            continue
+        except requests.exceptions.RequestException as exc:
+            last_non_transport_kind = 'error'
+            logger.error(f"❌ HTTP request failed for {url}: {exc!r}")
+            continue
 
         try:
-            data = response.json()
-        except json.JSONDecodeError as exc:
-            _last_fetch_failure = 'invalid'
-            _log_http_body_preview(
-                response,
-                f'JSONDecodeError ({exc}) from TradeHistorySyncer',
-            )
-            return None
-
-        account = data.get('account', {})
-        balance = account.get('balance')
-        equity = account.get('equity')
-
-        if balance is None or equity is None:
-            _last_fetch_failure = 'invalid'
-            logger.error(
-                "❌ Response missing account.balance/equity — TradeHistorySyncer may not be synced yet "
-                f"(HTTP {response.status_code} keys={list(data.keys())!r})"
-            )
-            return None
-
-        if not is_payload_fresh(data):
-            _last_fetch_failure = 'stale'
-            _last_stale_payload = data
-            disk_fresh = _load_fresh_from_disk()
-            if disk_fresh is not None:
-                logger.warning(
-                    f"⚠️ HTTP stale ({format_stale_reason(data)}) — using fresh trade_history.json from disk"
+            if response.status_code == 400:
+                last_non_transport_kind = 'hostname_mismatch'
+                _log_http_body_preview(
+                    response,
+                    'HTTP 400 Invalid Hostname (use Host: localhost on 127.0.0.1)',
                 )
-                _last_fetch_failure = None
-                _last_stale_payload = None
-                return disk_fresh
-            logger.error(
-                f"❌ STALE broker payload rejected — {format_stale_reason(data)} "
-                f"(HTTP {response.status_code} url={url}; check last_update format / cBot clock)"
+                continue
+
+            if not response.ok:
+                last_non_transport_kind = 'error'
+                _log_http_body_preview(response, 'HTTP error from TradeHistorySyncer')
+                continue
+
+            try:
+                data = response.json()
+            except json.JSONDecodeError as exc:
+                last_non_transport_kind = 'invalid'
+                _log_http_body_preview(
+                    response,
+                    f'JSONDecodeError ({exc}) from TradeHistorySyncer',
+                )
+                continue
+
+            account = data.get('account', {})
+            balance = account.get('balance')
+            equity = account.get('equity')
+
+            if balance is None or equity is None:
+                last_non_transport_kind = 'invalid'
+                logger.error(
+                    "❌ Response missing account.balance/equity — TradeHistorySyncer may not be synced yet "
+                    f"(HTTP {response.status_code} keys={list(data.keys())!r})"
+                )
+                continue
+
+            if not is_payload_fresh(data):
+                _last_stale_payload = data
+                disk_fresh = _load_fresh_from_disk()
+                if disk_fresh is not None:
+                    logger.warning(
+                        f"⚠️ HTTP stale ({format_stale_reason(data)}) — using fresh trade_history.json from disk"
+                    )
+                    _last_fetch_failure = None
+                    _last_stale_payload = None
+                    return disk_fresh
+                last_non_transport_kind = 'stale'
+                logger.error(
+                    f"❌ STALE broker payload rejected — {format_stale_reason(data)} "
+                    f"(HTTP {response.status_code} url={url})"
+                )
+                continue
+
+            _last_fetch_failure = None
+            _last_stale_payload = None
+            logger.success(
+                f"✅ API Response: Balance ${balance:.2f}, Equity ${equity:.2f} "
+                f"(last_update={(account.get('last_update'))})"
             )
-            return None
+            return data
 
-        _last_fetch_failure = None
-        _last_stale_payload = None
-        logger.success(
-            f"✅ API Response: Balance ${balance:.2f}, Equity ${equity:.2f} "
-            f"(last_update={(account.get('last_update'))})"
-        )
-        return data
+        except Exception as exc:
+            last_non_transport_kind = 'error'
+            status = response.status_code if response is not None else 'n/a'
+            preview = (response.text or '')[:100] if response is not None else ''
+            logger.error(
+                f"❌ Unexpected error parsing TradeHistorySyncer response "
+                f"url={url} HTTP {status} preview={preview!r}: {exc!r}"
+            )
+            continue
 
-    except Exception as exc:
-        _last_fetch_failure = 'error'
-        status = response.status_code if response is not None else 'n/a'
-        preview = (response.text or '')[:100] if response is not None else ''
-        logger.error(
-            f"❌ Unexpected error parsing TradeHistorySyncer response "
-            f"url={url} HTTP {status} preview={preview!r}: {exc!r}"
-        )
-        return None
+    if last_non_transport_kind:
+        _last_fetch_failure = last_non_transport_kind
+    elif had_transport_failure:
+        _last_fetch_failure = 'timeout' if last_non_transport_kind == 'timeout' else 'offline'
+    else:
+        _last_fetch_failure = 'offline'
+    return None
 
 
 def _send_broker_stale_telegram(
@@ -363,6 +395,8 @@ def _send_broker_stale_telegram(
     kind_note = {
         'stale': 'TradeHistorySyncer răspunde dar datele sunt STALE (last_update vechi)',
         'offline': 'TradeHistorySyncer offline — port 8767 inaccesibil',
+        'timeout': 'TradeHistorySyncer timeout — port 8767 fără răspuns',
+        'hostname_mismatch': 'HTTP 400 Invalid Hostname (Host header / URL)',
         'invalid': 'Răspuns JSON invalid sau fără balance/equity',
         'error': 'Eroare HTTP la citirea brokerului',
     }.get(failure_kind, failure_kind or 'necunoscut')
@@ -492,18 +526,29 @@ def write_trade_history(data, db: TradeDatabase):
 def sync_once(db: TradeDatabase):
     """Perform single sync operation"""
     logger.info("🔄 Starting sync from cTrader API...")
-    
+
     data = fetch_ctrader_data()
     if not data:
-        logger.error("❌ Sync failed - no data received")
-        return False
-    
+        disk = _load_fresh_from_disk()
+        if disk is not None:
+            logger.warning(
+                "[V57.1 DEGRADED] HTTP fetch failed but trade_history.json is fresh "
+                f"({format_stale_reason(disk).replace('last_update=', 'disk ')}) — "
+                "sync OK, no STALE Telegram"
+            )
+            global _last_fetch_failure, _last_stale_payload
+            _last_fetch_failure = None
+            _last_stale_payload = None
+            data = disk
+        else:
+            logger.error("❌ Sync failed - no HTTP data and disk not fresh")
+            return False
+
     success = write_trade_history(data, db)
     if success:
         logger.success("✅ Sync complete - trade_history.json is current")
         return True
-    else:
-        return False
+    return False
 
 
 def sync_loop(interval=SYNC_INTERVAL):
@@ -548,7 +593,15 @@ def sync_loop(interval=SYNC_INTERVAL):
                     f"⚠️ Sync skipped/failed ({consecutive_failures} consecutive, "
                     f"{elapsed:.0f}s) — daemon stays alive (max age {MAX_BROKER_AGE_SECONDS:.0f}s)"
                 )
-                if elapsed >= STALE_ALERT_AFTER_S:
+                disk_fresh = disk_payload_fresh(TRADE_HISTORY_FILE)
+                if disk_fresh:
+                    logger.info(
+                        "[V57.1] Sync HTTP failing but trade_history.json fresh — "
+                        "STALE Telegram suppressed"
+                    )
+                elif elapsed >= STALE_ALERT_AFTER_S and _telegram_alert_eligible(
+                    _last_fetch_failure
+                ):
                     cooldown = _stale_telegram_cooldown_seconds(stale_alert_count)
                     should_alert = (
                         last_stale_alert_at is None
@@ -556,7 +609,7 @@ def sync_loop(interval=SYNC_INTERVAL):
                     )
                     if should_alert:
                         _send_broker_stale_telegram(
-                            _last_fetch_failure or 'error',
+                            _last_fetch_failure or 'offline',
                             consecutive_failures,
                             _last_stale_payload,
                         )
@@ -565,9 +618,15 @@ def sync_loop(interval=SYNC_INTERVAL):
                         next_cd = _stale_telegram_cooldown_seconds(stale_alert_count)
                         if next_cd:
                             logger.info(
-                                f"[V57] Broker stale alert #{stale_alert_count} sent — "
+                                f"[V57.1] Broker stale alert #{stale_alert_count} sent — "
                                 f"next alert earliest in {next_cd // 60} min if still failing"
                             )
+                elif elapsed >= STALE_ALERT_AFTER_S and not _telegram_alert_eligible(
+                    _last_fetch_failure
+                ):
+                    logger.debug(
+                        f"[V57.1] Failure {_last_fetch_failure!r} — not eligible for STALE Telegram"
+                    )
             
             logger.debug(f"💤 Sleeping {interval}s until next sync...")
             time.sleep(interval)

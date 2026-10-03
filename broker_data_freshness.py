@@ -7,13 +7,15 @@ import json
 import os
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import urlparse
 
 
 def resolve_trade_sync_url() -> str:
-    """TradeHistorySyncer base URL — TRADE_SYNC_URL or CTRADER_API_URL from .env."""
+    """TradeHistorySyncer base URL — env chain, default localhost (HttpListener cBot)."""
     raw = (
-        os.getenv('TRADE_SYNC_URL')
+        os.getenv('CTRADER_SYNC_URL')
+        or os.getenv('TRADE_SYNC_URL')
         or os.getenv('CTRADER_API_URL')
         or 'http://localhost:8767/'
     ).strip()
@@ -21,8 +23,45 @@ def resolve_trade_sync_url() -> str:
         raw += '/'
     return raw
 
+
+def trade_sync_fetch_attempts() -> List[Tuple[str, Dict[str, str]]]:
+    """
+    HTTP GET attempts for TradeHistorySyncer (Windows HttpListener = localhost prefix).
+    127.0.0.1 requests must send Host: localhost to avoid 400 Invalid Hostname.
+    """
+    primary = resolve_trade_sync_url()
+    parsed = urlparse(primary)
+    port = parsed.port or 8767
+    attempts: List[Tuple[str, Dict[str, str]]] = []
+    seen: set[str] = set()
+
+    def _add(url: str, headers: Optional[Dict[str, str]] = None) -> None:
+        if url not in seen:
+            seen.add(url)
+            attempts.append((url, headers or {}))
+
+    _add(primary, {})
+    _add(f'http://127.0.0.1:{port}/', {'Host': 'localhost'})
+    host = (parsed.hostname or '').lower()
+    if host not in ('localhost', '127.0.0.1'):
+        _add(f'http://localhost:{port}/', {'Host': 'localhost'})
+
+    return attempts
+
+
 # cBot UpdateInterval default 10s — allow 2 min before calling data stale
 MAX_BROKER_AGE_SECONDS = 120
+
+
+def disk_payload_fresh(
+    path: Path,
+    max_age_seconds: Optional[float] = None,
+) -> bool:
+    """True if path exists and JSON account.last_update is within max_age."""
+    if max_age_seconds is None:
+        max_age_seconds = MAX_BROKER_AGE_SECONDS
+    data = load_local_trade_history(path)
+    return data is not None and is_payload_fresh(data, max_age_seconds=max_age_seconds)
 
 
 def parse_last_update(ts: Any) -> Optional[datetime]:

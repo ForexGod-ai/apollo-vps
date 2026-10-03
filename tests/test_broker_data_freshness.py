@@ -6,6 +6,7 @@ from broker_data_freshness import (
     is_payload_fresh,
     parse_last_update,
     payload_age_seconds,
+    trade_sync_fetch_attempts,
 )
 
 
@@ -41,6 +42,19 @@ def test_payload_age_seconds_non_negative():
     age = payload_age_seconds(_payload(now))
     assert age is not None
     assert age >= 0
+
+
+def test_trade_sync_fetch_attempts_includes_127_with_host_localhost(monkeypatch):
+    monkeypatch.delenv('CTRADER_SYNC_URL', raising=False)
+    monkeypatch.delenv('TRADE_SYNC_URL', raising=False)
+    monkeypatch.delenv('CTRADER_API_URL', raising=False)
+    attempts = trade_sync_fetch_attempts()
+    ip_attempt = next(
+        (h for url, h in attempts if url.startswith('http://127.0.0.1:')),
+        None,
+    )
+    assert ip_attempt is not None
+    assert ip_attempt.get('Host') == 'localhost'
 
 
 def test_stale_payload_three_hours_old():
