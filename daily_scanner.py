@@ -1215,6 +1215,44 @@ def _d1_wick_from_df(df_d1: Optional[pd.DataFrame]) -> tuple[Optional[float], Op
     return float(df_d1['high'].iloc[-1]), float(df_d1['low'].iloc[-1])
 
 
+def _apply_poi_to_setup_dict(out: dict, poi_res) -> dict:
+    """V70: populate poi_*, fvg_*, entry_price from POIResolution (FVG or OTE)."""
+    if poi_res is None or poi_res.fvg is None:
+        return out
+    fvg = poi_res.fvg
+    top = float(fvg.top)
+    bottom = float(fvg.bottom)
+    out['poi_top'] = top
+    out['poi_bottom'] = bottom
+    out['fvg_top'] = top
+    out['fvg_bottom'] = bottom
+    src = poi_res.poi_source or out.get('poi_v43_source') or 'organic_fvg'
+    out['poi_v43_source'] = src
+    if out.get('entry_price') in (None, 0, 0.0, ''):
+        bias = str(
+            out.get('d1_bias_direction')
+            or out.get('daily_bias')
+            or out.get('direction')
+            or ''
+        ).lower()
+        if bias in ('buy', 'bullish', 'long'):
+            out['entry_price'] = bottom
+        elif bias in ('sell', 'bearish', 'short'):
+            out['entry_price'] = top
+        else:
+            out['entry_price'] = float(fvg.middle)
+    if poi_res.adr is not None:
+        out['adr_lh'] = float(poi_res.adr.last_lh)
+        out['adr_ll'] = float(poi_res.adr.last_ll)
+        out['adr_hl'] = float(poi_res.adr.last_hl)
+    return out
+
+
+def _monitoring_dict_has_poi(entry: dict) -> bool:
+    bottom, top = poi_bounds_from_stored(entry)
+    return bottom is not None and top is not None
+
+
 def _v43_fields_from_setup(setup: TradeSetup) -> dict:
     """Extract V43 ADR / POI metadata from TradeSetup for JSON persistence."""
     return {
@@ -1777,15 +1815,7 @@ def _rehydrate_poi_from_bos_range(
         stored_poi_top=None,
         stored_poi_bottom=None,
     )
-    if poi_res.fvg:
-        out['poi_top'] = float(poi_res.fvg.top)
-        out['poi_bottom'] = float(poi_res.fvg.bottom)
-        out['fvg_top'] = float(poi_res.fvg.top)
-        out['fvg_bottom'] = float(poi_res.fvg.bottom)
-    if adr:
-        out['adr_lh'] = float(adr.last_lh)
-        out['adr_ll'] = float(adr.last_ll)
-        out['adr_hl'] = float(adr.last_hl)
+    out = _apply_poi_to_setup_dict(out, poi_res)
 
     out['strategy_type'] = _resolved_strategy
     out['setup_type'] = _norm_strategy_type(_resolved_strategy).upper()
@@ -1942,16 +1972,9 @@ def _hydrate_bias_fallback_poi(
             df_daily, latest_signal, price, current_trend, ctx.strategy_type, adr, symbol=sym,
         )
         out = dict(entry)
-        if poi_res.fvg:
-            out['poi_top'] = float(poi_res.fvg.top)
-            out['poi_bottom'] = float(poi_res.fvg.bottom)
-            out['fvg_top'] = float(poi_res.fvg.top)
-            out['fvg_bottom'] = float(poi_res.fvg.bottom)
-            out['poi_v43_source'] = poi_res.poi_source or 'V43.1 bias fallback hydrate'
-        if adr:
-            out['adr_lh'] = float(adr.last_lh)
-            out['adr_ll'] = float(adr.last_ll)
-            out['adr_hl'] = float(adr.last_hl)
+        out = _apply_poi_to_setup_dict(out, poi_res)
+        if poi_res.poi_source:
+            out['poi_v43_source'] = poi_res.poi_source
         out['structural_breach'] = SMCDetector.compute_structural_breach(
             price, current_trend, adr,
         )
@@ -2121,7 +2144,12 @@ def _trade_setup_to_monitoring_dict(setup: TradeSetup, setup_time_str: str) -> d
         "fvg_top": float(fvg_top) if fvg_top is not None else None,
         "fvg_bottom": float(fvg_bottom) if fvg_bottom is not None else None,
         "daily_target_price": getattr(setup, 'daily_tp_price', None),
-        "entry_price": float(setup.entry_price) if getattr(setup, 'entry_price', 0) else None,
+        "entry_price": float(setup.entry_price) if getattr(setup, 'entry_price', 0) else (
+            float(fvg_bottom) if fvg_bottom is not None and direction == "buy"
+            else float(fvg_top) if fvg_top is not None and direction == "sell"
+            else (float((fvg_top + fvg_bottom) / 2) if fvg_top is not None and fvg_bottom is not None else None)
+        ),
+        "poi_v43_source": getattr(setup, 'poi_v43_source', None),
         "stop_loss": float(setup.stop_loss) if getattr(setup, 'stop_loss', 0) else None,
         "take_profit": float(setup.take_profit) if getattr(setup, 'take_profit', 0) else None,
         "risk_reward": float(setup.risk_reward) if getattr(setup, 'risk_reward', 0) else None,

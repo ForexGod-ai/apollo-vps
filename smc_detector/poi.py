@@ -696,9 +696,26 @@ class PoiMixin:
             audit_out.update(fvg_audit)
 
         if selected is None:
-            meta['poi_source'] = 'no organic FVG'
-            if symbol and debug:
-                print(f"   ⏸️ [Faza A] {symbol}: no organic FVG in P/D — WAITING_D1_PULLBACK")
+            impulse_low, impulse_high = self.impulse_bounds_from_signal(latest_signal)
+            if (impulse_low is None or impulse_high is None) and adr is not None:
+                impulse_low = float(adr.container_low)
+                impulse_high = float(adr.container_high)
+            orderflow = getattr(latest_signal, 'direction', current_trend) or current_trend
+            if impulse_low is not None and impulse_high is not None:
+                selected = self.build_ote_pd_fvg(
+                    impulse_low, impulse_high, orderflow, latest_signal, df,
+                )
+                if selected is not None:
+                    meta['poi_source'] = 'ote_pd_fallback'
+                    if symbol and debug:
+                        print(
+                            f"   📐 [V70 OTE] {symbol}: POI OTE 62–79% "
+                            f"[{selected.bottom:.5f}–{selected.top:.5f}]"
+                        )
+            if selected is None:
+                meta['poi_source'] = 'no organic FVG or OTE'
+                if symbol and debug:
+                    print(f"   ⏸️ [Faza A] {symbol}: no FVG P/D and no OTE span")
 
         poi_zombie = bool(fvg_audit.get('v43', {}).get('poi_zombie'))
         rejected = fvg_audit.get('v43', {}).get('rejected')
@@ -707,8 +724,12 @@ class PoiMixin:
             rejected_top = rejected.get('top')
             rejected_bottom = rejected.get('bottom')
 
+        if selected is not None and meta.get('poi_source') == 'detect_fvg':
+            meta['poi_source'] = fvg_audit.get('selection_reason', 'organic_fvg') or 'organic_fvg'
+
         if audit_out is not None:
-            meta['poi_source'] = fvg_audit.get('selection_reason', meta['poi_source'])
+            if meta.get('poi_source') != 'ote_pd_fallback':
+                meta['poi_source'] = fvg_audit.get('selection_reason', meta['poi_source'])
             audit_out['v43'] = {**meta, **fvg_audit.get('v43', {})}
 
         return POIResolution(

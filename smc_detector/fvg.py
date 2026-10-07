@@ -435,11 +435,10 @@ class FvgMixin:
         #   Daily SHORT → Vindem NUMAI din Premium (peste 50% al impulsului)
         #                 Ignorăm orice FVG aflat în Discount (sub 50%)
         #
-        # SELECȚIE FINALĂ (dacă există mai multe FVG-uri valide în zona corectă):
-        #   1. Cel mai PROASPĂT (ultimul format = index maxim) — evităm FVG-uri uzate
-        #   2. Dacă egalitate de prospețime → cel mai MARE (gap maxim) = mai mult lichiditate
+        # SELECȚIE FINALĂ (V70 — strict P/D only):
+        #   Cel mai MARE gap în zona Premium/Discount; tie-break = index (prospețime).
         #
-        # FALLBACK → None: niciun FVG valid în zona P/D → Fibo 50% Fallback activat
+        # FALLBACK → None: niciun FVG în P/D → OTE 62–79% în resolve_d1_poi
         # ═══════════════════════════════════════════════════════════════════
         if not all_fvgs:
             _fill_audit(None, "no_fvg_found", None, [], [])
@@ -460,24 +459,24 @@ class FvgMixin:
             except Exception:
                 pass
 
-        # ── STEP 2: Filtrare — prefer P/D, accept orice FVG organic în span-ul impulsului ──
+        # ── STEP 2: Filtrare strictă P/D (fără fallback impulse în afara P/D) ──
         pd_valid_fvgs: List[FVG] = []
-        impulse_fvgs: List[FVG] = []
+        impulse_span_fvgs: List[FVG] = []
         if equilibrium is not None and impulse_size > 0:
             impulse_low = min(swing_broken_price, choch_break_price)
             impulse_high = max(swing_broken_price, choch_break_price)
             for fvg in all_fvgs:
                 if fvg.bottom > impulse_high or fvg.top < impulse_low:
                     continue
-                impulse_fvgs.append(fvg)
+                impulse_span_fvgs.append(fvg)
                 if orderflow_direction == 'bullish':
                     if fvg.middle < equilibrium:
                         pd_valid_fvgs.append(fvg)
                 elif fvg.middle > equilibrium:
                     pd_valid_fvgs.append(fvg)
 
-        # ── STEP 3: Prefer P/D; fallback la orice imbalance valid din impuls ─────────
-        pool = pd_valid_fvgs if pd_valid_fvgs else impulse_fvgs
+        # ── STEP 3: Strict P/D pool only ─────────
+        pool = pd_valid_fvgs
         if pool:
             # Preferăm FVG-uri formate DUPĂ CHoCH (impuls proaspăt)
             choch_idx = choch.index if hasattr(choch, 'index') else 0
@@ -499,9 +498,8 @@ class FvgMixin:
                     )
                     return None
 
-            # Criteriu 1: cel mai PROASPĂT (index maxim = format cel mai recent)
-            # Criteriu 2: la egalitate de index → cel mai MARE (gap maxim)
-            candidates.sort(key=lambda f: (f.index, f.top - f.bottom), reverse=True)
+            # V70: largest gap first, then freshest bar index
+            candidates.sort(key=lambda f: (f.top - f.bottom, f.index), reverse=True)
             selected = candidates[0]
 
             if _v43_continuation and self.poi_conflicts_with_continuation(
@@ -520,28 +518,82 @@ class FvgMixin:
                 )
                 return None
 
-            _reason = "V69 organic impulse FVG"
-            if pd_valid_fvgs:
-                _reason = "V16.1 freshest+largest P/D"
+            _reason = "V70 strict P/D largest gap"
             if _v43_continuation:
-                _reason = "V43 ADR in-range + V69 organic FVG"
+                _reason = "V70 strict P/D largest gap (ADR in-range)"
             if force_in_range_rescan:
-                _reason = "V43 in-range rescan after zombie reject"
+                _reason = "V70 in-range rescan after zombie reject"
 
             if debug:
-                print(f"  ✅ [V16.1 P/D FVG] {'Discount' if orderflow_direction == 'bullish' else 'Premium'} "
+                print(f"  ✅ [V70 P/D FVG] {'Discount' if orderflow_direction == 'bullish' else 'Premium'} "
                       f"FVG @ {selected.bottom:.5f}-{selected.top:.5f} "
                       f"| EQ={equilibrium:.5f} | Index={selected.index}")
             _fill_audit(selected, _reason, equilibrium, pd_valid_fvgs, post_choch)
             return selected
 
-        # ── FALLBACK → None: niciun FVG ne-mitigat în impuls ──
+        # ── FALLBACK → None: OTE handled in resolve_d1_poi ──
         _eq_display = f"{equilibrium:.5f}" if equilibrium else "N/A"
         if debug:
-            print(f"  ⚠️ [V69 FVG] Niciun FVG organic în impuls "
-                  f"(EQ={_eq_display}) → WAITING_D1_PULLBACK")
-        _fill_audit(None, "V69 no organic FVG in impulse span", equilibrium, pd_valid_fvgs, impulse_fvgs)
+            print(f"  ⚠️ [V70 FVG] Niciun FVG strict P/D "
+                  f"(EQ={_eq_display}) → OTE fallback")
+        _fill_audit(None, "V70 no strict P/D FVG", equilibrium, pd_valid_fvgs, impulse_span_fvgs)
         return None
+
+    OTE_FIB_LOW = 0.62
+    OTE_FIB_HIGH = 0.79
+
+    @classmethod
+    def impulse_bounds_from_signal(cls, choch) -> Tuple[Optional[float], Optional[float]]:
+        """Impulse low/high from CHoCH/BOS swing broken → break price."""
+        if not hasattr(choch, 'swing_broken') or not hasattr(choch, 'break_price'):
+            return None, None
+        try:
+            a = float(choch.swing_broken.price)
+            b = float(choch.break_price)
+            return min(a, b), max(a, b)
+        except Exception:
+            return None, None
+
+    @classmethod
+    def build_ote_pd_fvg(
+        cls,
+        impulse_low: float,
+        impulse_high: float,
+        orderflow_direction: str,
+        choch,
+        df: pd.DataFrame,
+    ) -> Optional[FVG]:
+        """
+        OTE 62–79% retracement box in Premium (bearish) or Discount (bullish).
+        """
+        if impulse_high <= impulse_low:
+            return None
+        rng = impulse_high - impulse_low
+        if orderflow_direction == 'bullish':
+            top = impulse_high - cls.OTE_FIB_LOW * rng
+            bottom = impulse_high - cls.OTE_FIB_HIGH * rng
+        else:
+            bottom = impulse_low + cls.OTE_FIB_LOW * rng
+            top = impulse_low + cls.OTE_FIB_HIGH * rng
+        top_f = float(max(top, bottom))
+        bottom_f = float(min(top, bottom))
+        if top_f <= bottom_f:
+            return None
+        idx = choch.index if hasattr(choch, 'index') else max(0, len(df) - 2)
+        if 'time' in df.columns and len(df) > idx:
+            candle_time = df['time'].iloc[min(idx, len(df) - 1)]
+        else:
+            candle_time = datetime.now()
+        return FVG(
+            index=int(idx),
+            direction=orderflow_direction,
+            top=top_f,
+            bottom=bottom_f,
+            middle=(top_f + bottom_f) / 2.0,
+            candle_time=candle_time,
+            is_filled=False,
+            associated_choch=choch if hasattr(choch, 'direction') else None,
+        )
 
     def calculate_fvg_quality_score(
         self, 

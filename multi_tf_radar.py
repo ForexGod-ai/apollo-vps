@@ -919,6 +919,7 @@ class MultiTFResult:
     pd_guard_passed: bool = True
     pd_guard_reason: str = ""
     poi_first_touch_time: Optional[str] = None
+    daily_poi_missing: bool = False
 
 
 class MultiTFRadar:
@@ -2116,17 +2117,13 @@ class MultiTFRadar:
             self._log_radar_skip(symbol, self._last_skip_reason)
             return None
         
-        # Get Daily data
-        # V30.2: Guard None — entry_price/fvg_top/fvg_bottom pot fi null in JSON
-        # (setups salvate cu OB else-branch vechi sau WAITING_D1_PULLBACK fara h4_signal)
-        # float(None) crasheaza cu TypeError → 12 errors per scan. Fix: fallback explicit la 0.
+        # V70: POI from JSON only — never coerce missing POI to 0.0 (avoids false [0–0] gate)
+        _poi_bottom, _poi_top = _poi_bounds_from_stored(setup_data)
+        daily_poi_missing = _poi_bottom is None or _poi_top is None
+        daily_fvg_bottom = float(_poi_bottom) if _poi_bottom is not None else 0.0
+        daily_fvg_top = float(_poi_top) if _poi_top is not None else 0.0
         _ep = setup_data.get('entry_price')
         daily_entry = float(_ep) if _ep is not None else 0.0
-        # V31.0: poi_top/poi_bottom sunt câmpurile noi din Scanner V31.0 — backward compat cu fvg_top/fvg_bottom
-        _ft = setup_data.get('poi_top') or setup_data.get('fvg_top')
-        daily_fvg_top = float(_ft) if _ft is not None else daily_entry
-        _fb = setup_data.get('poi_bottom') or setup_data.get('fvg_bottom')
-        daily_fvg_bottom = float(_fb) if _fb is not None else daily_entry
         # V24.6 PERMISSIVE DAILY FLOW: Setup cu FVG sintetic (zona Equilibrium) — niciun FVG corp natural
         # Radarul 4H TREBUIE să găsească un CHoCH real înainte de EXECUTE_NOW
         _daily_bias_active = bool(setup_data.get('daily_bias_active', False))
@@ -2162,11 +2159,23 @@ class MultiTFRadar:
             logger.warning(f"[V52] {symbol}: D1/H4 wick fetch failed — POI touch anchor degraded: {_wick_err}")
 
         # V45: wick Daily ∩ POI → pândă radar; P/D = filtru execuție, nu gate scan
-        _v43_zone = _evaluate_v43_daily_zone(
-            setup_data, direction, current_price, daily_fvg_bottom, daily_fvg_top,
-            d1_wick_high=_d1_wick_high, d1_wick_low=_d1_wick_low,
-        )
-        daily_zone_validated = _v43_zone['validated']
+        if daily_poi_missing:
+            _v43_zone = {
+                'validated': False,
+                'in_poi': False,
+                'in_poi_wick': False,
+                'pd_passed': False,
+                'equilibrium': None,
+                'reason': 'POI lipsă în JSON — rulează Daily scan (V70)',
+                'symbol': symbol,
+            }
+            daily_zone_validated = False
+        else:
+            _v43_zone = _evaluate_v43_daily_zone(
+                setup_data, direction, current_price, daily_fvg_bottom, daily_fvg_top,
+                d1_wick_high=_d1_wick_high, d1_wick_low=_d1_wick_low,
+            )
+            daily_zone_validated = _v43_zone['validated']
         _track_mitigation_touch(
             setup_data, _v43_zone, d1_touch_time=_d1_touch_time,
             df_d1=_df_d1_touch, df_h4=_df_h4_touch,
@@ -2182,7 +2191,10 @@ class MultiTFRadar:
             print(f"⚠️  [V24.6 DAILY BIAS] {symbol}: FVG sintetic (Equilibrium) — EXECUTE_NOW blocat până la CHoCH 4H real!")
         print(f"{'='*80}")
         print(f"💰 Current Price: {current_price:.5f}")
-        print(f"📊 Daily POI: [{daily_fvg_bottom:.5f} - {daily_fvg_top:.5f}]")
+        if daily_poi_missing:
+            print("📊 Daily POI: N/A (lipsă din monitoring_setups.json — rulează Daily scan)")
+        else:
+            print(f"📊 Daily POI: [{daily_fvg_bottom:.5f} - {daily_fvg_top:.5f}]")
         if _poi_scan_active:
             if daily_zone_validated:
                 _radar_out(
@@ -2321,6 +2333,7 @@ class MultiTFRadar:
             pd_guard_passed=_pd_guard_passed,
             pd_guard_reason=_pd_guard_reason,
             poi_first_touch_time=setup_data.get('poi_first_touch_time'),
+            daily_poi_missing=daily_poi_missing,
         )
         
         # 🔥 V8.3 SYNC: Write radar results to monitoring_setups.json
@@ -3305,7 +3318,7 @@ class MultiTFRadar:
         sep = "=" * 72
         d_lo = result.daily_fvg_bottom
         d_hi = result.daily_fvg_top
-        if d_lo == 0 and d_hi == 0:
+        if result.daily_poi_missing or (d_lo == 0 and d_hi == 0):
             daily_zone_txt = "N/A (Scanner: POI inca nesetat — WAITING_D1_PULLBACK)"
         else:
             daily_zone_txt = f"[{_fmt_price(d_lo)} - {_fmt_price(d_hi)}]"
