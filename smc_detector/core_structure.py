@@ -25,13 +25,12 @@ class CoreStructureMixin:
     """V67 C: CHoCH/BOS + structural range."""
 
     def detect_choch_and_bos(self, df: pd.DataFrame) -> Tuple[List[CHoCH], List[BOS]]:
-        """🎯 GLITCH IN MATRIX - CHoCH & BOS DETECTION V68.0 (MAJOR SWINGS ONLY)
+        """🎯 GLITCH IN MATRIX - CHoCH & BOS DETECTION V71.0 (MAJOR SWINGS ONLY)
 
-        V68 — MASTER SPEC alignment (Radar 4H + D1):
-        - ✅ CHoCH/BOS calculate STRICT pe pivoții majori (`filter_major_swings`)
-        - ✅ Micro-fractale geometrice NU generează CHoCH/BOS
-        - ✅ BODY CLOSE ONLY: close > body_high (bullish) / close < body_low (bearish)
-        - ✅ prev_trend se schimbă EXCLUSIV când CHoCH e confirmat
+        V71 — Pure SMC lifecycle (no Rule 2 / Major LH gate):
+        - CHoCH/BOS on major swings only; body-close vs prior swing body (not wick)
+        - Body-close break of prior swing high/low → CHoCH when trend flips, else BOS
+        - No internal-pullback veto from historical Major LH/HL
         """
         chochs = []
         bos_list = []
@@ -107,51 +106,15 @@ class CoreStructureMixin:
                         ))
                         prev_trend = 'bullish'
                     elif _body_close_confirmed_h and prev_trend == 'bearish':
-                        # Rule 2: CHoCH bullish ONLY on body-close above Major LH
-                        _mh = [h for h in major_highs if h.index <= swing.index]
-                        _ml = [l for l in major_lows if l.index <= swing.index]
-                        _structural_lh = None
-                        if _ml:
-                            _last_low = _ml[-1]
-                            _hb = [h for h in _mh if h.index < _last_low.index]
-                            if len(_hb) >= 2:
-                                for _j in range(len(_hb) - 1, 0, -1):
-                                    if _hb[_j].price < _hb[_j - 1].price:
-                                        _structural_lh = self._swing_body_high(
-                                            df, _hb[_j].index,
-                                        )
-                                        break
-                            if _structural_lh is None and _hb:
-                                _structural_lh = self._swing_body_high(df, _hb[-1].index)
-                        _confirm_bar = _confirm_bar_h if _confirm_bar_h is not None else swing.index
-                        if (
-                            _structural_lh is not None
-                            and not self._bar_body_close_above(
-                                df, _confirm_bar, _structural_lh,
-                            )
-                        ):
-                            pass  # internal pullback — prev_trend stays bearish
-                        else:
-                            recent_highs = [s for s in major_highs if s.index <= swing.index][-5:]
-                            recent_lows = [s for s in major_lows if s.index <= swing.index][-5:]
-                            lh_any = any(
-                                recent_highs[i].price < recent_highs[i-1].price
-                                for i in range(1, len(recent_highs))
-                            )
-                            ll_any = any(
-                                recent_lows[i].price < recent_lows[i-1].price
-                                for i in range(1, len(recent_lows))
-                            )
-                            if lh_any or ll_any:
-                                chochs.append(CHoCH(
-                                    index=swing.index,
-                                    direction='bullish',
-                                    break_price=swing.price,
-                                    previous_trend='bearish',
-                                    candle_time=swing.candle_time,
-                                    swing_broken=prev_high
-                                ))
-                                prev_trend = 'bullish'
+                        chochs.append(CHoCH(
+                            index=swing.index,
+                            direction='bullish',
+                            break_price=swing.price,
+                            previous_trend='bearish',
+                            candle_time=swing.candle_time,
+                            swing_broken=prev_high,
+                        ))
+                        prev_trend = 'bullish'
                     elif _body_close_confirmed_h:  # prev_trend == 'bullish'
                         # BOS bullish = HH continuation only (macro high break in uptrend)
                         bos_list.append(BOS(
@@ -201,51 +164,15 @@ class CoreStructureMixin:
                         ))
                         prev_trend = 'bearish'
                     elif _body_close_confirmed_l and prev_trend == 'bullish':
-                        # Rule 2: CHoCH bearish ONLY on body-close below Major HL
-                        _mh = [h for h in major_highs if h.index <= swing.index]
-                        _ml = [l for l in major_lows if l.index <= swing.index]
-                        _structural_hl = None
-                        if _mh:
-                            _last_high = _mh[-1]
-                            _lb = [l for l in _ml if l.index < _last_high.index]
-                            if len(_lb) >= 2:
-                                for _j in range(len(_lb) - 1, 0, -1):
-                                    if _lb[_j].price > _lb[_j - 1].price:
-                                        _structural_hl = self._swing_body_low(
-                                            df, _lb[_j].index,
-                                        )
-                                        break
-                            if _structural_hl is None and _lb:
-                                _structural_hl = self._swing_body_low(df, _lb[-1].index)
-                        _confirm_bar = _confirm_bar_l if _confirm_bar_l is not None else swing.index
-                        if (
-                            _structural_hl is not None
-                            and not self._bar_body_close_below(
-                                df, _confirm_bar, _structural_hl,
-                            )
-                        ):
-                            pass  # internal pullback — prev_trend stays bullish
-                        else:
-                            recent_highs = [s for s in major_highs if s.index <= swing.index][-5:]
-                            recent_lows = [s for s in major_lows if s.index <= swing.index][-5:]
-                            hh_any = any(
-                                recent_highs[i].price > recent_highs[i-1].price
-                                for i in range(1, len(recent_highs))
-                            )
-                            hl_any = any(
-                                recent_lows[i].price > recent_lows[i-1].price
-                                for i in range(1, len(recent_lows))
-                            )
-                            if hh_any or hl_any:
-                                chochs.append(CHoCH(
-                                    index=swing.index,
-                                    direction='bearish',
-                                    break_price=swing.price,
-                                    previous_trend='bullish',
-                                    candle_time=swing.candle_time,
-                                    swing_broken=prev_low
-                                ))
-                                prev_trend = 'bearish'
+                        chochs.append(CHoCH(
+                            index=swing.index,
+                            direction='bearish',
+                            break_price=swing.price,
+                            previous_trend='bullish',
+                            candle_time=swing.candle_time,
+                            swing_broken=prev_low,
+                        ))
+                        prev_trend = 'bearish'
                     elif _body_close_confirmed_l:  # prev_trend == 'bearish'
                         # BOS bearish = LL continuation only (macro low break in downtrend)
                         bos_list.append(BOS(
@@ -433,40 +360,6 @@ class CoreStructureMixin:
         range_state: Optional[StructuralRangeState],
         debug: bool = False,
     ) -> Tuple[List[CHoCH], List[BOS], Optional[StructuralRangeState]]:
-        if range_state is None:
-            return chochs, bos_list, range_state
-
-        if range_state.locked and debug:
-            _close = float(df['close'].iloc[-1])
-            if _close > range_state.macro_range_high:
-                _zone = 'ABOVE (breakout)'
-            elif _close <= range_state.macro_range_low:
-                _zone = 'BELOW (breakdown)'
-            else:
-                _zone = 'INSIDE'
-            print(
-                f"🔒 [V40 RANGE LOCK] {symbol}: LH={range_state.macro_range_high:.2f} "
-                f"LL={range_state.macro_range_low:.2f} | close={_close:.2f} "
-                f"{_zone} → LOCK {range_state.locked_bias.upper()}"
-            )
-
-        kept_chochs, kept_bos = [], []
-        for c in chochs:
-            if self._is_internal_range_signal(df, c, range_state):
-                if debug:
-                    print(
-                        f"   🧹 [V40 SUB-STRUCTURE] Ignor CHoCH {c.direction} bar{c.index} "
-                        f"@{c.break_price:.2f} — internal bounce in range"
-                    )
-            else:
-                kept_chochs.append(c)
-        for b in bos_list:
-            if self._is_internal_range_signal(df, b, range_state):
-                if debug:
-                    print(
-                        f"   🧹 [V40 SUB-STRUCTURE] Ignor BOS {b.direction} bar{b.index} "
-                        f"@{b.break_price:.2f} — internal bounce in range"
-                    )
-            else:
-                kept_bos.append(b)
-        return kept_chochs, kept_bos, range_state
+        """V71: no sub-structure stripping — keep all body-close-valid CHoCH/BOS."""
+        del symbol, df, debug
+        return chochs, bos_list, range_state

@@ -30,7 +30,7 @@ class D1AuthorityMixin:
         symbol: str = '?',
         debug: bool = False,
     ) -> D1AuthContext:
-        """V67: One canonical D1 pipeline per symbol — cache for scanner + JSON."""
+        """V71 Glitch: D1 CHoCH/BOS (body-close) sets trend; 4H CHoCH in POI confirms pullback (scan layer)."""
         empty = D1AuthContext(
             symbol=symbol,
             trend='neutral',
@@ -78,18 +78,6 @@ class D1AuthorityMixin:
                 current_trend = fallback
                 if leg_choch is None:
                     strategy_type = 'continuation'
-
-        # V68 Pilon 1: BOS-only pullback vs macro HH+HL / LH+LL — macro wins when leg absent
-        if (
-            leg_choch is None
-            and macro_swings in ('bullish', 'bearish')
-            and current_trend in ('bullish', 'bearish')
-            and current_trend != macro_swings
-        ):
-            current_trend = macro_swings
-            strategy_type = 'continuation'
-            aligned = [b for b in bos_list if b.direction == macro_swings]
-            latest = aligned[-1] if aligned else latest
 
         trade_dir = ''
         if current_trend == 'bullish':

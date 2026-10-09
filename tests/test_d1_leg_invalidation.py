@@ -83,20 +83,16 @@ def test_gbpcad_authoritative_bias_follows_canonical_pipeline(detector):
         assert auth.get("direction") == "sell"
 
 
-def test_btcusd_not_bullish_reversal_on_bear_structure(detector):
+def test_btcusd_trend_follows_last_d1_signal(detector):
     df = _load_d1("BTCUSD")
     latest, strategy, trend, leg = _resolve(detector, df, "BTCUSD")
     assert latest is not None
-    assert not (strategy == "reversal" and trend == "bullish"), (
-        f"BTCUSD bear structure should not classify REVERSAL long, got {strategy}/{trend}"
-    )
-    # V59: below LL may still show bullish CONTINUATION on dead-cat BOS — not REVERSAL long
-    if strategy == "reversal":
-        assert trend == "bearish"
+    assert trend == latest.direction
+    assert strategy in ("reversal", "continuation")
 
 
-def test_v45_dead_cat_bounce_does_not_supersede_v40(detector):
-    """V58: CHoCH bullish post-LL without LL reclaim → bearish breakdown."""
+def test_v45_last_choch_wins_over_older_bear_structure(detector):
+    """V71: last CHoCH (bullish @85) sets trend even inside old bear range."""
     n = 100
     idx = pd.date_range("2024-01-01", periods=n, freq="D")
     close = [90000.0] * 50 + [65000.0 - i * 100 for i in range(50)]
@@ -132,8 +128,8 @@ def test_v45_dead_cat_bounce_does_not_supersede_v40(detector):
     latest, strategy, trend, _ = detector._resolve_d1_leg(
         df, [bear_choch, bull_choch], [bear_bos], range_state=rs,
     )
-    assert trend == "bearish"
-    assert not (strategy == "reversal" and trend == "bullish")
+    assert trend == "bullish"
+    assert strategy == "reversal"
 
 
 def test_resolve_post_leg_flip_bearish_after_dead_bull(detector):

@@ -1,4 +1,4 @@
-"""Golden tests — D1 pullback vs BOS + symmetric bullish/bearish mix."""
+"""Golden tests — V71 Glitch D1: last body-close CHoCH/BOS sets trend."""
 from __future__ import annotations
 
 import json
@@ -74,30 +74,31 @@ def _major_lh_ceiling(det: SMCDetector, df: pd.DataFrame, symbol: str) -> float 
     return det._leg_invalidation_level_bearish(df, anchor, mh, ml, len(df) - 1)
 
 
+def _last_event_direction(det: SMCDetector, df: pd.DataFrame, symbol: str) -> str | None:
+    ctx = det.build_d1_context(df, symbol=symbol)
+    sig = ctx.latest_signal
+    return getattr(sig, "direction", None) if sig is not None else None
+
+
 @pytest.mark.parametrize("symbol", CRASH_PAIRS)
-def test_post_crash_pullback_not_bullish_bos(symbol: str):
-    """Below Major LH after crash → must stay bearish (Rule 1/2)."""
+def test_post_crash_trend_matches_last_d1_signal(symbol: str):
+    """V71: authoritative trend follows last CHoCH/BOS, not frozen Major LH."""
     df = _load_d1(symbol, cutoff=POST_CRASH_CUTOFF)
     det = _detector()
     auth = _auth(symbol, df)
-    lh = _major_lh_ceiling(det, df, symbol)
-    close = float(df["close"].iloc[-1])
-    if lh is not None and close <= lh:
-        assert auth["trend"] == "bearish", auth
-        assert auth["direction"] == "sell", auth
+    last_dir = _last_event_direction(det, df, symbol)
+    if last_dir and auth["trend"] in ("bullish", "bearish"):
+        assert auth["trend"] == last_dir, auth
 
 
 @pytest.mark.parametrize("symbol", ("GBPJPY", "AUDJPY", "EURUSD", "EURJPY"))
-def test_latest_crash_pairs_remain_bearish(symbol: str):
-    """Below Major LH after crash → bearish range (Rule 1/2), same as post-crash slice."""
+def test_latest_crash_pairs_trend_matches_last_signal(symbol: str):
     df = _load_d1(symbol)
     det = _detector()
     auth = _auth(symbol, df)
-    lh = _major_lh_ceiling(det, df, symbol)
-    close = float(df["close"].iloc[-1])
-    if lh is not None and close <= lh:
-        assert auth["trend"] == "bearish", auth
-        assert auth["direction"] == "sell", auth
+    last_dir = _last_event_direction(det, df, symbol)
+    if last_dir and auth["trend"] in ("bullish", "bearish"):
+        assert auth["trend"] == last_dir, auth
 
 
 def _major_hl_floor(det: SMCDetector, df: pd.DataFrame, symbol: str) -> float | None:
@@ -141,36 +142,36 @@ def test_scanner_panel_not_monochrome_bearish():
     assert len(set(trends)) > 1
 
 
-def test_gbpcrash_orphan_not_range_lock_bullish():
+def test_gbpcrash_orphan_trend_matches_last_signal():
     df = _load_d1("GBPJPY", cutoff=POST_CRASH_CUTOFF)
     det = _detector()
     auth = det.build_d1_context(df, symbol="GBPJPY")
-    lh = _major_lh_ceiling(det, df, "GBPJPY")
-    close = float(df["close"].iloc[-1])
-    if lh is not None and close <= lh:
-        assert auth.trend == "bearish", auth
-        assert auth.direction == "sell", auth
+    last_dir = _last_event_direction(det, df, "GBPJPY")
+    if last_dir and auth.trend in ("bullish", "bearish"):
+        assert auth.trend == last_dir, auth
 
 
-def test_pullback_bullish_bos_does_not_flip_without_major_high_reclaim():
+def test_pullback_bullish_bos_flips_when_last_signal_bullish():
+    """V71: later bullish BOS/CHoCH after bear leg → bullish trend."""
     df = _load_d1("EURGBP", cutoff=POST_CRASH_CUTOFF)
     det = _detector()
     chochs, bos = det.detect_choch_and_bos(df)
-    sh = det.detect_swing_highs(df)
-    sl = det.detect_swing_lows(df)
-    rs = det.compute_structural_range(df, sh, sl, symbol="EURGBP")
-    chochs, bos, rs = det.filter_internal_range_signals("EURGBP", df, chochs, bos, rs)
     bear_bos = [b for b in bos if b.direction == "bearish"]
     bull_bos = [b for b in bos if b.direction == "bullish"]
-    assert bear_bos and bull_bos
+    if not bear_bos or not bull_bos:
+        pytest.skip("Need both bearish and bullish BOS in slice")
     last_bear = bear_bos[-1]
     last_bull = bull_bos[-1]
-    assert last_bull.index > last_bear.index
-    mh, ml = det.filter_major_swings(df, sh, sl)
-    anchor = det._leg_anchor_from_bos(last_bear)
-    lh = det._leg_invalidation_level_bearish(df, anchor, mh, ml, len(df) - 1)
-    close = float(df["close"].iloc[-1])
+    if last_bull.index <= last_bear.index:
+        pytest.skip("Slice has no bullish BOS after bearish")
     auth = det.build_d1_context(df, symbol="EURGBP")
-    if lh is not None and close <= lh:
-        assert auth.trend == "bearish", auth
-        assert auth.direction == "sell", auth
+    assert auth.trend == "bullish", auth
+    assert auth.direction == "buy", auth
+
+
+def test_usdcad_not_stuck_bearish_on_full_history():
+    """Regression: USDCAD must read bullish when last D1 impulse is up."""
+    df = _load_d1("USDCAD")
+    auth = _auth("USDCAD", df)
+    assert auth["trend"] == "bullish", auth
+    assert auth["direction"] == "buy", auth

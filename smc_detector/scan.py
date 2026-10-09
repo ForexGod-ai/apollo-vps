@@ -41,11 +41,15 @@ class ScanOrchestratorMixin:
         """
         Main scanner: Check if "Glitch in Matrix" setup exists
         
-        FINAL LOGIC (V3.0 - CHoCH + BOS CORRECT USAGE):
+        GLITCH V71 LIFECYCLE (D1 → POI → 4H trigger → D1 BOS expectation):
+        1. D1 CHoCH/BOS (body-close) sets bias instantly — see build_d1_context
+        2. Wait for price pullback into Daily POI (Premium/Discount)
+        3. 4H CHoCH in POI direction confirms HL/LH (pullback finished)
+        4. Continuation: expect next D1 BOS in trend direction
         
         TWO SETUP TYPES:
-        1. REVERSAL: Daily CHoCH (trend changes) + FVG + 4H CHoCH from pullback
-        2. CONTINUITY: Daily BOS (trend continues) + FVG + 4H CHoCH from pullback
+        1. REVERSAL: Daily CHoCH + FVG + 4H CHoCH from POI
+        2. CONTINUITY: Daily BOS + FVG + 4H CHoCH from POI
         
         V37.0 strategy_type: determinat EXCLUSIV de V25.0 UNIVERSAL BIAS (index CHoCH vs BOS).
         Nu există motor paralel — detect_strategy_type() a fost eliminat ca dead code.
