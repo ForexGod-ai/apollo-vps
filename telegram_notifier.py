@@ -172,6 +172,22 @@ def _scan_card_wait_hint(setup: Any) -> str:
     return _WAIT_4H_CHOCH_HINT_RO
 
 
+def _canonical_d1_trend(setup: Any) -> str:
+    """V71: same rules as daily_scanner._setup_d1_trend — no mismatched signal fallback."""
+    raw = getattr(setup, 'd1_bias_direction', None)
+    d = str(raw or '').lower()
+    if d in ('buy', 'long', 'bullish'):
+        return 'bullish'
+    if d in ('sell', 'short', 'bearish'):
+        return 'bearish'
+    dc = getattr(setup, 'daily_choch', None)
+    if dc is not None:
+        sig = str(getattr(dc, 'direction', '') or '').lower()
+        if sig in ('bullish', 'bearish'):
+            return sig
+    return 'neutral'
+
+
 def _is_w1_counter_trend(setup: Any, raw_dir: str) -> bool:
     confidence = _setup_attr(setup, 'confidence', 'NORMAL')
     w1_bias = _setup_attr(setup, 'w1_bias', None)
@@ -751,12 +767,10 @@ class TelegramNotifier:
         sep = UNIVERSAL_SEPARATOR
         symbol = setup.symbol
 
-        raw_dir = getattr(setup, 'd1_bias_direction', None) or setup.daily_choch.direction
-        if raw_dir in ('buy', 'long'):
-            raw_dir = 'bullish'
-        elif raw_dir in ('sell', 'short'):
-            raw_dir = 'bearish'
-        direction = "🟢 LONG" if raw_dir == 'bullish' else "🔴 SHORT"
+        raw_dir = _canonical_d1_trend(setup)
+        direction = "🟢 LONG" if raw_dir == 'bullish' else (
+            "🔴 SHORT" if raw_dir == 'bearish' else "⚪ NEUTRAL"
+        )
 
         pair_stats = self._load_pair_statistics(symbol)
 
@@ -764,7 +778,8 @@ class TelegramNotifier:
         status_label = "Gata execuție" if setup.status == 'READY' else "Scan OK"
 
         strategy_type = getattr(setup, 'strategy_type', 'reversal').upper()
-        if strategy_type.startswith('REVERSAL'):
+        _d1_sig = str(getattr(setup, 'd1_signal_type', '') or '').upper()
+        if _d1_sig == 'CHoCH' or strategy_type.startswith('REVERSAL'):
             strategy_emoji = "🔄"
             strategy_chip = "REV (CHoCH)"
         else:
@@ -803,8 +818,9 @@ class TelegramNotifier:
             poi_line += f" · {poi_relation}"
         block2_parts.append(poi_line)
 
-        daily_structure_label = getattr(setup, 'd1_signal_type', None) or (
-            "CHoCH" if strategy_type.startswith('REVERSAL') else "BOS"
+        daily_structure_label = (
+            getattr(setup, 'd1_signal_type', None)
+            or ("CHoCH" if strategy_type.startswith('REVERSAL') else "BOS")
         )
         block2_parts.append(
             f"📊 D1: <b>{raw_dir.upper()} {daily_structure_label}</b>"

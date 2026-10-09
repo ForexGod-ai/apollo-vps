@@ -429,7 +429,17 @@ class ScanFinalizeMixin:
             print(f"⚠️ Warning: Could not convert setup_time properly: {e}")
             setup_timestamp = datetime.now()
         
-        # Store liquidity sweep and premium/discount in setup for reporting
+        # V71: daily_choch field holds latest D1 signal (CHoCH or BOS) aligned with current_trend
+        if (
+            latest_signal is not None
+            and getattr(latest_signal, 'direction', None) not in (None, current_trend)
+        ):
+            print(
+                f"⚠️ [V71 SYNC] {symbol}: latest_signal {latest_signal.direction} "
+                f"≠ current_trend {current_trend} — forcing signal direction to trend"
+            )
+        _signal_label = _signal_label or ('CHoCH' if strategy_type == 'reversal' else 'BOS')
+
         setup = TradeSetup(
             symbol=symbol,
             daily_choch=latest_signal,  # Daily CHoCH (REVERSAL) or BOS (CONTINUITY)

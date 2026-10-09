@@ -63,12 +63,9 @@ class D1AuthorityMixin:
         latest, strategy_type, current_trend, leg_choch = self._resolve_d1_leg(
             df, chochs, bos_list, debug=debug, range_state=range_state,
         )
-        strategy_type = self._classify_d1_strategy(
-            latest, leg_choch, bos_list, df,
-        )
-        latest = self._d1_signal_for_strategy(
-            latest, leg_choch, strategy_type, bos_list,
-        )
+        # V71: keep resolve output — no post-leg signal swap (prevents trend vs latest_signal drift)
+        if latest is not None and getattr(latest, 'direction', None) in ('bullish', 'bearish'):
+            current_trend = latest.direction
         macro_swings = self.macro_trend_from_swings(df)
         if current_trend == 'neutral':
             fallback = self.resolve_structural_bias_fallback(
@@ -86,12 +83,6 @@ class D1AuthorityMixin:
             trade_dir = 'sell'
 
         d1_signal_type = 'CHoCH' if strategy_type == 'reversal' else 'BOS'
-        if leg_choch is not None and strategy_type == 'reversal':
-            latest = leg_choch
-        elif strategy_type == 'reversal' and isinstance(latest, CHoCH):
-            pass
-        elif strategy_type == 'reversal' and leg_choch is not None:
-            latest = leg_choch
 
         return D1AuthContext(
             symbol=symbol,

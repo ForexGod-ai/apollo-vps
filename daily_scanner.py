@@ -595,6 +595,7 @@ class DailyScanner:
                             print(f"   {ai_prob['warning']}")
                     
                     setups_found.append(setup)
+                    _sync_setup_from_d1_context(setup, d1_auth_cache.get(symbol))
 
                     # V40.3: W1 context informativ pe setup
                     try:
@@ -771,6 +772,7 @@ class DailyScanner:
                                     if setup_status == 'READY'
                                     else {}
                                 )
+                                _sync_setup_from_d1_context(setup, d1_auth_cache.get(symbol))
                                 _deferred_tg_cards.append({
                                     'setup': setup,
                                     'df_daily': df_daily,
@@ -1264,16 +1266,42 @@ def _v43_fields_from_setup(setup: TradeSetup) -> dict:
     }
 
 
+def _sync_setup_from_d1_context(setup: TradeSetup, ctx) -> None:
+    """V71: Telegram/console/JSON share one D1 authority snapshot."""
+    if setup is None or ctx is None:
+        return
+    if isinstance(ctx, dict):
+        trend = ctx.get('trend') or ctx.get('d1_bias_direction')
+        latest = ctx.get('latest_signal')
+        strategy = ctx.get('strategy_type')
+        sig_type = ctx.get('d1_signal_type')
+    else:
+        trend = ctx.trend
+        latest = ctx.latest_signal
+        strategy = ctx.strategy_type
+        sig_type = ctx.d1_signal_type
+    if trend in ('bullish', 'bearish'):
+        setup.d1_bias_direction = trend
+    if strategy:
+        setup.strategy_type = strategy
+    if sig_type:
+        setup.d1_signal_type = sig_type
+    if latest is not None:
+        setup.daily_choch = latest
+
+
 def _setup_d1_trend(setup: TradeSetup) -> str:
-    """V64 canonical D1 trend — d1_bias_direction, not raw latest signal."""
+    """V64 canonical D1 trend — d1_bias_direction first; signal only if aligned."""
     raw = getattr(setup, 'd1_bias_direction', None)
-    if not raw and getattr(setup, 'daily_choch', None) is not None:
-        raw = setup.daily_choch.direction
     d = str(raw or '').lower()
     if d in ('buy', 'long', 'bullish'):
         return 'bullish'
     if d in ('sell', 'short', 'bearish'):
         return 'bearish'
+    if getattr(setup, 'daily_choch', None) is not None:
+        sig_d = str(setup.daily_choch.direction or '').lower()
+        if sig_d in ('bullish', 'bearish'):
+            return sig_d
     return 'neutral'
 
 
@@ -2123,8 +2151,8 @@ def _trade_setup_to_monitoring_dict(setup: TradeSetup, setup_time_str: str) -> d
     _d1_signal_type = getattr(setup, 'd1_signal_type', None) or (
         'CHoCH' if isinstance(_d1_sig, CHoCH) else 'BOS'
     )
-    _d1_bias = getattr(setup, 'd1_bias_direction', None) or setup.daily_choch.direction
-    direction = "buy" if _d1_bias == "bullish" else "sell"
+    _d1_bias = _setup_d1_trend(setup)
+    direction = "buy" if _d1_bias == "bullish" else ("sell" if _d1_bias == "bearish" else "")
     out = {
         "symbol": setup.symbol,
         "direction": direction,
