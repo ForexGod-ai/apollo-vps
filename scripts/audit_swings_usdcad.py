@@ -2,10 +2,13 @@
 """
 Audit USDCAD D1 — raw vs major swings + structural labels (HH/HL/LH/LL).
 
-Usage:
-  python scripts/audit_swings_usdcad.py
-  python scripts/audit_swings_usdcad.py --cache --bars 365
-  python scripts/audit_swings_usdcad.py --bars 365
+Usage (macOS / Linux):
+  python3 scripts/audit_swings_usdcad.py --bars 365
+
+Usage (Windows VPS — nu folosi ``python3``; de obicei e doar ``python``):
+  python scripts\\audit_swings_usdcad.py --bars 365
+  scripts\\audit_swings_usdcad.bat --bars 365
+  py -3 scripts\\audit_swings_usdcad.py --bars 365
 """
 from __future__ import annotations
 
