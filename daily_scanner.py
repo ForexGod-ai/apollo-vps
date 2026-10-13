@@ -453,6 +453,8 @@ class DailyScanner:
                     continue
 
                 # V67: single D1 authority build — cached for scan + bias fallback + save
+                # V72: build_d1_context drops the forming D1 bar + Protected HL/LH gate
+                # (df_daily full series kept for live price / ATR / POI distance)
                 try:
                     _ctx = self.smc_detector.build_d1_context(
                         df_daily, symbol=symbol, debug=_scanner_debug_flag,

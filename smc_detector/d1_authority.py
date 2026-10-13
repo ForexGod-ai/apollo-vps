@@ -53,23 +53,32 @@ class D1AuthorityMixin:
         if not {'open', 'high', 'low', 'close'}.issubset(df.columns):
             return empty
 
-        chochs, bos_list = self.detect_choch_and_bos(df)
-        swing_h = self.detect_swing_highs(df)
-        swing_l = self.detect_swing_lows(df)
-        range_state = self.compute_structural_range(df, swing_h, swing_l, symbol=symbol)
+        df_struct = self.d1_closed_structure_df(df)
+        if df_struct is None or df_struct.empty:
+            return empty
+
+        chochs, bos_list = self.detect_choch_and_bos(df_struct)
+        swing_h = self.detect_swing_highs(df_struct)
+        swing_l = self.detect_swing_lows(df_struct)
+        range_state = self.compute_structural_range(
+            df_struct, swing_h, swing_l, symbol=symbol,
+        )
         chochs, bos_list, range_state = self.filter_internal_range_signals(
-            symbol, df, chochs, bos_list, range_state, debug=debug,
+            symbol, df_struct, chochs, bos_list, range_state, debug=debug,
+        )
+        chochs, bos_list = self.filter_choch_bos_by_protected_swings(
+            df_struct, chochs, bos_list, debug=debug,
         )
         latest, strategy_type, current_trend, leg_choch = self._resolve_d1_leg(
-            df, chochs, bos_list, debug=debug, range_state=range_state,
+            df_struct, chochs, bos_list, debug=debug, range_state=range_state,
         )
         # V71: keep resolve output — no post-leg signal swap (prevents trend vs latest_signal drift)
         if latest is not None and getattr(latest, 'direction', None) in ('bullish', 'bearish'):
             current_trend = latest.direction
-        macro_swings = self.macro_trend_from_swings(df)
+        macro_swings = self.macro_trend_from_swings(df_struct)
         if current_trend == 'neutral':
             fallback = self.resolve_structural_bias_fallback(
-                df, chochs, bos_list, range_state,
+                df_struct, chochs, bos_list, range_state,
             )
             if fallback != 'neutral':
                 current_trend = fallback

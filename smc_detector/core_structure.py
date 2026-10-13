@@ -24,13 +24,19 @@ from smc_detector.models import (
 class CoreStructureMixin:
     """V67 C: CHoCH/BOS + structural range."""
 
-    def detect_choch_and_bos(self, df: pd.DataFrame) -> Tuple[List[CHoCH], List[BOS]]:
-        """🎯 GLITCH IN MATRIX - CHoCH & BOS DETECTION V71.0 (MAJOR SWINGS ONLY)
+    def d1_closed_structure_df(self, df: pd.DataFrame) -> pd.DataFrame:
+        """V72: structural D1 authority uses only finalized daily candles."""
+        if df is None or df.empty:
+            return df
+        if len(df) < 2:
+            return df
+        return df.iloc[:-1].copy()
 
-        V71 — Pure SMC lifecycle (no Rule 2 / Major LH gate):
-        - CHoCH/BOS on major swings only; body-close vs prior swing body (not wick)
-        - Body-close break of prior swing high/low → CHoCH when trend flips, else BOS
-        - No internal-pullback veto from historical Major LH/HL
+    def detect_choch_and_bos(self, df: pd.DataFrame) -> Tuple[List[CHoCH], List[BOS]]:
+        """🎯 GLITCH IN MATRIX - CHoCH & BOS DETECTION V72 (MAJOR SWINGS + PROTECTED GATE)
+
+        Raw major-swing body-close breaks; opposing flips are gated in
+        ``filter_choch_bos_by_protected_swings`` (Protected HL/LH impulse origin).
         """
         chochs = []
         bos_list = []

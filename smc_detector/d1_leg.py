@@ -803,7 +803,7 @@ class D1LegMixin:
             label = 'CONTINUATION' if strategy == 'continuation' else 'REVERSAL'
             sig_type = kind.upper()
             print(
-                f"   📐 [V71 GLITCH D1] last {sig_type} {trend.upper()} "
+                f"   📐 [V72 GLITCH D1] last {sig_type} {trend.upper()} "
                 f"@bar{last.index} → {label}"
             )
         return signal, strategy, trend, leg_choch
@@ -937,6 +937,140 @@ class D1LegMixin:
             c for c in chochs
             if c.previous_trend and c.previous_trend != c.direction
         ]
+
+    @staticmethod
+    def _is_true_choch_flip(choch: CHoCH) -> bool:
+        return bool(
+            choch.previous_trend and choch.previous_trend != choch.direction
+        )
+
+    def _daily_body_close_below(
+        self,
+        df: pd.DataFrame,
+        bar_index: int,
+        level: float,
+    ) -> bool:
+        if bar_index < 0 or bar_index >= len(df):
+            return False
+        return float(df['close'].iloc[bar_index]) < level
+
+    def _daily_body_close_above(
+        self,
+        df: pd.DataFrame,
+        bar_index: int,
+        level: float,
+    ) -> bool:
+        if bar_index < 0 or bar_index >= len(df):
+            return False
+        return float(df['close'].iloc[bar_index]) > level
+
+    def _protected_hl_impulse_origin(
+        self,
+        df: pd.DataFrame,
+        bull_leg: Optional[CHoCH],
+    ) -> Optional[float]:
+        """Protected HL — major low at origin of bullish impulse (BOS/CHoCH base)."""
+        if bull_leg is None or bull_leg.direction != 'bullish':
+            return None
+        return self._leg_origin_major_low(df, bull_leg)
+
+    def _protected_break_between(
+        self,
+        df: pd.DataFrame,
+        start_bar: int,
+        end_bar: int,
+        level: float,
+        direction: str,
+    ) -> bool:
+        lo = max(0, int(start_bar))
+        hi = min(len(df) - 1, int(end_bar))
+        if direction == 'below':
+            for bi in range(lo, hi + 1):
+                if self._daily_body_close_below(df, bi, level):
+                    return True
+            return False
+        for bi in range(lo, hi + 1):
+            if self._daily_body_close_above(df, bi, level):
+                return True
+        return False
+
+    def _protected_ceiling_bearish_leg_at(
+        self,
+        df: pd.DataFrame,
+        bear_leg: CHoCH,
+        bar_idx: int,
+    ) -> Optional[float]:
+        swing_highs = self.detect_swing_highs(df)
+        swing_lows = self.detect_swing_lows(df)
+        major_highs, major_lows = self.filter_major_swings(
+            df, swing_highs, swing_lows,
+        )
+        return self._leg_invalidation_level_bearish(
+            df, bear_leg, major_highs, major_lows, bar_idx,
+        )
+
+    def filter_choch_bos_by_protected_swings(
+        self,
+        df: pd.DataFrame,
+        chochs: List[CHoCH],
+        bos_list: List,
+        debug: bool = False,
+    ) -> Tuple[List[CHoCH], List]:
+        """
+        V72 — Active dealing range from the last true CHoCH flip:
+        - Bullish leg: drop post-flip bearish CHoCH/BOS unless daily close breaks
+          Protected HL (impulse origin / base of expansion).
+        - Bearish leg: drop post-flip bullish signals unless close breaks Protected LH
+          (bearish invalidation ceiling at event bar).
+        """
+        if df is None or df.empty:
+            return [], []
+        chochs = self._dedupe_chochs_by_bar(chochs or [])
+        bos_list = list(bos_list or [])
+        flips = self._true_choch_flips(chochs)
+        if not flips:
+            return chochs, bos_list
+
+        active = flips[-1]
+
+        def _drop(obj) -> bool:
+            idx = int(getattr(obj, 'index', -1))
+            if idx <= active.index:
+                return False
+            direction = getattr(obj, 'direction', None)
+            if active.direction == 'bullish' and direction == 'bearish':
+                floor = self._protected_hl_impulse_origin(df, active)
+                if floor is None:
+                    return False
+                ok = self._protected_break_between(
+                    df, active.index, idx, floor, 'below',
+                )
+                if not ok and debug:
+                    print(
+                        f"   🛡️ [V72 PROTECTED] drop BEARISH @bar{idx} "
+                        f"— above Protected HL {floor:.5f}"
+                    )
+                return not ok
+            if active.direction == 'bearish' and direction == 'bullish':
+                ceiling = self._protected_ceiling_bearish_leg_at(
+                    df, active, idx,
+                )
+                if ceiling is None:
+                    return False
+                ok = self._protected_break_between(
+                    df, active.index, idx, ceiling, 'above',
+                )
+                if not ok and debug:
+                    print(
+                        f"   🛡️ [V72 PROTECTED] drop BULLISH @bar{idx} "
+                        f"— below Protected LH {ceiling:.5f}"
+                    )
+                return not ok
+            return False
+
+        kept_c = [c for c in chochs if not _drop(c)]
+        kept_b = [b for b in bos_list if not _drop(b)]
+        return kept_c, kept_b
 
     @staticmethod
     def _post_leg_bos(
