@@ -1,4 +1,4 @@
-"""Golden tests — V71 Glitch D1: last body-close CHoCH/BOS sets trend."""
+"""Golden tests — V71/V73 Glitch D1: trend vs last signal (V73 dealing-range exception)."""
 from __future__ import annotations
 
 import json
@@ -80,15 +80,25 @@ def _last_event_direction(det: SMCDetector, df: pd.DataFrame, symbol: str) -> st
     return getattr(sig, "direction", None) if sig is not None else None
 
 
+def _trend_matches_last_or_dealing_range(auth: dict, last_dir: str) -> None:
+    """V73: inside dealing range, macro-aligned trend may override last micro BOS."""
+    if auth["trend"] == last_dir:
+        return
+    macro = auth.get("macro_swings")
+    if macro in ("bullish", "bearish") and auth["trend"] == macro:
+        return
+    assert auth["trend"] == last_dir, auth
+
+
 @pytest.mark.parametrize("symbol", CRASH_PAIRS)
 def test_post_crash_trend_matches_last_d1_signal(symbol: str):
-    """V71: authoritative trend follows last CHoCH/BOS, not frozen Major LH."""
+    """Authoritative trend follows last CHoCH/BOS unless V73 dealing-range continuation."""
     df = _load_d1(symbol, cutoff=POST_CRASH_CUTOFF)
     det = _detector()
     auth = _auth(symbol, df)
     last_dir = _last_event_direction(det, df, symbol)
     if last_dir and auth["trend"] in ("bullish", "bearish"):
-        assert auth["trend"] == last_dir, auth
+        _trend_matches_last_or_dealing_range(auth, last_dir)
 
 
 @pytest.mark.parametrize("symbol", ("GBPJPY", "AUDJPY", "EURUSD", "EURJPY"))
@@ -98,7 +108,7 @@ def test_latest_crash_pairs_trend_matches_last_signal(symbol: str):
     auth = _auth(symbol, df)
     last_dir = _last_event_direction(det, df, symbol)
     if last_dir and auth["trend"] in ("bullish", "bearish"):
-        assert auth["trend"] == last_dir, auth
+        _trend_matches_last_or_dealing_range(auth, last_dir)
 
 
 def _major_hl_floor(det: SMCDetector, df: pd.DataFrame, symbol: str) -> float | None:

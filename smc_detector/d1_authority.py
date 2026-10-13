@@ -76,6 +76,15 @@ class D1AuthorityMixin:
         if latest is not None and getattr(latest, 'direction', None) in ('bullish', 'bearish'):
             current_trend = latest.direction
         macro_swings = self.macro_trend_from_swings(df_struct)
+        current_trend, strategy_type, latest = self._coerce_dealing_range_pullback_bias(
+            df_struct,
+            chochs,
+            bos_list,
+            macro_swings,
+            current_trend,
+            strategy_type,
+            latest,
+        )
         if current_trend == 'neutral':
             fallback = self.resolve_structural_bias_fallback(
                 df_struct, chochs, bos_list, range_state,

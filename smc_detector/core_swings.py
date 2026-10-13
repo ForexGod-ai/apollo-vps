@@ -589,6 +589,158 @@ class CoreSwingsMixin:
         lo, hi = min(floor_body, ceiling_body), max(floor_body, ceiling_body)
         return lo < body < hi
 
+    def _first_close_above(
+        self,
+        df: pd.DataFrame,
+        after_index: int,
+        level: float,
+    ) -> Optional[int]:
+        for bi in range(max(after_index + 1, 0), len(df)):
+            if float(df['close'].iloc[bi]) > level:
+                return bi
+        return None
+
+    def _first_close_below(
+        self,
+        df: pd.DataFrame,
+        after_index: int,
+        level: float,
+    ) -> Optional[int]:
+        for bi in range(max(after_index + 1, 0), len(df)):
+            if float(df['close'].iloc[bi]) < level:
+                return bi
+        return None
+
+    def _impulse_origin_low_between(
+        self,
+        df: pd.DataFrame,
+        swing_lows: List[SwingPoint],
+        start_index: int,
+        end_index: int,
+    ) -> Optional[SwingPoint]:
+        """Protected HL candidate — deepest swing low in pullback before BOS up."""
+        cands = [
+            l for l in swing_lows
+            if start_index < l.index <= end_index
+        ]
+        if not cands:
+            return None
+        return min(cands, key=lambda l: self._swing_body_low(df, l.index))
+
+    def _impulse_origin_high_between(
+        self,
+        df: pd.DataFrame,
+        swing_highs: List[SwingPoint],
+        start_index: int,
+        end_index: int,
+    ) -> Optional[SwingPoint]:
+        """Protected LH candidate — highest swing high in pullback before BOS down."""
+        cands = [
+            h for h in swing_highs
+            if start_index < h.index <= end_index
+        ]
+        if not cands:
+            return None
+        return max(cands, key=lambda h: self._swing_body_high(df, h.index))
+
+    def _extend_major_swings_bullish_bos(
+        self,
+        df: pd.DataFrame,
+        swing_highs: List[SwingPoint],
+        swing_lows: List[SwingPoint],
+        major_highs: List[SwingPoint],
+        major_lows: List[SwingPoint],
+    ) -> None:
+        """Each confirmed BOS-up promotes impulse-origin HL and the next swing high."""
+        known_h = {h.index for h in major_highs}
+        known_l = {l.index for l in major_lows}
+        for ref_h in swing_highs:
+            break_level = self._swing_body_high(df, ref_h.index)
+            confirm = self._first_close_above(df, ref_h.index, break_level)
+            if confirm is None:
+                continue
+            origin = self._impulse_origin_low_between(
+                df, swing_lows, ref_h.index, confirm,
+            )
+            if origin is not None and origin.index not in known_l:
+                major_lows.append(origin)
+                known_l.add(origin.index)
+                major_lows.sort(key=lambda x: x.index)
+            next_highs = [
+                h for h in swing_highs
+                if h.index >= confirm and h.index not in known_h
+            ]
+            if not next_highs:
+                continue
+            new_h = min(next_highs, key=lambda h: h.index)
+            major_highs.append(new_h)
+            known_h.add(new_h.index)
+            major_highs.sort(key=lambda x: x.index)
+
+    def _extend_major_swings_bearish_bos(
+        self,
+        df: pd.DataFrame,
+        swing_highs: List[SwingPoint],
+        swing_lows: List[SwingPoint],
+        major_highs: List[SwingPoint],
+        major_lows: List[SwingPoint],
+    ) -> None:
+        """Each confirmed BOS-down promotes impulse-origin LH and the next swing low."""
+        known_h = {h.index for h in major_highs}
+        known_l = {l.index for l in major_lows}
+        for ref_l in swing_lows:
+            break_level = self._swing_body_low(df, ref_l.index)
+            confirm = self._first_close_below(df, ref_l.index, break_level)
+            if confirm is None:
+                continue
+            origin = self._impulse_origin_high_between(
+                df, swing_highs, ref_l.index, confirm,
+            )
+            if origin is not None and origin.index not in known_h:
+                major_highs.append(origin)
+                known_h.add(origin.index)
+                major_highs.sort(key=lambda x: x.index)
+            next_lows = [
+                l for l in swing_lows
+                if l.index >= confirm and l.index not in known_l
+            ]
+            if not next_lows:
+                continue
+            new_l = min(next_lows, key=lambda l: l.index)
+            major_lows.append(new_l)
+            known_l.add(new_l.index)
+            major_lows.sort(key=lambda x: x.index)
+
+    def dealing_range_protected_hl(
+        self,
+        df: pd.DataFrame,
+        major_highs: List[SwingPoint],
+        major_lows: List[SwingPoint],
+    ) -> Optional[float]:
+        """Floor of active bullish dealing range — body of Protected HL before last HH."""
+        if not major_highs or not major_lows:
+            return None
+        hh = major_highs[-1]
+        prior = [l for l in major_lows if l.index < hh.index]
+        if not prior:
+            return self._swing_body_low(df, major_lows[-1].index)
+        return self._swing_body_low(df, prior[-1].index)
+
+    def dealing_range_protected_lh(
+        self,
+        df: pd.DataFrame,
+        major_highs: List[SwingPoint],
+        major_lows: List[SwingPoint],
+    ) -> Optional[float]:
+        """Ceiling of active bearish dealing range — body of Protected LH before last LL."""
+        if not major_lows or not major_highs:
+            return None
+        ll = major_lows[-1]
+        prior = [h for h in major_highs if h.index < ll.index]
+        if not prior:
+            return self._swing_body_high(df, major_highs[-1].index)
+        return self._swing_body_high(df, prior[-1].index)
+
     def filter_major_swings(
         self,
         df: pd.DataFrame,
@@ -596,101 +748,40 @@ class CoreSwingsMixin:
         swing_lows: List[SwingPoint],
     ) -> Tuple[List[SwingPoint], List[SwingPoint]]:
         """
-        Macro pivots only — displacement + outside active [LL,LH] / [HL,HH] range.
+        V73 Glitch Matrix — majors only via confirmed BOS impulses (no piggyback).
 
-        Rule: pivot inside bearish macro range [LL, LH] without body-close above LH
-        = sub-structure (never promoted). Symmetric for bullish [HL, HH].
+        - Protected HL (major low): deepest swing low between last HH and the bar
+          where body-close breaks above that HH (BOS up).
+        - Protected LH (major high): symmetric for BOS down through last LL.
+        - Consolidation / internal LH-LL between HH and HL stays non-major.
         """
         if not swing_highs or not swing_lows:
             return [], []
 
-        displacement_highs: List[SwingPoint] = []
-        displacement_lows: List[SwingPoint] = []
-
-        for sh in swing_highs:
-            prior_lows = [sl for sl in swing_lows if sl.index < sh.index]
-            if not prior_lows:
-                continue
-            ref_level = self._swing_body_low(df, prior_lows[-1].index)
-            if self._body_close_below_after(df, sh.index, ref_level):
-                displacement_highs.append(sh)
-
-        for sl in swing_lows:
-            prior_highs = [sh for sh in swing_highs if sh.index < sl.index]
-            if not prior_highs:
-                continue
-            ref_level = self._swing_body_high(df, prior_highs[-1].index)
-            if self._body_close_above_after(df, sl.index, ref_level):
-                displacement_lows.append(sl)
-
-        candidates: List[Tuple[str, SwingPoint]] = []
-        for sh in displacement_highs:
-            candidates.append(('high', sh))
-        for sl in displacement_lows:
-            candidates.append(('low', sl))
-        candidates.sort(key=lambda x: x[1].index)
-
+        sh = sorted(swing_highs, key=lambda x: x.index)
+        sl = sorted(swing_lows, key=lambda x: x.index)
         major_highs: List[SwingPoint] = []
         major_lows: List[SwingPoint] = []
 
-        for kind, sp in candidates:
-            if kind == 'high':
-                lh, ll, lh_bar = self._structural_bearish_range_at(
-                    df, major_highs, major_lows, sp.index,
-                )
-                if lh is not None and ll is not None:
-                    if self._pivot_body_inside_range(df, sp, ll, lh):
-                        if lh_bar is None or not self._body_close_above_after(
-                            df, max(sp.index, lh_bar), lh,
-                        ):
-                            continue
-                _, hh, _ = self._structural_bullish_range_at(
-                    df, major_highs, major_lows, sp.index,
-                )
-                if hh is not None:
-                    hl, _, hl_bar = self._structural_bullish_range_at(
-                        df, major_highs, major_lows, sp.index,
-                    )
-                    if hl is not None and self._pivot_body_inside_range(df, sp, hl, hh):
-                        if hl_bar is None or not self._body_close_above_after(
-                            df, sp.index, hh,
-                        ):
-                            continue
-                major_highs.append(sp)
-                prior_lows = [l for l in swing_lows if l.index < sp.index]
-                if prior_lows:
-                    origin = prior_lows[-1]
-                    if all(l.index != origin.index for l in major_lows):
-                        major_lows.append(origin)
-                        major_lows.sort(key=lambda x: x.index)
-            else:
-                lh, ll, lh_bar = self._structural_bearish_range_at(
-                    df, major_highs, major_lows, sp.index,
-                )
-                if lh is not None and ll is not None:
-                    if self._pivot_body_inside_range(df, sp, ll, lh):
-                        if not self._body_close_below_after(df, sp.index, ll):
-                            continue
-                _, hh, _ = self._structural_bullish_range_at(
-                    df, major_highs, major_lows, sp.index,
-                )
-                if hh is not None:
-                    hl, _, hl_bar = self._structural_bullish_range_at(
-                        df, major_highs, major_lows, sp.index,
-                    )
-                    if hl is not None and self._pivot_body_inside_range(df, sp, hl, hh):
-                        if hl_bar is None or not self._body_close_below_after(
-                            df, max(sp.index, hl_bar), hl,
-                        ):
-                            continue
-                major_lows.append(sp)
-                prior_highs = [h for h in swing_highs if h.index < sp.index]
-                if prior_highs:
-                    origin = prior_highs[-1]
-                    if all(h.index != origin.index for h in major_highs):
-                        major_highs.append(origin)
-                        major_highs.sort(key=lambda x: x.index)
+        major_lows.append(sl[0])
+        seed_high = next((h for h in sh if h.index > sl[0].index), sh[0])
+        major_highs.append(seed_high)
 
+        self._extend_major_swings_bullish_bos(
+            df, sh, sl, major_highs, major_lows,
+        )
+        self._extend_major_swings_bearish_bos(
+            df, sh, sl, major_highs, major_lows,
+        )
+
+        major_highs = sorted(
+            {h.index: h for h in major_highs}.values(),
+            key=lambda x: x.index,
+        )
+        major_lows = sorted(
+            {l.index: l for l in major_lows}.values(),
+            key=lambda x: x.index,
+        )
         return major_highs, major_lows
 
     @staticmethod

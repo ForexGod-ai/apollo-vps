@@ -33,10 +33,10 @@ class CoreStructureMixin:
         return df.iloc[:-1].copy()
 
     def detect_choch_and_bos(self, df: pd.DataFrame) -> Tuple[List[CHoCH], List[BOS]]:
-        """🎯 GLITCH IN MATRIX - CHoCH & BOS DETECTION V72 (MAJOR SWINGS + PROTECTED GATE)
+        """🎯 GLITCH IN MATRIX - CHoCH & BOS V73 (BOS-validated majors + dealing range)
 
-        Raw major-swing body-close breaks; opposing flips are gated in
-        ``filter_choch_bos_by_protected_swings`` (Protected HL/LH impulse origin).
+        Major pivots from V73 BOS chains only. Pullback LL/LH inside [Protected HL, HH]
+        do not flip trend; bearish CHoCH requires close below Protected HL.
         """
         chochs = []
         bos_list = []
@@ -112,15 +112,27 @@ class CoreStructureMixin:
                         ))
                         prev_trend = 'bullish'
                     elif _body_close_confirmed_h and prev_trend == 'bearish':
-                        chochs.append(CHoCH(
-                            index=swing.index,
-                            direction='bullish',
-                            break_price=swing.price,
-                            previous_trend='bearish',
-                            candle_time=swing.candle_time,
-                            swing_broken=prev_high,
-                        ))
-                        prev_trend = 'bullish'
+                        _prot_lh = self.dealing_range_protected_lh(
+                            df, major_highs, major_lows,
+                        )
+                        _confirm_close_h = float(
+                            df['close'].iloc[_confirm_bar_h],
+                        )
+                        if (
+                            _prot_lh is not None
+                            and _confirm_close_h <= _prot_lh
+                        ):
+                            pass
+                        else:
+                            chochs.append(CHoCH(
+                                index=swing.index,
+                                direction='bullish',
+                                break_price=swing.price,
+                                previous_trend='bearish',
+                                candle_time=swing.candle_time,
+                                swing_broken=prev_high,
+                            ))
+                            prev_trend = 'bullish'
                     elif _body_close_confirmed_h:  # prev_trend == 'bullish'
                         # BOS bullish = HH continuation only (macro high break in uptrend)
                         bos_list.append(BOS(
@@ -170,15 +182,27 @@ class CoreStructureMixin:
                         ))
                         prev_trend = 'bearish'
                     elif _body_close_confirmed_l and prev_trend == 'bullish':
-                        chochs.append(CHoCH(
-                            index=swing.index,
-                            direction='bearish',
-                            break_price=swing.price,
-                            previous_trend='bullish',
-                            candle_time=swing.candle_time,
-                            swing_broken=prev_low,
-                        ))
-                        prev_trend = 'bearish'
+                        _prot_hl = self.dealing_range_protected_hl(
+                            df, major_highs, major_lows,
+                        )
+                        _confirm_close = float(
+                            df['close'].iloc[_confirm_bar_l],
+                        )
+                        if (
+                            _prot_hl is not None
+                            and _confirm_close >= _prot_hl
+                        ):
+                            pass
+                        else:
+                            chochs.append(CHoCH(
+                                index=swing.index,
+                                direction='bearish',
+                                break_price=swing.price,
+                                previous_trend='bullish',
+                                candle_time=swing.candle_time,
+                                swing_broken=prev_low,
+                            ))
+                            prev_trend = 'bearish'
                     elif _body_close_confirmed_l:  # prev_trend == 'bearish'
                         # BOS bearish = LL continuation only (macro low break in downtrend)
                         bos_list.append(BOS(
