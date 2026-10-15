@@ -42,9 +42,9 @@ class CoreStructureMixin:
         debug: bool = False,
     ) -> dict:
         """
-        V75 — Sequential Glitch SMC on live D1 series (caller passes closed bars only).
-        Body-close vs active_high / protected_low (bull) or active_low / protected_high (bear).
-        No crypto ceilings, ATR displacement, or bias fallback overrides.
+        V77 — Sequential Glitch SMC on closed bars.
+        V77: on BOS, protected HL/LH = min/max body in pullback segment since last_bos_bar
+        (no seed from historic wick floor — allows Higher Low / Lower High to advance).
         """
         empty = {
             'trend': 'neutral',
@@ -182,16 +182,12 @@ class CoreStructureMixin:
 
                 if close > bh(df, active_high_idx):
                     seg_start = max(0, last_bos_bar)
-                    lo_idx = protected_low_idx
+                    new_lo_idx = seg_start
                     for j in range(seg_start, i + 1):
-                        if wick_lo(j) <= wick_lo(lo_idx):
-                            lo_idx = j
-                    protected_low_idx = lo_idx
-                    hi_idx = i
-                    for j in range(seg_start, i + 1):
-                        if wick_hi(j) >= wick_hi(hi_idx):
-                            hi_idx = j
-                    active_high_idx = hi_idx
+                        if bl(df, j) <= bl(df, new_lo_idx):
+                            new_lo_idx = j
+                    protected_low_idx = new_lo_idx
+                    active_high_idx = i
                     broken = swing_pt(active_high_idx, 'high')
                     ev = BOS(
                         index=i,
@@ -236,16 +232,12 @@ class CoreStructureMixin:
 
                 if close < bl(df, active_low_idx):
                     seg_start = max(0, last_bos_bar)
-                    hi_idx = protected_high_idx
+                    new_hi_idx = seg_start
                     for j in range(seg_start, i + 1):
-                        if wick_hi(j) >= wick_hi(hi_idx):
-                            hi_idx = j
-                    protected_high_idx = hi_idx
-                    lo_idx = i
-                    for j in range(seg_start, i + 1):
-                        if wick_lo(j) <= wick_lo(lo_idx):
-                            lo_idx = j
-                    active_low_idx = lo_idx
+                        if bh(df, j) >= bh(df, new_hi_idx):
+                            new_hi_idx = j
+                    protected_high_idx = new_hi_idx
+                    active_low_idx = i
                     broken = swing_pt(active_low_idx, 'low')
                     ev = BOS(
                         index=i,
