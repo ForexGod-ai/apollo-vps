@@ -1,28 +1,17 @@
 from __future__ import annotations
 
 import pandas as pd
-import numpy as np
-from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
 from smc_detector.models import (
-    ActiveDealingRange,
     BOS,
     CHoCH,
     D1AuthContext,
-    FVG,
-    OrderBlock,
-    POIResolution,
-    StructuralRangeState,
-    SwingPoint,
-    TradeSetup,
-    CRYPTO_MACRO_CEILING_LOOKBACK,
-    CRYPTO_MACRO_CEILING_MIN_BARS,
 )
 
 
 class D1AuthorityMixin:
-    """V67 C: canonical D1 authority."""
+    """V67 C: canonical D1 authority (V74 sequential state machine)."""
 
     def build_d1_context(
         self,
@@ -30,7 +19,7 @@ class D1AuthorityMixin:
         symbol: str = '?',
         debug: bool = False,
     ) -> D1AuthContext:
-        """V71 Glitch: D1 CHoCH/BOS (body-close) sets trend; 4H CHoCH in POI confirms pullback (scan layer)."""
+        """V74: D1 bias = final state of sequential SMC state machine on closed bars."""
         empty = D1AuthContext(
             symbol=symbol,
             trend='neutral',
@@ -57,42 +46,23 @@ class D1AuthorityMixin:
         if df_struct is None or df_struct.empty:
             return empty
 
-        chochs, bos_list = self.detect_choch_and_bos(df_struct)
+        sm = self.run_d1_smc_state_machine(df_struct, debug=debug)
+        current_trend = sm['trend']
+        latest = sm['latest_signal']
+        strategy_type = sm['strategy_type']
+        leg_choch = sm['leg_choch']
+        chochs = sm['chochs']
+        bos_list = sm['bos_list']
+
         swing_h = self.detect_swing_highs(df_struct)
         swing_l = self.detect_swing_lows(df_struct)
         range_state = self.compute_structural_range(
             df_struct, swing_h, swing_l, symbol=symbol,
         )
-        chochs, bos_list, range_state = self.filter_internal_range_signals(
-            symbol, df_struct, chochs, bos_list, range_state, debug=debug,
+
+        macro_swings = current_trend if current_trend in ('bullish', 'bearish') else (
+            self.macro_trend_from_swings(df_struct)
         )
-        chochs, bos_list = self.filter_choch_bos_by_protected_swings(
-            df_struct, chochs, bos_list, debug=debug,
-        )
-        latest, strategy_type, current_trend, leg_choch = self._resolve_d1_leg(
-            df_struct, chochs, bos_list, debug=debug, range_state=range_state,
-        )
-        # V71: keep resolve output — no post-leg signal swap (prevents trend vs latest_signal drift)
-        if latest is not None and getattr(latest, 'direction', None) in ('bullish', 'bearish'):
-            current_trend = latest.direction
-        macro_swings = self.macro_trend_from_swings(df_struct)
-        current_trend, strategy_type, latest = self._coerce_dealing_range_pullback_bias(
-            df_struct,
-            chochs,
-            bos_list,
-            macro_swings,
-            current_trend,
-            strategy_type,
-            latest,
-        )
-        if current_trend == 'neutral':
-            fallback = self.resolve_structural_bias_fallback(
-                df_struct, chochs, bos_list, range_state,
-            )
-            if fallback != 'neutral':
-                current_trend = fallback
-                if leg_choch is None:
-                    strategy_type = 'continuation'
 
         trade_dir = ''
         if current_trend == 'bullish':
@@ -125,10 +95,7 @@ class D1AuthorityMixin:
         df: pd.DataFrame,
         symbol: str = '?',
     ) -> dict:
-        """
-        V63: Single source of truth for D1 direction/strategy (scanner + identity lock + JSON).
-        Runs canonical resolve_d1_leg on major-filtered signals.
-        """
+        """Single source of truth for D1 direction/strategy."""
         return self.build_d1_context(df, symbol=symbol).as_dict()
 
     def macro_authority_supports_direction(
@@ -154,9 +121,13 @@ class D1AuthorityMixin:
         chochs: List[CHoCH],
         bos_list: List,
         debug: bool = False,
-        range_state: Optional[StructuralRangeState] = None,
+        range_state=None,
     ) -> Tuple[Optional[object], str, str, Optional[CHoCH]]:
-        """Pure symmetric SMC D1 — major pivots, body-close, pullback/flip rules."""
-        return self._resolve_pure_d1_matrix(
-            df, chochs, bos_list, debug=debug, range_state=range_state,
+        """Scan fallback — V74 state machine snapshot."""
+        sm = self.run_d1_smc_state_machine(df, debug=debug)
+        return (
+            sm['latest_signal'],
+            sm['strategy_type'],
+            sm['trend'],
+            sm['leg_choch'],
         )

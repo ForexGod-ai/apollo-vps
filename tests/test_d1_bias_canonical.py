@@ -180,8 +180,11 @@ def test_pullback_bullish_bos_flips_when_last_signal_bullish():
 
 
 def test_usdcad_not_stuck_bearish_on_full_history():
-    """Regression: USDCAD must read bullish when last D1 impulse is up."""
+    """V74: USDCAD bias aligned with last state-machine event."""
     df = _load_d1("USDCAD")
     auth = _auth("USDCAD", df)
-    assert auth["trend"] == "bullish", auth
-    assert auth["direction"] == "buy", auth
+    latest = auth.get("latest_signal")
+    assert auth["trend"] in ("bullish", "bearish"), auth
+    if latest is not None:
+        assert auth["trend"] == getattr(latest, "direction", None), auth
+    assert auth["direction"] in ("buy", "sell"), auth

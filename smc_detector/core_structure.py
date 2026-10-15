@@ -16,8 +16,6 @@ from smc_detector.models import (
     StructuralRangeState,
     SwingPoint,
     TradeSetup,
-    CRYPTO_MACRO_CEILING_LOOKBACK,
-    CRYPTO_MACRO_CEILING_MIN_BARS,
 )
 
 
@@ -32,188 +30,261 @@ class CoreStructureMixin:
             return df
         return df.iloc[:-1].copy()
 
-    def detect_choch_and_bos(self, df: pd.DataFrame) -> Tuple[List[CHoCH], List[BOS]]:
-        """🎯 GLITCH IN MATRIX - CHoCH & BOS V73 (BOS-validated majors + dealing range)
+    @staticmethod
+    def _bar_time(df: pd.DataFrame, idx: int):
+        if isinstance(df.index, pd.RangeIndex):
+            return idx
+        return df.index[idx]
 
-        Major pivots from V73 BOS chains only. Pullback LL/LH inside [Protected HL, HH]
-        do not flip trend; bearish CHoCH requires close below Protected HL.
+    def run_d1_smc_state_machine(
+        self,
+        df: pd.DataFrame,
+        debug: bool = False,
+    ) -> dict:
         """
-        chochs = []
-        bos_list = []
+        V74 — Sequential Glitch SMC on closed D1 bars only.
+        Body-close vs active_high / protected_low (bull) or active_low / protected_high (bear).
+        """
+        empty = {
+            'trend': 'neutral',
+            'latest_signal': None,
+            'strategy_type': 'continuation',
+            'leg_choch': None,
+            'chochs': [],
+            'bos_list': [],
+        }
+        if df is None or len(df) < 2:
+            return empty
 
-        swing_highs = self.detect_swing_highs(df)
-        swing_lows = self.detect_swing_lows(df)
-        major_highs, major_lows = self.filter_major_swings(df, swing_highs, swing_lows)
+        bh = self._swing_body_high
+        bl = self._swing_body_low
 
-        if len(major_highs) < 2 or len(major_lows) < 2:
-            return chochs, bos_list
+        def wick_hi(i: int) -> float:
+            return float(df['high'].iloc[i])
 
-        # V68: iterate MAJOR swings only — micro pivots are noise.
-        all_swings = []
-        for sh in major_highs:
-            all_swings.append(('high', sh))
-        for sl in major_lows:
-            all_swings.append(('low', sl))
-        all_swings.sort(key=lambda x: x[1].index)
+        def wick_lo(i: int) -> float:
+            return float(df['low'].iloc[i])
 
-        prev_trend = self.macro_trend_from_swings(df)
-        if prev_trend == 'neutral':
-            init_highs = major_highs[:2]
-            init_lows = major_lows[:2]
-            if len(init_highs) >= 2 and len(init_lows) >= 2:
-                h_asc = init_highs[1].price > init_highs[0].price
-                l_asc = init_lows[1].price > init_lows[0].price
-                if h_asc and l_asc:
-                    prev_trend = 'bullish'
-                elif not h_asc and not l_asc:
-                    prev_trend = 'bearish'
+        def swing_pt(i: int, st: str) -> SwingPoint:
+            price = wick_hi(i) if st == 'high' else wick_lo(i)
+            return SwingPoint(
+                index=i,
+                price=price,
+                swing_type=st,
+                candle_time=self._bar_time(df, i),
+            )
 
-        for i in range(1, len(all_swings)):
-            swing_type, swing = all_swings[i]
+        chochs: List[CHoCH] = []
+        bos_list: List[BOS] = []
+        state: Optional[str] = None
+        ref_high = bh(df, 0)
+        ref_low = bl(df, 0)
+        active_high_idx = 0
+        protected_low_idx = 0
+        active_low_idx = 0
+        protected_high_idx = 0
+        last_bos_bar = 0
+        latest_signal = None
+        leg_choch = None
 
-            if swing_type == 'high':
-                prev_high = next(
-                    (s for t, s in reversed(all_swings[:i]) if t == 'high'),
-                    None,
-                )
-                if prev_high is None:
+        for i in range(1, len(df)):
+            close = float(df['close'].iloc[i])
+            ct = self._bar_time(df, i)
+
+            if state is None:
+                if close > ref_high:
+                    state = 'bullish'
+                    last_bos_bar = i
+                    lo_idx = 0
+                    for j in range(0, i + 1):
+                        if wick_lo(j) <= wick_lo(lo_idx):
+                            lo_idx = j
+                    protected_low_idx = lo_idx
+                    hi_idx = i
+                    for j in range(0, i + 1):
+                        if wick_hi(j) >= wick_hi(hi_idx):
+                            hi_idx = j
+                    active_high_idx = hi_idx
+                    broken = swing_pt(active_high_idx, 'high')
+                    ev = CHoCH(
+                        index=i,
+                        direction='bullish',
+                        break_price=bh(df, active_high_idx),
+                        previous_trend=None,
+                        candle_time=ct,
+                        swing_broken=broken,
+                    )
+                    chochs.append(ev)
+                    latest_signal = ev
+                    leg_choch = ev
+                elif close < ref_low:
+                    state = 'bearish'
+                    last_bos_bar = i
+                    hi_idx = 0
+                    for j in range(0, i + 1):
+                        if wick_hi(j) >= wick_hi(hi_idx):
+                            hi_idx = j
+                    protected_high_idx = hi_idx
+                    lo_idx = i
+                    for j in range(0, i + 1):
+                        if wick_lo(j) <= wick_lo(lo_idx):
+                            lo_idx = j
+                    active_low_idx = lo_idx
+                    protected_low_idx = lo_idx
+                    broken = swing_pt(active_low_idx, 'low')
+                    ev = CHoCH(
+                        index=i,
+                        direction='bearish',
+                        break_price=bl(df, active_low_idx),
+                        previous_trend=None,
+                        candle_time=ct,
+                        swing_broken=broken,
+                    )
+                    chochs.append(ev)
+                    latest_signal = ev
+                    leg_choch = ev
+                else:
+                    ref_high = max(ref_high, bh(df, i))
+                    ref_low = min(ref_low, bl(df, i))
+                continue
+
+            if state == 'bullish':
+                if close < bl(df, protected_low_idx):
+                    seg_start = max(0, last_bos_bar)
+                    hi_idx = seg_start
+                    for j in range(seg_start, i + 1):
+                        if wick_hi(j) >= wick_hi(hi_idx):
+                            hi_idx = j
+                    protected_high_idx = hi_idx
+                    lo_idx = i
+                    for j in range(seg_start, i + 1):
+                        if wick_lo(j) <= wick_lo(lo_idx):
+                            lo_idx = j
+                    active_low_idx = lo_idx
+                    broken = swing_pt(protected_low_idx, 'low')
+                    ev = CHoCH(
+                        index=i,
+                        direction='bearish',
+                        break_price=bl(df, protected_low_idx),
+                        previous_trend='bullish',
+                        candle_time=ct,
+                        swing_broken=broken,
+                    )
+                    chochs.append(ev)
+                    latest_signal = ev
+                    leg_choch = ev
+                    state = 'bearish'
+                    last_bos_bar = i
                     continue
 
-                if swing.price > prev_high.price:
-                    # V36.0 FIX B1: BODY CLOSE RULE CORECTATA — close > BODY_HIGH (nu > WICK)
-                    # Motivul bug-ului V22: _prev_wick_h = prev_high.price = df['high'] (wick absolut)
-                    # Pe GBPNZD/XTIUSD/JPY crosses: wick >> body → close depasea BODY dar nu WICK
-                    # → CHoCH/BOS omis complet pe piete volatile = unghiul mort principal.
-                    # Fix: comparam close cu BODY_HIGH (max open/close) al pivot-ului anterior.
-                    # Liquidity Sweep (wick hunt) este prins tot: wick trece dincolo de BODY
-                    # dar close revine sub body_high = sweep fara confirmare structurala.
-                    _prev_body_h = max(
-                        float(df['open'].iloc[prev_high.index]),
-                        float(df['close'].iloc[prev_high.index])
-                    )  # V36.0: body high al swing-ului anterior (nu wick absolut)
-                    _body_close_confirmed_h = False
-                    _confirm_bar_h = None
-                    for _ci in range(prev_high.index + 1, min(swing.index + 1, len(df))):
-                        if float(df['close'].iloc[_ci]) > _prev_body_h:
-                            _body_close_confirmed_h = True
-                            _confirm_bar_h = _ci
-                            break
-                    if not _body_close_confirmed_h:
-                        # Close nu a depasit body-ul prev_high → sweep sau miscare fara confirmare
-                        pass
-                    elif _body_close_confirmed_h and prev_trend is None:
-                        chochs.append(CHoCH(
-                            index=swing.index,
-                            direction='bullish',
-                            break_price=swing.price,
-                            previous_trend=None,
-                            candle_time=swing.candle_time,
-                            swing_broken=prev_high
-                        ))
-                        prev_trend = 'bullish'
-                    elif _body_close_confirmed_h and prev_trend == 'bearish':
-                        _prot_lh = self.dealing_range_protected_lh(
-                            df, major_highs, major_lows,
-                        )
-                        _confirm_close_h = float(
-                            df['close'].iloc[_confirm_bar_h],
-                        )
-                        if (
-                            _prot_lh is not None
-                            and _confirm_close_h <= _prot_lh
-                        ):
-                            pass
-                        else:
-                            chochs.append(CHoCH(
-                                index=swing.index,
-                                direction='bullish',
-                                break_price=swing.price,
-                                previous_trend='bearish',
-                                candle_time=swing.candle_time,
-                                swing_broken=prev_high,
-                            ))
-                            prev_trend = 'bullish'
-                    elif _body_close_confirmed_h:  # prev_trend == 'bullish'
-                        # BOS bullish = HH continuation only (macro high break in uptrend)
-                        bos_list.append(BOS(
-                            index=swing.index,
-                            direction='bullish',
-                            break_price=prev_high.price,
-                            candle_time=swing.candle_time,
-                            swing_broken=prev_high
-                        ))
+                if close > bh(df, active_high_idx):
+                    seg_start = max(0, last_bos_bar)
+                    lo_idx = protected_low_idx
+                    for j in range(seg_start, i + 1):
+                        if wick_lo(j) <= wick_lo(lo_idx):
+                            lo_idx = j
+                    protected_low_idx = lo_idx
+                    hi_idx = i
+                    for j in range(seg_start, i + 1):
+                        if wick_hi(j) >= wick_hi(hi_idx):
+                            hi_idx = j
+                    active_high_idx = hi_idx
+                    broken = swing_pt(active_high_idx, 'high')
+                    ev = BOS(
+                        index=i,
+                        direction='bullish',
+                        break_price=bh(df, active_high_idx),
+                        candle_time=ct,
+                        swing_broken=broken,
+                    )
+                    bos_list.append(ev)
+                    latest_signal = ev
+                    last_bos_bar = i
+                continue
 
-            elif swing_type == 'low':
-                prev_low = next(
-                    (s for t, s in reversed(all_swings[:i]) if t == 'low'),
-                    None,
-                )
-                if prev_low is None:
+            if state == 'bearish':
+                if close > bh(df, protected_high_idx):
+                    seg_start = max(0, last_bos_bar)
+                    lo_idx = i
+                    for j in range(seg_start, i + 1):
+                        if wick_lo(j) <= wick_lo(lo_idx):
+                            lo_idx = j
+                    protected_low_idx = lo_idx
+                    hi_idx = seg_start
+                    for j in range(seg_start, i + 1):
+                        if wick_hi(j) >= wick_hi(hi_idx):
+                            hi_idx = j
+                    active_high_idx = hi_idx
+                    broken = swing_pt(protected_high_idx, 'high')
+                    ev = CHoCH(
+                        index=i,
+                        direction='bullish',
+                        break_price=bh(df, protected_high_idx),
+                        previous_trend='bearish',
+                        candle_time=ct,
+                        swing_broken=broken,
+                    )
+                    chochs.append(ev)
+                    latest_signal = ev
+                    leg_choch = ev
+                    state = 'bullish'
+                    last_bos_bar = i
                     continue
 
-                if swing.price < prev_low.price:
-                    # V36.0 FIX B1: BODY CLOSE RULE CORECTATA — close < BODY_LOW (nu < WICK)
-                    # Motivul bug-ului V22: _prev_wick_l = prev_low.price = df['low'] (wick absolut)
-                    # Pe GBPNZD/XTIUSD/JPY crosses: wick << body → close depasea BODY dar nu WICK
-                    # → CHoCH/BOS omis complet pe piete volatile.
-                    # Fix: comparam close cu BODY_LOW (min open/close) al pivot-ului anterior.
-                    _prev_body_l = min(
-                        float(df['open'].iloc[prev_low.index]),
-                        float(df['close'].iloc[prev_low.index])
-                    )  # V36.0: body low al swing-ului anterior (nu wick absolut)
-                    _body_close_confirmed_l = False
-                    _confirm_bar_l = None
-                    for _ci in range(prev_low.index + 1, min(swing.index + 1, len(df))):
-                        if float(df['close'].iloc[_ci]) < _prev_body_l:
-                            _body_close_confirmed_l = True
-                            _confirm_bar_l = _ci
-                            break
-                    if not _body_close_confirmed_l:
-                        # Close nu a depasit body-ul prev_low → sweep sau miscare fara confirmare
-                        pass
-                    elif _body_close_confirmed_l and prev_trend is None:
-                        chochs.append(CHoCH(
-                            index=swing.index,
-                            direction='bearish',
-                            break_price=swing.price,
-                            previous_trend=None,
-                            candle_time=swing.candle_time,
-                            swing_broken=prev_low
-                        ))
-                        prev_trend = 'bearish'
-                    elif _body_close_confirmed_l and prev_trend == 'bullish':
-                        _prot_hl = self.dealing_range_protected_hl(
-                            df, major_highs, major_lows,
-                        )
-                        _confirm_close = float(
-                            df['close'].iloc[_confirm_bar_l],
-                        )
-                        if (
-                            _prot_hl is not None
-                            and _confirm_close >= _prot_hl
-                        ):
-                            pass
-                        else:
-                            chochs.append(CHoCH(
-                                index=swing.index,
-                                direction='bearish',
-                                break_price=swing.price,
-                                previous_trend='bullish',
-                                candle_time=swing.candle_time,
-                                swing_broken=prev_low,
-                            ))
-                            prev_trend = 'bearish'
-                    elif _body_close_confirmed_l:  # prev_trend == 'bearish'
-                        # BOS bearish = LL continuation only (macro low break in downtrend)
-                        bos_list.append(BOS(
-                            index=swing.index,
-                            direction='bearish',
-                            break_price=prev_low.price,
-                            candle_time=swing.candle_time,
-                            swing_broken=prev_low
-                        ))
+                if close < bl(df, active_low_idx):
+                    seg_start = max(0, last_bos_bar)
+                    hi_idx = protected_high_idx
+                    for j in range(seg_start, i + 1):
+                        if wick_hi(j) >= wick_hi(hi_idx):
+                            hi_idx = j
+                    protected_high_idx = hi_idx
+                    lo_idx = i
+                    for j in range(seg_start, i + 1):
+                        if wick_lo(j) <= wick_lo(lo_idx):
+                            lo_idx = j
+                    active_low_idx = lo_idx
+                    broken = swing_pt(active_low_idx, 'low')
+                    ev = BOS(
+                        index=i,
+                        direction='bearish',
+                        break_price=bl(df, active_low_idx),
+                        candle_time=ct,
+                        swing_broken=broken,
+                    )
+                    bos_list.append(ev)
+                    latest_signal = ev
+                    last_bos_bar = i
 
-        return chochs, bos_list
+        trend = state if state is not None else 'neutral'
+
+        strategy_type = 'continuation'
+        if latest_signal is not None and isinstance(latest_signal, CHoCH):
+            pt = getattr(latest_signal, 'previous_trend', None)
+            if pt and pt != latest_signal.direction:
+                strategy_type = 'reversal'
+            elif pt is None:
+                strategy_type = 'reversal'
+
+        if debug and trend != 'neutral':
+            kind = 'CHoCH' if isinstance(latest_signal, CHoCH) else 'BOS'
+            print(
+                f"   📐 [V74 SMC SM] trend={trend.upper()} last={kind} "
+                f"@bar{getattr(latest_signal, 'index', '?')}"
+            )
+
+        return {
+            'trend': trend,
+            'latest_signal': latest_signal,
+            'strategy_type': strategy_type,
+            'leg_choch': leg_choch,
+            'chochs': chochs,
+            'bos_list': bos_list,
+        }
+
+    def detect_choch_and_bos(self, df: pd.DataFrame) -> Tuple[List[CHoCH], List[BOS]]:
+        """V74: delegate to sequential state machine (body close only)."""
+        out = self.run_d1_smc_state_machine(df)
+        return out['chochs'], out['bos_list']
 
     def compute_structural_range(
         self,
@@ -222,11 +293,7 @@ class CoreStructureMixin:
         swing_lows: List[SwingPoint],
         symbol: Optional[str] = None,
     ) -> Optional[StructuralRangeState]:
-        """Lock bearish range between major LH (body high) and LL (body low).
-
-        V40.1: pe crypto/metals/energy, macro_range_high = max(body-high) ultimele
-        90–150 bare D1 — evită LH local ~63k care genera LOCK BULLISH fals pe BTCUSD.
-        """
+        """Macro range from major LH/LL bodies (V74: no crypto ceiling / asset overrides)."""
         if df is None or len(df) < 20:
             return None
 
@@ -270,22 +337,7 @@ class CoreStructureMixin:
         if macro_range_high is None or macro_range_high <= macro_range_low:
             return None
 
-        # V40.1 CRYPTO MACRO CEILING — tavan real (~77k BTC), nu LH din ultimul picior
-        if self._uses_macro_ceiling(symbol):
-            avail = len(df)
-            lookback = min(CRYPTO_MACRO_CEILING_LOOKBACK, avail)
-            if lookback >= CRYPTO_MACRO_CEILING_MIN_BARS:
-                ceiling, ceiling_bar = self._compute_macro_ceiling_d1(df, lookback)
-                if ceiling > macro_range_low:
-                    _old_lh = macro_range_high
-                    macro_range_high = ceiling
-                    macro_range_high_bar = ceiling_bar
-                    _sym = symbol or 'CRYPTO'
-                    print(
-                        f"   📐 [V40.1 MACRO CEILING] {_sym}: LH local {_old_lh:.2f} → "
-                        f"max body-high {lookback}D = {ceiling:.2f} (bar {ceiling_bar})"
-                    )
-
+        del symbol
         close = float(df['close'].iloc[-1])
         locked_bias = 'neutral'
         if close > macro_range_high:

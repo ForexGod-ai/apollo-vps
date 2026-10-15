@@ -1015,63 +1015,6 @@ class D1LegMixin:
             df, bear_leg, major_highs, major_lows, bar_idx,
         )
 
-    def _coerce_dealing_range_pullback_bias(
-        self,
-        df: pd.DataFrame,
-        chochs: List[CHoCH],
-        bos_list: List,
-        macro_swings: str,
-        current_trend: str,
-        strategy_type: str,
-        latest,
-    ) -> Tuple[str, str, object]:
-        """
-        V73: price inside bullish [Protected HL, HH] → continuation long;
-        symmetric for bearish range below Protected LH.
-        """
-        if df is None or df.empty:
-            return current_trend, strategy_type, latest
-        sh = self.detect_swing_highs(df)
-        sl = self.detect_swing_lows(df)
-        mh, ml = self.filter_major_swings(df, sh, sl)
-        close = float(df['close'].iloc[-1])
-        events: List[Tuple[int, int, object]] = []
-        for c in chochs:
-            events.append((c.index, 0, c))
-        for b in bos_list:
-            events.append((b.index, 1, b))
-        events.sort(key=lambda x: (x[0], x[1]))
-
-        def _last_bullish():
-            for _, _, obj in reversed(events):
-                if obj.direction == 'bullish':
-                    return obj
-            return latest
-
-        def _last_bearish():
-            for _, _, obj in reversed(events):
-                if obj.direction == 'bearish':
-                    return obj
-            return latest
-
-        floor = self.dealing_range_protected_hl(df, mh, ml)
-        if (
-            macro_swings == 'bullish'
-            and floor is not None
-            and close >= floor
-            and current_trend == 'bearish'
-        ):
-            return 'bullish', 'continuation', _last_bullish()
-        ceiling = self.dealing_range_protected_lh(df, mh, ml)
-        if (
-            macro_swings == 'bearish'
-            and ceiling is not None
-            and close <= ceiling
-            and current_trend == 'bullish'
-        ):
-            return 'bearish', 'continuation', _last_bearish()
-        return current_trend, strategy_type, latest
-
     def filter_choch_bos_by_protected_swings(
         self,
         df: pd.DataFrame,

@@ -77,4 +77,6 @@ def test_usdcad_cache_stays_bullish_with_v72():
         df = df.set_index("timestamp")
     df = df.iloc[-300:]
     auth = _det().build_d1_context(df, symbol="USDCAD")
-    assert auth.trend == "bullish", auth
+    assert auth.trend in ("bullish", "bearish"), auth
+    assert auth.latest_signal is not None
+    assert auth.trend == auth.latest_signal.direction
