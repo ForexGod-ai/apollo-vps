@@ -5,16 +5,29 @@ Uses IC Markets data via cTrader cBot HTTP server
 """
 
 import sys
-import io
 
-from console_utils import init_console, loguru_colorize
+import colorama
+from colorama import Fore, Back, Style
 
-init_console()
+colorama.init(autoreset=True, convert=True)
 
-# Fix Windows cp1252 emoji encoding issue
-if sys.stdout.encoding and sys.stdout.encoding.lower() != 'utf-8':
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
-    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
+
+class C:
+    """Terminal colors (colorama + reset_matrix style)."""
+    RED = Fore.RED
+    GREEN = Fore.GREEN
+    YELLOW = Fore.YELLOW
+    BLUE = Fore.BLUE
+    MAGENTA = Fore.MAGENTA
+    CYAN = Fore.CYAN
+    WHITE = Fore.WHITE
+    BOLD = Style.BRIGHT
+    RESET = Style.RESET_ALL
+
+
+def _loguru_colorize() -> bool:
+    return os.getenv('STRIP_ANSI', '0') != '1'
+
 
 import math
 import requests
@@ -43,7 +56,7 @@ logger.remove()
 logger.add(
     sys.stderr,
     level=os.getenv('LOG_LEVEL', 'WARNING'),
-    colorize=loguru_colorize(),
+    colorize=_loguru_colorize(),
     format='{time:HH:mm:ss} | {level} | {message}',
 )
 
@@ -119,7 +132,23 @@ def _print_pair_scan_summary(
         status = 'SKIP'
     else:
         status = 'WAITING'
-    print(f"✓ {symbol} | {strat} {trend} | {status} | {elapsed_sec:.1f}s")
+    if ctx.trend == 'bullish':
+        trend_col = C.GREEN
+    elif ctx.trend == 'bearish':
+        trend_col = C.RED
+    else:
+        trend_col = C.YELLOW
+    if setup is not None:
+        status_col = C.GREEN
+    elif status == 'SKIP':
+        status_col = C.YELLOW
+    else:
+        status_col = C.CYAN
+    print(
+        f"{C.GREEN}✓{C.RESET} {C.BOLD}{symbol}{C.RESET} | "
+        f"{C.BLUE}{strat}{C.RESET} {trend_col}{trend}{C.RESET} | "
+        f"{status_col}{status}{C.RESET} | {elapsed_sec:.1f}s"
+    )
 
 
 def _clear_deep_sleep_on_resume() -> bool:
@@ -244,14 +273,11 @@ class DailyScanner:
             swing_lookback=5,      # Standard swing validation (5 bars each side)
             atr_multiplier=0.5     # V24.5: era 1.2 (4x prea restrictiv) — aliniat cu practica SMC
         )
-        print("✅ SMC Detector V10.2 initialized (ГЛИТЧ ИН МАТРИКС — VERSIUNEA FINALĂ):")
-        print("   🎯 Entry: Marginea FVG în zona 70-80% Fibonacci pe impulsul 4H")
-        print("   🛑 SL: Body close structural pur — ZERO floor, ZERO ATR buffer")
-        print("   🏆 TP: Max/Min HH/LL din TOATĂ structura D1 — fără limită 60 zile")
-        print("   📊 RR: Minim 1:4 structural — sub 1:4 = trade RESPINS")
-        print("   👁️ MONITORING vizibil pe Telegram — chart trimis la orice setup (PÂNDĂ + READY)")
-        print("   ❌ Method 2 Large Imbalance ELIMINAT — FVG pur 3 lumânări EXCLUSIV")
-        print("   ⏱️ 4H CHoCH max 48 candle (8 zile) — setup-uri masive incluse")
+        print(f"{C.GREEN}✅ SMC Detector initialized (Glitch in Matrix){C.RESET}")
+        print(f"   {C.CYAN}Entry:{C.RESET} FVG 70-80% Fib on 4H impulse")
+        print(f"   {C.CYAN}SL:{C.RESET} Body-close structural")
+        print(f"   {C.CYAN}TP:{C.RESET} D1 HH/LL structural targets")
+        print(f"   {C.CYAN}RR:{C.RESET} Min 1:4 structural")
         
         self.telegram = TelegramNotifier()
         
@@ -325,10 +351,10 @@ class DailyScanner:
         Args:
             keep_connection: If True, don't disconnect MT5 after scan (for auto-trader)
         """
-        print("\n" + "="*60)
-        print("🔥 ForexGod - Glitch Daily Scanner Starting... [V37.15 DYNAMIC REVERSAL + V40.3]")
-        print(f"⏰ Scan Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        print("="*60 + "\n")
+        print(f"\n{C.BOLD}{C.MAGENTA}{'='*60}{C.RESET}")
+        print(f"{C.BOLD}{C.CYAN}ForexGod — Glitch Daily Scanner{C.RESET}")
+        print(f"{C.WHITE}Scan time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}{C.RESET}")
+        print(f"{C.BOLD}{C.MAGENTA}{'='*60}{C.RESET}\n")
 
         # V39.1: /resume — nu bloca scanul daca deep_sleep ramane pe disk
         if _clear_deep_sleep_on_resume():
@@ -422,7 +448,7 @@ class DailyScanner:
                 scan_reason = "Re-evaluating MONITORING" if is_monitoring else f"Priority {priority}"
                 
                 if not _scanner_quiet_flag:
-                    print(f"\n🔍 Scanning {symbol} ({scan_reason})...")
+                    print(f"\n{C.CYAN}🔍 Scanning {C.BOLD}{symbol}{C.RESET}{C.CYAN} ({scan_reason})...{C.RESET}")
                 _pair_t0 = time.time()
                 setup = None
                 
@@ -925,16 +951,14 @@ class DailyScanner:
             logger.warning(f"[V37.0] Could not read final monitoring count: {_cnt_err}")
         
         # Send daily summary AFTER saving
-        print("\n" + "="*60)
-        print(f"✅ Scan Complete!")
-        print(f"📊 Total Pairs Scanned: {len(self.pairs)}")
-        print(f"🆕 New Setups Found: {len(setups_found)}")
-        print(f"    └─ Brand New (never in monitoring): {len(brand_new_setups)}")
-        print(f"    └─ Re-evaluated (already in monitoring): {len(re_evaluated_setups)}")
-        print(f"📋 Total Active Tracking:")
-        print(f"    └─ Saved in Monitoring: {final_monitoring_count}")
-        print(f"    └─ Open Positions: {len(all_open_positions)}")
-        print("="*60 + "\n")
+        print(f"\n{C.BOLD}{C.GREEN}{'='*60}{C.RESET}")
+        print(f"{C.BOLD}{C.GREEN}✅ Scan Complete!{C.RESET}")
+        print(f"{C.WHITE}📊 Total pairs: {len(self.pairs)}{C.RESET}")
+        print(f"{C.YELLOW}🆕 New setups: {len(setups_found)}{C.RESET}")
+        print(f"    └─ Brand new: {C.CYAN}{len(brand_new_setups)}{C.RESET}")
+        print(f"    └─ Re-evaluated: {C.CYAN}{len(re_evaluated_setups)}{C.RESET}")
+        print(f"{C.WHITE}📋 Active tracking — monitoring: {final_monitoring_count} | open: {len(all_open_positions)}{C.RESET}")
+        print(f"{C.BOLD}{C.GREEN}{'='*60}{C.RESET}\n")
 
         if self.scanner_settings['telegram_alerts']:
             # ━━━ V67.1: setup cards ÎNAINTE, MARKET_REPORT la final (ordinea corectă) ━━━
@@ -2404,16 +2428,16 @@ def main():
     IGNORE_OPEN_POSITIONS = args.ignore_open_positions
     
     if IGNORE_OPEN_POSITIONS:
-        print("⚠️  AUDIT MODE: Ignoring open positions check - scanning ALL pairs\n")
+        print(f"{C.YELLOW}⚠️  AUDIT MODE: Ignoring open positions — scanning ALL pairs{C.RESET}\n")
     
     scanner = DailyScanner()
 
     # Test Telegram connection first
-    print("🧪 Testing Telegram connection...")
+    print(f"{C.CYAN}🧪 Testing Telegram connection...{C.RESET}")
     if scanner.telegram.test_connection():
-        print("✅ Telegram connected successfully!\n")
+        print(f"{C.GREEN}✅ Telegram connected successfully!{C.RESET}\n")
     else:
-        print("⚠️ Telegram connection failed - check .env configuration\n")
+        print(f"{C.YELLOW}⚠️ Telegram connection failed — check .env{C.RESET}\n")
     
     # Run full daily scan
     setups = scanner.run_daily_scan()
@@ -2422,17 +2446,20 @@ def main():
 
     # Print summary
     if setups:
-        print("\n📋 SETUPS SUMMARY:")
+        print(f"\n{C.BOLD}{C.MAGENTA}📋 SETUPS SUMMARY:{C.RESET}")
         for i, setup in enumerate(setups, 1):
             direction = "LONG" if _setup_d1_trend(setup) == 'bullish' else "SHORT"
+            dir_col = C.GREEN if direction == "LONG" else C.RED
             status = f"[{setup.status}]"
-            # V8.4: Display strategy type (REVERSAL or CONTINUITY)
             strategy = setup.strategy_type.upper() if hasattr(setup, 'strategy_type') else "UNKNOWN"
             strategy_emoji = "🔄" if strategy == "REVERSAL" else "➡️"
-            # V8.2 FIX: Handle None values for entry_price and risk_reward
             entry_price = setup.entry_price if setup.entry_price is not None else 0.0
             risk_reward = setup.risk_reward if setup.risk_reward is not None else 0.0
-            print(f"{i}. {strategy_emoji} {strategy} - {setup.symbol} - {direction} @ {entry_price:.5f} (R:R 1:{risk_reward:.2f}) {status}")
+            print(
+                f"{C.CYAN}{i}.{C.RESET} {strategy_emoji} {C.BLUE}{strategy}{C.RESET} — "
+                f"{C.BOLD}{setup.symbol}{C.RESET} — {dir_col}{direction}{C.RESET} @ "
+                f"{entry_price:.5f} (R:R 1:{risk_reward:.2f}) {C.YELLOW}{status}{C.RESET}"
+            )
 
 
 if __name__ == "__main__":
