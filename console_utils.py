@@ -7,6 +7,14 @@ import sys
 
 _ANSI_RE = re.compile(r'\x1b\[[0-9;]*m')
 
+# V76: initialize colorama on first import (PowerShell / CMD ANSI → no raw ^[32m)
+if sys.platform == 'win32':
+    try:
+        import colorama
+        colorama.init(autoreset=True, strip=False, convert=True)
+    except ImportError:
+        pass
+
 
 def strip_ansi(text: str) -> str:
     return _ANSI_RE.sub('', text)
@@ -35,25 +43,24 @@ class _AnsiStripWriter:
 
 def init_console() -> None:
     """Call once at process start (daily_scanner, radar, etc.)."""
-    if sys.platform != 'win32':
-        return
-    try:
-        import colorama
-        colorama.init(autoreset=True, strip=False, convert=True)
-    except ImportError:
-        pass
-    if os.getenv('STRIP_ANSI', '0') == '1' or not sys.stdout.isatty():
-        if not isinstance(sys.stdout, _AnsiStripWriter):
-            sys.stdout = _AnsiStripWriter(sys.stdout)
-        if not isinstance(sys.stderr, _AnsiStripWriter):
-            sys.stderr = _AnsiStripWriter(sys.stderr)
+    if sys.platform == 'win32':
+        try:
+            import colorama
+            colorama.init(autoreset=True, strip=False, convert=True)
+        except ImportError:
+            pass
+        if os.getenv('STRIP_ANSI', '0') == '1':
+            if not isinstance(sys.stdout, _AnsiStripWriter):
+                sys.stdout = _AnsiStripWriter(sys.stdout)
+            if not isinstance(sys.stderr, _AnsiStripWriter):
+                sys.stderr = _AnsiStripWriter(sys.stderr)
 
 
 def loguru_colorize() -> bool:
-    """Use loguru colorize only when stdout is a TTY and STRIP_ANSI is off."""
+    """Use loguru colorize when TTY and STRIP_ANSI is off (Windows: colorama convert)."""
     if os.getenv('STRIP_ANSI', '0') == '1':
         return False
     try:
-        return sys.stdout.isatty()
+        return sys.stderr.isatty()
     except Exception:
         return False

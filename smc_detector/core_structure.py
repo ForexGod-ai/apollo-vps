@@ -53,6 +53,8 @@ class CoreStructureMixin:
             'leg_choch': None,
             'chochs': [],
             'bos_list': [],
+            'protected_low': None,
+            'protected_high': None,
         }
         if df is None or len(df) < 2:
             return empty
@@ -266,6 +268,13 @@ class CoreStructureMixin:
             elif pt is None:
                 strategy_type = 'reversal'
 
+        protected_low = None
+        protected_high = None
+        if state == 'bullish':
+            protected_low = float(bl(df, protected_low_idx))
+        elif state == 'bearish':
+            protected_high = float(bh(df, protected_high_idx))
+
         if debug and trend != 'neutral':
             kind = 'CHoCH' if isinstance(latest_signal, CHoCH) else 'BOS'
             print(
@@ -280,6 +289,8 @@ class CoreStructureMixin:
             'leg_choch': leg_choch,
             'chochs': chochs,
             'bos_list': bos_list,
+            'protected_low': protected_low,
+            'protected_high': protected_high,
         }
 
     def detect_choch_and_bos(self, df: pd.DataFrame) -> Tuple[List[CHoCH], List[BOS]]:

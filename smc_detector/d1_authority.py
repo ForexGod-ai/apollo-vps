@@ -36,6 +36,8 @@ class D1AuthorityMixin:
             range_state=None,
             swing_h=[],
             swing_l=[],
+            protected_low=None,
+            protected_high=None,
         )
         if df is None or df.empty:
             return empty
@@ -88,6 +90,8 @@ class D1AuthorityMixin:
             range_state=range_state,
             swing_h=swing_h,
             swing_l=swing_l,
+            protected_low=sm.get('protected_low'),
+            protected_high=sm.get('protected_high'),
         )
 
     def resolve_authoritative_d1_bias(

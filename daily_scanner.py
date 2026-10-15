@@ -6,6 +6,11 @@ Uses IC Markets data via cTrader cBot HTTP server
 
 import sys
 import io
+
+from console_utils import init_console, loguru_colorize
+
+init_console()
+
 # Fix Windows cp1252 emoji encoding issue
 if sys.stdout.encoding and sys.stdout.encoding.lower() != 'utf-8':
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
@@ -24,7 +29,6 @@ from typing import List, Optional, Dict, Tuple
 from dotenv import load_dotenv
 from loguru import logger
 
-from console_utils import init_console, loguru_colorize
 from smc_detector import SMCDetector, TradeSetup, CHoCH, BOS, D1AuthContext
 from telegram_notifier import TelegramNotifier
 from ctrader_cbot_client import CTraderCBotClient
@@ -35,7 +39,6 @@ from poi_utils import poi_bounds_from_stored, poi_touch_active
 
 load_dotenv()
 
-init_console()
 logger.remove()
 logger.add(
     sys.stderr,
@@ -679,31 +682,13 @@ class DailyScanner:
                         setup.daily_tp_price = None
                         print(f"   ⚠️ [V24.6 D1 TP] Eroare calcul daily_tp_price: {_dtp_err}")
 
-                    # ✅ V35 T2: Pivoti structurali D1 pentru Poarta 1 (Gate 1 - Invalidare Structurala)
-                    # daily_swing_low  (LONG) : cel mai adanc swing low sub pret  = baza structurala D1
-                    # daily_swing_high (SHORT): cel mai inalt swing high deasupra  = plafonul structural D1
-                    # Poarta 1 in _apply_lifecycle_gates() marcheaza INVALIDATED daca:
-                    #   LONG:  close < daily_swing_low  (baza sparta -> structura bullish invalida)
-                    #   SHORT: close > daily_swing_high (plafonul spart -> structura bearish invalida)
+                    # V76 Gate 1: protected levels from D1 state machine (d1_auth_cache)
                     try:
-                        _gate1_dir = _setup_d1_trend(setup)  # 'bullish' / 'bearish'
-                        _gate1_px  = float(df_daily['close'].iloc[-1])
-                        if _gate1_dir == 'bullish':
-                            _gate1_lows  = self.smc_detector.detect_swing_lows(df_daily)
-                            _gate1_below = [s for s in _gate1_lows if s.price < _gate1_px]
-                            setup.daily_swing_low  = float(min(_gate1_below, key=lambda s: s.price).price) if _gate1_below else None
-                            setup.daily_swing_high = None
-                            if setup.daily_swing_low:
-                                print(f"   🏛️  [V35 GATE1] {symbol} LONG: baza structurala D1 = {setup.daily_swing_low:.5f}")
-                        else:
-                            _gate1_highs = self.smc_detector.detect_swing_highs(df_daily)
-                            _gate1_above = [s for s in _gate1_highs if s.price > _gate1_px]
-                            setup.daily_swing_high = float(max(_gate1_above, key=lambda s: s.price).price) if _gate1_above else None
-                            setup.daily_swing_low  = None
-                            if setup.daily_swing_high:
-                                print(f"   🏛️  [V35 GATE1] {symbol} SHORT: plafon structural D1 = {setup.daily_swing_high:.5f}")
+                        _apply_v76_gate1_from_d1_ctx(
+                            setup, d1_auth_cache.get(symbol), symbol,
+                        )
                     except Exception as _gate1_err:
-                        setup.daily_swing_low  = None
+                        setup.daily_swing_low = None
                         setup.daily_swing_high = None
 
                     # ✅ V10.9 CARRY MATRIX: Fetch live swap rates and attach to setup
@@ -1228,6 +1213,29 @@ def _sync_setup_from_d1_context(setup: TradeSetup, ctx) -> None:
         setup.d1_signal_type = sig_type
     if latest is not None:
         setup.daily_choch = latest
+
+
+def _apply_v76_gate1_from_d1_ctx(
+    setup: TradeSetup,
+    ctx: Optional[D1AuthContext],
+    symbol: str,
+) -> None:
+    """V76: Gate 1 invalidation levels = SM protected_low / protected_high (not historic min/max)."""
+    setup.daily_swing_low = None
+    setup.daily_swing_high = None
+    if setup is None or ctx is None:
+        return
+    trend = _setup_d1_trend(setup)
+    if trend == 'bullish' and ctx.protected_low is not None:
+        setup.daily_swing_low = float(ctx.protected_low)
+        print(
+            f"   🏛️  [V76 GATE1] {symbol} LONG: protected_low D1 = {setup.daily_swing_low:.5f}"
+        )
+    elif trend == 'bearish' and ctx.protected_high is not None:
+        setup.daily_swing_high = float(ctx.protected_high)
+        print(
+            f"   🏛️  [V76 GATE1] {symbol} SHORT: protected_high D1 = {setup.daily_swing_high:.5f}"
+        )
 
 
 def _setup_d1_trend(setup: TradeSetup) -> str:

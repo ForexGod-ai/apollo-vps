@@ -22,7 +22,7 @@ from smc_detector.models import (
 
 
 class W1Mixin:
-    """V67 C: w1 mixin."""
+    """V67 C: w1 mixin — V76 W1 bias via same sequential SMC state machine as D1."""
 
     @staticmethod
     def _normalize_macro_bias_label(bias: str) -> Optional[str]:
@@ -55,31 +55,25 @@ class W1Mixin:
         df_w1: 'pd.DataFrame',
         debug: bool = False,
     ):
-        """W1 = același pipeline D1: major swings + filter_internal + _resolve_d1_leg."""
-        import pandas as pd
+        """V76: W1 = run_d1_smc_state_machine on closed weekly bars (no legacy leg pipeline)."""
         if df_w1 is None or len(df_w1) < 10:
             return None, None, 'neutral', None, None, None
 
         df = df_w1.iloc[-60:].copy()
-        w1_det = type(self)(swing_lookback=3, atr_multiplier=self.atr_multiplier)
-        w1_det._swing_highs_cache.clear()
-        w1_det._swing_lows_cache.clear()
+        df_struct = self.d1_closed_structure_df(df)
+        if df_struct is None or len(df_struct) < 2:
+            return None, None, 'neutral', None, None, None
 
-        chochs, bos_list = w1_det.detect_choch_and_bos(df)
-        sh = w1_det.detect_swing_highs(df)
-        sl = w1_det.detect_swing_lows(df)
-        range_state = w1_det.compute_structural_range(df, sh, sl, symbol='W1_MACRO')
-        chochs, bos_list, range_state = w1_det.filter_internal_range_signals(
-            'W1_MACRO', df, chochs, bos_list, range_state,
-        )
-        latest_signal, strategy_type, current_trend, leg_choch = w1_det._resolve_d1_leg(
-            df, chochs, bos_list, debug=debug, range_state=range_state,
-        )
-        return latest_signal, strategy_type, current_trend, leg_choch, w1_det, df
+        sm = self.run_d1_smc_state_machine(df_struct, debug=debug)
+        current_trend = sm['trend']
+        latest_signal = sm['latest_signal']
+        strategy_type = sm['strategy_type']
+        leg_choch = sm['leg_choch']
+        return latest_signal, strategy_type, current_trend, leg_choch, self, df_struct
 
     def calculate_w1_bias(self, df_w1: 'pd.DataFrame', debug: bool = False) -> dict:
         """
-        W1 macro bias — EXACT același pipeline ca D1 (_resolve_d1_leg pe pivoți majori).
+        W1 macro bias — V76 sequential SMC state machine on weekly OHLC.
 
         Returnează dict:
             bias, strategy_type, current_trend, last_signal_type,
@@ -98,18 +92,22 @@ class W1Mixin:
             latest_signal, strategy_type, current_trend, leg_choch, w1_det, df = (
                 self._resolve_w1_leg_pipeline(df_w1, debug=debug)
             )
-            if w1_det is None or latest_signal is None or current_trend == 'neutral':
+            if w1_det is None or current_trend not in ('bullish', 'bearish'):
                 if debug:
-                    print("   🔍 [W1 BIAS] leg pipeline → NEUTRAL (fără semnal major)")
+                    print("   🔍 [W1 BIAS] SMC state machine → NEUTRAL")
                 return _empty
 
             bias = 'BULLISH' if current_trend == 'bullish' else 'BEARISH'
-            sig_type = 'CHoCH' if isinstance(latest_signal, CHoCH) else 'BOS'
+            if latest_signal is not None:
+                sig_type = 'CHoCH' if isinstance(latest_signal, CHoCH) else 'BOS'
+            else:
+                sig_type = 'CHoCH' if strategy_type == 'reversal' else 'BOS'
+
             if debug:
-                chochs, bos_list = w1_det.detect_choch_and_bos(df)
+                idx = getattr(latest_signal, 'index', '?') if latest_signal else '?'
                 print(
-                    f"   🔍 [W1 BIAS] {sig_type} {current_trend.upper()} "
-                    f"@bar{latest_signal.index} → {strategy_type.upper()} → BIAS={bias}"
+                    f"   🔍 [W1 BIAS V76] {sig_type} {current_trend.upper()} "
+                    f"@bar{idx} → {strategy_type.upper()} → BIAS={bias}"
                 )
                 if leg_choch is not None:
                     print(
@@ -122,9 +120,15 @@ class W1Mixin:
                 'strategy_type': strategy_type,
                 'current_trend': current_trend,
                 'last_signal_type': sig_type,
-                'last_bos_direction': latest_signal.direction,
-                'last_bos_price': float(latest_signal.break_price),
-                'last_bos_bar_idx': latest_signal.index,
+                'last_bos_direction': (
+                    latest_signal.direction if latest_signal is not None else current_trend
+                ),
+                'last_bos_price': (
+                    float(latest_signal.break_price) if latest_signal is not None else None
+                ),
+                'last_bos_bar_idx': (
+                    latest_signal.index if latest_signal is not None else None
+                ),
             }
         except Exception as e:
             print(f"⚠️ [W1 BIAS] Error: {e}")

@@ -129,6 +129,8 @@ class D1AuthContext:
     range_state: Optional[StructuralRangeState]
     swing_h: List['SwingPoint']
     swing_l: List['SwingPoint']
+    protected_low: Optional[float] = None
+    protected_high: Optional[float] = None
 
     def as_dict(self) -> dict:
         return {
@@ -141,6 +143,8 @@ class D1AuthContext:
             'latest_signal': self.latest_signal,
             'leg_choch': self.leg_choch,
             'd1_signal_type': self.d1_signal_type,
+            'protected_low': self.protected_low,
+            'protected_high': self.protected_high,
         }
 
 
