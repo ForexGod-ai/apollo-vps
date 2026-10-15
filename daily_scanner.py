@@ -24,6 +24,7 @@ from typing import List, Optional, Dict, Tuple
 from dotenv import load_dotenv
 from loguru import logger
 
+from console_utils import init_console, loguru_colorize
 from smc_detector import SMCDetector, TradeSetup, CHoCH, BOS, D1AuthContext
 from telegram_notifier import TelegramNotifier
 from ctrader_cbot_client import CTraderCBotClient
@@ -33,6 +34,15 @@ from pip_utils import get_pip_size, liquidity_already_swept
 from poi_utils import poi_bounds_from_stored, poi_touch_active
 
 load_dotenv()
+
+init_console()
+logger.remove()
+logger.add(
+    sys.stderr,
+    level=os.getenv('LOG_LEVEL', 'WARNING'),
+    colorize=loguru_colorize(),
+    format='{time:HH:mm:ss} | {level} | {message}',
+)
 
 # Global flag for testing/audit - ignore open positions check
 IGNORE_OPEN_POSITIONS = False
@@ -94,8 +104,6 @@ def _print_pair_scan_summary(
     ctx: D1AuthContext,
     setup: Optional[TradeSetup],
     elapsed_sec: float,
-    *,
-    bias_fallback: bool = False,
 ) -> None:
     """V67: one production line per pair (skipped when SCANNER_DEBUG=1)."""
     if _scanner_debug():
@@ -104,10 +112,10 @@ def _print_pair_scan_summary(
     trend = ctx.trend.upper() if ctx.trend not in ('', 'neutral') else 'NEUTRAL'
     if setup is not None:
         status = getattr(setup, 'status', 'MONITORING')
-    elif bias_fallback:
-        status = 'BIAS_FALLBACK'
+    elif ctx.trend == 'neutral':
+        status = 'SKIP'
     else:
-        status = 'NO_SETUP'
+        status = 'WAITING'
     print(f"✓ {symbol} | {strat} {trend} | {status} | {elapsed_sec:.1f}s")
 
 
@@ -358,7 +366,6 @@ class DailyScanner:
             raise RuntimeError(error_msg)
         
         setups_found = []
-        bias_fallback_entries = []  # V31.0: Bias-only entries colectate pentru WIPE final
         daily_bias_map = {}  # V40: D1 bias per symbol pentru invalidare setup-uri stale
         w1_bias_map = {}  # V40.3: W1 macro bias informativ (confidence flag)
         symbol_price_map = {}  # V40.3: preț D1 close per simbol — soft TTL POI
@@ -415,7 +422,6 @@ class DailyScanner:
                     print(f"\n🔍 Scanning {symbol} ({scan_reason})...")
                 _pair_t0 = time.time()
                 setup = None
-                _pair_bias_fallback = False
                 
                 # Download Daily data — V44.2: min 250 bare (~1 an), prefer config (365 în pairs_config)
                 _d1_lookback = max(
@@ -792,84 +798,18 @@ class DailyScanner:
                     if not _scanner_quiet_flag:
                         print(f"✓ {symbol} adăugat în raportul de dimineață [{setup_status}]")
                 else:
-                    # V10.2: Setup respins — motivul exact a fost printat de smc_detector
-                    # ── V31.0 BIAS FALLBACK ──────────────────────────────────────────────────
-                    # Nu mai scriem direct în JSON. Colectăm în bias_fallback_entries[].
-                    # save_monitoring_setups() face WIPE&OVERWRITE la final cu tot.
-                    try:
+                    if not _scanner_quiet_flag:
                         _auth = d1_auth_cache.get(symbol)
                         if _auth is None:
                             _auth = self.smc_detector.build_d1_context(
                                 df_daily, symbol=symbol, debug=_scanner_debug_flag,
                             )
-                            d1_auth_cache[symbol] = _auth
-                        # V67 B: bias fallback reads canonical D1AuthContext only
-                        _bias_dir = _auth.trend
-                        _bf_strategy = _auth.strategy_type
-                        _bf_sig = _auth.d1_signal_type
-                        if _bias_dir in ('bullish', 'bearish'):
-                            _pair_bias_fallback = True
-                            _w1 = w1_bias_map.get(symbol, 'NEUTRAL')
-                            _bias_trade_dir = _auth.direction or (
-                                'buy' if _bias_dir == 'bullish' else 'sell'
-                            )
-                            _bf_status = 'WAITING_D1_PULLBACK'
-                            _bf_w_d_aligned = True
-                            _bf_confidence = 'NORMAL'
-                            if _w1 == 'BEARISH' and _bias_dir == 'bullish':
-                                _bf_status = 'WAITING_W_D_SYNC'
-                                _bf_w_d_aligned = False
-                                _bf_confidence = 'LOW_W1_COUNTER_TREND'
-                                print(
-                                    f"⏸️ [W+D SOFT SYNC] {symbol}: bias fallback LONG vs W1 BEARISH — "
-                                    f"status=WAITING_W_D_SYNC (monitor only)"
-                                )
-                            elif _w1 == 'BULLISH' and _bias_dir == 'bearish':
-                                _bf_status = 'WAITING_W_D_SYNC'
-                                _bf_w_d_aligned = False
-                                _bf_confidence = 'LOW_W1_COUNTER_TREND'
-                                print(
-                                    f"⏸️ [W+D SOFT SYNC] {symbol}: bias fallback SHORT vs W1 BULLISH — "
-                                    f"status=WAITING_W_D_SYNC (monitor only)"
-                                )
-                            _bf_setup_type = _bf_strategy.upper()
-                            print(
-                                f"📡 [V63 BIAS FALLBACK] {symbol}: bias={_bias_dir.upper()} "
-                                f"→ {_bf_sig}/{_bf_strategy.upper()} {_bf_status}"
-                            )
-                            _bf_entry = {
-                                'symbol': symbol,
-                                'direction': _bias_trade_dir,
-                                'd1_bias_direction': _bias_dir,
-                                'daily_bias': _bias_dir.upper(),
-                                'setup_type': _bf_setup_type,
-                                'strategy_type': _bf_strategy,
-                                'strategy_locked': True,
-                                'daily_bias_active': True,
-                                'confidence': _bf_confidence,
-                                'w1_bias': _w1,
-                                'w_d_aligned': _bf_w_d_aligned,
-                                'w1_poi_top': w1_poi.get('w1_poi_top') if w1_poi else None,
-                                'w1_poi_bottom': w1_poi.get('w1_poi_bottom') if w1_poi else None,
-                                'poi_top': None,
-                                'poi_bottom': None,
-                                'fvg_top': None,
-                                'fvg_bottom': None,
-                                'daily_target_price': None,
-                                'status': _bf_status,
-                                'setup_time': datetime.now().isoformat(),
-                                'bias_fallback': True,
-                            }
-                            bias_fallback_entries.append(
-                                _hydrate_bias_fallback_poi(
-                                    self.smc_detector, _bf_entry, df_daily, ctx=_auth,
-                                )
-                            )
-                            print(f"   ✅ [V63] {symbol} {_bias_trade_dir.upper()} → bias_fallback_entries ({len(bias_fallback_entries)} total)")
+                        if _auth.trend == 'neutral':
+                            print(f"⏸️ {symbol} — SKIP (D1 neutral, no complete SMC setup)")
                         else:
-                            print(f"⛔ {symbol} — NO SETUP + BIAS NEUTRAL [V10.2 REJECT: vezi log-ul ↑]")
-                    except Exception as _bf_err:
-                        print(f"⛔ {symbol} — NO SETUP [V10.2 REJECT: vezi log-ul ↑] | bias fallback error: {_bf_err}")
+                            print(
+                                f"⏸️ {symbol} — WAITING (D1 {_auth.trend.upper()}, no trade setup yet)"
+                            )
 
                 _ctx_out = d1_auth_cache.get(symbol)
                 if _ctx_out is not None:
@@ -878,7 +818,6 @@ class DailyScanner:
                         _ctx_out,
                         setup,
                         time.time() - _pair_t0,
-                        bias_fallback=_pair_bias_fallback,
                     )
 
                 # V44.2: pauză scurtă — cBot main thread (radar + scanner simultan → HTTP 500 Timeout)
@@ -959,10 +898,9 @@ class DailyScanner:
         brand_new_setups   = [s for s in all_active_setups if s.symbol not in monitoring_symbols]
         re_evaluated_setups = [s for s in all_active_setups if s.symbol in monitoring_symbols]
 
-        # SAVE first, then show final summary — V31.0: WIPE + bias fallback
         save_result = save_monitoring_setups(
             all_active_setups,
-            bias_fallback_entries,
+            [],
             daily_bias_map,
             w1_bias_map,
             symbol_price_map,
@@ -971,7 +909,7 @@ class DailyScanner:
         )
         persist_missing = _audit_scan_persistence(
             all_active_setups,
-            bias_fallback_entries,
+            [],
             save_result.get('saved_symbols', []),
             save_result.get('skipped', {}),
         )
@@ -1746,7 +1684,7 @@ def _apply_v43_poi_persistence(old: dict, new_macro: dict) -> dict:
 
     if _adr_container_shift_detected(old, new_macro):
         out['poi_v43_source'] = new_macro.get('poi_v43_source') or 'V43 ADR shift rehydrate'
-        print(
+        _lifecycle_debug(
             f"  [V43.1 LIFECYCLE] {sym}: ADR shift detected "
             f"LH {old.get('adr_lh')}→{new_macro.get('adr_lh')} "
             f"HL {old.get('adr_hl')}→{new_macro.get('adr_hl')} "
@@ -1969,50 +1907,16 @@ def _try_post_tp_evolution(
     out['poi_mitigated'] = True
     out['reversal_tp_hit'] = False
 
-    print(
+    _lifecycle_debug(
         f"  [V43.1 LIFECYCLE] {sym}: REVERSAL → CONTINUATION (post-TP + expansion BOS) "
         f"| new POI [{out.get('poi_bottom')} – {out.get('poi_top')}]"
     )
     return out
 
 
-def _hydrate_bias_fallback_poi(
-    detector: SMCDetector,
-    entry: dict,
-    df_daily: pd.DataFrame,
-    ctx: Optional[D1AuthContext] = None,
-) -> dict:
-    """V43.1 E2-T4: populate POI for bias-fallback entries missing coordinates."""
-    if entry.get('poi_top') is not None and entry.get('poi_bottom') is not None:
-        return entry
-    sym = entry.get('symbol', '?')
-    try:
-        if ctx is None:
-            ctx = detector.build_d1_context(df_daily, symbol=sym)
-        latest_signal = ctx.latest_signal
-        if latest_signal is None:
-            return entry
-        current_trend = ctx.trend
-        price = float(df_daily['close'].iloc[-1])
-        adr = detector.build_active_dealing_range(
-            df_daily, ctx.swing_h, ctx.swing_l, latest_signal.index, current_trend,
-            range_state=ctx.range_state, symbol=sym,
-        )
-        poi_res = detector.resolve_d1_poi(
-            df_daily, latest_signal, price, current_trend, ctx.strategy_type, adr, symbol=sym,
-        )
-        out = dict(entry)
-        out = _apply_poi_to_setup_dict(out, poi_res)
-        if poi_res.poi_source:
-            out['poi_v43_source'] = poi_res.poi_source
-        out['structural_breach'] = SMCDetector.compute_structural_breach(
-            price, current_trend, adr,
-        )
-        print(f"  [V43.1 LIFECYCLE] {sym}: bias fallback POI hydrated")
-        return _sanitize_monitoring_value(out)
-    except Exception as exc:
-        print(f"  ⚠️ [V43.1 LIFECYCLE] {sym}: bias fallback POI hydrate failed: {exc}")
-        return _sanitize_monitoring_value(entry)
+def _lifecycle_debug(msg: str) -> None:
+    if _scanner_debug():
+        print(msg)
 
 
 def _apply_v431_lifecycle_gates(
@@ -2039,8 +1943,8 @@ def _apply_v431_lifecycle_gates(
             and status in _swing_watch
             and status not in ('TRADE_OPEN', 'PARTIAL_OPEN')
         ):
-            print(
-                f"  [V43.1 LIFECYCLE] {sym}: structural_breach flag — "
+            _lifecycle_debug(
+                f"  [LIFECYCLE] {sym}: structural_breach flag — "
                 f"swing monitor kept ({status}), no instant INVALIDATED"
             )
         elif not setup_dict.get('entry1_filled') and status not in ('TRADE_OPEN', 'PARTIAL_OPEN'):
@@ -2048,25 +1952,25 @@ def _apply_v431_lifecycle_gates(
             setup_dict['invalidation_reason'] = 'V43.1 structural_breach'
             for key in _RADAR_RESET_KEYS:
                 setup_dict.pop(key, None)
-            print(f"  [V43.1 LIFECYCLE] {sym}: INVALIDATED — structural_breach (protected LH/LL broken)")
+            _lifecycle_debug(f"  [LIFECYCLE] {sym}: INVALIDATED — structural_breach")
             return setup_dict
 
     if status == 'WAITING_D1_PULLBACK' and in_poi:
         setup_dict['status'] = 'MONITORING'
         _touch = 'wick/preț în POI' if d1_wick_high is not None else 'preț în POI'
-        print(f"  [V43.1 LIFECYCLE] {sym}: WAITING_D1_PULLBACK → MONITORING ({_touch})")
+        _lifecycle_debug(f"  [LIFECYCLE] {sym}: WAITING_D1_PULLBACK → MONITORING ({_touch})")
 
     elif status == 'MONITORING' and not in_poi:
         setup_dict['status'] = 'WAITING_D1_PULLBACK'
         for key in _RADAR_RESET_KEYS:
             setup_dict.pop(key, None)
-        print(f"  [V43.1 LIFECYCLE] {sym}: MONITORING → WAITING_D1_PULLBACK (price left POI)")
+        _lifecycle_debug(f"  [LIFECYCLE] {sym}: MONITORING → WAITING_D1_PULLBACK (price left POI)")
 
     elif status == 'READY' and not in_poi:
         setup_dict['status'] = 'WAITING_D1_PULLBACK'
         for key in _RADAR_RESET_KEYS:
             setup_dict.pop(key, None)
-        print(f"  [V43.1 LIFECYCLE] {sym}: READY → WAITING_D1_PULLBACK (price left POI macro zone)")
+        _lifecycle_debug(f"  [LIFECYCLE] {sym}: READY → WAITING_D1_PULLBACK (price left POI)")
 
     return setup_dict
 
@@ -2446,75 +2350,6 @@ def save_monitoring_setups(
             preserved_symbols.add(setup.symbol)
             _skip_audit.pop(setup.symbol, None)
 
-        # Pasul 4: Bias fallback entries (numai daca simbolul nu e deja activ)
-        for entry in bias_fallback:
-            sym = entry.get('symbol')
-            direction = entry.get('direction', '')
-            if sym in preserved_symbols:
-                _old = existing_active.get(sym, {})
-                _old_dir = (_old.get('direction') or '').lower()
-                if _old_dir and _old_dir != direction:
-                    monitoring_setups = [s for s in monitoring_setups if s.get('symbol') != sym]
-                    preserved_symbols.discard(sym)
-                    existing_active.pop(sym, None)
-                    print(
-                        f"  🔄 [V40 BIAS FLIP] {sym} fallback: {_old_dir.upper()} → {direction.upper()}"
-                    )
-                else:
-                    _new_fb = dict(entry)
-                    if _macro_overwrite_blocked(_old, open_position_dir_map):
-                        print(
-                            f"  ⚠️ [V42 CONFLICT] Skipping macro overwrite for {sym} fallback "
-                            f"due to active TRADE_OPEN/PARTIAL_OPEN"
-                        )
-                        _skip_audit[sym] = 'macro_overwrite_blocked_trade_open'
-                        continue
-                    merged_fb = _apply_v42_macro_override(_old, _new_fb)
-                    _df_fb = symbol_df_daily_map.get(sym)
-                    merged_fb = _apply_setup_identity_lock(_old, merged_fb, _df_fb, detector, sym)
-                    merged_fb = _apply_v43_poi_persistence(_old, merged_fb)
-                    _live_fb = symbol_price_map.get(sym)
-                    _fb_h, _fb_l = _d1_wick_from_df(_df_fb)
-                    merged_fb = _apply_v431_lifecycle_gates(merged_fb, _live_fb, _fb_h, _fb_l)
-                    df_d1 = _df_fb
-                    if df_d1 is not None:
-                        merged_fb = _try_bos_new_range_evolution(detector, df_d1, merged_fb, sym)
-                        merged_fb = _try_post_tp_evolution(detector, df_d1, merged_fb, sym)
-                    if merged_fb.get('status') in _DEAD_STATUSES:
-                        _skip_audit[sym] = f"lifecycle_{merged_fb.get('status')}"
-                        monitoring_setups = [s for s in monitoring_setups if s.get('symbol') != sym]
-                        existing_active.pop(sym, None)
-                        preserved_symbols.discard(sym)
-                        print(f"  ⚠️ [V59 PERSIST SKIP] {sym}: {_skip_audit[sym]}")
-                        continue
-                    monitoring_setups = [s for s in monitoring_setups if s.get('symbol') != sym]
-                    monitoring_setups.append(merged_fb)
-                    existing_active[sym] = merged_fb
-                    print(
-                        f"  🏛️ [V42 LIVE AUTHORITY] {sym}: bias fallback re-hydrated "
-                        f"(Strategy: {merged_fb.get('strategy_type')}, Direction: {merged_fb.get('direction')})"
-                    )
-                    continue
-            open_dir = open_position_dir_map.get(sym)
-            if open_dir and open_dir != direction:
-                print(f"⛔ SAVE GUARD: {sym} — NOT saving bias fallback {direction.upper()}, "
-                      f"open {open_dir.upper()} position exists")
-                _skip_audit[sym] = f'conflict_open_{open_dir}'
-                print(f"  ⚠️ [V59 PERSIST SKIP] {sym}: {_skip_audit[sym]}")
-                continue
-            _live_fb = symbol_price_map.get(sym)
-            _df_fb = symbol_df_daily_map.get(sym)
-            entry = _apply_v431_lifecycle_gates(entry, _live_fb, *_d1_wick_from_df(_df_fb))
-            entry = _apply_setup_identity_lock({}, entry, _df_fb, detector, sym)
-            if entry.get('status') in _DEAD_STATUSES:
-                _skip_audit[sym] = f"lifecycle_{entry.get('status')}"
-                print(f"  ⚠️ [V59 PERSIST SKIP] {sym}: {_skip_audit[sym]}")
-                continue
-            entry = _sanitize_monitoring_value(entry)
-            monitoring_setups.append(entry)
-            if sym:
-                preserved_symbols.add(sym)
-
         # Atomic write
         monitoring_setups = [
             _sanitize_monitoring_value(s) for s in monitoring_setups
@@ -2564,10 +2399,7 @@ def main():
         print("⚠️  AUDIT MODE: Ignoring open positions check - scanning ALL pairs\n")
     
     scanner = DailyScanner()
-    logger.success(
-        "[V42.4 CLEANUP] Successfully purged legacy branches and unified core system data defaults."
-    )
-    
+
     # Test Telegram connection first
     print("🧪 Testing Telegram connection...")
     if scanner.telegram.test_connection():

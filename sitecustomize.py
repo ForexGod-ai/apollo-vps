@@ -27,3 +27,8 @@ if sys.platform == 'win32':
             errors='replace',
             line_buffering=True
         )
+    try:
+        from console_utils import init_console
+        init_console()
+    except Exception:
+        pass

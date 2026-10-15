@@ -24,6 +24,65 @@ from smc_detector.models import (
 class CoreSwingsMixin:
     """V67 C: swing + equilibrium detection."""
 
+    def _swing_fractal_window(self, df: pd.DataFrame) -> int:
+        """V75: universal local pivot window (3 D1/4H, 2 intraday) — no ATR gates."""
+        if df is None or len(df) < 3:
+            return 2
+        try:
+            if hasattr(df.index, 'to_series'):
+                _td_series = df.index.to_series().diff().dropna()
+                _median_sec = _td_series.median().total_seconds()
+                if _median_sec >= 72000:
+                    return 3
+                if _median_sec >= 10800:
+                    return 3
+        except Exception:
+            pass
+        return 2
+
+    def _append_provisional_edge_high(
+        self,
+        df: pd.DataFrame,
+        swing_highs: List[SwingPoint],
+        body_highs: pd.Series,
+        fractal: int,
+    ) -> None:
+        """Right-edge chart: last bar may be active high if it dominates left window."""
+        if len(df) < fractal + 1:
+            return
+        i = len(df) - 1
+        if any(s.index == i for s in swing_highs):
+            return
+        current = body_highs.iloc[i]
+        if all(current > body_highs.iloc[i - j] for j in range(1, fractal + 1)):
+            swing_highs.append(SwingPoint(
+                index=i,
+                price=float(current),
+                swing_type='high',
+                candle_time=df.index[i] if not isinstance(df.index, pd.RangeIndex) else i,
+            ))
+
+    def _append_provisional_edge_low(
+        self,
+        df: pd.DataFrame,
+        swing_lows: List[SwingPoint],
+        body_lows: pd.Series,
+        fractal: int,
+    ) -> None:
+        if len(df) < fractal + 1:
+            return
+        i = len(df) - 1
+        if any(s.index == i for s in swing_lows):
+            return
+        current = body_lows.iloc[i]
+        if all(current < body_lows.iloc[i - j] for j in range(1, fractal + 1)):
+            swing_lows.append(SwingPoint(
+                index=i,
+                price=float(current),
+                swing_type='low',
+                candle_time=df.index[i] if not isinstance(df.index, pd.RangeIndex) else i,
+            ))
+
     def calculate_atr(self, df: pd.DataFrame, period: int = 14) -> float:
         """🔥 Calculate Average True Range for prominence filtering
         
@@ -391,25 +450,7 @@ class CoreSwingsMixin:
         if _cache_key in self._swing_highs_cache:
             return self._swing_highs_cache[_cache_key]
 
-        # V36.0 FIX B3: FRACTAL_WINDOW ADAPTIV — Daily redus de la 5 la 3
-        # V29.0: FW=5 pe Daily lasa o zona moarta de 5 zile la marginea graficului.
-        # Un CHoCH bearish format vineri dimineata era INVIZIBIL pana marti dimineata.
-        # V36.0: FW=3 → zona moarta redusa la 3 zile (weekend = 0 bare = practic invizibil 1 zi)
-        # Daily (≥20h/bar): FW=3 — prinde swing-uri din ultimele 3 zile (era 5)
-        # 4H  (3-20h/bar): FW=3 — echilibru precizie/calitate (nemodificat)
-        # 1H/sub         : FW=2 — fractal agil (comportament V24.0 original, nemodificat)
-        FRACTAL_WINDOW = 2  # default: 1H și sub
-        try:
-            if len(df) >= 3 and hasattr(df.index, 'to_series'):
-                _td_series = df.index.to_series().diff().dropna()
-                _median_sec = _td_series.median().total_seconds()
-                if _median_sec >= 72000:    # ≥20h → Daily
-                    FRACTAL_WINDOW = 3  # V36.0: era 5 → redus la 3 (zona oarba 5→3 zile)
-                elif _median_sec >= 10800:  # ≥3h → 4H
-                    FRACTAL_WINDOW = 3
-                # else: 1H sau sub → 2
-        except Exception:
-            pass  # index non-timestamp (RangeIndex, backtesting) → fallback 2
+        FRACTAL_WINDOW = self._swing_fractal_window(df)
         swing_highs = []
         body_highs = df[['open', 'close']].max(axis=1)
 
@@ -432,6 +473,8 @@ class CoreSwingsMixin:
                     swing_type='high',
                     candle_time=df.index[i] if not isinstance(df.index, pd.RangeIndex) else i
                 ))
+
+        self._append_provisional_edge_high(df, swing_highs, body_highs, FRACTAL_WINDOW)
 
         # ⚡ V13.1: Stochează în cache înainte de return
         self._swing_highs_cache[_cache_key] = swing_highs
@@ -458,20 +501,7 @@ class CoreSwingsMixin:
         if _cache_key in self._swing_lows_cache:
             return self._swing_lows_cache[_cache_key]
 
-        # V36.0 FIX B3: FRACTAL_WINDOW ADAPTIV — Daily=3 (era 5), 4H=3, 1H/sub=2 (simetric cu detect_swing_highs)
-        # Motivul: FW=5 pe Daily lasa zona moarta de 5 zile la marginea graficului.
-        # V36.0: FW=3 → zona moarta redusa la 3 zile (simetric cu detect_swing_highs).
-        FRACTAL_WINDOW = 2
-        try:
-            if len(df) >= 3 and hasattr(df.index, 'to_series'):
-                _td_series = df.index.to_series().diff().dropna()
-                _median_sec = _td_series.median().total_seconds()
-                if _median_sec >= 72000:
-                    FRACTAL_WINDOW = 3  # V36.0: era 5 → redus la 3 (zona oarba 5→3 zile)
-                elif _median_sec >= 10800:
-                    FRACTAL_WINDOW = 3
-        except Exception:
-            pass
+        FRACTAL_WINDOW = self._swing_fractal_window(df)
         swing_lows = []
         body_lows = df[['open', 'close']].min(axis=1)
 
@@ -494,6 +524,8 @@ class CoreSwingsMixin:
                     swing_type='low',
                     candle_time=df.index[i] if not isinstance(df.index, pd.RangeIndex) else i
                 ))
+
+        self._append_provisional_edge_low(df, swing_lows, body_lows, FRACTAL_WINDOW)
 
         # ⚡ V13.1: Stochează în cache înainte de return
         self._swing_lows_cache[_cache_key] = swing_lows
@@ -804,6 +836,28 @@ class CoreSwingsMixin:
     @staticmethod
     def _swing_body_low(df: pd.DataFrame, idx: int) -> float:
         return min(float(df['open'].iloc[idx]), float(df['close'].iloc[idx]))
+
+    def label_swing_hh_hl_lh_ll(
+        self,
+        swing_highs: List[SwingPoint],
+        swing_lows: List[SwingPoint],
+    ) -> dict:
+        """V75: sequential HH/LH and HL/LL labels on detected pivots (live D1)."""
+        labeled_h: List[Tuple[int, str, float]] = []
+        labeled_l: List[Tuple[int, str, float]] = []
+        for i, pt in enumerate(swing_highs):
+            if i == 0:
+                tag = 'H'
+            else:
+                tag = 'HH' if pt.price > swing_highs[i - 1].price else 'LH'
+            labeled_h.append((pt.index, tag, pt.price))
+        for i, pt in enumerate(swing_lows):
+            if i == 0:
+                tag = 'L'
+            else:
+                tag = 'HL' if pt.price > swing_lows[i - 1].price else 'LL'
+            labeled_l.append((pt.index, tag, pt.price))
+        return {'swing_highs': labeled_h, 'swing_lows': labeled_l}
 
     def macro_trend_from_swings(self, df: pd.DataFrame) -> str:
         """HH+HL vs LH+LL — majori dacă disponibili, altfel geometrici recenti (V64 JPY fix)."""

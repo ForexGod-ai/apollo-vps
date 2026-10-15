@@ -1275,24 +1275,7 @@ class D1LegMixin:
         bos_list: List,
         range_state: Optional[StructuralRangeState] = None,
     ) -> str:
-        """V58: when leg resolve is neutral — infer bias from range + last valid BOS/CHoCH."""
-        macro = self.macro_trend_from_swings(df)
-        if macro != 'neutral':
-            return macro
-        close = float(df['close'].iloc[-1])
-        if range_state is not None and range_state.locked:
-            _ll = float(range_state.macro_range_low)
-            _lh = float(range_state.macro_range_high)
-            if close <= _ll:
-                bearish_bos = [b for b in bos_list if b.direction == 'bearish']
-                bearish_chochs = [c for c in chochs if c.direction == 'bearish']
-                if bearish_bos or bearish_chochs:
-                    return 'bearish'
-            elif close > _lh:
-                bullish_bos = [b for b in bos_list if b.direction == 'bullish']
-                bullish_chochs = [c for c in chochs if c.direction == 'bullish']
-                if bullish_bos or bullish_chochs:
-                    return 'bullish'
+        """V75: disabled — no synthetic bias injection; authority is build_d1_context / SM only."""
         return 'neutral'
 
     def _resolve_historical_opposite_bias(

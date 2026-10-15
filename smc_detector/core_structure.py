@@ -42,8 +42,9 @@ class CoreStructureMixin:
         debug: bool = False,
     ) -> dict:
         """
-        V74 — Sequential Glitch SMC on closed D1 bars only.
+        V75 — Sequential Glitch SMC on live D1 series (caller passes closed bars only).
         Body-close vs active_high / protected_low (bull) or active_low / protected_high (bear).
+        No crypto ceilings, ATR displacement, or bias fallback overrides.
         """
         empty = {
             'trend': 'neutral',

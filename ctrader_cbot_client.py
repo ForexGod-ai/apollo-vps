@@ -15,7 +15,7 @@ class CTraderCBotClient:
     
     def __init__(self, host='localhost', port=8010):
         self.base_url = f"http://{host}:{port}"
-        logger.info(f"🤖 CTrader cBot Client initialized: {self.base_url}")
+        logger.debug(f"CTrader cBot Client initialized: {self.base_url}")
     
     def is_available(self, retries: int = 3, wait: float = 2.0) -> bool:
         """
@@ -113,13 +113,9 @@ class CTraderCBotClient:
     ) -> Optional[pd.DataFrame]:
         """O singură cerere HTTP — returnează DataFrame sau None, fără excepții neprinse."""
         params = {'symbol': symbol, 'timeframe': timeframe, 'bars': bars}
-        logger.debug(f"📊 Requesting {bars} {timeframe} bars for {symbol}")
         response = requests.get(f"{self.base_url}/data", params=params, timeout=timeout)
-        logger.debug(f"🔍 Request URL: {response.url}")
-        logger.debug(f"🔍 Response Status: {response.status_code}")
-        logger.debug(f"🔍 Response Text (first 200 chars): {response.text[:200]}")
         if response.status_code != 200:
-            logger.error(f"❌ HTTP {response.status_code}: {response.text[:200]}")
+            logger.warning(f"HTTP {response.status_code} {symbol} {timeframe}: {response.text[:120]}")
             return None
         try:
             payload = response.json()
@@ -139,13 +135,7 @@ class CTraderCBotClient:
                     if df is not None and not df.empty:
                         if bar_count != bars:
                             logger.warning(
-                                f"⚠️ [V36.4 FALLBACK] {symbol} {timeframe}: "
-                                f"{bars}→{bar_count} bare OK ({len(df)} primite)"
-                            )
-                        else:
-                            logger.success(
-                                f"✅ Got {len(df)} bars for {symbol} "
-                                f"(latest: {df['close'].iloc[-1]:.5f})"
+                                f"{symbol} {timeframe}: bar fallback {bars}→{bar_count} ({len(df)} bars)"
                             )
                         return df
                 except requests.exceptions.Timeout:

@@ -91,8 +91,8 @@ def test_btcusd_trend_follows_last_d1_signal(detector):
     assert strategy in ("reversal", "continuation")
 
 
-def test_v45_last_choch_wins_over_older_bear_structure(detector):
-    """V71: last CHoCH (bullish @85) sets trend even inside old bear range."""
+def test_v74_resolve_d1_leg_matches_state_machine(detector):
+    """V74: _resolve_d1_leg ignores injected CHoCH/BOS — trend = sequential SM on OHLC only."""
     n = 100
     idx = pd.date_range("2024-01-01", periods=n, freq="D")
     close = [90000.0] * 50 + [65000.0 - i * 100 for i in range(50)]
@@ -125,11 +125,15 @@ def test_v45_last_choch_wins_over_older_bear_structure(detector):
         locked=True,
         locked_bias="bearish",
     )
-    latest, strategy, trend, _ = detector._resolve_d1_leg(
+    sm = detector.run_d1_smc_state_machine(df)
+    latest, strategy, trend, leg = detector._resolve_d1_leg(
         df, [bear_choch, bull_choch], [bear_bos], range_state=rs,
     )
-    assert trend == "bullish"
-    assert strategy == "reversal"
+    assert trend == sm['trend']
+    assert strategy == sm['strategy_type']
+    assert leg == sm['leg_choch']
+    if sm['latest_signal'] is not None:
+        assert latest == sm['latest_signal']
 
 
 def test_resolve_post_leg_flip_bearish_after_dead_bull(detector):
