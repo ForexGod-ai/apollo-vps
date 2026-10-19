@@ -55,7 +55,7 @@ load_dotenv()
 logger.remove()
 logger.add(
     sys.stderr,
-    level=os.getenv('LOG_LEVEL', 'WARNING'),
+    level=os.getenv('LOG_LEVEL', 'INFO'),
     colorize=_loguru_colorize(),
     format='{time:HH:mm:ss} | {level} | {message}',
 )
@@ -138,14 +138,17 @@ def _print_pair_scan_summary(
         trend_col = C.RED
     else:
         trend_col = C.YELLOW
-    if setup is not None:
+    st_up = (status or '').upper()
+    if st_up in ('MONITORING', 'READY') or setup is not None:
         status_col = C.GREEN
+    elif st_up == 'WAITING':
+        status_col = C.YELLOW
     elif status == 'SKIP':
         status_col = C.YELLOW
     else:
         status_col = C.CYAN
     print(
-        f"{C.GREEN}✓{C.RESET} {C.BOLD}{symbol}{C.RESET} | "
+        f"{C.CYAN}▸{C.RESET} {C.BOLD}{symbol}{C.RESET} | "
         f"{C.BLUE}{strat}{C.RESET} {trend_col}{trend}{C.RESET} | "
         f"{status_col}{status}{C.RESET} | {elapsed_sec:.1f}s"
     )
@@ -1490,7 +1493,7 @@ def _apply_setup_identity_lock(
     detector: SMCDetector,
     symbol: Optional[str] = None,
 ) -> dict:
-    """Faza B — blocare identitate setup până la spargerea podelei/plafonului major."""
+    """V79: live D1 state machine wins; lock only while a trade is open."""
     sym = symbol or new_macro.get('symbol') or old.get('symbol') or '?'
     out = dict(new_macro)
 
@@ -1501,84 +1504,21 @@ def _apply_setup_identity_lock(
         out['setup_identity_locked'] = bool(old.get('setup_identity_locked'))
         return out
 
-    def _snapshot() -> dict:
-        if df_daily is None:
-            return {}
-        try:
-            return _d1_identity_snapshot(detector, df_daily, sym)
-        except Exception:
-            return {}
-
-    if not old.get('setup_identity_locked'):
-        out.update(_snapshot())
-        if out.get('setup_identity_locked'):
-            print(
-                f"  🔒 [Faza B] {sym}: identity locked "
-                f"floor={out.get('major_structure_floor')} "
-                f"ceiling={out.get('major_structure_ceiling')} "
-                f"leg@bar{out.get('leg_choch_bar')}"
-            )
-        return out
-
-    breached = _structure_identity_breached(df_daily, old)
-    contradicts = _live_contradicts_locked_identity(old, new_macro)
-
-    if breached:
-        out.update(_snapshot())
-        if contradicts:
-            print(f"  🔓 [Faza B] {sym}: structure breached — new identity from live D1")
-        return out
-
-    if contradicts:
-        auth = _d1_ctx_auth_dict(detector, df_daily, sym) if (
-            df_daily is not None and not df_daily.empty
-        ) else {}
+    if df_daily is not None and not df_daily.empty:
+        auth = _d1_ctx_auth_dict(detector, df_daily, sym)
         auth_trend = auth.get('trend')
-        old_dir = _identity_direction(old)
-        new_dir = _identity_direction(new_macro)
-        # V64: authoritative D1 always wins over locked identity on direction flip
-        if auth_trend and auth_trend in ('bullish', 'bearish') and auth_trend != old_dir:
-            out.update(_snapshot())
-            out['direction'] = auth.get('direction') or ('buy' if auth_trend == 'bullish' else 'sell')
+        if auth_trend in ('bullish', 'bearish'):
             out['d1_bias_direction'] = auth_trend
+            out['direction'] = auth.get('direction') or (
+                'buy' if auth_trend == 'bullish' else 'sell'
+            )
             out['daily_bias'] = auth.get('daily_bias', auth_trend.upper())
-            out['strategy_type'] = auth.get('strategy_type', out.get('strategy_type'))
-            out['setup_type'] = _norm_strategy_type(out['strategy_type']).upper()
-            print(
-                f"  🔓 [V64 AUTH FLIP] {sym}: identity {old_dir.upper()} → "
-                f"{auth_trend.upper()} (canonical D1 authority)"
-            )
-            return out
-        allow_flip = _macro_authority_allows_identity_flip(
-            detector, df_daily, old, new_macro, sym,
-        )
-        if not allow_flip and auth_trend and new_dir and auth_trend == new_dir:
-            allow_flip = True
-        if allow_flip:
-            out.update(_snapshot())
-            print(
-                f"  🔓 [V63 MACRO FLIP] {sym}: identity updated "
-                f"{old.get('direction', '').upper()} → "
-                f"{new_macro.get('direction', '').upper()} "
-                f"(canonical D1 authority)"
-            )
-            return out
-        for key in _IDENTITY_MACRO_KEYS + _IDENTITY_BOUND_KEYS:
-            if key in old and old.get(key) is not None:
-                out[key] = old[key]
-        for key in _IDENTITY_STALE_LEVEL_KEYS:
-            if key in old and old.get(key) is not None:
-                out[key] = old[key]
-        out['setup_identity_locked'] = True
-        print(
-            f"  🔒 [Faza B] {sym}: live D1 flip blocked — "
-            f"identity {old.get('direction', '').upper()}/"
-            f"{_norm_strategy_type(old.get('strategy_type'))} held (pullback noise)"
-        )
-        return out
+            st = auth.get('strategy_type')
+            if st:
+                out['strategy_type'] = st
+                out['setup_type'] = _norm_strategy_type(st).upper()
 
-    out.update(_snapshot())
-    out['setup_identity_locked'] = True
+    out['setup_identity_locked'] = False
     return out
 
 

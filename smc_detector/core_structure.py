@@ -42,9 +42,9 @@ class CoreStructureMixin:
         debug: bool = False,
     ) -> dict:
         """
-        V77 — Sequential Glitch SMC on closed bars.
-        V77: on BOS, protected HL/LH = min/max body in pullback segment since last_bos_bar
-        (no seed from historic wick floor — allows Higher Low / Lower High to advance).
+        V79 — Sequential Glitch SMC on closed bars.
+        On BOS, protected HL/LH = min/max body between broken pivot and break bar;
+        active pivot advances to the break bar (i).
         """
         empty = {
             'trend': 'neutral',
@@ -181,18 +181,18 @@ class CoreStructureMixin:
                     continue
 
                 if close > bh(df, active_high_idx):
-                    seg_start = max(0, last_bos_bar)
-                    new_lo_idx = seg_start
-                    for j in range(seg_start, i + 1):
-                        if bl(df, j) <= bl(df, new_lo_idx):
+                    new_lo_idx = active_high_idx
+                    for j in range(active_high_idx, i + 1):
+                        if bl(df, j) < bl(df, new_lo_idx):
                             new_lo_idx = j
                     protected_low_idx = new_lo_idx
+                    prev_high_idx = active_high_idx
                     active_high_idx = i
-                    broken = swing_pt(active_high_idx, 'high')
+                    broken = swing_pt(prev_high_idx, 'high')
                     ev = BOS(
                         index=i,
                         direction='bullish',
-                        break_price=bh(df, active_high_idx),
+                        break_price=bh(df, prev_high_idx),
                         candle_time=ct,
                         swing_broken=broken,
                     )
@@ -231,18 +231,18 @@ class CoreStructureMixin:
                     continue
 
                 if close < bl(df, active_low_idx):
-                    seg_start = max(0, last_bos_bar)
-                    new_hi_idx = seg_start
-                    for j in range(seg_start, i + 1):
-                        if bh(df, j) >= bh(df, new_hi_idx):
+                    new_hi_idx = active_low_idx
+                    for j in range(active_low_idx, i + 1):
+                        if bh(df, j) > bh(df, new_hi_idx):
                             new_hi_idx = j
                     protected_high_idx = new_hi_idx
+                    prev_low_idx = active_low_idx
                     active_low_idx = i
-                    broken = swing_pt(active_low_idx, 'low')
+                    broken = swing_pt(prev_low_idx, 'low')
                     ev = BOS(
                         index=i,
                         direction='bearish',
-                        break_price=bl(df, active_low_idx),
+                        break_price=bl(df, prev_low_idx),
                         candle_time=ct,
                         swing_broken=broken,
                     )

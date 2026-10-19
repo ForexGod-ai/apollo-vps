@@ -459,8 +459,28 @@ class PoiMixin:
                     ))
         return fvgs
 
-    def _impulse_equilibrium(self, df: pd.DataFrame, signal) -> Tuple[Optional[float], int, int]:
-        """Equilibrium 50% din impulsul semnalului (origine → break)."""
+    def _impulse_equilibrium(
+        self,
+        df: pd.DataFrame,
+        signal,
+        adr: Optional[ActiveDealingRange] = None,
+        sm_protected_low: Optional[float] = None,
+        sm_protected_high: Optional[float] = None,
+    ) -> Tuple[Optional[float], int, int]:
+        """V79: ADR/SM equilibrium when available; else impuls semnal (origine → break)."""
+        if adr is not None:
+            sig_idx = signal.index if hasattr(signal, 'index') else 0
+            eq = (float(adr.container_high) + float(adr.container_low)) / 2.0
+            return eq, 0, sig_idx
+        sm_eq, _, _, _ = self.macro_equilibrium(
+            df, signal, dealing_range=None,
+            sm_protected_low=sm_protected_low,
+            sm_protected_high=sm_protected_high,
+        )
+        if sm_eq is not None:
+            sig_idx = signal.index if hasattr(signal, 'index') else 0
+            return sm_eq, 0, sig_idx
+
         sig_idx = signal.index if hasattr(signal, 'index') else 0
         direction = getattr(signal, 'direction', '') or ''
         origin_idx = max(0, sig_idx - 20)
@@ -646,10 +666,12 @@ class PoiMixin:
         stored_poi_top: Optional[float] = None,
         stored_poi_bottom: Optional[float] = None,
         audit_out: Optional[dict] = None,
+        sm_protected_low: Optional[float] = None,
+        sm_protected_high: Optional[float] = None,
         debug: bool = False,
     ) -> POIResolution:
         """Faza A — POI organic only; no JSON preserve, no synthetic Equilibrium clip."""
-        _ = (current_price, stored_poi_top, stored_poi_bottom)
+        _ = (stored_poi_top, stored_poi_bottom)
         meta: dict = {
             'adr': None,
             'preserve_stored_poi': False,
@@ -676,6 +698,9 @@ class PoiMixin:
             audit_out=fvg_audit,
             strategy_type=strategy_type,
             dealing_range=adr,
+            current_price=current_price,
+            sm_protected_low=sm_protected_low,
+            sm_protected_high=sm_protected_high,
         )
         if (
             selected is None
@@ -697,9 +722,12 @@ class PoiMixin:
 
         if selected is None:
             impulse_low, impulse_high = self.impulse_bounds_from_signal(latest_signal)
-            if (impulse_low is None or impulse_high is None) and adr is not None:
+            if adr is not None:
                 impulse_low = float(adr.container_low)
                 impulse_high = float(adr.container_high)
+            elif sm_protected_low is not None and sm_protected_high is not None:
+                impulse_low = float(min(sm_protected_low, sm_protected_high))
+                impulse_high = float(max(sm_protected_low, sm_protected_high))
             orderflow = getattr(latest_signal, 'direction', current_trend) or current_trend
             if impulse_low is not None and impulse_high is not None:
                 selected = self.build_ote_pd_fvg(

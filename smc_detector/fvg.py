@@ -229,6 +229,58 @@ class FvgMixin:
             "gap_size": round(float(fvg.top - fvg.bottom), 5),
         }
 
+    @staticmethod
+    def macro_equilibrium(
+        df: pd.DataFrame,
+        choch,
+        dealing_range: Optional[ActiveDealingRange] = None,
+        sm_protected_low: Optional[float] = None,
+        sm_protected_high: Optional[float] = None,
+    ) -> Tuple[Optional[float], Optional[float], Optional[float], float]:
+        """V79: equilibrium from ADR mid, else SM protected range, else CHoCH impulse."""
+        if dealing_range is not None:
+            lo = float(dealing_range.container_low)
+            hi = float(dealing_range.container_high)
+            return (hi + lo) / 2.0, lo, hi, hi - lo
+
+        pl = sm_protected_low
+        ph = sm_protected_high
+        if pl is not None and ph is not None:
+            lo, hi = float(min(pl, ph)), float(max(pl, ph))
+            return (lo + hi) / 2.0, lo, hi, hi - lo
+
+        direction = (getattr(choch, 'direction', '') or '').lower()
+        body_hi = df[['open', 'close']].max(axis=1)
+        body_lo = df[['open', 'close']].min(axis=1)
+        if direction == 'bullish' and pl is not None:
+            hi = float(body_hi.iloc[-40:].max())
+            if ph is not None:
+                hi = max(hi, float(ph))
+            lo = float(pl)
+            if hi > lo:
+                return (lo + hi) / 2.0, lo, hi, hi - lo
+        if direction == 'bearish' and ph is not None:
+            lo = float(body_lo.iloc[-40:].min())
+            if pl is not None:
+                lo = min(lo, float(pl))
+            hi = float(ph)
+            if hi > lo:
+                return (lo + hi) / 2.0, lo, hi, hi - lo
+
+        swing_broken_price = choch_break_price = None
+        impulse_size = 0.0
+        if hasattr(choch, 'swing_broken') and hasattr(choch, 'break_price'):
+            try:
+                swing_broken_price = float(choch.swing_broken.price)
+                choch_break_price = float(choch.break_price)
+                impulse_size = abs(choch_break_price - swing_broken_price)
+                lo = min(swing_broken_price, choch_break_price)
+                hi = max(swing_broken_price, choch_break_price)
+                return (swing_broken_price + choch_break_price) / 2.0, lo, hi, impulse_size
+            except Exception:
+                pass
+        return None, None, None, 0.0
+
     def detect_fvg(
         self,
         df: pd.DataFrame,
@@ -237,6 +289,9 @@ class FvgMixin:
         strategy_type: Optional[str] = None,
         dealing_range: Optional[ActiveDealingRange] = None,
         force_in_range_rescan: bool = False,
+        current_price: Optional[float] = None,
+        sm_protected_low: Optional[float] = None,
+        sm_protected_high: Optional[float] = None,
         debug: bool = False,
     ) -> Optional[FVG]:
         """🎯 GLITCH IN MATRIX - FVG DETECTION (V8.1 - ORDERFLOW ALIGNED)
@@ -444,35 +499,39 @@ class FvgMixin:
             _fill_audit(None, "no_fvg_found", None, [], [])
             return None
 
-        # ── STEP 1: Calculează Equilibrium (50%) din impulsul CHoCH ──────────
-        equilibrium = None
-        swing_broken_price = None
-        choch_break_price = None
-        impulse_size = 0.0
+        # ── STEP 1: V79 equilibrium — ADR mid, else SM range, else micro-impulse ──
+        mkt = current_price
+        if mkt is None and len(df):
+            mkt = float(df['close'].iloc[-1])
+        equilibrium, macro_low, macro_high, impulse_size = self.macro_equilibrium(
+            df,
+            choch,
+            dealing_range=dealing_range,
+            sm_protected_low=sm_protected_low,
+            sm_protected_high=sm_protected_high,
+        )
 
-        if hasattr(choch, 'swing_broken') and hasattr(choch, 'break_price'):
-            try:
-                swing_broken_price = float(choch.swing_broken.price)
-                choch_break_price = float(choch.break_price)
-                impulse_size = abs(choch_break_price - swing_broken_price)
-                equilibrium = (swing_broken_price + choch_break_price) / 2.0
-            except Exception:
-                pass
+        def _v79_pd_valid(fvg: FVG) -> bool:
+            if equilibrium is None:
+                return False
+            if orderflow_direction == 'bullish':
+                if mkt is not None and fvg.bottom > mkt:
+                    return False
+                return fvg.top <= equilibrium or fvg.middle < equilibrium
+            if mkt is not None and fvg.top < mkt:
+                return False
+            return fvg.bottom >= equilibrium or fvg.middle > equilibrium
 
-        # ── STEP 2: Filtrare strictă P/D (fără fallback impulse în afara P/D) ──
+        # ── STEP 2: Filtrare strictă P/D + preț curent ──
         pd_valid_fvgs: List[FVG] = []
         impulse_span_fvgs: List[FVG] = []
-        if equilibrium is not None and impulse_size > 0:
-            impulse_low = min(swing_broken_price, choch_break_price)
-            impulse_high = max(swing_broken_price, choch_break_price)
+        if equilibrium is not None:
             for fvg in all_fvgs:
-                if fvg.bottom > impulse_high or fvg.top < impulse_low:
-                    continue
-                impulse_span_fvgs.append(fvg)
-                if orderflow_direction == 'bullish':
-                    if fvg.middle < equilibrium:
-                        pd_valid_fvgs.append(fvg)
-                elif fvg.middle > equilibrium:
+                if macro_low is not None and macro_high is not None:
+                    if fvg.bottom > macro_high or fvg.top < macro_low:
+                        continue
+                    impulse_span_fvgs.append(fvg)
+                if _v79_pd_valid(fvg):
                     pd_valid_fvgs.append(fvg)
 
         # ── STEP 3: Strict P/D pool only ─────────

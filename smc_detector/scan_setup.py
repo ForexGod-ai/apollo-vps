@@ -125,58 +125,6 @@ class ScanSetupMixin:
                 print(f"❌ REJECTED: No Daily CHoCH or BOS found")
             return None
 
-        _close = float(df_daily['close'].iloc[-1])
-        _macro_swings = self.macro_trend_from_swings(df_daily)
-        if (
-            strategy_type == 'reversal'
-            and current_trend == 'bullish'
-            and _range_state
-            and _close <= float(_range_state.macro_range_high)
-            and _close > float(_range_state.macro_range_low)
-            and _macro_swings != 'bullish'
-        ):
-            print(
-                f"⛔ [V63 GATE] {symbol}: REVERSAL LONG rejected — "
-                f"close {_close:.5f} inside range without macro bullish confirmation"
-            )
-            return None
-        if (
-            strategy_type == 'reversal'
-            and current_trend == 'bullish'
-            and _range_state
-            and _range_state.locked_bias == 'bearish'
-            and _close <= float(_range_state.macro_range_low)
-        ):
-            print(
-                f"⛔ [V58 MACRO GATE] {symbol}: REVERSAL LONG rejected — "
-                f"close {_close:.5f} below LL {_range_state.macro_range_low:.5f}"
-            )
-            return None
-        if (
-            strategy_type == 'reversal'
-            and current_trend == 'bullish'
-            and _macro_swings == 'bearish'
-            and _range_state
-            and _close <= float(_range_state.macro_range_low)
-        ):
-            print(
-                f"⛔ [V58 MACRO GATE] {symbol}: REVERSAL LONG rejected — "
-                f"macro swings BEARISH + close below LL"
-            )
-            return None
-        if (
-            strategy_type == 'reversal'
-            and current_trend == 'bearish'
-            and _macro_swings == 'bullish'
-            and _range_state
-            and _close > float(_range_state.macro_range_high)
-        ):
-            print(
-                f"⛔ [V58 MACRO GATE] {symbol}: REVERSAL SHORT rejected — "
-                f"macro swings BULLISH + close above LH"
-            )
-            return None
-
         if (
             leg_choch is not None
             and not self._leg_choch_still_valid(
@@ -222,6 +170,8 @@ class ScanSetupMixin:
                 f"   🚨 [V43.0 ADR] {symbol}: structural_breach=True — "
                 f"daily close breached protected structure (stateless signal for Etapa 2+)"
             )
+        _sm_pl = d1_ctx.protected_low if d1_ctx is not None else None
+        _sm_ph = d1_ctx.protected_high if d1_ctx is not None else None
         _poi_res = self.resolve_d1_poi(
             df_daily,
             latest_signal,
@@ -232,6 +182,8 @@ class ScanSetupMixin:
             symbol=symbol,
             stored_poi_top=stored_poi_top,
             stored_poi_bottom=stored_poi_bottom,
+            sm_protected_low=_sm_pl,
+            sm_protected_high=_sm_ph,
             debug=debug,
         )
         fvg = _poi_res.fvg
