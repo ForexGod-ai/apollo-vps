@@ -93,6 +93,132 @@ import re
 
 # V37.1: Output ASCII pe Windows VPS — PowerShell citeste log UTF-8 ca mojibake
 _RADAR_ASCII = platform.system() == 'Windows' or _os_global.getenv('RADAR_ASCII', '').lower() in ('1', 'true', 'yes')
+
+try:
+    import colorama
+    colorama.init(autoreset=False, convert=True)
+except ImportError:
+    pass
+
+
+class C:
+    """ANSI console styling for radar output (disabled when RADAR_ASCII=1)."""
+    RESET = "\033[0m"
+    BOLD = "\033[1m"
+    RED = "\033[1;31m"
+    GREEN = "\033[1;32m"
+    YELLOW = "\033[1;33m"
+    BLUE = "\033[1;34m"
+    PURPLE = "\033[1;35m"
+    CYAN = "\033[1;36m"
+    GRAY = "\033[1;30m"
+    BG_GREEN = "\033[1;42;30m"
+    BG_RED = "\033[1;41;37m"
+
+
+def _radar_color_enabled() -> bool:
+    if _RADAR_ASCII:
+        return False
+    return _os_global.getenv("RADAR_NO_COLOR", "").strip().lower() not in (
+        "1", "true", "yes",
+    )
+
+
+def _style_radar_line(line: str) -> str:
+    if not _radar_color_enabled() or not line:
+        return line
+
+    stripped = line.strip()
+    if stripped and len(stripped) >= 8 and all(ch in "=-─━ " for ch in stripped):
+        return f"{C.GRAY}{line}{C.RESET}"
+
+    out = line
+
+    def _sub(pattern: str, repl, flags=re.IGNORECASE):
+        nonlocal out
+        out = re.sub(pattern, repl, out, flags=flags)
+
+    _sub(
+        r"\*\*\*\s*EXECUTE_NOW[^*]*\*\*\*|EXECUTE_NOW(?:_4H)?|"
+        r"EXECUTE:\s*DA\b|EXECUTE NOW(?:\s*\(|(?=\s*—))",
+        lambda m: f"{C.BG_GREEN}{m.group(0)}{C.RESET}",
+    )
+    _sub(
+        r"P/D GUARD:\s*BLOCK EXECUTE|BLOCK EXECUTE|EXECUTE:\s*NU\b|"
+        r"EXECUTE blocat|⛔|🛑",
+        lambda m: f"{C.PURPLE}{m.group(0)}{C.RESET}",
+    )
+    _sub(
+        r"WAITING_4H_CHOCH|WAITING_4H_PULLBACK|WAIT_P/?D|WAITING FOR|\[WAIT\]|"
+        r"⏳|POI WAIT|P/D WAIT|asteptam|așteptăm|NU inca",
+        lambda m: f"{C.YELLOW}{m.group(0)}{C.RESET}",
+    )
+    _sub(
+        r"\b(BULLISH|BUY|LONG)\b",
+        lambda m: f"{C.GREEN}{m.group(0)}{C.RESET}",
+    )
+    _sub(
+        r"\b(BEARISH|SELL|SHORT)\b",
+        lambda m: f"{C.RED}{m.group(0)}{C.RESET}",
+    )
+    _sub(
+        r"P/D GUARD:\s*OK",
+        lambda m: f"{C.GREEN}{m.group(0)}{C.RESET}",
+    )
+    _sub(
+        r"\b(TRIGGERED|READY)\b",
+        lambda m: f"{C.BG_GREEN}{m.group(0)}{C.RESET}",
+    )
+    _sub(
+        r"\b([A-Z]{6})\b",
+        lambda m: (
+            f"{C.CYAN}{m.group(0)}{C.RESET}"
+            if m.group(0) not in ("BULLISH", "BEARISH")
+            else m.group(0)
+        ),
+    )
+    _sub(
+        r"\[([A-Z0-9]{3,12})\]",
+        lambda m: f"[{C.CYAN}{m.group(1)}{C.RESET}]",
+    )
+    _sub(
+        r"(RADAR REPORT \| )([A-Z0-9]{3,12})( \|)",
+        lambda m: f"{m.group(1)}{C.CYAN}{m.group(2)}{C.RESET}{m.group(3)}",
+    )
+    _sub(
+        r"^(\s*[-─]{3,}|\s*\|\s*FVG ref:|\s*\|\s*Entry ref:|\s*\|\s*POI anchor:)",
+        lambda m: f"{C.GRAY}{m.group(0)}{C.RESET}",
+    )
+
+    if out != line and C.RESET not in out:
+        out = out + C.RESET
+    elif out != line and not out.endswith(C.RESET):
+        out = out + C.RESET
+    return out
+
+
+def _radar_print(*args, **kwargs) -> None:
+    """Console print with ANSI styling; plain print for non-stdout targets."""
+    file = kwargs.get("file", sys.stdout)
+    if file is not sys.stdout:
+        print(*args, **kwargs)
+        return
+    sep = kwargs.get("sep", " ")
+    end = kwargs.get("end", "\n")
+    flush = kwargs.get("flush", False)
+    text = sep.join(str(a) for a in args)
+    payload = text + (end if end else "")
+    lines = payload.split("\n")
+    for idx, line in enumerate(lines):
+        is_last = idx == len(lines) - 1
+        if is_last and not payload.endswith("\n") and line == "":
+            continue
+        if line or not is_last:
+            _radar_out(line)
+    if flush:
+        sys.stdout.flush()
+
+
 _EMOJI_RE = re.compile(
     "["
     "\U0001F300-\U0001FAFF"
@@ -128,12 +254,12 @@ def _radar_log_filter(record) -> bool:
 def _radar_out(msg: str) -> None:
     """Print radar line — ASCII-safe on Windows log files + persist to multi_tf_radar.log."""
     clean = _ascii_sanitize(msg)
-    print(clean)
+    styled = _style_radar_line(clean)
+    print(styled, flush=True)
     try:
         logger.info(clean)
     except Exception:
         pass
-    sys.stdout.flush()
 
 
 def _plain_status(status: 'PullbackStatus') -> str:
@@ -207,7 +333,7 @@ def _v46_entry_status_and_note(
     exec_st = PullbackStatus.EXECUTE_NOW_4H
     wait_st = PullbackStatus.WAITING_4H_PULLBACK
     if in_poi_entry:
-        print(
+        _radar_print(
             f"  [V46 POI-PD ENTRY 4H] {symbol} {required_direction.upper()} "
             f"-> EXECUTE_NOW retrace={retrace_pct * 100:.1f}% "
             f"CHoCH=-{choch_bars_ago}b (fara gate 3 bare)"
@@ -279,7 +405,7 @@ def _structural_event_dt(structural, df=None) -> Optional[datetime]:
     dt = _dt_from_df_row(df, idx)
     if dt is not None:
         return dt
-    print(
+    _radar_print(
         f"  [V55 STRUCT DT] idx={idx} candle_time={ct!r} — fallback df eșuat"
     )
     sys.stdout.flush()
@@ -322,14 +448,14 @@ def _filter_structural_post_poi(
         if edt is not None and edt >= anchor:
             filtered.append(ev)
         elif edt is None and poi_bar_idx is not None and ev_idx >= poi_bar_idx:
-            print(
+            _radar_print(
                 f"  [V55 POST-POI] idx={ev_idx} edt=None — păstrat via bar-index "
                 f"(>= poi_bar={poi_bar_idx})"
             )
             filtered.append(ev)
         else:
             reason = 'before_poi' if edt is not None else 'edt_unresolved_before_poi'
-            print(
+            _radar_print(
                 f"  [V55 POST-POI DROP] idx={ev_idx} edt={edt} anchor={anchor} "
                 f"reason={reason}"
             )
@@ -356,7 +482,7 @@ def _log_choch_wait_diag(
         post_poi = edt is not None and poi_dt is not None and edt >= poi_dt
         valid = _is_structural_break_valid(last, last.direction, df)
         ts = edt.isoformat() if edt else '?'
-        print(
+        _radar_print(
             f"  [V52 DIAG {timeframe_display}] {symbol}: anchor={anchor} | "
             f"ultim {required_direction}: {ts} -{bars_ago}b "
             f"post_poi={'YES' if post_poi else 'NO'} valid={'YES' if valid else 'NO'}"
@@ -366,7 +492,7 @@ def _log_choch_wait_diag(
         last_c = contrary[-1]
         edt_c = _structural_event_dt(last_c, df)
         ts_c = edt_c.isoformat() if edt_c else '?'
-        print(
+        _radar_print(
             f"  [V52 DIAG {timeframe_display}] {symbol}: ultim {last_c.direction} "
             f"ignorat (contrary {required_direction}): {ts_c}"
         )
@@ -709,12 +835,12 @@ def _track_mitigation_touch(
             setup_data['_poi_occupied'] = False
             setup_data['radar_panda_active'] = True
             if not h4_structural_alerted:
-                print(
+                _radar_print(
                     f"  [V49 POI LATCH] {setup_data.get('symbol', '?')}: preț ieșit din POI — "
                     f"panda ON, așteptăm CHoCH/BOS 4H post-touch"
                 )
             else:
-                print(
+                _radar_print(
                     f"  [V49 POI LATCH] {setup_data.get('symbol', '?')}: post-alertă 4H — "
                     f"latch activ pentru entry retrace 60–80%"
                 )
@@ -725,7 +851,7 @@ def _track_mitigation_touch(
             setup_data['_poi_occupied'] = False
             setup_data['radar_panda_active'] = True
             setup_data['poi_touch_latched'] = True
-            print(
+            _radar_print(
                 f"  [V0b POI FLICKER] {setup_data.get('symbol', '?')}: ieșire marginală POI — "
                 f"ciclu alertă păstrat (h4_alert_cycle_complete)"
             )
@@ -771,12 +897,12 @@ def _track_mitigation_touch(
         # V50: nu resetăm radar_*_choch_detected — evită rising-edge zombi pe CHoCH vechi
         setup_data['radar_panda_active'] = True
         if _dedup_reset:
-            print(
+            _radar_print(
                 f"  [V50 POI ARM] {setup_data.get('symbol', '?')}: radar PANDA ON @ {touch_anchor} — "
                 f"dedup alerte resetat, asteptam break LIVE ≤3b post-touch"
             )
         else:
-            print(
+            _radar_print(
                 f"  [P0 POI FLICKER] {setup_data.get('symbol', '?')}: re-intrare POI același ciclu "
                 f"@ {touch_anchor} — dedup alerte păstrat"
             )
@@ -802,7 +928,7 @@ def _track_mitigation_touch(
         )
         if touch_anchor != old_anchor:
             setup_data['poi_first_touch_time'] = touch_anchor
-            print(
+            _radar_print(
                 f"  [V52.2 POI ANCHOR] {setup_data.get('symbol', '?')}: "
                 f"{old_anchor} → {touch_anchor} (retroactive first touch)"
             )
@@ -931,18 +1057,18 @@ class MultiTFRadar:
         
         self.ctrader = CTraderCBotClient()
         if not self.ctrader.is_available():
-            print("❌ cTrader cBot not running")
+            _radar_print("❌ cTrader cBot not running")
             sys.exit(1)
         
-        print("✅ cTrader cBot connected")
+        _radar_print("✅ cTrader cBot connected")
         
         self.smc_4h = SMCDetector(
             swing_lookback=8,   # V19: più context structural pe 4H (5→8)
             atr_multiplier=1.0  # V15.4: relaxed from 1.2→1.0 — avoid missing clear 4H CHoCH
         )
         
-        print("🎯 SMC Detectors initialized:")
-        print("   - 4H: ATR 1.0x (W→D→4H structural mode — V15.4)")
+        _radar_print("🎯 SMC Detectors initialized:")
+        _radar_print("   - 4H: ATR 1.0x (W→D→4H structural mode — V15.4)")
 
         # V25.2: Contor eșecuri consecutive port 8010 — alertă Telegram la 3 eșecuri
         self._port8010_fail_count: int = 0
@@ -1091,13 +1217,13 @@ class MultiTFRadar:
     @staticmethod
     def _log_radar_warn(symbol: str, reason: str) -> None:
         """V36.4: avertisment — setup Daily rămâne în JSON, retry la 30s."""
-        print(f"  ⚠️ [RADAR WARN] {symbol}: {reason} — setup păstrat în monitoring, retry ciclu următor")
+        _radar_print(f"  ⚠️ [RADAR WARN] {symbol}: {reason} — setup păstrat în monitoring, retry ciclu următor")
         sys.stdout.flush()
 
     @staticmethod
     def _log_radar_skip(symbol: str, reason: str) -> None:
         """V36.3: fiecare skip trebuie explicat explicit în consolă."""
-        print(f"  ⛔ [RADAR SKIP] {symbol}: {reason}")
+        _radar_print(f"  ⛔ [RADAR SKIP] {symbol}: {reason}")
         sys.stdout.flush()
 
     @staticmethod
@@ -1111,7 +1237,7 @@ class MultiTFRadar:
             _bos = f"BOS {tf.bos_direction} -{tf.bos_bars_ago}b"
         else:
             _bos = "no BOS"
-        print(
+        _radar_print(
             f"  ✅ [V36.5 SCAN DONE] {symbol} {tf.timeframe} — {num_bars} bare | "
             f"{_choch} | {_bos} | status={tf.status.value}"
         )
@@ -1140,7 +1266,7 @@ class MultiTFRadar:
             if _df_d1_pd is None or _df_d1_pd.empty:
                 _result['skipped'] = True
                 _result['reason'] = 'D1 indisponibil — guard P/D omis'
-                print(f"  ⚠️ [V36.5 P/D] {symbol}: D1 indisponibil — guard P/D omis "
+                _radar_print(f"  ⚠️ [V36.5 P/D] {symbol}: D1 indisponibil — guard P/D omis "
                       f"(pip_size={_pip_pd})")
                 sys.stdout.flush()
                 return _result
@@ -1152,7 +1278,7 @@ class MultiTFRadar:
             if _d1_range_pd < _min_range:
                 _result['skipped'] = True
                 _result['reason'] = f'range D1 prea mic ({_d1_range_pd:.5f})'
-                print(f"  ⚠️ [V36.5 P/D] {symbol}: range D1 prea mic "
+                _radar_print(f"  ⚠️ [V36.5 P/D] {symbol}: range D1 prea mic "
                       f"({_d1_range_pd:.5f} < {_min_range:.5f} = 5p @ pip={_pip_pd}) — guard omis")
                 sys.stdout.flush()
                 return _result
@@ -1176,13 +1302,13 @@ class MultiTFRadar:
                 )
             else:
                 _pd_label = 'Discount ✅' if required_direction == 'bullish' else 'Premium ✅'
-                print(f"  ✅ [V36.5 P/D] {symbol}: {current_price:.5f} in {_pd_label} "
+                _radar_print(f"  ✅ [V36.5 P/D] {symbol}: {current_price:.5f} in {_pd_label} "
                       f"(EQ={_d1_midpoint:.5f} | range={_d1_range_pd/_pip_pd:.0f}p | pip={_pip_pd})")
                 sys.stdout.flush()
         except Exception as _pd_err:
             _result['skipped'] = True
             _result['reason'] = f'eroare calcul P/D: {_pd_err}'
-            print(f"  ⚠️ [V36.5 P/D] {symbol}: eroare calcul ({_pd_err}) — procedăm fără guard "
+            _radar_print(f"  ⚠️ [V36.5 P/D] {symbol}: eroare calcul ({_pd_err}) — procedăm fără guard "
                   f"(pip={_pip_pd})")
             sys.stdout.flush()
         return _result
@@ -1255,7 +1381,7 @@ class MultiTFRadar:
                 timeout=10
             )
         except Exception as _tg_err:
-            print(f"⚠️ [RADAR TELEGRAM] Eroare trimitere alertă: {_tg_err}")
+            _radar_print(f"⚠️ [RADAR TELEGRAM] Eroare trimitere alertă: {_tg_err}")
 
     def get_current_price(self, symbol: str) -> Optional[float]:
         """Get current price from cTrader — V36.3: broker symbol fallbacks + logging explicit."""
@@ -1275,23 +1401,23 @@ class MultiTFRadar:
                     ask = data.get('ask', 0)
                     if bid > 0 and ask > 0:
                         if broker_sym != symbol.upper():
-                            print(f"  ✅ [V36.3 SYMBOL MAP] {symbol} → {broker_sym} (preț OK)")
+                            _radar_print(f"  ✅ [V36.3 SYMBOL MAP] {symbol} → {broker_sym} (preț OK)")
                             sys.stdout.flush()
                         if self._port8010_fail_count > 0:
-                            print(f"✅ [PORT 8010] Conexiune restaurată pentru {symbol} — resetare contor eșecuri")
+                            _radar_print(f"✅ [PORT 8010] Conexiune restaurată pentru {symbol} — resetare contor eșecuri")
                             self._port8010_fail_count = 0
                             self._port8010_alert_sent = False
                         return (bid + ask) / 2.0
 
                 last_err = f"HTTP {response.status_code} body={response.text[:120]}"
-                print(f"⚠️  [PORT 8010] Răspuns invalid {symbol} ca {broker_sym}: {last_err}")
+                _radar_print(f"⚠️  [PORT 8010] Răspuns invalid {symbol} ca {broker_sym}: {last_err}")
 
             except Exception as e:
                 last_err = str(e)
-                print(f"⚠️  [PORT 8010] Eroare {symbol} ca {broker_sym}: {e}")
+                _radar_print(f"⚠️  [PORT 8010] Eroare {symbol} ca {broker_sym}: {e}")
 
         self._port8010_fail_count += 1
-        print(f"⚠️  [RADAR ERROR] Preț indisponibil pentru {symbol} — toate variantele eșuate"
+        _radar_print(f"⚠️  [RADAR ERROR] Preț indisponibil pentru {symbol} — toate variantele eșuate"
               f" {self._broker_symbol_candidates(symbol)}"
               f"{f' | ultima eroare: {last_err}' if last_err else ''}"
               f" (eșec #{self._port8010_fail_count})")
@@ -1300,7 +1426,7 @@ class MultiTFRadar:
         # V25.2: Alertă Telegram la 3 eșecuri consecutive (anti-spam: o singură alertă per incident)
         if self._port8010_fail_count >= 3 and not self._port8010_alert_sent:
             self._port8010_alert_sent = True
-            print(f"🚨 [PORT 8010 OFFLINE] {self._port8010_fail_count} eșecuri consecutive — trimit alertă Telegram!")
+            _radar_print(f"🚨 [PORT 8010 OFFLINE] {self._port8010_fail_count} eșecuri consecutive — trimit alertă Telegram!")
             self._send_radar_telegram_alert(
                 f"🚨 <b>CONEXIUNE ÎNTRERUPTĂ — cBot OFFLINE</b>\n\n"
                 f"MarketDataProvider cBot de pe cTrader NU răspunde pe portul 8010.\n"
@@ -1331,7 +1457,7 @@ class MultiTFRadar:
         """V36.4: broker symbol map + bar-count fallback chain + zero crash."""
         candidates = self._broker_symbol_candidates(symbol)
         bar_chain = self._bar_count_chain(timeframe, symbol, num_candles)
-        print(f"  📥 [V36.4 DATA] {symbol} {timeframe} — simboluri {candidates} | bare {bar_chain}")
+        _radar_print(f"  📥 [V36.4 DATA] {symbol} {timeframe} — simboluri {candidates} | bare {bar_chain}")
         sys.stdout.flush()
         last_err: Optional[str] = None
         for bar_count in bar_chain:
@@ -1340,17 +1466,17 @@ class MultiTFRadar:
                     df = self.ctrader.get_historical_data(broker_sym, timeframe, bar_count)
                     if df is not None and not df.empty:
                         if broker_sym != symbol.upper() or bar_count != num_candles:
-                            print(f"  ✅ [V36.4 DATA OK] {symbol} → {broker_sym} "
+                            _radar_print(f"  ✅ [V36.4 DATA OK] {symbol} → {broker_sym} "
                                   f"{timeframe} x{bar_count} ({len(df)} bare)")
                             sys.stdout.flush()
                         return df.reset_index()
                     last_err = f"{broker_sym} x{bar_count}: răspuns gol"
                 except Exception as e:
                     last_err = f"{broker_sym} x{bar_count}: {e}"
-                    print(f"  ⚠️ [RADAR ERROR] {symbol} {timeframe} via {broker_sym} "
+                    _radar_print(f"  ⚠️ [RADAR ERROR] {symbol} {timeframe} via {broker_sym} "
                           f"x{bar_count}: {e}")
                     sys.stdout.flush()
-        print(f"  ⚠️ [RADAR WARN] {symbol} {timeframe}: date indisponibile "
+        _radar_print(f"  ⚠️ [RADAR WARN] {symbol} {timeframe}: date indisponibile "
               f"(încercat {candidates} × {bar_chain})"
               f"{f' — ultima: {last_err}' if last_err else ''}")
         sys.stdout.flush()
@@ -1408,7 +1534,7 @@ class MultiTFRadar:
         pip_size = self._get_pip_size(symbol)
 
         if _retrace_implies_stale_anchor(retrace_pct, impulse_size):
-            print(
+            _radar_print(
                 f"  🛑 [V53 RETRACE INVALID] {symbol} {timeframe_display}: "
                 f"retrace={retrace_pct * 100:.1f}% impulse={impulse_size:.5f} — anchor invalid"
             )
@@ -1431,7 +1557,7 @@ class MultiTFRadar:
             )
 
         if _retrace_is_overshoot(retrace_pct, impulse_size):
-            print(
+            _radar_print(
                 f"  ⚠️ [V53 RETRACE OVERSHOOT] {symbol} {timeframe_display}: "
                 f"retrace={retrace_pct * 100:.1f}% > {_RETRACE_ALERT_MAX * 100:.0f}% — "
                 f"CHoCH păstrat, așteptăm re-intrare 60–80%"
@@ -1457,7 +1583,7 @@ class MultiTFRadar:
             )
 
         if impulse_size <= 0:
-            print(f"  ⚠️ [V46 GUARD] {symbol}: impuls 0 pips — WAITING")
+            _radar_print(f"  ⚠️ [V46 GUARD] {symbol}: impuls 0 pips — WAITING")
             sys.stdout.flush()
             return TimeframeAnalysis(
                 timeframe=timeframe_display,
@@ -1477,7 +1603,7 @@ class MultiTFRadar:
             )
 
         if _choch_bars_ago > 72:
-            print(
+            _radar_print(
                 f"  ⚠️ [V46 AGE] {symbol}: CHoCH la -{_choch_bars_ago} bare > 72 — "
                 f"ancora expirata, asteptam CHoCH nou"
             )
@@ -1533,9 +1659,9 @@ class MultiTFRadar:
             distance_to_fvg_pips = abs(zone_bottom - current_price) / pip_size
 
         if _choch_bars_ago <= 3:
-            print(f"  [V46 INFO] CHoCH LIVE -{_choch_bars_ago}b (informativ, nu gate)")
+            _radar_print(f"  [V46 INFO] CHoCH LIVE -{_choch_bars_ago}b (informativ, nu gate)")
         elif _bos_trigger_bars_ago <= 3:
-            print(
+            _radar_print(
                 f"  [V46 INFO] BOS post-CHoCH LIVE -{_bos_trigger_bars_ago}b "
                 f"(CHoCH ancora -{_choch_bars_ago}b, informativ)"
             )
@@ -1544,12 +1670,12 @@ class MultiTFRadar:
         fvg_source = "structural" if latest_fvg else "premium_discount"
         eq_val = choch_equilibrium if choch_equilibrium else zone_entry
         _sig_label = signal_type.upper()
-        print(
+        _radar_print(
             f"  [V46 POI-PD] {symbol} {timeframe_display} ({_sig_label}) | "
             f"Impulse anchor: swing_broken {swing_broken_price:.5f} -> break {choch_break_price:.5f} "
             f"({impulse_size / pip_size:.1f}p)"
         )
-        print(
+        _radar_print(
             f"     Zone 55–85%: [{zone_bottom:.5f}–{zone_top:.5f}] | "
             f"Retrace={retrace_pct * 100:.1f}% | in_fvg={in_choch_fvg} | "
             f"in_poi={daily_in_poi} | latched={poi_touch_latched} | {sniper_note}"
@@ -1715,7 +1841,7 @@ class MultiTFRadar:
             aligned_chochs = _filter_structurally_valid_events(aligned_chochs, df)
             rejected_count = all_chochs_count - len(aligned_chochs)
             if rejected_count > 0:
-                print(
+                _radar_print(
                     f"  🚫 [4H DIRECTION MISMATCH SKIP] {symbol}: "
                     f"{rejected_count} CHoCH(uri) contrare bias Daily "
                     f"({required_direction.upper()}) — IGNORATE"
@@ -1742,7 +1868,7 @@ class MultiTFRadar:
                     if _all_aligned_bos_for_lock else 9999
                 )
                 if _pre > len(aligned_chochs):
-                    print(
+                    _radar_print(
                         f"  🛑 [{timeframe_display} V50 POST-POI] {symbol}: "
                         f"{_pre - len(aligned_chochs)} CHoCH(uri) pre-POI eliminate"
                     )
@@ -1753,7 +1879,7 @@ class MultiTFRadar:
                 aligned_chochs, _all_aligned_bos_for_lock, allow_bos_trigger,
             )
             if latest_structural is None:
-                print(
+                _radar_print(
                     f"  ⏳ [{timeframe_display} V47] {symbol}: Zero CHoCH/BOS "
                     f"{required_direction.upper()} — WAITING"
                 )
@@ -1788,7 +1914,7 @@ class MultiTFRadar:
 
             # V68: reactivare V50 — CHoCH trebuie să supraviețuiască structurii live
             if not _is_structural_break_valid(latest_choch, choch_direction, df):
-                print(
+                _radar_print(
                     f"  🛑 [{timeframe_display} V68 INVALID] {symbol}: "
                     f"{choch_direction.upper()} CHoCH @ -{_choch_bars_ago}b invalidat "
                     f"de structură opusă post-break"
@@ -1812,7 +1938,7 @@ class MultiTFRadar:
             if choch_direction == 'bearish' and _opposite_bullish_invalidation_after(
                 latest_choch, df, _major_h,
             ):
-                print(
+                _radar_print(
                     f"  🛑 [{timeframe_display} V68 PURGE] {symbol}: "
                     f"CHoCH bearish invalidat de HH body-close post-break"
                 )
@@ -1835,7 +1961,7 @@ class MultiTFRadar:
             if choch_direction == 'bullish' and _opposite_bearish_invalidation_after(
                 latest_choch, df, _major_l,
             ):
-                print(
+                _radar_print(
                     f"  🛑 [{timeframe_display} V68 PURGE] {symbol}: "
                     f"CHoCH bullish invalidat de LL body-close post-break"
                 )
@@ -1857,12 +1983,12 @@ class MultiTFRadar:
                 )
 
             if signal_type == 'CHoCH':
-                print(
+                _radar_print(
                     f"  ✅ [{timeframe_display} V47 CHoCH] {symbol} | "
                     f"{required_direction.upper()} la -{_choch_bars_ago} bare"
                 )
             else:
-                print(
+                _radar_print(
                     f"  ⚡ [{timeframe_display} V47 BOS] {symbol} | "
                     f"{required_direction.upper()} la -{_choch_bars_ago} bare (intrare 2)"
                 )
@@ -1870,7 +1996,7 @@ class MultiTFRadar:
 
             # ── V61 DIRECTION ASSERTION — guard final nenegociabil ─────────────
             if _normalize_structural_direction(choch_direction) != required_direction:
-                print(
+                _radar_print(
                     f"  🚨 [4H DIRECTION MISMATCH SKIP] {symbol}: "
                     f"CHoCH dir={choch_direction} != required={required_direction}"
                 )
@@ -1927,7 +2053,7 @@ class MultiTFRadar:
                 choch_equilibrium = (_sbp + _cbp) / 2.0
                 pip_size_eq = self._get_pip_size(symbol)
                 _eq_str = f"{choch_equilibrium:.5f}" if choch_equilibrium is not None else "N/A"
-                print(f"  📐 [V16.2 EQ] {timeframe_display} Impulse: {_sbp:.5f} → {_cbp:.5f} | "
+                _radar_print(f"  📐 [V16.2 EQ] {timeframe_display} Impulse: {_sbp:.5f} → {_cbp:.5f} | "
                       f"EQ={_eq_str} ({abs(_cbp - _sbp)/pip_size_eq:.1f} pips)")
                 sys.stdout.flush()
             except Exception as _eq_err:
@@ -1968,20 +2094,20 @@ class MultiTFRadar:
                 if h4_sl_price is not None:
                     _sl_dist_pips = abs(_ref_px - h4_sl_price) / _sl_pip
                     if _sl_dist_pips < 30:
-                        print(f"  ⚠️  [V37.2 MIN SL] {timeframe_display} {symbol}: "
+                        _radar_print(f"  ⚠️  [V37.2 MIN SL] {timeframe_display} {symbol}: "
                               f"SL {_sl_dist_pips:.1f}p < 30p — nu scriem h4_sl in JSON")
                         h4_sl_price = None
                     elif _sl_dist_pips > get_max_sl_pips(symbol):
-                        print(f"  ⚠️  [V42.6 MAX SL] {timeframe_display} {symbol}: "
+                        _radar_print(f"  ⚠️  [V42.6 MAX SL] {timeframe_display} {symbol}: "
                               f"SL {_sl_dist_pips:.1f}p > {get_max_sl_pips(symbol):.0f}p — skip h4_sl")
                         h4_sl_price = None
                 if h4_sl_price:
                     _sl_pips_log = abs(choch_break_price - h4_sl_price) / _sl_pip
-                    print(f"  🛡️  [V31.0 STRUCT SL] {timeframe_display} base={h4_sl_price:.5f} "
+                    _radar_print(f"  🛡️  [V31.0 STRUCT SL] {timeframe_display} base={h4_sl_price:.5f} "
                           f"({_sl_pips_log:.1f}p de la CHoCH break | dir={choch_direction})")
                 sys.stdout.flush()
             except Exception as _sl_err:
-                print(f"  ⚠️ [V31.0 SL] Eroare calcul structural SL: {_sl_err}")
+                _radar_print(f"  ⚠️ [V31.0 SL] Eroare calcul structural SL: {_sl_err}")
                 sys.stdout.flush()
 
             # Detect FVG created by CHoCH
@@ -1995,8 +2121,8 @@ class MultiTFRadar:
                     latest_choch if signal_type == 'CHoCH' else None,
                 )
             except Exception as fvg_err:
-                print(f"  ⚠️ [PATCH RADAR] detect_fvg structural crash caught: {fvg_err}")
-                print(f"  ⚠️ [PATCH RADAR] Forcing V15.4 Fibo Fallback.")
+                _radar_print(f"  ⚠️ [PATCH RADAR] detect_fvg structural crash caught: {fvg_err}")
+                _radar_print(f"  ⚠️ [PATCH RADAR] Forcing V15.4 Fibo Fallback.")
                 sys.stdout.flush()
                 latest_fvg = None
 
@@ -2041,7 +2167,7 @@ class MultiTFRadar:
         
         except Exception as e:
             import traceback
-            print(f"⚠️  Error analyzing {timeframe} for {symbol}: {e}")
+            _radar_print(f"⚠️  Error analyzing {timeframe} for {symbol}: {e}")
             traceback.print_exc()
             sys.stdout.flush()
             # V19.4 FIX #3: scan_error=True propagat în JSON → Executor nu va folosi date corupte
@@ -2185,16 +2311,16 @@ class MultiTFRadar:
         _poi_scan_active = bool(daily_zone_validated or setup_data.get('radar_panda_active'))
         _allow_bos_4h = bool(_poi_scan_active)
 
-        print(f"\n{'='*80}")
-        print(f"🔍 [{symbol}] Bias Daily: {direction} | Scanare structurală 4H (V43.2 POI Gate)...")
+        _radar_print(f"\n{'='*80}")
+        _radar_print(f"🔍 [{symbol}] Bias Daily: {direction} | Scanare structurală 4H (V43.2 POI Gate)...")
         if _daily_bias_active:
-            print(f"⚠️  [V24.6 DAILY BIAS] {symbol}: FVG sintetic (Equilibrium) — EXECUTE_NOW blocat până la CHoCH 4H real!")
-        print(f"{'='*80}")
-        print(f"💰 Current Price: {current_price:.5f}")
+            _radar_print(f"⚠️  [V24.6 DAILY BIAS] {symbol}: FVG sintetic (Equilibrium) — EXECUTE_NOW blocat până la CHoCH 4H real!")
+        _radar_print(f"{'='*80}")
+        _radar_print(f"💰 Current Price: {current_price:.5f}")
         if daily_poi_missing:
-            print("📊 Daily POI: N/A (lipsă din monitoring_setups.json — rulează Daily scan)")
+            _radar_print("📊 Daily POI: N/A (lipsă din monitoring_setups.json — rulează Daily scan)")
         else:
-            print(f"📊 Daily POI: [{daily_fvg_bottom:.5f} - {daily_fvg_top:.5f}]")
+            _radar_print(f"📊 Daily POI: [{daily_fvg_bottom:.5f} - {daily_fvg_top:.5f}]")
         if _poi_scan_active:
             if daily_zone_validated:
                 _radar_out(
@@ -2209,8 +2335,8 @@ class MultiTFRadar:
                     f"scan 4H continuă ({_v43_zone['reason']})"
                 )
         else:
-            print(f"⏳ [V43.2 POI GATE] ÎNCHISĂ — {_v43_zone['reason']}")
-            print(f"  LTF CHoCH ignorat până la touch POI + zonă instituțională ADR corectă")
+            _radar_print(f"⏳ [V43.2 POI GATE] ÎNCHISĂ — {_v43_zone['reason']}")
+            _radar_print(f"  LTF CHoCH ignorat până la touch POI + zonă instituțională ADR corectă")
         sys.stdout.flush()
 
         if _poi_scan_active:
@@ -2218,9 +2344,9 @@ class MultiTFRadar:
             _poi_latched = bool(setup_data.get('poi_touch_latched'))
             _poi_touch_ts = setup_data.get('poi_first_touch_time')
 
-            print("\n🔎 [4H] STRUCTURAL SCAN (ATR 1.0x — V15.4)...")
+            _radar_print("\n🔎 [4H] STRUCTURAL SCAN (ATR 1.0x — V15.4)...")
             if _allow_bos_4h:
-                print(f"  ⚡ [V30.1 CONTINUATION] {symbol}: allow_bos=True — 4H BOS in directie {required_direction.upper()} = trigger echivalent CHoCH")
+                _radar_print(f"  ⚡ [V30.1 CONTINUATION] {symbol}: allow_bos=True — 4H BOS in directie {required_direction.upper()} = trigger echivalent CHoCH")
             sys.stdout.flush()
             _h4_bars = 300
             tf_4h = self.analyze_timeframe(
@@ -2280,7 +2406,7 @@ class MultiTFRadar:
                 execution_ready = False
                 priority_timeframe = None
             verdict = f"⏳ POI/P-D WAIT — {_pd_guard_reason}"
-            print(f"  ⏳ [V43.2 POI BLOCK EXECUTE] {symbol}: {_pd_guard_reason}")
+            _radar_print(f"  ⏳ [V43.2 POI BLOCK EXECUTE] {symbol}: {_pd_guard_reason}")
             sys.stdout.flush()
         elif not _pd_guard_passed and _pd_guard_reason:
             if execution_ready:
@@ -2288,7 +2414,7 @@ class MultiTFRadar:
                 priority_timeframe = None
             _wait_zone = 'Premium' if required_direction == 'bearish' else 'Discount'
             verdict = f"⏳ P/D WAIT — 4H monitorizat, așteptăm {_wait_zone}"
-            print(f"  ⏳ [V36.5 P/D BLOCK EXECUTE] {symbol}: {_pd_guard_reason} — "
+            _radar_print(f"  ⏳ [V36.5 P/D BLOCK EXECUTE] {symbol}: {_pd_guard_reason} — "
                   f"EXECUTE blocat")
             sys.stdout.flush()
 
@@ -2298,7 +2424,7 @@ class MultiTFRadar:
             priority_timeframe = None
             _wait_zone = 'Premium' if required_direction == 'bullish' else 'Discount'
             verdict = f"⏳ POI WAIT — preț în {_wait_zone}, așteptăm pullback Daily"
-            print(f"  ⏳ [V42.7 POI BLOCK EXECUTE] {symbol}: {current_price:.5f} vs POI "
+            _radar_print(f"  ⏳ [V42.7 POI BLOCK EXECUTE] {symbol}: {current_price:.5f} vs POI "
                   f"[{daily_fvg_bottom:.5f}–{daily_fvg_top:.5f}] — EXECUTE blocat")
             sys.stdout.flush()
 
@@ -2313,9 +2439,9 @@ class MultiTFRadar:
                 execution_ready = False
                 priority_timeframe = None
                 verdict = f"⚠️ [V24.6 DAILY BIAS] EXECUTE blocat: FVG sintetic necesită CHoCH 4H real (nu BOS)"
-                print(f"  🛡️ [V24.6 DAILY BIAS GUARD] {symbol}: EXECUTE_NOW blocat — zona Equilibrium sintetic\u0103 fara CHoCH 4H confirmat")
+                _radar_print(f"  🛡️ [V24.6 DAILY BIAS GUARD] {symbol}: EXECUTE_NOW blocat — zona Equilibrium sintetic\u0103 fara CHoCH 4H confirmat")
             else:
-                print(f"  ✅ [V24.6 DAILY BIAS UNLOCK] {symbol}: CHoCH 4H real detectat — EXECUTE_NOW autorizat pe zona Equilibrium")
+                _radar_print(f"  ✅ [V24.6 DAILY BIAS UNLOCK] {symbol}: CHoCH 4H real detectat — EXECUTE_NOW autorizat pe zona Equilibrium")
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         
         result = MultiTFResult(
@@ -2608,7 +2734,7 @@ class MultiTFRadar:
                 f"[V52 ALERT SKIP] {sym} {tf_label}: post_poi={post_poi} bars={bars} "
                 f"retrace={retrace} reason={reason}"
             )
-            print(f"  {msg}")
+            _radar_print(f"  {msg}")
             sys.stdout.flush()
             logger.info(msg)
 
@@ -2631,7 +2757,7 @@ class MultiTFRadar:
                     f"[4H DIRECTION MISMATCH SKIP] {sym}: 4H {_actual} != "
                     f"D1 bias {_macro_norm} — alertă blocată"
                 )
-                print(f"  {msg}")
+                _radar_print(f"  {msg}")
                 sys.stdout.flush()
                 logger.info(msg)
                 return False, 'direction_mismatch', tf_4h.choch_time, tf_4h.choch_bars_ago
@@ -3017,7 +3143,7 @@ class MultiTFRadar:
                     f"[V31.0 REVERSAL GUARD] {result.symbol}: EXECUTE_NOW blocat — "
                     f"setup REVERSAL nu accepta BOS ca trigger. Numai CHoCH autentic!"
                 )
-                print(f"  ⛔ [RADAR SKIP EXECUTE] {result.symbol}: REVERSAL guard — "
+                _radar_print(f"  ⛔ [RADAR SKIP EXECUTE] {result.symbol}: REVERSAL guard — "
                       f"BOS-only trigger respins, așteptăm CHoCH autentic")
                 sys.stdout.flush()
                 # Nu setam EXECUTE_NOW — asteptam CHoCH real
@@ -3386,14 +3512,14 @@ class MultiTFRadar:
         """Load setups from monitoring_setups.json — resilient + auto-repair Extra data."""
         try:
             if not _MONITORING_PATH.exists():
-                print("⚠️  monitoring_setups.json not found — rulează: python daily_scanner.py")
+                _radar_print("⚠️  monitoring_setups.json not found — rulează: python daily_scanner.py")
                 return []
 
             _, setups, had_junk = load_monitoring_json(_MONITORING_PATH)
             if not setups:
                 try:
                     if not _MONITORING_PATH.read_text(encoding='utf-8').strip():
-                        print(
+                        _radar_print(
                             "⚠️  monitoring_setups.json este GOL — rulează: python daily_scanner.py"
                         )
                 except OSError:
@@ -3402,7 +3528,7 @@ class MultiTFRadar:
 
             if had_junk:
                 if repair_monitoring_json_if_needed(_MONITORING_PATH):
-                    print(
+                    _radar_print(
                         "🔧 monitoring_setups.json reparat (Extra data eliminat) — "
                         f"{len(setups)} setup(uri) recuperate"
                     )
@@ -3410,8 +3536,8 @@ class MultiTFRadar:
             return [s for s in setups if isinstance(s, dict) and s.get('symbol')]
 
         except Exception as e:
-            print(f"⚠️  Error loading monitoring_setups.json: {e}")
-            print("   Fix: python daily_scanner.py sau repară JSON manual")
+            _radar_print(f"⚠️  Error loading monitoring_setups.json: {e}")
+            _radar_print("   Fix: python daily_scanner.py sau repară JSON manual")
             return []
     
     def run_scan(self, symbol: Optional[str] = None, all_setups: bool = False):
@@ -3423,20 +3549,20 @@ class MultiTFRadar:
         setups = self._purge_structural_breaches(setups)
 
         if not setups:
-            print("\n📭 No active setups in monitoring\n")
+            _radar_print("\n📭 No active setups in monitoring\n")
             return
 
         _all_in_json = [
             f"{s.get('symbol','?')}({s.get('status','?')})"
             for s in setups if isinstance(s, dict)
         ]
-        print(f"  📋 [V36.3] monitoring_setups.json: {len(setups)} intrări — {_all_in_json}")
+        _radar_print(f"  📋 [V36.3] monitoring_setups.json: {len(setups)} intrări — {_all_in_json}")
         sys.stdout.flush()
 
         if symbol:
             target_setups = [s for s in setups if s.get('symbol') == symbol]
             if not target_setups:
-                print(f"\n⚠️  No setup found for {symbol}\n")
+                _radar_print(f"\n⚠️  No setup found for {symbol}\n")
                 return
             setups = target_setups
 
@@ -3458,21 +3584,21 @@ class MultiTFRadar:
         if skipped:
             for s in setups:
                 if s.get('status', '') in _SKIP_STATUSES:
-                    print(f"  ⏸️  [RADAR SKIP] {s.get('symbol', '?')}: status={s.get('status')} "
+                    _radar_print(f"  ⏸️  [RADAR SKIP] {s.get('symbol', '?')}: status={s.get('status')} "
                           f"— exclus din scan (terminal/TRADE_OPEN)")
             sys.stdout.flush()
 
         if not active_setups:
-            print("\n📭 No active setups to scan (all TRADE_OPEN or invalidated)\n")
+            _radar_print("\n📭 No active setups to scan (all TRADE_OPEN or invalidated)\n")
             return
 
         # V22: json_data pre-citire ELIMINATA — _batch_sync re-citeste LIVE la final ciclu
 
-        print("\n" + "="*80)
+        _radar_print("\n" + "="*80)
         symbols_list = " | ".join([f"{s.get('symbol','?')} {s.get('direction','?')}" for s in active_setups])
-        print(f"📋 LOADED {len(active_setups)} ACTIVE SETUP(S) FROM monitoring_setups.json")
-        print(f"   {symbols_list}")
-        print("="*80)
+        _radar_print(f"📋 LOADED {len(active_setups)} ACTIVE SETUP(S) FROM monitoring_setups.json")
+        _radar_print(f"   {symbols_list}")
+        _radar_print("="*80)
         sys.stdout.flush()
 
         ok_count = 0
@@ -3482,13 +3608,13 @@ class MultiTFRadar:
         for setup in active_setups:
             sym = setup.get('symbol', 'UNKNOWN')
             direction_label = setup.get('direction', '?').upper()
-            print(f"\n🔄 [RADAR INITIALIZAT] Pornire descarcare date si analiza istorica pentru: {sym} {direction_label}...")
+            _radar_print(f"\n🔄 [RADAR INITIALIZAT] Pornire descarcare date si analiza istorica pentru: {sym} {direction_label}...")
             sys.stdout.flush()
             try:
                 result = self.analyze_setup(setup, save_to_json=False)
                 if result is None:
                     _reason = self._last_skip_reason or "motiv necunoscut (verifică log-urile de mai sus)"
-                    print(f"  ⛔ [RADAR SKIP] {sym}: ciclu omis — {_reason}")
+                    _radar_print(f"  ⛔ [RADAR SKIP] {sym}: ciclu omis — {_reason}")
                     sys.stdout.flush()
                     ok_count += 1
                     continue
@@ -3498,10 +3624,10 @@ class MultiTFRadar:
                 ok_count += 1
             except Exception as e:
                 import traceback
-                print(f"\n{'='*80}")
-                print(f"❌ [RADAR ERROR] {sym}: analiză eșuată — {e}")
+                _radar_print(f"\n{'='*80}")
+                _radar_print(f"❌ [RADAR ERROR] {sym}: analiză eșuată — {e}")
                 traceback.print_exc()
-                print("="*80 + "\n")
+                _radar_print("="*80 + "\n")
                 sys.stdout.flush()
                 err_count += 1
                 continue
@@ -3509,7 +3635,7 @@ class MultiTFRadar:
         if collected_results:
             self._batch_sync_to_monitoring_setups(collected_results)
 
-        print(f"\n✅ Scan complete: {ok_count} analyzed | ❌ {err_count} errors\n")
+        _radar_print(f"\n✅ Scan complete: {ok_count} analyzed | ❌ {err_count} errors\n")
     
     def _compute_adaptive_interval(self, base_interval: int, symbol: Optional[str] = None) -> int:
         """
@@ -3556,19 +3682,19 @@ class MultiTFRadar:
 
     def watch_mode(self, interval: int, symbol: Optional[str] = None, all_setups: bool = False):
         """Run scan in watch mode with auto-refresh"""
-        print("\n" + "="*80)
-        print("👁️  MULTI-TF RADAR - WATCH MODE ACTIVE (V25.2 ADAPTIVE INTERVAL)")
-        print("="*80)
-        print(f"⏱️  Base Interval: {interval}s | Adaptive: 10s (pullback) / 5s (în FVG)")
-        print(f"🎯 Target: {'ALL setups' if all_setups else (symbol if symbol else 'First setup')}")
-        print("Press Ctrl+C to stop")
-        print("="*80 + "\n")
+        _radar_print("\n" + "="*80)
+        _radar_print("👁️  MULTI-TF RADAR - WATCH MODE ACTIVE (V25.2 ADAPTIVE INTERVAL)")
+        _radar_print("="*80)
+        _radar_print(f"⏱️  Base Interval: {interval}s | Adaptive: 10s (pullback) / 5s (în FVG)")
+        _radar_print(f"🎯 Target: {'ALL setups' if all_setups else (symbol if symbol else 'First setup')}")
+        _radar_print("Press Ctrl+C to stop")
+        _radar_print("="*80 + "\n")
 
         try:
             while True:
                 _scan_lock = _Path('data') / 'auto_scan_in_progress.lock'
                 if _scan_lock.exists():
-                    print("⏸️ [V67] Auto-scan in progress — radar paused 60s (avoid cBot port 8010 contention)")
+                    _radar_print("⏸️ [V67] Auto-scan in progress — radar paused 60s (avoid cBot port 8010 contention)")
                     time.sleep(60)
                     continue
 
@@ -3577,15 +3703,15 @@ class MultiTFRadar:
                 # V25.2: Interval adaptiv bazat pe proximitate FVG (citire JSON fără HTTP extra)
                 next_interval = self._compute_adaptive_interval(interval, symbol)
                 if next_interval <= 5:
-                    print(f"\n⚡ [SNIPER MODE] Preț aproape de FVG — rescan în {next_interval}s...\n")
+                    _radar_print(f"\n⚡ [SNIPER MODE] Preț aproape de FVG — rescan în {next_interval}s...\n")
                 elif next_interval <= 10:
-                    print(f"\n🔍 [PULLBACK ACTIV] CHoCH detectat — rescan în {next_interval}s...\n")
+                    _radar_print(f"\n🔍 [PULLBACK ACTIV] CHoCH detectat — rescan în {next_interval}s...\n")
                 else:
-                    print(f"\n⏳ Next scan în {next_interval}s (normal)...\n")
+                    _radar_print(f"\n⏳ Next scan în {next_interval}s (normal)...\n")
                 time.sleep(next_interval)
 
         except KeyboardInterrupt:
-            print("\n\n👋 Watch mode stopped by user\n")
+            _radar_print("\n\n👋 Watch mode stopped by user\n")
 
 
 def main():

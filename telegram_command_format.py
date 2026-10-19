@@ -36,6 +36,12 @@ def append_slim_footer(text: str) -> str:
     return f"{text.rstrip()}\n\n{format_slim_footer()}"
 
 
+def normalize_telegram_command(text: str) -> str:
+    """Strip @BotName suffix so /news@MyBot matches /news in group chats."""
+    token = (text or "").strip().split()[0].lower()
+    return token.split("@", 1)[0]
+
+
 def section_header(title: str) -> str:
     """Section title with full-width separator."""
     return f"{SLIM_FOOTER_SEP}\n<b>{title}</b>"

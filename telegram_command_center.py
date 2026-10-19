@@ -35,12 +35,15 @@ from dotenv import load_dotenv
 import requests
 import time
 import os
+import re
 import psutil
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from loguru import logger
 
 from telegram_command_format import (
     SLIM_FOOTER_SEP,
     append_slim_footer,
+    normalize_telegram_command,
     format_btcusd_card,
     format_stat_block,
     format_two_column_grid,
@@ -278,6 +281,33 @@ class TelegramCommandCenter:
         except Exception as e:
             logger.error(f"❌ Error sending message: {e}")
             return False
+
+    def send_command_reply(self, text: str, chat_id=None) -> bool:
+        """Send command output; retry plain text if HTML parse fails."""
+        body = (text or "").strip()
+        if not body:
+            body = "⚠️ <b>Răspuns gol</b> — comanda a rulat fără conținut."
+        if self.send_message(body, chat_id=chat_id):
+            return True
+        plain = re.sub(r"<[^>]+>", "", body)
+        plain = append_slim_footer(plain)
+        target_chat = chat_id if chat_id is not None else self.chat_id
+        if not target_chat or not self.bot_token:
+            return False
+        try:
+            url = f"https://api.telegram.org/bot{self.bot_token}/sendMessage"
+            payload = {
+                "chat_id": target_chat,
+                "text": plain[:4096],
+            }
+            response = requests.post(url, json=payload, timeout=10)
+            if response.status_code == 200 and response.json().get("ok"):
+                logger.warning("Telegram HTML send failed — plain-text fallback OK")
+                return True
+            logger.error(f"❌ Plain sendMessage failed: {response.text[:300]}")
+        except Exception as e:
+            logger.error(f"❌ Plain fallback send error: {e}")
+        return False
     
     def handle_stats_command(self):
         """📊 Handle /stats command - Show today's trading statistics (COMPACT VERTICAL)"""
@@ -1367,6 +1397,36 @@ class TelegramCommandCenter:
             logger.error(f"❌ Resume error: {e}")
             return f"❌ <b>RESUME ERROR:</b> {str(e)}"
 
+    def _refresh_upcoming_news_cache(self, timeout_sec: float = 22.0) -> str:
+        """Background refresh for data/upcoming_news.json; returns status token."""
+        def _work() -> None:
+            from news_fetcher import (
+                fetch_all_merged,
+                LAST_SOURCE_PROVIDER,
+                save_events,
+            )
+            merged = fetch_all_merged(days_ahead=14, debug=False)
+            if merged:
+                save_events(merged, source_provider=LAST_SOURCE_PROVIDER or None)
+            else:
+                save_events(
+                    [],
+                    source_provider=LAST_SOURCE_PROVIDER or "sync_failed",
+                    allow_empty=True,
+                    sync_note="auto-refresh: no High events",
+                )
+
+        try:
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                pool.submit(_work).result(timeout=timeout_sec)
+            return "ok"
+        except FuturesTimeoutError:
+            logger.warning("[/news] Auto refresh timed out (>%ss)", timeout_sec)
+            return "timeout"
+        except Exception as exc:
+            logger.warning(f"[/news] Auto refresh failed: {exc}")
+            return f"error:{exc}"
+
     def handle_news_command(self) -> str:
         """/news — HIGH impact next 14 days (ForexFactory red folder via news_fetcher)."""
         from news_calendar_utils import (
@@ -1375,6 +1435,9 @@ class TelegramCommandCenter:
             parse_event_datetime,
             UPCOMING_NEWS_FILE,
         )
+
+        news_path = UPCOMING_NEWS_FILE.resolve()
+        refresh_note = ""
 
         FLAG_MAP = {
             'USD': '🇺🇸', 'EUR': '🇪🇺', 'GBP': '🇬🇧', 'JPY': '🇯🇵',
@@ -1402,30 +1465,31 @@ class TelegramCommandCenter:
 
         try:
             cache_expired_pre, cache_age_h = _news_cache_age_hours()
-            if cache_expired_pre:
-                try:
-                    from news_fetcher import (
-                        fetch_all_merged,
-                        LAST_HTML_PAGES_FETCHED,
-                        LAST_SOURCE_PROVIDER,
-                        save_events,
-                    )
-                    _merged = fetch_all_merged(days_ahead=14, debug=False)
-                    if _merged:
-                        _saved = save_events(_merged, source_provider=LAST_SOURCE_PROVIDER or None)
-                    else:
-                        _saved = save_events(
-                            [],
-                            source_provider=LAST_SOURCE_PROVIDER or "sync_failed",
-                            allow_empty=True,
-                            sync_note="auto-refresh: no High events",
-                        )
-                    if _saved:
-                        logger.info(f"[/news] Auto-refreshed upcoming_news.json ({len(_merged)} events)")
-                except Exception as _refresh_err:
-                    logger.warning(f"[/news] Auto refresh failed: {_refresh_err}")
-
             events = load_high_impact_events(days_ahead=14)
+            refresh_on_cmd = os.getenv("NEWS_REFRESH_ON_CMD", "0").strip() == "1"
+
+            if refresh_on_cmd:
+                need_refresh = not news_path.exists() or not events
+                if need_refresh:
+                    refresh_note = self._refresh_upcoming_news_cache()
+                    if refresh_note == "timeout" and not news_path.exists():
+                        return (
+                            "<b>🚨 News HIGH IMPACT</b>\n"
+                            f"{SLIM_FOOTER_SEP}\n\n"
+                            "⚠️ <b>Fișier știri lipsă</b> — refresh depășit timeout (~22s).\n"
+                            f"Cale: <code>{news_path}</code>\n"
+                            "<i>Rulează <code>scripts/run_news_fetcher.ps1</code> pe VPS.</i>"
+                        )
+                    events = load_high_impact_events(days_ahead=14)
+                elif cache_expired_pre:
+                    refresh_note = self._refresh_upcoming_news_cache(timeout_sec=8.0)
+                    fresh = load_high_impact_events(days_ahead=14)
+                    if fresh:
+                        events = fresh
+            elif not news_path.exists():
+                refresh_note = "skipped_no_file"
+            elif cache_expired_pre:
+                refresh_note = "skipped_stale_cache"
             source = '📡 forexfactory.com (High only)'
 
             upcoming: list = []
@@ -1459,19 +1523,35 @@ class TelegramCommandCenter:
                     except Exception:
                         cache_expired = True
 
-                if cache_expired:
+                if not news_path.exists():
                     msg += (
-                        "⚠️ <b>News cache expirat</b> — fetch eșuat sau fișier vechi.\n"
+                        "⚠️ <b>Lipsește fișierul de știri</b>\n"
+                        f"<code>{news_path}</code>\n"
+                        "Nu pot lista evenimente HIGH până la primul sync.\n"
+                    )
+                elif cache_expired or refresh_note.startswith("error"):
+                    msg += (
+                        "⚠️ <b>News cache expirat sau refresh eșuat</b>\n"
                         "Nu există evenimente HIGH valide în fereastra de 14 zile.\n"
                     )
+                    if refresh_note.startswith("error"):
+                        msg += f"<i>Refresh: {refresh_note[6:]}</i>\n"
+                    elif refresh_note == "timeout":
+                        msg += "<i>Refresh: timeout (reîncearcă în câteva secunde)</i>\n"
+                    elif refresh_note == "skipped_stale_cache":
+                        msg += (
+                            "<i>Cache vechi — setează NEWS_REFRESH_ON_CMD=1 sau "
+                            "rulează news_fetcher pe VPS.</i>\n"
+                        )
                 else:
                     msg += "✅ <b>All clear</b> — fără evenimente HIGH în următoarele 14 zile.\n"
                 stale = ""
-                if UPCOMING_NEWS_FILE.exists() and not cache_expired:
-                    stale = " (fișier present dar gol/expirat)"
-                elif UPCOMING_NEWS_FILE.exists() and cache_expired:
+                if news_path.exists() and not cache_expired:
+                    stale = " (fișier present dar fără HIGH în fereastră)"
+                elif news_path.exists() and cache_expired:
                     stale = " (upcoming_news.json expirat)"
                 msg += f"\n<i>Sursă: {source or 'upcoming_news.json'}{stale}</i>"
+                msg += f"\n<i>Path: <code>{news_path}</code></i>"
                 msg += (
                     "\n<i>Windows VPS: <code>.\\scripts\\run_news_fetcher.ps1</code> "
                     "(pip install cloudscraper beautifulsoup4)</i>"
@@ -1531,8 +1611,13 @@ class TelegramCommandCenter:
             return msg
 
         except Exception as e:
-            logger.error(f"❌ /news error: {e}")
-            return f"❌ <b>NEWS ERROR:</b> {str(e)}"
+            logger.exception(f"❌ /news error: {e}")
+            return (
+                f"❌ <b>NEWS ERROR</b>\n"
+                f"{SLIM_FOOTER_SEP}\n\n"
+                f"<code>{str(e)[:400]}</code>\n\n"
+                f"<i>Fișier așteptat: <code>{news_path}</code></i>"
+            )
 
     def handle_rates_command(self) -> str:
         """/rates — Live central bank rates + carry + IC Markets swap (V38.6)"""
@@ -1556,6 +1641,7 @@ class TelegramCommandCenter:
         🔐 ADMIN   → /killall /resume /active /btcusd /news /rates
         """
         reply_chat_id = None
+        response = None
         try:
             from_user = message_obj.get('from', {})
             user_id   = from_user.get('id')
@@ -1565,7 +1651,7 @@ class TelegramCommandCenter:
             if not text.startswith('/'):
                 return
 
-            command = text.split()[0].lower()
+            command = normalize_telegram_command(text)
             is_admin = (user_id == self.admin_id)
 
             logger.info(f"📥 cmd={command} user={user_id} admin={is_admin} chat={reply_chat_id}")
@@ -1646,12 +1732,20 @@ class TelegramCommandCenter:
                 else:
                     return  # non-admin + comandă necunoscută → ignorăm
 
-            self.send_message(response, chat_id=reply_chat_id)
+            if response is None and command in (self.PUBLIC_COMMANDS | self.ADMIN_COMMANDS):
+                response = (
+                    f"⚠️ <b>{command}</b> — procesat fără răspuns.\n"
+                    "Verifică logs/command center."
+                )
+            if response is not None:
+                sent = self.send_command_reply(response, chat_id=reply_chat_id)
+                if not sent:
+                    logger.error(f"❌ Failed to deliver reply for {command} chat={reply_chat_id}")
 
         except Exception as e:
             logger.exception(f"❌ Command processing error: {e}")
             if reply_chat_id:
-                self.send_message(
+                self.send_command_reply(
                     f"❌ <b>Eroare la procesarea comenzii</b>\n\n<code>{str(e)[:200]}</code>",
                     chat_id=reply_chat_id,
                 )
