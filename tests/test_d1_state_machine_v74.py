@@ -11,13 +11,13 @@ from smc_detector import SMCDetector
 ROOT = Path(__file__).resolve().parent.parent
 CACHE = ROOT / "data" / "historical_cache"
 
-# V77: protected HL advances in BOS segment — cache trends updated (not V74 golden).
+# V80: fractal swing anchors — cache golden table (closed D1 authority).
 EXPECTED = {
     "USDCAD": "bearish",
     "USDCHF": "bearish",
     "BTCUSD": "bearish",
-    "XAUUSD": "bearish",
-    "EURGBP": "bullish",
+    "XAUUSD": "bullish",
+    "EURGBP": "bearish",
     "EURJPY": "bullish",
 }
 
@@ -69,26 +69,26 @@ def test_v74_bias_table(capsys):
 
 
 def test_v77_protected_low_advances_after_bos_not_global_wick_floor():
-    """V77: BOS up resets protected_low to min body in segment, not ancient wick low."""
-    import pandas as pd
+    """V80: protected low trails major/fractal HL on BOS (not ancient wick floor)."""
     det = SMCDetector()
-    # Uptrend: deep old low, then HL ~1.375, then BOS above prior high
-    n = 30
+    n = 45
     idx = pd.date_range("2024-01-01", periods=n, freq="D")
-    close = [1.34] * 5 + [1.36, 1.38, 1.37, 1.375, 1.39, 1.41] + [1.40] * (n - 11)
+    close = []
+    for i in range(n):
+        close.append(1.34 + 0.003 * i + 0.01 * (1 if (i // 6) % 2 else -1))
     df = pd.DataFrame(
         {
             "open": close,
             "high": [c + 0.005 for c in close],
             "low": [c - 0.005 for c in close],
+            "close": close,
         },
         index=idx,
     )
-    df["close"] = close
-    df.loc[df.index[0], "low"] = 1.330  # ancient wick floor
+    df.loc[df.index[0], "low"] = 1.330
     sm = det.run_d1_smc_state_machine(df)
     assert sm["trend"] == "bullish"
     assert sm["protected_low"] is not None
-    assert sm["protected_low"] >= 1.365, (
-        f"protected_low should reflect recent pullback body, got {sm['protected_low']}"
+    assert sm["protected_low"] >= 1.36, (
+        f"protected_low should reflect recent fractal HL, got {sm['protected_low']}"
     )
