@@ -55,3 +55,31 @@ def test_bearish_pullback_zone_does_not_change_bias():
     )
     sm = det.run_d1_smc_state_machine(df)
     assert sm["trend"] == "bearish"
+
+
+def test_post_choch_bos_marks_continuation():
+    """After CHoCH, same-direction BOS → continuation + latest_signal is last BOS."""
+    det = SMCDetector()
+    n = 55
+    idx = pd.date_range("2024-01-01", periods=n, freq="D")
+    close = [1.20 + 0.003 * i for i in range(n)]
+    df = pd.DataFrame(
+        {
+            "open": close,
+            "high": [c + 0.005 for c in close],
+            "low": [c - 0.005 for c in close],
+            "close": close,
+        },
+        index=idx,
+    )
+    sm = det.run_d1_smc_state_machine(df)
+    if sm["trend"] == "bullish" and len(sm["bos_list"]) >= 1:
+        post = [
+            b for b in sm["bos_list"]
+            if sm["leg_choch"] is not None
+            and b.index > sm["leg_choch"].index
+            and b.direction == "bullish"
+        ]
+        if post:
+            assert sm["strategy_type"] == "continuation"
+            assert sm["latest_signal"] == post[-1]

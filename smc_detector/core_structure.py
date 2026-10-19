@@ -28,7 +28,11 @@ class CoreStructureMixin:
             return df
         if len(df) < 2:
             return df
-        return df.iloc[:-1].copy()
+        if df.attrs.get("apollo_d1_closed_only"):
+            return df
+        out = df.iloc[:-1].copy()
+        out.attrs["apollo_d1_closed_only"] = True
+        return out
 
     @staticmethod
     def _bar_time(df: pd.DataFrame, idx: int):
@@ -42,11 +46,11 @@ class CoreStructureMixin:
         debug: bool = False,
     ) -> dict:
         """
-        V82 — Deterministic D1 bias state machine (HH/HL/LH/LL fractal pivots).
+        V82.1 — Pivot state machine + stale-leg reconcile + CONT/REV from post-CHoCH BOS.
 
-        State: bias, protected_pivot (HL if bullish / LH if bearish), target_pivot (HH/LL).
-        Pullback = price between protected and target; trend flips only on body close through
-        protected_pivot. BOS extends target and refreshes protected from impulse-origin fractal.
+        State: bias, protected_pivot (HL/LH), target_pivot (HH/LL). Pullback keeps bias;
+        flip on body close through protected_pivot. Terminal pass: if close breaks below
+        the active bullish leg CHoCH/BOS floor, force bearish (and symmetric for bearish).
         """
         empty = {
             'trend': 'neutral',
@@ -367,15 +371,101 @@ class CoreStructureMixin:
 
                 continue
 
+        def _last_leg_choch(direction: str) -> Optional[CHoCH]:
+            for c in reversed(chochs):
+                if c.direction == direction:
+                    return c
+            return None
+
+        def _leg_impulse_ref(leg: CHoCH) -> float:
+            ref = float(leg.break_price)
+            same = [
+                b for b in bos_list
+                if b.index > leg.index and b.direction == leg.direction
+            ]
+            if not same:
+                return ref
+            last_b = same[-1]
+            if leg.direction == 'bullish':
+                return max(ref, float(last_b.break_price))
+            return min(ref, float(last_b.break_price))
+
+        last_i = len(df) - 1
+        last_close = float(df['close'].iloc[last_i])
+        last_ct = self._bar_time(df, last_i)
+
+        def _force_bearish_terminal() -> None:
+            nonlocal bias, latest_signal, leg_choch, last_event_bar
+            lh_cand = highest_confirmed_high(last_i, last_i)
+            lh_idx = (
+                lh_cand.index if lh_cand is not None
+                else (target_idx if target_idx is not None else last_i)
+            )
+            ll_cand = deepest_confirmed_low(last_i, last_i)
+            ll_idx = ll_cand.index if ll_cand is not None else last_i
+            bias = 'bearish'
+            _set_bearish_pivots(lh_idx, ll_idx)
+            broken = swing_pt(protected_idx or ll_idx, 'low')
+            br_px = float(protected_pivot) if protected_pivot is not None else float(bl(df, ll_idx))
+            ev = CHoCH(
+                index=last_i,
+                direction='bearish',
+                break_price=br_px,
+                previous_trend='bullish',
+                candle_time=last_ct,
+                swing_broken=broken,
+            )
+            chochs.append(ev)
+            latest_signal = ev
+            leg_choch = ev
+            last_event_bar = last_i
+
+        if bias == 'bullish':
+            bull_leg = _last_leg_choch('bullish')
+            if bull_leg is not None and last_close < _leg_impulse_ref(bull_leg):
+                _force_bearish_terminal()
+            elif (
+                protected_pivot is not None
+                and target_pivot is not None
+                and target_pivot > protected_pivot
+            ):
+                span = target_pivot - protected_pivot
+                pos_in_leg = (last_close - protected_pivot) / span
+                bull_bos = [b for b in bos_list if b.direction == 'bullish']
+                if (
+                    bull_bos
+                    and last_close < float(bull_bos[-1].break_price)
+                    and pos_in_leg >= 0.88
+                ):
+                    _force_bearish_terminal()
+            elif (
+                bull_leg is not None
+                and hasattr(self, '_leg_choch_still_valid')
+                and not self._leg_choch_still_valid(
+                    df, bull_leg, bos_list, chochs,
+                )
+            ):
+                _force_bearish_terminal()
+
         trend = bias if bias is not None else 'neutral'
 
+        leg_choch = _last_leg_choch(trend) if trend in ('bullish', 'bearish') else None
         strategy_type = 'continuation'
-        if latest_signal is not None and isinstance(latest_signal, CHoCH):
-            pt = getattr(latest_signal, 'previous_trend', None)
-            if pt and pt != latest_signal.direction:
+        latest_out = latest_signal
+        if leg_choch is not None and trend in ('bullish', 'bearish'):
+            post_leg_bos = [
+                b for b in bos_list
+                if b.index > leg_choch.index and b.direction == trend
+            ]
+            if post_leg_bos:
+                strategy_type = 'continuation'
+                latest_out = post_leg_bos[-1]
+            else:
                 strategy_type = 'reversal'
-            elif pt is None:
-                strategy_type = 'reversal'
+                latest_out = leg_choch
+        elif isinstance(latest_signal, CHoCH):
+            strategy_type = 'reversal'
+            latest_out = latest_signal
 
         protected_low = None
         protected_high = None
@@ -393,14 +483,14 @@ class CoreStructureMixin:
         if debug and trend != 'neutral':
             kind = 'CHoCH' if isinstance(latest_signal, CHoCH) else 'BOS'
             print(
-                f"   📐 [V82 SMC SM] trend={trend.upper()} "
+                f"   📐 [V82.1 SMC SM] trend={trend.upper()} "
                 f"HL/LH={protected_pivot} HH/LL={target_pivot} last={kind} "
                 f"@bar{getattr(latest_signal, 'index', '?')}"
             )
 
         return {
             'trend': trend,
-            'latest_signal': latest_signal,
+            'latest_signal': latest_out,
             'strategy_type': strategy_type,
             'leg_choch': leg_choch,
             'chochs': chochs,

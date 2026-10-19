@@ -133,11 +133,49 @@ class ScanSetupMixin:
             and strategy_type == 'reversal'
             and current_trend == 'bullish'
         ):
-            print(
-                f"⛔ [V57 LEG INVALID] {symbol}: bullish REVERSAL rejected — "
-                f"close below leg CHoCH break @bar{leg_choch.index}"
-            )
-            return None
+            # V82.1: stale bullish leg — prefer authoritative SM or promote active BEARISH leg
+            _auth = self.build_d1_context(df_daily, symbol=symbol)
+            if _auth.trend == 'bearish' and _auth.latest_signal is not None:
+                current_trend = _auth.trend
+                strategy_type = _auth.strategy_type
+                latest_signal = _auth.latest_signal
+                leg_choch = _auth.leg_choch
+                if debug:
+                    print(
+                        f"   🔄 [V82.1] {symbol}: stale bullish leg → "
+                        f"authoritative BEARISH {_auth.strategy_type.upper()}"
+                    )
+            else:
+                _bear_leg = None
+                for _c in reversed(daily_chochs):
+                    if _c.direction == 'bearish':
+                        _bear_leg = _c
+                        break
+                _post_bear = [
+                    b for b in daily_bos_list
+                    if _bear_leg is not None
+                    and b.index > _bear_leg.index
+                    and b.direction == 'bearish'
+                ]
+                if _post_bear or _bear_leg is not None:
+                    current_trend = 'bearish'
+                    leg_choch = _bear_leg
+                    if _post_bear:
+                        strategy_type = 'continuation'
+                        latest_signal = _post_bear[-1]
+                    else:
+                        strategy_type = 'reversal'
+                        latest_signal = _bear_leg
+                    print(
+                        f"   🔄 [V82.1] {symbol}: V57 invalid bullish leg → "
+                        f"BEARISH {strategy_type.upper()} (scan continues)"
+                    )
+                else:
+                    print(
+                        f"⛔ [V57 LEG INVALID] {symbol}: bullish REVERSAL rejected — "
+                        f"close below leg CHoCH break @bar{leg_choch.index}"
+                    )
+                    return None
 
         _signal_label = 'CHoCH' if strategy_type == 'reversal' else 'BOS'
 
