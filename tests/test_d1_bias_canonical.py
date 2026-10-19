@@ -175,11 +175,8 @@ def test_pullback_bullish_bos_flips_when_last_signal_bullish():
     if last_bull.index <= last_bear.index:
         pytest.skip("Slice has no bullish BOS after bearish")
     auth = det.build_d1_context(df, symbol="EURGBP")
-    assert auth.trend in ("bullish", "bearish", "neutral"), auth
-    if auth.trend == "bullish":
-        assert auth.direction == "buy", auth
-    elif auth.trend == "bearish":
-        assert auth.direction == "sell", auth
+    assert auth.trend == "bullish", auth
+    assert auth.direction == "buy", auth
 
 
 def test_usdcad_not_stuck_bearish_on_full_history():
