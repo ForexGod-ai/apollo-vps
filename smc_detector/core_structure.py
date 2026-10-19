@@ -42,9 +42,10 @@ class CoreStructureMixin:
         debug: bool = False,
     ) -> dict:
         """
-        V80 — Sequential Glitch SMC on closed bars (fractal swing anchors).
-        Protected HL/LH and BOS/CHoCH levels use confirmed fractal pivots only;
-        1–2 bar pullbacks cannot flip trend without a body close through protected swing.
+        V81 — Structural leg HH/HL (TradingView circles logic).
+        Bullish leg: HL = fractal low at impulse origin of the BOS leg (never ratchets UP).
+        Trend stays bullish until a daily body close is below HL; pullbacks inside HL–HH
+        must not emit bearish BOS/CHoCH. Bearish leg is symmetric (LH never ratchets DOWN).
         """
         empty = {
             'trend': 'neutral',
@@ -55,6 +56,8 @@ class CoreStructureMixin:
             'bos_list': [],
             'protected_low': None,
             'protected_high': None,
+            'structural_hh': None,
+            'structural_hl': None,
         }
         if df is None or len(df) < 2:
             return empty
@@ -147,11 +150,47 @@ class CoreStructureMixin:
         structure_low_idx: Optional[int] = None
         leg_invalidation_low_idx = 0
         leg_invalidation_high_idx = 0
+        structural_hl_idx = 0
+        structural_lh_idx = 0
+        structural_hh_idx: Optional[int] = None
+        structural_ll_idx: Optional[int] = None
         last_bos_bar = 0
         last_state_flip_bar = 0
         latest_signal = None
         leg_choch = None
         MIN_CHOCH_COOLDOWN_BARS = 5
+
+        def hl_body(idx: int) -> float:
+            if idx in swing_low_indices:
+                return bl(df, idx)
+            return float('inf')
+
+        def lh_body(idx: int) -> float:
+            if idx in swing_high_indices:
+                return bh(df, idx)
+            return float('-inf')
+
+        def lock_structural_hl(idx: int) -> None:
+            nonlocal structural_hl_idx, leg_invalidation_low_idx, protected_low_idx
+            if idx not in swing_low_indices:
+                return
+            if structural_hl_idx not in swing_low_indices:
+                structural_hl_idx = idx
+            elif hl_body(idx) < hl_body(structural_hl_idx):
+                structural_hl_idx = idx
+            leg_invalidation_low_idx = structural_hl_idx
+            protected_low_idx = structural_hl_idx
+
+        def lock_structural_lh(idx: int) -> None:
+            nonlocal structural_lh_idx, leg_invalidation_high_idx, protected_high_idx
+            if idx not in swing_high_indices:
+                return
+            if structural_lh_idx not in swing_high_indices:
+                structural_lh_idx = idx
+            elif lh_body(idx) > lh_body(structural_lh_idx):
+                structural_lh_idx = idx
+            leg_invalidation_high_idx = structural_lh_idx
+            protected_high_idx = structural_lh_idx
 
         def seed_macro_low_for_leg(bar_i: int, break_ref_idx: int) -> None:
             nonlocal macro_protected_low_idx, protected_low_idx
@@ -194,8 +233,9 @@ class CoreStructureMixin:
                         if lows:
                             deepest = min(lows, key=lambda l: bl(df, l.index))
                             protected_low_idx = deepest.index
+                    lock_structural_hl(protected_low_idx)
                     seed_macro_low_for_leg(i, br_h.index)
-                    leg_invalidation_low_idx = macro_protected_low_idx
+                    structural_hh_idx = br_h.index
                     last_state_flip_bar = i
                     broken = br_h
                     ev = CHoCH(
@@ -218,8 +258,14 @@ class CoreStructureMixin:
                     state = 'bearish'
                     last_bos_bar = i
                     structure_low_idx = None
+                    if not set_protected_high_from_origin(0, i):
+                        highs = confirmed_highs(i)
+                        if highs:
+                            highest = max(highs, key=lambda h: bh(df, h.index))
+                            protected_high_idx = highest.index
+                    lock_structural_lh(protected_high_idx)
                     seed_macro_high_for_leg(i, br_l.index)
-                    leg_invalidation_high_idx = macro_protected_high_idx
+                    structural_ll_idx = br_l.index
                     last_state_flip_bar = i
                     broken = br_l
                     ev = CHoCH(
@@ -241,12 +287,13 @@ class CoreStructureMixin:
             if state == 'bullish':
                 if (
                     i > last_state_flip_bar + MIN_CHOCH_COOLDOWN_BARS
-                    and leg_invalidation_low_idx in swing_low_indices
-                    and close < bl(df, leg_invalidation_low_idx)
+                    and structural_hl_idx in swing_low_indices
+                    and close < bl(df, structural_hl_idx)
                 ):
-                    pl_idx = leg_invalidation_low_idx
+                    pl_idx = structural_hl_idx
                     seed_macro_high_for_leg(i, pl_idx)
-                    leg_invalidation_high_idx = macro_protected_high_idx
+                    lock_structural_lh(macro_protected_high_idx)
+                    structural_ll_idx = pl_idx
                     last_state_flip_bar = i
                     broken = swing_pt(pl_idx, 'low')
                     ev = CHoCH(
@@ -286,16 +333,15 @@ class CoreStructureMixin:
                     origin = self._impulse_origin_low_between(
                         df, swing_lows, broken_idx, i,
                     )
-                    if origin is not None and origin.index in major_low_indices:
-                        protected_low_idx = origin.index
-                        macro_protected_low_idx = origin.index
+                    if origin is not None:
+                        lock_structural_hl(origin.index)
+                        if origin.index in major_low_indices:
+                            macro_protected_low_idx = origin.index
                     elif set_protected_low_from_origin(broken_idx, i):
+                        lock_structural_hl(protected_low_idx)
                         if protected_low_idx in major_low_indices:
                             macro_protected_low_idx = protected_low_idx
-                    new_lo = bl(df, macro_protected_low_idx)
-                    old_lo = bl(df, leg_invalidation_low_idx)
-                    if new_lo > old_lo:
-                        leg_invalidation_low_idx = macro_protected_low_idx
+                    structural_hh_idx = broken_idx
                     broken = swing_pt(broken_idx, 'high')
                     ev = BOS(
                         index=i,
@@ -313,12 +359,13 @@ class CoreStructureMixin:
             if state == 'bearish':
                 if (
                     i > last_state_flip_bar + MIN_CHOCH_COOLDOWN_BARS
-                    and leg_invalidation_high_idx in swing_high_indices
-                    and close > bh(df, leg_invalidation_high_idx)
+                    and structural_lh_idx in swing_high_indices
+                    and close > bh(df, structural_lh_idx)
                 ):
-                    ph_idx = leg_invalidation_high_idx
+                    ph_idx = structural_lh_idx
                     seed_macro_low_for_leg(i, ph_idx)
-                    leg_invalidation_low_idx = macro_protected_low_idx
+                    lock_structural_hl(macro_protected_low_idx)
+                    structural_hh_idx = ph_idx
                     last_state_flip_bar = i
                     broken = swing_pt(ph_idx, 'high')
                     ev = CHoCH(
@@ -355,7 +402,15 @@ class CoreStructureMixin:
                     and close < bl(df, structure_low_idx)
                 ):
                     broken_idx = structure_low_idx
-                    set_protected_high_from_origin(broken_idx, i)
+                    origin_h = self._impulse_origin_high_between(
+                        df, swing_highs, broken_idx, i,
+                    )
+                    if origin_h is not None:
+                        lock_structural_lh(origin_h.index)
+                    else:
+                        set_protected_high_from_origin(broken_idx, i)
+                        lock_structural_lh(protected_high_idx)
+                    structural_ll_idx = broken_idx
                     broken = swing_pt(broken_idx, 'low')
                     ev = BOS(
                         index=i,
@@ -381,25 +436,25 @@ class CoreStructureMixin:
 
         protected_low = None
         protected_high = None
+        structural_hh = None
+        structural_hl = None
         if state == 'bullish':
-            idx = (
-                leg_invalidation_low_idx
-                if leg_invalidation_low_idx in swing_low_indices
-                else macro_protected_low_idx
-            )
-            protected_low = float(bl(df, idx))
+            if structural_hl_idx in swing_low_indices:
+                structural_hl = float(bl(df, structural_hl_idx))
+                protected_low = structural_hl
+            if structural_hh_idx is not None and structural_hh_idx in swing_high_indices:
+                structural_hh = float(bh(df, structural_hh_idx))
         elif state == 'bearish':
-            idx = (
-                leg_invalidation_high_idx
-                if leg_invalidation_high_idx in swing_high_indices
-                else macro_protected_high_idx
-            )
-            protected_high = float(bh(df, idx))
+            if structural_lh_idx in swing_high_indices:
+                structural_hl = float(bh(df, structural_lh_idx))
+                protected_high = structural_hl
+            if structural_ll_idx is not None and structural_ll_idx in swing_low_indices:
+                structural_hh = float(bl(df, structural_ll_idx))
 
         if debug and trend != 'neutral':
             kind = 'CHoCH' if isinstance(latest_signal, CHoCH) else 'BOS'
             print(
-                f"   📐 [V80 SMC SM] trend={trend.upper()} last={kind} "
+                f"   📐 [V81 SMC SM] trend={trend.upper()} last={kind} "
                 f"@bar{getattr(latest_signal, 'index', '?')}"
             )
 
@@ -412,6 +467,8 @@ class CoreStructureMixin:
             'bos_list': bos_list,
             'protected_low': protected_low,
             'protected_high': protected_high,
+            'structural_hh': structural_hh,
+            'structural_hl': structural_hl,
         }
 
     def detect_choch_and_bos(self, df: pd.DataFrame) -> Tuple[List[CHoCH], List[BOS]]:
