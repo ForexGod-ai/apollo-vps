@@ -91,33 +91,68 @@ except ImportError:
 import platform
 import re
 
-# V37.1: Output ASCII pe Windows VPS — PowerShell citeste log UTF-8 ca mojibake
-_RADAR_ASCII = platform.system() == 'Windows' or _os_global.getenv('RADAR_ASCII', '').lower() in ('1', 'true', 'yes')
-
 try:
     import colorama
-    colorama.init(autoreset=False, convert=True)
+    from colorama import Back, Fore, Style
+
+    colorama.init(autoreset=True, convert=True)
+    _COLORAMA_OK = True
 except ImportError:
-    pass
+    colorama = None  # type: ignore
+    _COLORAMA_OK = False
+
+    class _Fore:
+        RED = GREEN = YELLOW = BLUE = MAGENTA = CYAN = BLACK = ""
+
+    class _Back:
+        GREEN = RED = ""
+
+    class _Style:
+        RESET_ALL = BRIGHT = ""
+
+    Fore = _Fore()  # type: ignore
+    Back = _Back()  # type: ignore
+    Style = _Style()  # type: ignore
+
+# V37.1: ASCII curat (emoji/diacritice) — nu dezactivează culorile pe Windows
+_RADAR_ASCII_SANITIZE = (
+    platform.system() == "Windows"
+    or _os_global.getenv("RADAR_ASCII", "").lower() in ("1", "true", "yes")
+)
 
 
-class C:
-    """ANSI console styling for radar output (disabled when RADAR_ASCII=1)."""
-    RESET = "\033[0m"
-    BOLD = "\033[1m"
-    RED = "\033[1;31m"
-    GREEN = "\033[1;32m"
-    YELLOW = "\033[1;33m"
-    BLUE = "\033[1;34m"
-    PURPLE = "\033[1;35m"
-    CYAN = "\033[1;36m"
-    GRAY = "\033[1;30m"
-    BG_GREEN = "\033[1;42;30m"
-    BG_RED = "\033[1;41;37m"
+if _COLORAMA_OK:
+    class C:
+        """Console styling via colorama (Windows CMD/PowerShell safe with convert=True)."""
+        RESET = Style.RESET_ALL
+        BOLD = Style.BRIGHT
+        RED = Fore.RED + Style.BRIGHT
+        GREEN = Fore.GREEN + Style.BRIGHT
+        YELLOW = Fore.YELLOW + Style.BRIGHT
+        BLUE = Fore.BLUE + Style.BRIGHT
+        PURPLE = Fore.MAGENTA + Style.BRIGHT
+        CYAN = Fore.CYAN + Style.BRIGHT
+        GRAY = Fore.BLACK + Style.BRIGHT
+        BG_GREEN = Back.GREEN + Fore.BLACK + Style.BRIGHT
+        BG_RED = Back.RED + Fore.WHITE + Style.BRIGHT
+else:
+    class C:
+        """Fallback ANSI when colorama is not installed (pip install colorama on Windows VPS)."""
+        RESET = "\033[0m"
+        BOLD = "\033[1m"
+        RED = "\033[1;31m"
+        GREEN = "\033[1;32m"
+        YELLOW = "\033[1;33m"
+        BLUE = "\033[1;34m"
+        PURPLE = "\033[1;35m"
+        CYAN = "\033[1;36m"
+        GRAY = "\033[1;30m"
+        BG_GREEN = "\033[1;42;30m"
+        BG_RED = "\033[1;41;37m"
 
 
 def _radar_color_enabled() -> bool:
-    if _RADAR_ASCII:
+    if _os_global.getenv("STRIP_ANSI", "0").strip() == "1":
         return False
     return _os_global.getenv("RADAR_NO_COLOR", "").strip().lower() not in (
         "1", "true", "yes",
@@ -170,16 +205,25 @@ def _style_radar_line(line: str) -> str:
         lambda m: f"{C.BG_GREEN}{m.group(0)}{C.RESET}",
     )
     _sub(
-        r"\b([A-Z]{6})\b",
-        lambda m: (
-            f"{C.CYAN}{m.group(0)}{C.RESET}"
-            if m.group(0) not in ("BULLISH", "BEARISH")
-            else m.group(0)
-        ),
+        r"\b(?:AUD|CAD|CHF|EUR|GBP|JPY|NZD|USD|XAU|XAG|BTC|ETH|XTI|WTI|USO|UKO)"
+        r"(?:USD|EUR|GBP|JPY|CHF|CAD|AUD|NZD)\b",
+        lambda m: f"{C.CYAN}{m.group(0)}{C.RESET}",
     )
     _sub(
         r"\[([A-Z0-9]{3,12})\]",
         lambda m: f"[{C.CYAN}{m.group(1)}{C.RESET}]",
+    )
+    _sub(
+        r"(RADAR REPORT \| )([A-Z0-9]{3,12})( \| )"
+        r"(BULLISH|BEARISH|BUY|SELL|LONG|SHORT)\b",
+        lambda m: (
+            f"{m.group(1)}{C.CYAN}{m.group(2)}{C.RESET}{m.group(3)}"
+            + (
+                f"{C.GREEN}{m.group(4)}{C.RESET}"
+                if m.group(4).upper() in ("BULLISH", "BUY", "LONG")
+                else f"{C.RED}{m.group(4)}{C.RESET}"
+            )
+        ),
     )
     _sub(
         r"(RADAR REPORT \| )([A-Z0-9]{3,12})( \|)",
@@ -237,7 +281,7 @@ _ASCII_MAP = str.maketrans({
 
 def _ascii_sanitize(text: str) -> str:
     """V37.1.1: ASCII curat pentru log PowerShell Windows."""
-    if not _RADAR_ASCII:
+    if not _RADAR_ASCII_SANITIZE:
         return str(text)
     t = _EMOJI_RE.sub("", str(text))
     t = t.translate(_ASCII_MAP)
@@ -251,15 +295,26 @@ def _radar_log_filter(record) -> bool:
     return True
 
 
+def _persist_radar_report_line(clean: str) -> None:
+    """Append plain radar report line to file log (no stderr duplicate)."""
+    if not clean.strip():
+        return
+    try:
+        log_dir = _RADAR_DIR / "logs"
+        log_dir.mkdir(exist_ok=True)
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with open(log_dir / "multi_tf_radar.log", "a", encoding="utf-8") as fh:
+            fh.write(f"{ts} | INFO     | {clean}\n")
+    except Exception:
+        pass
+
+
 def _radar_out(msg: str) -> None:
-    """Print radar line — ASCII-safe on Windows log files + persist to multi_tf_radar.log."""
+    """Styled radar report to stdout; plain text only in multi_tf_radar.log (not Loguru stderr)."""
     clean = _ascii_sanitize(msg)
     styled = _style_radar_line(clean)
     print(styled, flush=True)
-    try:
-        logger.info(clean)
-    except Exception:
-        pass
+    _persist_radar_report_line(clean)
 
 
 def _plain_status(status: 'PullbackStatus') -> str:
@@ -3742,7 +3797,13 @@ def main():
     )
     
     args = parser.parse_args()
-    
+
+    if platform.system() == "Windows" and not _COLORAMA_OK:
+        print(
+            "WARNING: Instaleaza colorama pentru culori in consola: pip install colorama",
+            flush=True,
+        )
+
     radar = MultiTFRadar()
     logger.success(
         "[V42.4 CLEANUP] Successfully purged legacy branches and unified core system data defaults."
