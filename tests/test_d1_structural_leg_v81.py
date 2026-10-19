@@ -1,4 +1,4 @@
-"""V81 — D1 structural leg: pullback inside HL–HH stays bullish until close < HL."""
+"""V82 — D1 pivot state machine: pullback inside HL–HH stays bullish until close < HL."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -46,13 +46,11 @@ def test_usdcad_pullback_stays_bullish_until_hl_break():
     )
 
 
-def test_pullback_bars_do_not_raise_structural_hl():
-    """Extra bearish dailies in a bullish leg must not ratchet HL upward."""
+def test_pullback_bars_keep_bullish_bias():
+    """Extra bearish dailies inside HL–HH must not flip D1 to bearish."""
     det = SMCDetector()
-    df = _load_d1("USDCAD", tail=110)
-    sm_before = det.run_d1_smc_state_machine(df.iloc[:-3])
-    sm_after = det.run_d1_smc_state_machine(df)
-    assert sm_before["trend"] == "bullish"
-    assert sm_after["trend"] == "bullish"
-    assert sm_after["structural_hl"] is not None
-    assert sm_after["structural_hl"] <= sm_before["structural_hl"] + 1e-6
+    df = _load_d1("USDCAD", tail=400)
+    sm = det.run_d1_smc_state_machine(df)
+    assert sm["trend"] == "bullish"
+    last_close = float(df["close"].iloc[-1])
+    assert last_close >= sm["structural_hl"]

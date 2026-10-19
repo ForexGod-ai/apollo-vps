@@ -11,13 +11,13 @@ from smc_detector import SMCDetector
 ROOT = Path(__file__).resolve().parent.parent
 CACHE = ROOT / "data" / "historical_cache"
 
-# V81: structural leg HL/HH — cache golden table (closed D1 authority).
+# V82: pivot state machine — cache golden table (closed D1 authority).
 EXPECTED = {
     "USDCAD": "bullish",
     "USDCHF": "bearish",
-    "BTCUSD": "bullish",
+    "BTCUSD": "bearish",
     "XAUUSD": "bullish",
-    "EURGBP": "bullish",
+    "EURGBP": "bearish",
     "EURJPY": "bullish",
 }
 

@@ -42,10 +42,11 @@ class CoreStructureMixin:
         debug: bool = False,
     ) -> dict:
         """
-        V81 — Structural leg HH/HL (TradingView circles logic).
-        Bullish leg: HL = fractal low at impulse origin of the BOS leg (never ratchets UP).
-        Trend stays bullish until a daily body close is below HL; pullbacks inside HL–HH
-        must not emit bearish BOS/CHoCH. Bearish leg is symmetric (LH never ratchets DOWN).
+        V82 — Deterministic D1 bias state machine (HH/HL/LH/LL fractal pivots).
+
+        State: bias, protected_pivot (HL if bullish / LH if bearish), target_pivot (HH/LL).
+        Pullback = price between protected and target; trend flips only on body close through
+        protected_pivot. BOS extends target and refreshes protected from impulse-origin fractal.
         """
         empty = {
             'trend': 'neutral',
@@ -69,11 +70,9 @@ class CoreStructureMixin:
         major_highs, major_lows = self.filter_major_swings(
             df, swing_highs, swing_lows,
         )
-        fw = self._swing_fractal_window(df)
+        fw = max(self._swing_fractal_window(df), 2)
         swing_low_indices = {l.index for l in swing_lows}
         swing_high_indices = {h.index for h in swing_highs}
-        major_high_indices = {h.index for h in major_highs}
-        major_low_indices = {l.index for l in major_lows}
 
         def swing_pt(i: int, st: str) -> SwingPoint:
             if st == 'high':
@@ -117,134 +116,97 @@ class CoreStructureMixin:
                     return l
             return None
 
-        def set_protected_low_from_origin(start_idx: int, end_idx: int) -> bool:
-            nonlocal protected_low_idx
-            origin = self._impulse_origin_low_between(
-                df, swing_lows, start_idx, end_idx,
-            )
-            if origin is None:
-                return False
-            protected_low_idx = origin.index
-            return True
+        def deepest_confirmed_low(bar_i: int, cap_idx: int) -> Optional[SwingPoint]:
+            lows = [l for l in confirmed_lows(bar_i) if l.index <= cap_idx]
+            if not lows:
+                return None
+            return min(lows, key=lambda l: bl(df, l.index))
 
-        def set_protected_high_from_origin(start_idx: int, end_idx: int) -> bool:
-            nonlocal protected_high_idx
-            origin = self._impulse_origin_high_between(
-                df, swing_highs, start_idx, end_idx,
-            )
-            if origin is None:
-                return False
-            protected_high_idx = origin.index
-            return True
+        def highest_confirmed_high(bar_i: int, cap_idx: int) -> Optional[SwingPoint]:
+            highs = [h for h in confirmed_highs(bar_i) if h.index <= cap_idx]
+            if not highs:
+                return None
+            return max(highs, key=lambda h: bh(df, h.index))
 
         chochs: List[CHoCH] = []
         bos_list: List[BOS] = []
-        state: Optional[str] = None
+        bias: Optional[str] = None
+        protected_pivot: Optional[float] = None
+        target_pivot: Optional[float] = None
+        protected_idx: Optional[int] = None
+        target_idx: Optional[int] = None
         ref_high = bh(df, 0)
         ref_low = bl(df, 0)
-        protected_low_idx = 0
-        protected_high_idx = 0
-        macro_protected_low_idx = 0
-        macro_protected_high_idx = 0
-        structure_high_idx: Optional[int] = None
-        structure_low_idx: Optional[int] = None
-        leg_invalidation_low_idx = 0
-        leg_invalidation_high_idx = 0
-        structural_hl_idx = 0
-        structural_lh_idx = 0
-        structural_hh_idx: Optional[int] = None
-        structural_ll_idx: Optional[int] = None
-        last_bos_bar = 0
-        last_state_flip_bar = 0
+        last_event_bar = 0
         latest_signal = None
         leg_choch = None
-        MIN_CHOCH_COOLDOWN_BARS = 5
+        MIN_FLIP_COOLDOWN = 5
 
-        def hl_body(idx: int) -> float:
-            if idx in swing_low_indices:
-                return bl(df, idx)
-            return float('inf')
+        def _set_bullish_pivots(hl_idx: int, hh_idx: int) -> None:
+            nonlocal protected_pivot, target_pivot, protected_idx, target_idx
+            protected_idx = hl_idx
+            target_idx = hh_idx
+            protected_pivot = float(bl(df, hl_idx))
+            target_pivot = float(bh(df, hh_idx))
 
-        def lh_body(idx: int) -> float:
-            if idx in swing_high_indices:
-                return bh(df, idx)
-            return float('-inf')
+        def _set_bearish_pivots(lh_idx: int, ll_idx: int) -> None:
+            nonlocal protected_pivot, target_pivot, protected_idx, target_idx
+            protected_idx = lh_idx
+            target_idx = ll_idx
+            protected_pivot = float(bh(df, lh_idx))
+            target_pivot = float(bl(df, ll_idx))
 
-        def lock_structural_hl(idx: int) -> None:
-            nonlocal structural_hl_idx, leg_invalidation_low_idx, protected_low_idx
-            if idx not in swing_low_indices:
-                return
-            if structural_hl_idx not in swing_low_indices:
-                structural_hl_idx = idx
-            elif hl_body(idx) < hl_body(structural_hl_idx):
-                structural_hl_idx = idx
-            leg_invalidation_low_idx = structural_hl_idx
-            protected_low_idx = structural_hl_idx
-
-        def lock_structural_lh(idx: int) -> None:
-            nonlocal structural_lh_idx, leg_invalidation_high_idx, protected_high_idx
-            if idx not in swing_high_indices:
-                return
-            if structural_lh_idx not in swing_high_indices:
-                structural_lh_idx = idx
-            elif lh_body(idx) > lh_body(structural_lh_idx):
-                structural_lh_idx = idx
-            leg_invalidation_high_idx = structural_lh_idx
-            protected_high_idx = structural_lh_idx
-
-        def seed_macro_low_for_leg(bar_i: int, break_ref_idx: int) -> None:
-            nonlocal macro_protected_low_idx, protected_low_idx
-            lows = [l for l in major_lows if l.index <= bar_i]
-            if not lows:
-                lows = confirmed_lows(bar_i)
+        def _hl_from_impulse(start_idx: int, end_idx: int) -> Tuple[int, float]:
+            """Fractal HL at impulse origin before BOS-up (body low of pivot)."""
+            origin = self._impulse_origin_low_between(
+                df, swing_lows, start_idx, end_idx,
+            )
+            if origin is not None:
+                return origin.index, float(bl(df, origin.index))
+            lows = [l for l in confirmed_lows(end_idx) if start_idx < l.index <= end_idx]
             if lows:
                 deepest = min(lows, key=lambda l: bl(df, l.index))
-                macro_protected_low_idx = deepest.index
-                if protected_low_idx not in swing_low_indices:
-                    protected_low_idx = macro_protected_low_idx
+                return deepest.index, float(bl(df, deepest.index))
+            return end_idx, float(bl(df, end_idx))
 
-        def seed_macro_high_for_leg(bar_i: int, break_ref_idx: int) -> None:
-            nonlocal macro_protected_high_idx, protected_high_idx
-            _ = break_ref_idx
-            highs = [h for h in major_highs if h.index <= bar_i]
-            if not highs:
-                highs = confirmed_highs(bar_i)
+        def _lh_from_impulse(start_idx: int, end_idx: int) -> Tuple[int, float]:
+            """Fractal LH at impulse origin before BOS-down (body high of pivot)."""
+            origin = self._impulse_origin_high_between(
+                df, swing_highs, start_idx, end_idx,
+            )
+            if origin is not None:
+                return origin.index, float(bh(df, origin.index))
+            highs = [h for h in confirmed_highs(end_idx) if start_idx < h.index <= end_idx]
             if highs:
                 highest = max(highs, key=lambda h: bh(df, h.index))
-                macro_protected_high_idx = highest.index
-                protected_high_idx = macro_protected_high_idx
+                return highest.index, float(bh(df, highest.index))
+            return end_idx, float(bh(df, end_idx))
 
         for i in range(1, len(df)):
             close = float(df['close'].iloc[i])
             ct = self._bar_time(df, i)
 
-            if state is None:
+            if bias is None:
                 if close > ref_high:
                     br_h = broken_swing_high(i, close)
                     if br_h is None:
                         ref_high = max(ref_high, bh(df, i))
                         ref_low = min(ref_low, bl(df, i))
                         continue
-                    state = 'bullish'
-                    last_bos_bar = i
-                    structure_high_idx = None
-                    if not set_protected_low_from_origin(0, i):
-                        lows = confirmed_lows(i)
-                        if lows:
-                            deepest = min(lows, key=lambda l: bl(df, l.index))
-                            protected_low_idx = deepest.index
-                    lock_structural_hl(protected_low_idx)
-                    seed_macro_low_for_leg(i, br_h.index)
-                    structural_hh_idx = br_h.index
-                    last_state_flip_bar = i
-                    broken = br_h
+                    hl_idx, hl_px = _hl_from_impulse(0, i)
+                    bias = 'bullish'
+                    protected_pivot = hl_px
+                    protected_idx = hl_idx
+                    target_idx = br_h.index
+                    target_pivot = float(bh(df, br_h.index))
+                    last_event_bar = i
                     ev = CHoCH(
                         index=i,
                         direction='bullish',
-                        break_price=bh(df, broken.index),
+                        break_price=target_pivot,
                         previous_trend=None,
                         candle_time=ct,
-                        swing_broken=broken,
+                        swing_broken=br_h,
                     )
                     chochs.append(ev)
                     latest_signal = ev
@@ -255,26 +217,20 @@ class CoreStructureMixin:
                         ref_high = max(ref_high, bh(df, i))
                         ref_low = min(ref_low, bl(df, i))
                         continue
-                    state = 'bearish'
-                    last_bos_bar = i
-                    structure_low_idx = None
-                    if not set_protected_high_from_origin(0, i):
-                        highs = confirmed_highs(i)
-                        if highs:
-                            highest = max(highs, key=lambda h: bh(df, h.index))
-                            protected_high_idx = highest.index
-                    lock_structural_lh(protected_high_idx)
-                    seed_macro_high_for_leg(i, br_l.index)
-                    structural_ll_idx = br_l.index
-                    last_state_flip_bar = i
-                    broken = br_l
+                    lh_idx, lh_px = _lh_from_impulse(0, i)
+                    bias = 'bearish'
+                    protected_pivot = lh_px
+                    protected_idx = lh_idx
+                    target_idx = br_l.index
+                    target_pivot = float(bl(df, br_l.index))
+                    last_event_bar = i
                     ev = CHoCH(
                         index=i,
                         direction='bearish',
-                        break_price=bl(df, broken.index),
+                        break_price=target_pivot,
                         previous_trend=None,
                         candle_time=ct,
-                        swing_broken=broken,
+                        swing_broken=br_l,
                     )
                     chochs.append(ev)
                     latest_signal = ev
@@ -284,22 +240,27 @@ class CoreStructureMixin:
                     ref_low = min(ref_low, bl(df, i))
                 continue
 
-            if state == 'bullish':
+            assert protected_pivot is not None and target_pivot is not None
+
+            if bias == 'bullish':
+                # 3. Bearish CHoCH — body close below sacred HL
                 if (
-                    i > last_state_flip_bar + MIN_CHOCH_COOLDOWN_BARS
-                    and structural_hl_idx in swing_low_indices
-                    and close < bl(df, structural_hl_idx)
+                    i > last_event_bar + MIN_FLIP_COOLDOWN
+                    and close < protected_pivot
                 ):
-                    pl_idx = structural_hl_idx
-                    seed_macro_high_for_leg(i, pl_idx)
-                    lock_structural_lh(macro_protected_high_idx)
-                    structural_ll_idx = pl_idx
-                    last_state_flip_bar = i
-                    broken = swing_pt(pl_idx, 'low')
+                    lh_idx = target_idx if target_idx is not None else i
+                    ll_cand = deepest_confirmed_low(i, i)
+                    if ll_cand is None:
+                        ll_cand = swing_pt(i, 'low')
+                    ll_idx = ll_cand.index
+                    bias = 'bearish'
+                    _set_bearish_pivots(lh_idx, ll_idx)
+                    last_event_bar = i
+                    broken = swing_pt(protected_idx or 0, 'low')
                     ev = CHoCH(
                         index=i,
                         direction='bearish',
-                        break_price=bl(df, pl_idx),
+                        break_price=protected_pivot,
                         previous_trend='bullish',
                         candle_time=ct,
                         swing_broken=broken,
@@ -307,71 +268,62 @@ class CoreStructureMixin:
                     chochs.append(ev)
                     latest_signal = ev
                     leg_choch = ev
-                    state = 'bearish'
-                    last_bos_bar = i
-                    structure_low_idx = None
                     continue
 
-                post_highs = [
-                    h for h in major_highs
-                    if h.index > last_bos_bar and h.index + fw <= i
-                ]
-                if not post_highs:
-                    post_highs = [
-                        h for h in swing_highs
-                        if h.index > last_bos_bar and h.index + fw <= i
+                # 1. BOS bullish — close above HH target (confirmed fractal high)
+                if close > target_pivot:
+                    pool = [
+                        h for h in major_highs
+                        if h.index + fw <= i and close > bh(df, h.index)
                     ]
-                if post_highs:
-                    structure_high_idx = max(post_highs, key=lambda h: h.index).index
+                    if not pool:
+                        pool = [
+                            h for h in confirmed_highs(i)
+                            if close > bh(df, h.index)
+                        ]
+                    if pool:
+                        br_h = max(pool, key=lambda h: bh(df, h.index))
+                        if target_idx is not None and br_h.index <= target_idx:
+                            continue
+                        start = target_idx if target_idx is not None else 0
+                        hl_idx, hl_px = _hl_from_impulse(start, i)
+                        protected_pivot = hl_px
+                        protected_idx = hl_idx
+                        target_idx = br_h.index
+                        target_pivot = float(bh(df, br_h.index))
+                        last_event_bar = i
+                        ev = BOS(
+                            index=i,
+                            direction='bullish',
+                            break_price=target_pivot,
+                            candle_time=ct,
+                            swing_broken=br_h,
+                        )
+                        bos_list.append(ev)
+                        latest_signal = ev
+                    continue
 
-                if (
-                    structure_high_idx is not None
-                    and structure_high_idx in swing_high_indices
-                    and close > bh(df, structure_high_idx)
-                ):
-                    broken_idx = structure_high_idx
-                    origin = self._impulse_origin_low_between(
-                        df, swing_lows, broken_idx, i,
-                    )
-                    if origin is not None:
-                        lock_structural_hl(origin.index)
-                        if origin.index in major_low_indices:
-                            macro_protected_low_idx = origin.index
-                    elif set_protected_low_from_origin(broken_idx, i):
-                        lock_structural_hl(protected_low_idx)
-                        if protected_low_idx in major_low_indices:
-                            macro_protected_low_idx = protected_low_idx
-                    structural_hh_idx = broken_idx
-                    broken = swing_pt(broken_idx, 'high')
-                    ev = BOS(
-                        index=i,
-                        direction='bullish',
-                        break_price=bh(df, broken_idx),
-                        candle_time=ct,
-                        swing_broken=broken,
-                    )
-                    bos_list.append(ev)
-                    latest_signal = ev
-                    last_bos_bar = i
-                    structure_high_idx = None
+                # 2. Pullback: protected_pivot < close <= target_pivot — no state change
                 continue
 
-            if state == 'bearish':
+            if bias == 'bearish':
                 if (
-                    i > last_state_flip_bar + MIN_CHOCH_COOLDOWN_BARS
-                    and structural_lh_idx in swing_high_indices
-                    and close > bh(df, structural_lh_idx)
+                    i > last_event_bar + MIN_FLIP_COOLDOWN
+                    and close > protected_pivot
                 ):
-                    ph_idx = structural_lh_idx
-                    seed_macro_low_for_leg(i, ph_idx)
-                    lock_structural_hl(macro_protected_low_idx)
-                    structural_hh_idx = ph_idx
-                    last_state_flip_bar = i
-                    broken = swing_pt(ph_idx, 'high')
+                    hl_idx = target_idx if target_idx is not None else i
+                    hh_cand = highest_confirmed_high(i, i)
+                    if hh_cand is None:
+                        hh_cand = swing_pt(i, 'high')
+                    hh_idx = hh_cand.index
+                    bias = 'bullish'
+                    _set_bullish_pivots(hl_idx, hh_idx)
+                    last_event_bar = i
+                    broken = swing_pt(protected_idx or 0, 'high')
                     ev = CHoCH(
                         index=i,
                         direction='bullish',
-                        break_price=bh(df, ph_idx),
+                        break_price=protected_pivot,
                         previous_trend='bearish',
                         candle_time=ct,
                         swing_broken=broken,
@@ -379,52 +331,43 @@ class CoreStructureMixin:
                     chochs.append(ev)
                     latest_signal = ev
                     leg_choch = ev
-                    state = 'bullish'
-                    last_bos_bar = i
-                    structure_high_idx = None
                     continue
 
-                post_lows = [
-                    l for l in major_lows
-                    if l.index > last_bos_bar and l.index + fw <= i
-                ]
-                if not post_lows:
-                    post_lows = [
-                        l for l in swing_lows
-                        if l.index > last_bos_bar and l.index + fw <= i
+                if close < target_pivot:
+                    pool = [
+                        l for l in major_lows
+                        if l.index + fw <= i and close < bl(df, l.index)
                     ]
-                if post_lows:
-                    structure_low_idx = max(post_lows, key=lambda l: l.index).index
+                    if not pool:
+                        pool = [
+                            l for l in confirmed_lows(i)
+                            if close < bl(df, l.index)
+                        ]
+                    if pool:
+                        br_l = min(pool, key=lambda l: bl(df, l.index))
+                        if target_idx is not None and br_l.index <= target_idx:
+                            continue
+                        start = target_idx if target_idx is not None else 0
+                        lh_idx, lh_px = _lh_from_impulse(start, i)
+                        protected_pivot = lh_px
+                        protected_idx = lh_idx
+                        target_idx = br_l.index
+                        target_pivot = float(bl(df, br_l.index))
+                        last_event_bar = i
+                        ev = BOS(
+                            index=i,
+                            direction='bearish',
+                            break_price=target_pivot,
+                            candle_time=ct,
+                            swing_broken=br_l,
+                        )
+                        bos_list.append(ev)
+                        latest_signal = ev
+                    continue
 
-                if (
-                    structure_low_idx is not None
-                    and structure_low_idx in swing_low_indices
-                    and close < bl(df, structure_low_idx)
-                ):
-                    broken_idx = structure_low_idx
-                    origin_h = self._impulse_origin_high_between(
-                        df, swing_highs, broken_idx, i,
-                    )
-                    if origin_h is not None:
-                        lock_structural_lh(origin_h.index)
-                    else:
-                        set_protected_high_from_origin(broken_idx, i)
-                        lock_structural_lh(protected_high_idx)
-                    structural_ll_idx = broken_idx
-                    broken = swing_pt(broken_idx, 'low')
-                    ev = BOS(
-                        index=i,
-                        direction='bearish',
-                        break_price=bl(df, broken_idx),
-                        candle_time=ct,
-                        swing_broken=broken,
-                    )
-                    bos_list.append(ev)
-                    latest_signal = ev
-                    last_bos_bar = i
-                    structure_low_idx = None
+                continue
 
-        trend = state if state is not None else 'neutral'
+        trend = bias if bias is not None else 'neutral'
 
         strategy_type = 'continuation'
         if latest_signal is not None and isinstance(latest_signal, CHoCH):
@@ -438,23 +381,20 @@ class CoreStructureMixin:
         protected_high = None
         structural_hh = None
         structural_hl = None
-        if state == 'bullish':
-            if structural_hl_idx in swing_low_indices:
-                structural_hl = float(bl(df, structural_hl_idx))
-                protected_low = structural_hl
-            if structural_hh_idx is not None and structural_hh_idx in swing_high_indices:
-                structural_hh = float(bh(df, structural_hh_idx))
-        elif state == 'bearish':
-            if structural_lh_idx in swing_high_indices:
-                structural_hl = float(bh(df, structural_lh_idx))
-                protected_high = structural_hl
-            if structural_ll_idx is not None and structural_ll_idx in swing_low_indices:
-                structural_hh = float(bl(df, structural_ll_idx))
+        if bias == 'bullish':
+            structural_hl = protected_pivot
+            protected_low = protected_pivot
+            structural_hh = target_pivot
+        elif bias == 'bearish':
+            structural_hl = protected_pivot
+            protected_high = protected_pivot
+            structural_hh = target_pivot
 
         if debug and trend != 'neutral':
             kind = 'CHoCH' if isinstance(latest_signal, CHoCH) else 'BOS'
             print(
-                f"   📐 [V81 SMC SM] trend={trend.upper()} last={kind} "
+                f"   📐 [V82 SMC SM] trend={trend.upper()} "
+                f"HL/LH={protected_pivot} HH/LL={target_pivot} last={kind} "
                 f"@bar{getattr(latest_signal, 'index', '?')}"
             )
 
