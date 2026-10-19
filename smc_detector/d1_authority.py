@@ -74,6 +74,13 @@ class D1AuthorityMixin:
 
         d1_signal_type = 'CHoCH' if strategy_type == 'reversal' else 'BOS'
 
+        if bos_list and current_trend in ('bullish', 'bearish'):
+            same_dir_bos = [b for b in bos_list if getattr(b, 'direction', '') == current_trend]
+            if same_dir_bos:
+                strategy_type = 'continuation'
+                d1_signal_type = 'BOS'
+                latest = same_dir_bos[-1]
+
         return D1AuthContext(
             symbol=symbol,
             trend=current_trend,

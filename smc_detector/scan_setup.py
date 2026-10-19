@@ -125,20 +125,6 @@ class ScanSetupMixin:
                 print(f"❌ REJECTED: No Daily CHoCH or BOS found")
             return None
 
-        if (
-            leg_choch is not None
-            and not self._leg_choch_still_valid(
-                df_daily, leg_choch, daily_bos_list, daily_chochs,
-            )
-            and strategy_type == 'reversal'
-            and current_trend == 'bullish'
-        ):
-            print(
-                f"⛔ [V57 LEG INVALID] {symbol}: bullish REVERSAL rejected — "
-                f"close below leg CHoCH break @bar{leg_choch.index}"
-            )
-            return None
-
         _signal_label = 'CHoCH' if strategy_type == 'reversal' else 'BOS'
 
         if debug:
