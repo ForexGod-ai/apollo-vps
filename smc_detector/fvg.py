@@ -24,6 +24,23 @@ from smc_detector.models import (
 class FvgMixin:
     """V67 C: FVG detection and scoring."""
 
+    @staticmethod
+    def _sort_fvg_greedy_ote(fvgs: List[FVG], direction: str) -> List[FVG]:
+        """V82: deepest Premium (bearish) or Discount (bullish); tie-break = gap size."""
+        d = (direction or '').lower()
+        if d == 'bearish':
+            return sorted(
+                fvgs,
+                key=lambda f: (float(f.middle), float(f.top - f.bottom)),
+                reverse=True,
+            )
+        if d == 'bullish':
+            return sorted(
+                fvgs,
+                key=lambda f: (float(f.middle), -float(f.top - f.bottom)),
+            )
+        return list(fvgs)
+
     def store_fvg_magnet(
         self, symbol: str, timeframe: str, fvg: FVG, debug: bool = False,
     ) -> None:
@@ -111,95 +128,15 @@ class FvgMixin:
         fvg_middle = fvg.middle
         
         if current_trend == 'bearish':
-            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-            # BEARISH SHORT: Price must be in PREMIUM ZONE (above equilibrium)
-            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-            # ✅ V10.6 REGULA 55/45: fvg.top >= equilibrium * 0.80
-            # Logica: prețul a retras 45% din range (55% din macro rămâne deasupra) = valid SHORT
-            # Buffer extins de la 10% la 20% — eliminăm respingerile false pentru SELL la 48-50%
-            # Exemplu: equilibrium 1.0600, FVG.top 1.0490 (10% sub) → acum VALID
-            # V69 Pilon 1: organic imbalance — accept anywhere in impulse, not only premium half
-            eq_threshold_bearish = equilibrium * 0.55
-            is_valid = fvg_top >= eq_threshold_bearish
-            
+            is_valid = fvg_middle >= equilibrium
             if debug:
-                print(f"\n🔍 V8.4 BINARY VALIDATION (BEARISH SHORT - PREMIUM ZONE):")
-                print(f"   Equilibrium (50%): {equilibrium:.5f}")
-                print(f"   FVG Zone: {fvg_bottom:.5f} - {fvg_top:.5f}")
-                print(f"   FVG Top: {fvg_top:.5f}")
-                print(f"   FVG Middle: {fvg_middle:.5f}")
-                
-                if is_valid:
-                    # Calculate how far above equilibrium (optional, just for info)
-                    distance_above = fvg_top - equilibrium
-                    distance_pct = (distance_above / equilibrium) * 100 if equilibrium > 0 else 0
-                    
-                    print(f"   ✅ VALID: FVG.top ({fvg_top:.5f}) >= Equilibrium ({equilibrium:.5f})")
-                    print(f"      → FVG reaches PREMIUM ZONE (+{distance_above:.5f} pips above 50%)")
-                    print(f"      → Distance: +{distance_pct:.2f}% above equilibrium")
-                    print(f"      → PREMIUM = Price expensive = GOOD for SHORT")
-                    
-                    if fvg_top >= equilibrium * 1.15:  # Way above 50% (example: 65%+)
-                        print(f"      → 💎 EXTREME PREMIUM (70%+ zone) - Excellent SHORT setup!")
-                    elif fvg_top >= equilibrium * 1.10:  # ~60-65%
-                        print(f"      → ✨ STRONG PREMIUM (60%+ zone) - Great SHORT setup!")
-                    else:
-                        print(f"      → 🎯 STANDARD PREMIUM (50%+ zone) - Valid SHORT setup")
-                else:
-                    distance_below = equilibrium - fvg_top
-                    distance_pct = (distance_below / equilibrium) * 100 if equilibrium > 0 else 0
-                    
-                    print(f"   ❌ REJECTED: FVG.top ({fvg_top:.5f}) < Equilibrium ({equilibrium:.5f})")
-                    print(f"      → FVG does NOT reach PREMIUM zone ({distance_below:.5f} pips short)")
-                    print(f"      → Distance: -{distance_pct:.2f}% below equilibrium")
-                    print(f"      → NOT PREMIUM = Price not expensive enough for SHORT")
-            
+                print(f"\n🔍 V82 P/D (BEARISH): middle {fvg_middle:.5f} vs EQ {equilibrium:.5f} → {is_valid}")
             return is_valid
-        
+
         elif current_trend == 'bullish':
-            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-            # BULLISH LONG: Price must be in DISCOUNT ZONE (below equilibrium)
-            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-            # ✅ V10.6 REGULA 55/45: fvg.bottom <= equilibrium * 1.20
-            # Logica: prețul a retras 55% din range (45% din macro rămâne sub) = valid LONG
-            # Buffer extins de la 10% la 20% — eliminăm respingerile false pentru BUY la 50-55%
-            # Exemplu: equilibrium 1.0600, FVG.bottom 1.0720 (12% deasupra) → acum VALID
-            # V69 Pilon 1: organic imbalance — accept anywhere in impulse, not only discount half
-            eq_threshold_bullish = equilibrium * 1.45
-            is_valid = fvg_bottom <= eq_threshold_bullish
-            
+            is_valid = fvg_middle <= equilibrium
             if debug:
-                print(f"\n🔍 V8.4 BINARY VALIDATION (BULLISH LONG - DISCOUNT ZONE):")
-                print(f"   Equilibrium (50%): {equilibrium:.5f}")
-                print(f"   FVG Zone: {fvg_bottom:.5f} - {fvg_top:.5f}")
-                print(f"   FVG Bottom: {fvg_bottom:.5f}")
-                print(f"   FVG Middle: {fvg_middle:.5f}")
-                
-                if is_valid:
-                    # Calculate how far below equilibrium (optional, just for info)
-                    distance_below = equilibrium - fvg_bottom
-                    distance_pct = (distance_below / equilibrium) * 100 if equilibrium > 0 else 0
-                    
-                    print(f"   ✅ VALID: FVG.bottom ({fvg_bottom:.5f}) <= Equilibrium ({equilibrium:.5f})")
-                    print(f"      → FVG reaches DISCOUNT ZONE (-{distance_below:.5f} pips below 50%)")
-                    print(f"      → Distance: -{distance_pct:.2f}% below equilibrium")
-                    print(f"      → DISCOUNT = Price cheap = GOOD for LONG")
-                    
-                    if fvg_bottom <= equilibrium * 0.85:  # Way below 50% (example: 35%-)
-                        print(f"      → 💎 EXTREME DISCOUNT (30%- zone) - Excellent LONG setup!")
-                    elif fvg_bottom <= equilibrium * 0.90:  # ~40-35%
-                        print(f"      → ✨ STRONG DISCOUNT (40%- zone) - Great LONG setup!")
-                    else:
-                        print(f"      → 🎯 STANDARD DISCOUNT (50%- zone) - Valid LONG setup")
-                else:
-                    distance_above = fvg_bottom - equilibrium
-                    distance_pct = (distance_above / equilibrium) * 100 if equilibrium > 0 else 0
-                    
-                    print(f"   ❌ REJECTED: FVG.bottom ({fvg_bottom:.5f}) > Equilibrium ({equilibrium:.5f})")
-                    print(f"      → FVG does NOT reach DISCOUNT zone (+{distance_above:.5f} pips above)")
-                    print(f"      → Distance: +{distance_pct:.2f}% above equilibrium")
-                    print(f"      → NOT DISCOUNT = Price not cheap enough for LONG")
-            
+                print(f"\n🔍 V82 P/D (BULLISH): middle {fvg_middle:.5f} vs EQ {equilibrium:.5f} → {is_valid}")
             return is_valid
         
         # Unknown trend direction
@@ -336,9 +273,8 @@ class FvgMixin:
         # V10.4 limita la ultimele 30 bare → bloca FVG-urile formate la bara 40-70 dintr-un range de 100
         # V10.6: folosim întreg intervalul [choch.index → prezent], exact cum vede traderul pe chart
         raw_start = choch.index if hasattr(choch, 'index') else 0
-        # ✅ V10.8 LOOKBACK FIX: dacă BOS/CHoCH e la bara 93/100, scanăm și 20 bare ÎNAINTE
-        # Traderul vede FVG-uri formate CU CÂTEVA BARE ÎNAINTE de BOS — le includem!
-        start_idx = max(0, raw_start - 20)  # V10.8: 20 bare pre-semnal incluse
+        pre_signal = 80 if dealing_range is not None else 20
+        start_idx = max(0, raw_start - pre_signal)
         
         # 🔥 V8.1: ORDERFLOW DIRECTION - Only search for FVGs aligned with CHoCH/BOS direction
         orderflow_direction = choch.direction  # 'bullish' or 'bearish'
@@ -413,7 +349,7 @@ class FvgMixin:
                 #   body_low = 1.0845 (5 pips sub bottom) → ACTIV (sub buffer)
                 #   body_low = 1.0838 (12 pips sub bottom) → FILLED (depășește buffer)
                 fvg_size = fvg.top - fvg.bottom
-                mitigation_buffer = fvg_size * 0.20  # 20% din dimensiunea FVG
+                mitigation_buffer = fvg_size * 0.50  # V82: 50% consequent encroachment
                 
                 # Check all candles AFTER FVG formation for body closure through zone
                 for j in range(fvg.index + 1, len(df)):
@@ -490,8 +426,8 @@ class FvgMixin:
         #   Daily SHORT → Vindem NUMAI din Premium (peste 50% al impulsului)
         #                 Ignorăm orice FVG aflat în Discount (sub 50%)
         #
-        # SELECȚIE FINALĂ (V70 — strict P/D only):
-        #   Cel mai MARE gap în zona Premium/Discount; tie-break = index (prospețime).
+        # SELECȚIE FINALĂ (V82 — strict P/D + greedy OTE depth):
+        #   Bearish: cel mai sus fvg.middle în Premium; bullish: cel mai jos; tie = gap size.
         #
         # FALLBACK → None: niciun FVG în P/D → OTE 62–79% în resolve_d1_poi
         # ═══════════════════════════════════════════════════════════════════
@@ -515,12 +451,12 @@ class FvgMixin:
             if equilibrium is None:
                 return False
             if orderflow_direction == 'bullish':
-                if mkt is not None and fvg.bottom > mkt:
+                if mkt is not None and float(fvg.bottom) >= float(mkt):
                     return False
-                return fvg.top <= equilibrium or fvg.middle < equilibrium
-            if mkt is not None and fvg.top < mkt:
+                return float(fvg.middle) <= float(equilibrium)
+            if mkt is not None and float(fvg.top) <= float(mkt):
                 return False
-            return fvg.bottom >= equilibrium or fvg.middle > equilibrium
+            return float(fvg.middle) >= float(equilibrium)
 
         # ── STEP 2: Filtrare strictă P/D + preț curent ──
         pd_valid_fvgs: List[FVG] = []
@@ -537,10 +473,9 @@ class FvgMixin:
         # ── STEP 3: Strict P/D pool only ─────────
         pool = pd_valid_fvgs
         if pool:
-            # Preferăm FVG-uri formate DUPĂ CHoCH (impuls proaspăt)
             choch_idx = choch.index if hasattr(choch, 'index') else 0
             post_choch = [f for f in pool if f.index >= choch_idx]
-            candidates = post_choch if post_choch else pool
+            candidates = pool
 
             if _v43_continuation:
                 in_adr = [f for f in candidates if _v43_adr_allows(f)]
@@ -557,9 +492,8 @@ class FvgMixin:
                     )
                     return None
 
-            # V70: largest gap first, then freshest bar index
-            candidates.sort(key=lambda f: (f.top - f.bottom, f.index), reverse=True)
-            selected = candidates[0]
+            ranked = self._sort_fvg_greedy_ote(candidates, orderflow_direction)
+            selected = ranked[0]
 
             if _v43_continuation and self.poi_conflicts_with_continuation(
                 selected.top, selected.bottom, orderflow_direction, dealing_range,
@@ -577,11 +511,11 @@ class FvgMixin:
                 )
                 return None
 
-            _reason = "V70 strict P/D largest gap"
+            _reason = "V82 strict P/D greedy OTE depth"
             if _v43_continuation:
-                _reason = "V70 strict P/D largest gap (ADR in-range)"
+                _reason = "V82 strict P/D greedy OTE (ADR in-range)"
             if force_in_range_rescan:
-                _reason = "V70 in-range rescan after zombie reject"
+                _reason = "V82 in-range rescan after zombie reject"
 
             if debug:
                 print(f"  ✅ [V70 P/D FVG] {'Discount' if orderflow_direction == 'bullish' else 'Premium'} "

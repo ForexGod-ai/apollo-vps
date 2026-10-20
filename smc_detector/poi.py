@@ -175,27 +175,92 @@ class PoiMixin:
         current_trend: str,
         range_state: Optional[StructuralRangeState] = None,
         symbol: Optional[str] = None,
+        sm_protected_low: Optional[float] = None,
+        sm_protected_high: Optional[float] = None,
         debug: bool = False,
     ) -> Optional[ActiveDealingRange]:
         """V43.0 ADR — dynamic impulse bounds after latest valid D1 BOS/CHoCH.
 
-        V43.4: last_lh / last_ll / last_hl from chronological HH→HL or LH→LL pairs
-        post-anchor (not decoupled old LH + recent LL).
+        V82: when SM protected pivots exist, container = Protected pivot → Active extreme (30-bar).
+        V43.4: legacy pairing when SM pivots missing.
         """
         if df is None or len(df) < 5:
             return None
 
         anchor = max(0, int(leg_anchor_index))
-        post_highs = [h for h in swing_highs if h.index >= anchor]
-        post_lows = [l for l in swing_lows if l.index >= anchor]
-
-        if not post_highs and swing_highs:
-            post_highs = swing_highs[-3:]
-        if not post_lows and swing_lows:
-            post_lows = swing_lows[-3:]
-
         close = float(df['close'].iloc[-1])
         trend = (current_trend or 'neutral').lower()
+        _sym = symbol or ''
+        tail_len = min(30, len(df))
+        tail = df.iloc[-tail_len:]
+
+        def _finish_adr(
+            c_low: float,
+            c_high: float,
+            c_low_bar: int,
+            c_high_bar: int,
+            last_lh: Optional[float],
+            last_ll: Optional[float],
+            last_hl: Optional[float],
+            tag: str,
+        ) -> Optional[ActiveDealingRange]:
+            if c_low >= c_high:
+                return None
+            price_inside = c_low <= close <= c_high
+            if debug:
+                print(
+                    f"   📐 [{tag}] {_sym}: container [{c_low:.5f} – {c_high:.5f}] "
+                    f"| close={close:.5f} {'INSIDE' if price_inside else 'OUTSIDE'} "
+                    f"| anchor=bar{anchor}"
+                )
+            return ActiveDealingRange(
+                container_low=c_low,
+                container_high=c_high,
+                current_swing_high=c_high,
+                current_swing_low=c_low,
+                last_lh=last_lh if last_lh is not None else c_high,
+                last_hl=last_hl if last_hl is not None else c_low,
+                last_ll=last_ll if last_ll is not None else c_low,
+                current_swing_high_bar=c_high_bar,
+                current_swing_low_bar=c_low_bar,
+                leg_anchor_index=anchor,
+                price_inside=price_inside,
+            )
+
+        if trend == 'bearish' and sm_protected_high is not None:
+            c_high = float(sm_protected_high)
+            c_low = float(tail['low'].min())
+            if swing_lows:
+                swing_ll = min(
+                    self._swing_body_low(df, l.index) for l in swing_lows[-5:]
+                )
+                c_low = min(c_low, swing_ll)
+            rel = int(tail['low'].to_numpy().argmin())
+            c_low_bar = len(df) - tail_len + rel
+            return _finish_adr(
+                c_low, c_high, c_low_bar, anchor,
+                last_lh=c_high, last_ll=c_low, last_hl=None,
+                tag='V82 ADR bearish SM',
+            )
+
+        if trend == 'bullish' and sm_protected_low is not None:
+            c_low = float(sm_protected_low)
+            c_high = float(tail['high'].max())
+            if swing_highs:
+                swing_hh = max(
+                    self._swing_body_high(df, h.index) for h in swing_highs[-5:]
+                )
+                c_high = max(c_high, swing_hh)
+            rel = int(tail['high'].to_numpy().argmax())
+            c_high_bar = len(df) - tail_len + rel
+            return _finish_adr(
+                c_low, c_high, anchor, c_high_bar,
+                last_lh=c_high, last_ll=c_low, last_hl=c_low,
+                tag='V82 ADR bullish SM',
+            )
+
+        post_highs = [h for h in swing_highs if h.index >= anchor]
+        post_lows = [l for l in swing_lows if l.index >= anchor]
 
         last_ll = last_lh = last_hl = None
         last_ll_bar = last_lh_bar = last_hl_bar = anchor
@@ -301,27 +366,10 @@ class PoiMixin:
         if c_low >= c_high:
             return None
 
-        price_inside = c_low <= close <= c_high
-        _sym = symbol or ''
-        if debug:
-            print(
-                f"   📐 [V43.0 ADR] {_sym}: container [{c_low:.5f} – {c_high:.5f}] "
-                f"| close={close:.5f} {'INSIDE' if price_inside else 'OUTSIDE'} "
-                f"| anchor=bar{anchor}"
-            )
-
-        return ActiveDealingRange(
-            container_low=c_low,
-            container_high=c_high,
-            current_swing_high=c_high,
-            current_swing_low=c_low,
-            last_lh=last_lh,
-            last_hl=last_hl if last_hl is not None else last_ll,
-            last_ll=last_ll,
-            current_swing_high_bar=c_high_bar,
-            current_swing_low_bar=c_low_bar,
-            leg_anchor_index=anchor,
-            price_inside=price_inside,
+        return _finish_adr(
+            c_low, c_high, c_low_bar, c_high_bar,
+            last_lh, last_ll, last_hl,
+            tag='V43.0 ADR',
         )
 
     @staticmethod
@@ -334,9 +382,9 @@ class PoiMixin:
         """V43.0 anti-zombie: POI invalid for continuation if it breaks protected structure."""
         d = (direction or '').lower()
         if d == 'bearish':
-            return float(poi_bottom) > float(adr.current_swing_high)
+            return float(poi_bottom) > float(adr.container_high)
         if d == 'bullish':
-            return float(poi_top) < float(adr.current_swing_low)
+            return float(poi_top) < float(adr.container_low)
         return False
 
     @staticmethod
@@ -387,26 +435,18 @@ class PoiMixin:
 
     @staticmethod
     def _fvg_within_adr(fvg: FVG, adr: ActiveDealingRange, orderflow_direction: str) -> bool:
-        """Truncated scan: FVG must overlap ADR container."""
-        d = (orderflow_direction or '').lower()
-        if d == 'bearish':
-            return (
-                float(fvg.bottom) <= float(adr.current_swing_high)
-                and float(fvg.top) >= float(adr.container_low)
-            )
-        if d == 'bullish':
-            return (
-                float(fvg.top) >= float(adr.current_swing_low)
-                and float(fvg.bottom) <= float(adr.container_high)
-            )
-        return True
+        """V82: FVG middle must sit inside macro ADR (Protected → Active)."""
+        lo = float(adr.container_low)
+        hi = float(adr.container_high)
+        mid = float(fvg.middle)
+        return lo <= mid <= hi
 
     def _fvg_body_mitigated(self, df: pd.DataFrame, fvg: FVG) -> bool:
-        """True dacă body close a mitigat FVG-ul (>20% buffer)."""
+        """True dacă body close a mitigat FVG-ul (>50% consequent encroachment)."""
         body_highs = df[['open', 'close']].max(axis=1)
         body_lows = df[['open', 'close']].min(axis=1)
         fvg_size = fvg.top - fvg.bottom
-        mitigation_buffer = fvg_size * 0.20
+        mitigation_buffer = fvg_size * 0.50
         for j in range(fvg.index + 1, len(df)):
             body_high = body_highs.iloc[j]
             body_low = body_lows.iloc[j]
@@ -592,12 +632,12 @@ class PoiMixin:
         reason = 'no cascade POI'
 
         if pd_unmitigated:
-            pd_unmitigated.sort(key=lambda f: (f.index, f.top - f.bottom), reverse=True)
-            selected = pd_unmitigated[0]
+            ranked = self._sort_fvg_greedy_ote(pd_unmitigated, direction)
+            selected = ranked[0]
             reason = 'continuation cascade: unmitigated FVG in impulse'
         elif unmitigated:
-            unmitigated.sort(key=lambda f: (f.index, f.top - f.bottom), reverse=True)
-            selected = unmitigated[0]
+            ranked = self._sort_fvg_greedy_ote(unmitigated, direction)
+            selected = ranked[0]
             reason = 'continuation cascade: organic FVG in impulse span'
         else:
             # (b) OB la originea impulsului — semnalul BOS/CHoCH ancorat pe impuls

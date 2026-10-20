@@ -138,6 +138,8 @@ class ScanSetupMixin:
 
         _swing_h = self.detect_swing_highs(df_daily)
         _swing_l = self.detect_swing_lows(df_daily)
+        _sm_pl = d1_ctx.protected_low if d1_ctx is not None else None
+        _sm_ph = d1_ctx.protected_high if d1_ctx is not None else None
         _adr = self.build_active_dealing_range(
             df_daily,
             _swing_h,
@@ -146,6 +148,8 @@ class ScanSetupMixin:
             current_trend,
             range_state=_range_state,
             symbol=symbol,
+            sm_protected_low=_sm_pl,
+            sm_protected_high=_sm_ph,
             debug=debug,
         )
         _structural_breach = self.compute_structural_breach(
@@ -156,8 +160,6 @@ class ScanSetupMixin:
                 f"   🚨 [V43.0 ADR] {symbol}: structural_breach=True — "
                 f"daily close breached protected structure (stateless signal for Etapa 2+)"
             )
-        _sm_pl = d1_ctx.protected_low if d1_ctx is not None else None
-        _sm_ph = d1_ctx.protected_high if d1_ctx is not None else None
         _poi_res = self.resolve_d1_poi(
             df_daily,
             latest_signal,

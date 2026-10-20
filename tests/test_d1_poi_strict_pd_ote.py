@@ -52,7 +52,7 @@ def test_strict_pd_selects_largest_gap():
     large = FVG(46, "bearish", 108.0, 106.0, 107.0, datetime.now(), associated_choch=choch)
     assert small.middle > eq and large.middle > eq
     pool = [small, large]
-    selected = max(pool, key=lambda f: (f.top - f.bottom, f.index))
+    selected = det._sort_fvg_greedy_ote(pool, "bearish")[0]
     assert selected is large
 
 
