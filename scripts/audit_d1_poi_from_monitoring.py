@@ -249,6 +249,7 @@ def audit_setup(
         current_trend,
         range_state=range_state,
         symbol=symbol,
+        latest_signal=latest_signal,
     )
     structural_breach = SMCDetector.compute_structural_breach(price, current_trend, adr)
     result["structural_breach"] = structural_breach

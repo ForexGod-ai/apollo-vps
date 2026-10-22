@@ -97,8 +97,9 @@ def format_poi_price_relation(
     price: Optional[Union[float, int]],
     fvg_bottom: Union[float, int, None],
     fvg_top: Union[float, int, None],
+    trade_side: Optional[str] = None,
 ) -> str:
-    """Premium / Discount / în zonă relative to Daily POI (for scan cards)."""
+    """Distance to Daily POI — avoids misleading Discount label on SHORT below POI."""
     if price is None or fvg_bottom is None or fvg_top is None:
         return ''
     try:
@@ -107,13 +108,24 @@ def format_poi_price_relation(
         hi = float(fvg_top)
     except (TypeError, ValueError):
         return ''
+    side = str(trade_side or '').lower()
+    is_short = side in ('sell', 'short', 'bearish')
+    is_long = side in ('buy', 'long', 'bullish')
     if lo <= px <= hi:
         return 'în zonă'
     if px > hi and hi:
         pct = (px - hi) / hi * 100.0
+        if is_short:
+            return f'Sub POI (-{pct:.1f}%) · retragere spre zonă'
+        if is_long:
+            return f'Premium (+{pct:.1f}%)'
         return f'Premium (+{pct:.1f}%)'
     if px < lo and lo:
         pct = (lo - px) / lo * 100.0
+        if is_short:
+            return f'Sub POI (-{pct:.1f}%) · pullback în curs'
+        if is_long:
+            return f'Discount (+{pct:.1f}%)'
         return f'Discount (+{pct:.1f}%)'
     return ''
 

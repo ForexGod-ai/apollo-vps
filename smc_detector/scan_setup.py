@@ -150,6 +150,7 @@ class ScanSetupMixin:
             symbol=symbol,
             sm_protected_low=_sm_pl,
             sm_protected_high=_sm_ph,
+            latest_signal=latest_signal,
             debug=debug,
         )
         _structural_breach = self.compute_structural_breach(

@@ -1000,9 +1000,10 @@ class DailyScanner:
             except Exception as e:
                 logger.debug(f"Could not check Deep Sleep state: {e}")
             
-            # Build setup symbols from JSON (inventar real) + fallback scan-only pentru nesalvate
+            # Build setup symbols: JSON inventory + live scan snapshot (MARKET_REPORT sync)
             setup_symbols = []
             _json_syms = set()
+            _live_by_sym = {s.symbol: s for s in setups_found}
             try:
                 with open('monitoring_setups.json', 'r', encoding='utf-8') as _jf:
                     _jdata = json.load(_jf)
@@ -1014,29 +1015,16 @@ class DailyScanner:
                     if not sym:
                         continue
                     _json_syms.add(sym)
-                    setup_symbols.append({
-                        'symbol': sym,
-                        'direction': row.get('direction', 'buy'),
-                        'strategy': (row.get('strategy_type') or 'CONTINUATION').upper(),
-                        'h4_structure_locked': row.get('h4_structure_locked', False),
-                        'bias_fallback': bool(row.get('bias_fallback')),
-                        'status': row.get('status', 'MONITORING'),
-                        'w_d_aligned': row.get('w_d_aligned', True),
-                    })
+                    setup_symbols.append(
+                        _market_report_row(row, _live_by_sym.get(sym)),
+                    )
             except Exception as _js_err:
                 logger.warning(f"[V59] Could not build report from JSON: {_js_err}")
                 _json_syms = set()
                 for s in setups_found:
-                    direction_str = _setup_trade_direction(s)
-                    setup_symbols.append({
-                        'symbol': s.symbol,
-                        'direction': direction_str,
-                        'strategy': getattr(s, 'strategy_type', 'UNKNOWN').upper(),
-                        'h4_structure_locked': getattr(s, 'h4_structure_locked', False),
-                        'bias_fallback': False,
-                        'status': getattr(s, 'status', 'MONITORING'),
-                        'w_d_aligned': getattr(s, 'w_d_aligned', True),
-                    })
+                    setup_symbols.append(
+                        _market_report_row({'symbol': s.symbol, 'status': getattr(s, 'status', 'MONITORING')}, s),
+                    )
                     _json_syms.add(s.symbol)
 
             # Send the OFFICIAL scan report (mirrors console exactly)
@@ -1287,6 +1275,51 @@ def _setup_trade_direction(setup: TradeSetup) -> str:
     if trend == 'bearish':
         return 'sell'
     return ''
+
+
+def _market_report_row(row: dict, live_setup: Optional[TradeSetup] = None) -> dict:
+    """MARKET_REPORT line — live scan wins over JSON; no blind buy/CONT defaults."""
+    d1_bias = (
+        row.get('d1_bias_direction')
+        or str(row.get('daily_bias') or '').lower()
+        or ''
+    )
+    direction = (row.get('direction') or '').lower()
+    strategy_type = row.get('strategy_type') or row.get('setup_type')
+    if isinstance(strategy_type, str):
+        strategy_type = strategy_type.lower()
+    d1_signal_type = row.get('d1_signal_type')
+
+    if live_setup is not None:
+        live_dir = _setup_trade_direction(live_setup)
+        if live_dir:
+            direction = live_dir
+        live_st = getattr(live_setup, 'strategy_type', None)
+        if live_st:
+            strategy_type = live_st
+        live_sig = getattr(live_setup, 'd1_signal_type', None)
+        if live_sig:
+            d1_signal_type = live_sig
+        live_trend = _setup_d1_trend(live_setup)
+        if live_trend in ('bullish', 'bearish'):
+            d1_bias = live_trend
+
+    if not direction and d1_bias in ('bullish', 'bearish'):
+        direction = 'buy' if d1_bias == 'bullish' else 'sell'
+
+    return {
+        'symbol': row.get('symbol'),
+        'direction': direction,
+        'strategy_type': strategy_type,
+        'strategy': strategy_type,
+        'd1_signal_type': d1_signal_type,
+        'd1_bias_direction': d1_bias,
+        'daily_bias': (d1_bias.upper() if d1_bias else row.get('daily_bias')),
+        'h4_structure_locked': row.get('h4_structure_locked', False),
+        'bias_fallback': bool(row.get('bias_fallback')),
+        'status': row.get('status', 'MONITORING'),
+        'w_d_aligned': row.get('w_d_aligned', True),
+    }
 
 
 def _identity_direction(entry: dict) -> str:

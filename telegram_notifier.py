@@ -90,18 +90,58 @@ def _format_strategy_short(raw_strat: str) -> str:
     s = str(raw_strat or 'UNKNOWN').upper().replace('_COUNTER_W1', '')
     if s in ('CONTINUITY', 'CONTINUATION'):
         return 'CONT'
-    if s.startswith('REVERSAL'):
+    if s.startswith('REVERSAL') or s == 'REV':
         return 'REV'
     return s[:4] if len(s) > 4 else s
+
+
+def _resolve_report_side(info: dict) -> str:
+    """bearish | bullish | neutral — aligned with format_setup_alert / D1 bias."""
+    raw_dir = str(info.get('direction') or '').lower()
+    d1 = str(
+        info.get('d1_bias_direction') or info.get('d1_trend') or ''
+    ).lower()
+    daily = str(info.get('daily_bias') or '').upper()
+    if (
+        raw_dir in ('sell', 'short', 'bearish')
+        or d1 in ('sell', 'short', 'bearish')
+        or daily == 'BEARISH'
+    ):
+        return 'bearish'
+    if (
+        raw_dir in ('buy', 'long', 'bullish')
+        or d1 in ('buy', 'long', 'bullish')
+        or daily == 'BULLISH'
+    ):
+        return 'bullish'
+    return 'neutral'
+
+
+def _format_strategy_from_info(info: dict) -> str:
+    """REV/CONT — same rules as individual scan card (CHoCH vs BOS)."""
+    sig = str(info.get('d1_signal_type') or '').upper()
+    st = str(
+        info.get('strategy_type') or info.get('strategy') or ''
+    ).upper().replace('_COUNTER_W1', '')
+    if sig == 'CHOCH' or st.startswith('REVERSAL') or st == 'REV':
+        return 'REV'
+    if sig == 'BOS' or st in ('CONTINUITY', 'CONTINUATION', 'CONT'):
+        return 'CONT'
+    return _format_strategy_short(st)
 
 
 def _format_compact_line(sym_info: dict) -> str:
     """One symbol per line: 🟢 GBPCAD · REV"""
     info = _normalize_sym_info(sym_info)
     symbol = info.get('symbol', '?')
-    direction = str(info.get('direction', 'buy')).lower()
-    strat = _format_strategy_short(info.get('strategy', 'UNKNOWN'))
-    dot = "🔴" if direction == 'sell' else "🟢"
+    side = _resolve_report_side(info)
+    strat = _format_strategy_from_info(info)
+    if side == 'bearish':
+        dot = "🔴"
+    elif side == 'bullish':
+        dot = "🟢"
+    else:
+        dot = "🟢"
     return f"{dot} {symbol} · {strat}\n"
 
 
@@ -812,7 +852,9 @@ class TelegramNotifier:
             )
 
         poi_range = format_telegram_fvg_range(symbol, setup.fvg.bottom, setup.fvg.top)
-        poi_relation = format_poi_price_relation(live_price, setup.fvg.bottom, setup.fvg.top)
+        poi_relation = format_poi_price_relation(
+            live_price, setup.fvg.bottom, setup.fvg.top, trade_side=raw_dir,
+        )
         poi_line = f"🎯 POI Daily: <code>{poi_range}</code>"
         if poi_relation:
             poi_line += f" · {poi_relation}"

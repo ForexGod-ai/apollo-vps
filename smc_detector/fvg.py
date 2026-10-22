@@ -24,9 +24,67 @@ from smc_detector.models import (
 class FvgMixin:
     """V67 C: FVG detection and scoring."""
 
+    DECISIONAL_RETRACE_LO = 0.52
+    DECISIONAL_RETRACE_HI = 0.78
+    EXTREME_RETRACE_HI = 0.98
+
+    @staticmethod
+    def _fvg_retrace_pct(
+        fvg: FVG,
+        adr: ActiveDealingRange,
+        direction: str,
+    ) -> Optional[float]:
+        lo = float(adr.container_low)
+        hi = float(adr.container_high)
+        rng = hi - lo
+        if rng <= 0:
+            return None
+        mid = float(fvg.middle)
+        d = (direction or '').lower()
+        if d == 'bearish':
+            return (mid - lo) / rng
+        if d == 'bullish':
+            return (hi - mid) / rng
+        return None
+
+    @classmethod
+    def _pick_largest_gap(cls, fvgs: List[FVG]) -> Optional[FVG]:
+        if not fvgs:
+            return None
+        return max(fvgs, key=lambda f: float(f.top - f.bottom))
+
+    @classmethod
+    def _select_fvg_decisional_first(
+        cls,
+        fvgs: List[FVG],
+        direction: str,
+        adr: Optional[ActiveDealingRange],
+    ) -> Optional[FVG]:
+        """V83: OTE decisional (52–78%) before extreme (78–98%); tie = largest gap."""
+        if not fvgs:
+            return None
+        if adr is None:
+            ranked = cls._sort_fvg_greedy_ote(fvgs, direction)
+            return ranked[0] if ranked else None
+        g1: List[FVG] = []
+        g2: List[FVG] = []
+        for f in fvgs:
+            rp = cls._fvg_retrace_pct(f, adr, direction)
+            if rp is None:
+                continue
+            if cls.DECISIONAL_RETRACE_LO <= rp <= cls.DECISIONAL_RETRACE_HI:
+                g1.append(f)
+            elif cls.DECISIONAL_RETRACE_HI < rp <= cls.EXTREME_RETRACE_HI:
+                g2.append(f)
+        pick = cls._pick_largest_gap(g1) or cls._pick_largest_gap(g2)
+        if pick is not None:
+            return pick
+        ranked = cls._sort_fvg_greedy_ote(fvgs, direction)
+        return ranked[0] if ranked else None
+
     @staticmethod
     def _sort_fvg_greedy_ote(fvgs: List[FVG], direction: str) -> List[FVG]:
-        """V82: deepest Premium (bearish) or Discount (bullish); tie-break = gap size."""
+        """Fallback sort — largest gap in Premium/Discount half."""
         d = (direction or '').lower()
         if d == 'bearish':
             return sorted(
@@ -284,7 +342,7 @@ class FvgMixin:
         )
 
         def _v43_adr_allows(fvg: FVG) -> bool:
-            if not _v43_continuation:
+            if dealing_range is None:
                 return True
             return self._fvg_within_adr(fvg, dealing_range, orderflow_direction)
         
@@ -467,7 +525,7 @@ class FvgMixin:
                     if fvg.bottom > macro_high or fvg.top < macro_low:
                         continue
                     impulse_span_fvgs.append(fvg)
-                if _v79_pd_valid(fvg):
+                if _v79_pd_valid(fvg) and _v43_adr_allows(fvg):
                     pd_valid_fvgs.append(fvg)
 
         # ── STEP 3: Strict P/D pool only ─────────
@@ -477,14 +535,14 @@ class FvgMixin:
             post_choch = [f for f in pool if f.index >= choch_idx]
             candidates = pool
 
-            if _v43_continuation:
+            if dealing_range is not None:
                 in_adr = [f for f in candidates if _v43_adr_allows(f)]
                 if in_adr:
                     candidates = in_adr
                 else:
                     _fill_audit(
                         None,
-                        "V43 no in-range P/D FVG inside ADR",
+                        "V83 no clamped P/D FVG inside ADR",
                         equilibrium,
                         pd_valid_fvgs,
                         post_choch,
@@ -492,8 +550,12 @@ class FvgMixin:
                     )
                     return None
 
-            ranked = self._sort_fvg_greedy_ote(candidates, orderflow_direction)
-            selected = ranked[0]
+            selected = self._select_fvg_decisional_first(
+                candidates, orderflow_direction, dealing_range,
+            )
+            if selected is None:
+                _fill_audit(None, "V83 no decisional FVG", equilibrium, pd_valid_fvgs, post_choch)
+                return None
 
             if _v43_continuation and self.poi_conflicts_with_continuation(
                 selected.top, selected.bottom, orderflow_direction, dealing_range,
@@ -511,11 +573,11 @@ class FvgMixin:
                 )
                 return None
 
-            _reason = "V82 strict P/D greedy OTE depth"
+            _reason = "V83 decisional-first OTE (52–78%)"
             if _v43_continuation:
-                _reason = "V82 strict P/D greedy OTE (ADR in-range)"
+                _reason = "V83 decisional OTE (ADR clamped)"
             if force_in_range_rescan:
-                _reason = "V82 in-range rescan after zombie reject"
+                _reason = "V83 in-range rescan after zombie reject"
 
             if debug:
                 print(f"  ✅ [V70 P/D FVG] {'Discount' if orderflow_direction == 'bullish' else 'Premium'} "

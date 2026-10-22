@@ -8,10 +8,11 @@ import pandas as pd
 import pytest
 
 from smc_detector.fvg import FvgMixin
-from smc_detector.models import FVG, SwingPoint
+from smc_detector.models import ActiveDealingRange, FVG, SwingPoint
+from smc_detector.poi import PoiMixin
 
 
-class _Det(FvgMixin):
+class _Det(FvgMixin, PoiMixin):
     pass
 
 
@@ -54,6 +55,50 @@ def test_strict_pd_selects_largest_gap():
     pool = [small, large]
     selected = det._sort_fvg_greedy_ote(pool, "bearish")[0]
     assert selected is large
+
+
+def test_v83_decisional_first_over_extreme():
+    det = _Det()
+    adr = ActiveDealingRange(
+        container_low=0.83988,
+        container_high=0.86000,
+        current_swing_high=0.86000,
+        current_swing_low=0.83988,
+        last_lh=0.86000,
+        last_hl=None,
+        last_ll=0.83988,
+        current_swing_high_bar=10,
+        current_swing_low_bar=20,
+        leg_anchor_index=15,
+        price_inside=True,
+    )
+    decisional = FVG(1, "bearish", 0.85740, 0.85350, 0.85545, datetime.now())
+    extreme = FVG(2, "bearish", 0.85990, 0.85800, 0.85895, datetime.now())
+    assert det._fvg_within_adr(decisional, adr, "bearish")
+    assert det._fvg_within_adr(extreme, adr, "bearish")
+    pick = det._select_fvg_decisional_first(
+        [extreme, decisional], "bearish", adr,
+    )
+    assert pick is decisional
+
+
+def test_v83_adr_clamp_rejects_fvg_above_lh():
+    det = _Det()
+    adr = ActiveDealingRange(
+        container_low=0.83988,
+        container_high=0.86000,
+        current_swing_high=0.86000,
+        current_swing_low=0.83988,
+        last_lh=0.86000,
+        last_hl=None,
+        last_ll=0.83988,
+        current_swing_high_bar=10,
+        current_swing_low_bar=20,
+        leg_anchor_index=15,
+        price_inside=True,
+    )
+    invalid = FVG(1, "bearish", 0.87540, 0.87000, 0.87270, datetime.now())
+    assert not det._fvg_within_adr(invalid, adr, "bearish")
 
 
 def test_apply_poi_to_setup_dict_sets_entry():

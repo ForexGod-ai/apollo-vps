@@ -40,6 +40,38 @@ def test_format_compact_line_sell_continuation():
     assert line == "🔴 AUDUSD · CONT\n"
 
 
+def test_format_compact_line_bearish_via_daily_bias():
+    line = _format_compact_line(_sym(
+        'XAUUSD',
+        direction='buy',
+        strategy='CONTINUATION',
+        daily_bias='BEARISH',
+        d1_signal_type='CHoCH',
+        strategy_type='reversal',
+    ))
+    assert line == "🔴 XAUUSD · REV\n"
+
+
+def test_format_compact_line_bearish_short_alias():
+    line = _format_compact_line(_sym(
+        'USDJPY',
+        direction='short',
+        strategy='REVERSAL',
+        d1_signal_type='CHoCH',
+    ))
+    assert line == "🔴 USDJPY · REV\n"
+
+
+def test_format_compact_line_choch_overrides_continuation_label():
+    line = _format_compact_line(_sym(
+        'EURGBP',
+        direction='sell',
+        strategy='CONTINUATION',
+        d1_signal_type='CHoCH',
+    ))
+    assert line == "🔴 EURGBP · REV\n"
+
+
 def test_render_grouped_setups_vertical_by_phase():
     setups = [
         _sym('EURUSD', status='WAITING_W_D_SYNC', w_d_aligned=False, strategy='CONTINUATION'),

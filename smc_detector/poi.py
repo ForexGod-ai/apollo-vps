@@ -166,6 +166,90 @@ class PoiMixin:
         
         return order_block
 
+    def _resolve_bearish_leg_high(
+        self,
+        df: pd.DataFrame,
+        anchor: int,
+        swing_highs: List[SwingPoint],
+        latest_signal,
+        sm_protected_high: Optional[float],
+    ) -> Tuple[float, int]:
+        """LH plafon = originea impulsului activ (cap la origine semnal; SM vechi ignorat)."""
+        sig_idx = min(int(anchor), len(df) - 1)
+        if latest_signal is not None and hasattr(latest_signal, 'index'):
+            sig_idx = min(int(latest_signal.index), len(df) - 1)
+
+        origin_idx = max(0, sig_idx - 80)
+        leg_hi: Optional[float] = None
+        if latest_signal is not None and getattr(latest_signal, 'swing_broken', None) is not None:
+            sb = latest_signal.swing_broken
+            origin_idx = max(0, min(int(sb.index), sig_idx))
+            leg_hi = max(
+                float(sb.price),
+                self._swing_body_high(df, origin_idx),
+            )
+
+        prior = [h for h in swing_highs if origin_idx <= h.index <= sig_idx]
+        if not prior:
+            prior = [h for h in swing_highs if h.index <= sig_idx]
+        if prior:
+            lh = prior[-1]
+            for j in range(len(prior) - 1, 0, -1):
+                if prior[j].price < prior[j - 1].price:
+                    lh = prior[j]
+                    break
+            origin_idx = min(origin_idx, lh.index)
+            leg_hi = max(leg_hi or 0.0, self._swing_body_high(df, lh.index))
+
+        origin_cap = float(df.iloc[origin_idx:sig_idx + 1]['high'].max())
+        if leg_hi is None:
+            leg_hi = origin_cap
+        else:
+            leg_hi = min(leg_hi, origin_cap)
+
+        if sm_protected_high is not None:
+            sm_f = float(sm_protected_high)
+            if sm_f > leg_hi * 1.005:
+                c_high = leg_hi
+            else:
+                c_high = min(leg_hi, sm_f)
+        else:
+            c_high = leg_hi
+        return c_high, origin_idx
+
+    def _resolve_bullish_leg_low(
+        self,
+        df: pd.DataFrame,
+        anchor: int,
+        swing_lows: List[SwingPoint],
+        latest_signal,
+        sm_protected_low: Optional[float],
+    ) -> Tuple[float, int]:
+        """HL podea = originea impulsului bullish activ."""
+        origin_idx = max(0, anchor - 80)
+        leg_lo: Optional[float] = None
+        if latest_signal is not None and getattr(latest_signal, 'swing_broken', None) is not None:
+            sb = latest_signal.swing_broken
+            origin_idx = max(0, min(int(sb.index), anchor))
+            leg_lo = min(
+                float(sb.price),
+                self._swing_body_low(df, origin_idx),
+            )
+        prior = [l for l in swing_lows if l.index <= anchor]
+        if prior:
+            hl = prior[-1]
+            origin_idx = hl.index if leg_lo is None else min(origin_idx, hl.index)
+            leg_lo = min(leg_lo if leg_lo is not None else float('inf'), self._swing_body_low(df, hl.index))
+        win_end = min(len(df), anchor + 1)
+        window_lo = float(df.iloc[max(0, origin_idx):win_end]['low'].min())
+        leg_lo = min(leg_lo if leg_lo is not None else window_lo, window_lo)
+        if sm_protected_low is not None:
+            sm_f = float(sm_protected_low)
+            c_low = leg_lo if sm_f < leg_lo * 0.995 else max(leg_lo, sm_f)
+        else:
+            c_low = leg_lo
+        return c_low, origin_idx
+
     def build_active_dealing_range(
         self,
         df: pd.DataFrame,
@@ -177,13 +261,10 @@ class PoiMixin:
         symbol: Optional[str] = None,
         sm_protected_low: Optional[float] = None,
         sm_protected_high: Optional[float] = None,
+        latest_signal=None,
         debug: bool = False,
     ) -> Optional[ActiveDealingRange]:
-        """V43.0 ADR — dynamic impulse bounds after latest valid D1 BOS/CHoCH.
-
-        V82: when SM protected pivots exist, container = Protected pivot → Active extreme (30-bar).
-        V43.4: legacy pairing when SM pivots missing.
-        """
+        """V43.0 ADR — leg LH/HL → Active LL/HH (V83 clamp pe impulsul curent)."""
         if df is None or len(df) < 5:
             return None
 
@@ -227,36 +308,33 @@ class PoiMixin:
                 price_inside=price_inside,
             )
 
-        if trend == 'bearish' and sm_protected_high is not None:
-            c_high = float(sm_protected_high)
+        if trend == 'bearish':
+            c_high, lh_bar = self._resolve_bearish_leg_high(
+                df, anchor, swing_highs, latest_signal, sm_protected_high,
+            )
+            tail = df.iloc[lh_bar:]
             c_low = float(tail['low'].min())
-            if swing_lows:
-                swing_ll = min(
-                    self._swing_body_low(df, l.index) for l in swing_lows[-5:]
-                )
-                c_low = min(c_low, swing_ll)
-            rel = int(tail['low'].to_numpy().argmin())
-            c_low_bar = len(df) - tail_len + rel
+            c_low_bar = int(lh_bar + int(tail['low'].to_numpy().argmin()))
+            if sm_protected_low is not None:
+                sm_l = float(sm_protected_low)
+                if sm_l < c_low * 1.004:
+                    c_low = sm_l
             return _finish_adr(
-                c_low, c_high, c_low_bar, anchor,
+                c_low, c_high, c_low_bar, lh_bar,
                 last_lh=c_high, last_ll=c_low, last_hl=None,
-                tag='V82 ADR bearish SM',
+                tag='V83 ADR bearish leg→LL',
             )
 
-        if trend == 'bullish' and sm_protected_low is not None:
-            c_low = float(sm_protected_low)
-            c_high = float(tail['high'].max())
-            if swing_highs:
-                swing_hh = max(
-                    self._swing_body_high(df, h.index) for h in swing_highs[-5:]
-                )
-                c_high = max(c_high, swing_hh)
-            rel = int(tail['high'].to_numpy().argmax())
-            c_high_bar = len(df) - tail_len + rel
+        if trend == 'bullish':
+            c_low, hl_bar = self._resolve_bullish_leg_low(
+                df, anchor, swing_lows, latest_signal, sm_protected_low,
+            )
+            c_high = float(df.iloc[hl_bar:]['high'].max())
+            c_high_bar = int(hl_bar + int(df.iloc[hl_bar:]['high'].to_numpy().argmax()))
             return _finish_adr(
-                c_low, c_high, anchor, c_high_bar,
+                c_low, c_high, hl_bar, c_high_bar,
                 last_lh=c_high, last_ll=c_low, last_hl=c_low,
-                tag='V82 ADR bullish SM',
+                tag='V83 ADR bullish HL→HH',
             )
 
         post_highs = [h for h in swing_highs if h.index >= anchor]
@@ -435,11 +513,17 @@ class PoiMixin:
 
     @staticmethod
     def _fvg_within_adr(fvg: FVG, adr: ActiveDealingRange, orderflow_direction: str) -> bool:
-        """V82: FVG middle must sit inside macro ADR (Protected → Active)."""
+        """V83: întreg FVG clampat în ADR — SHORT: top <= LH; LONG: bottom >= HL."""
         lo = float(adr.container_low)
         hi = float(adr.container_high)
-        mid = float(fvg.middle)
-        return lo <= mid <= hi
+        top = float(fvg.top)
+        bottom = float(fvg.bottom)
+        d = (orderflow_direction or '').lower()
+        if d == 'bearish':
+            return bottom >= lo and top <= hi
+        if d == 'bullish':
+            return bottom >= lo and top <= hi
+        return lo <= float(fvg.middle) <= hi
 
     def _fvg_body_mitigated(self, df: pd.DataFrame, fvg: FVG) -> bool:
         """True dacă body close a mitigat FVG-ul (>50% consequent encroachment)."""
@@ -508,22 +592,25 @@ class PoiMixin:
         sm_protected_high: Optional[float] = None,
     ) -> Tuple[Optional[float], int, int]:
         """V79: ADR/SM equilibrium when available; else impuls semnal (origine → break)."""
+        sig_idx = signal.index if hasattr(signal, 'index') else 0
+        origin_idx = max(0, sig_idx - 20)
         if adr is not None:
-            sig_idx = signal.index if hasattr(signal, 'index') else 0
             eq = (float(adr.container_high) + float(adr.container_low)) / 2.0
-            return eq, 0, sig_idx
+            if hasattr(signal, 'swing_broken') and signal.swing_broken is not None:
+                try:
+                    origin_idx = int(signal.swing_broken.index)
+                except Exception:
+                    pass
+            return eq, origin_idx, sig_idx
         sm_eq, _, _, _ = self.macro_equilibrium(
             df, signal, dealing_range=None,
             sm_protected_low=sm_protected_low,
             sm_protected_high=sm_protected_high,
         )
         if sm_eq is not None:
-            sig_idx = signal.index if hasattr(signal, 'index') else 0
-            return sm_eq, 0, sig_idx
+            return sm_eq, origin_idx, sig_idx
 
-        sig_idx = signal.index if hasattr(signal, 'index') else 0
         direction = getattr(signal, 'direction', '') or ''
-        origin_idx = max(0, sig_idx - 20)
         equilibrium = None
         origin_price = None
         break_price = float(getattr(signal, 'break_price', 0) or 0)
@@ -604,10 +691,17 @@ class PoiMixin:
         if direction not in ('bullish', 'bearish'):
             return None
 
-        equilibrium, origin_idx, sig_idx = self._impulse_equilibrium(df, latest_signal)
+        equilibrium, origin_idx, sig_idx = self._impulse_equilibrium(
+            df, latest_signal, adr=adr,
+        )
         scan_end = min(len(df) - 1, sig_idx + 40)
         all_fvgs = self._scan_organic_fvgs(df, origin_idx, scan_end, direction)
         impulse_fvgs = [f for f in all_fvgs if origin_idx <= f.index <= scan_end]
+        if adr is not None:
+            impulse_fvgs = [
+                f for f in impulse_fvgs
+                if self._fvg_within_adr(f, adr, direction)
+            ]
 
         impulse_low = impulse_high = None
         break_price = float(getattr(latest_signal, 'break_price', 0) or 0)
@@ -632,12 +726,10 @@ class PoiMixin:
         reason = 'no cascade POI'
 
         if pd_unmitigated:
-            ranked = self._sort_fvg_greedy_ote(pd_unmitigated, direction)
-            selected = ranked[0]
-            reason = 'continuation cascade: unmitigated FVG in impulse'
+            selected = self._select_fvg_decisional_first(pd_unmitigated, direction, adr)
+            reason = 'continuation cascade: decisional OTE FVG'
         elif unmitigated:
-            ranked = self._sort_fvg_greedy_ote(unmitigated, direction)
-            selected = ranked[0]
+            selected = self._select_fvg_decisional_first(unmitigated, direction, adr)
             reason = 'continuation cascade: organic FVG in impulse span'
         else:
             # (b) OB la originea impulsului — semnalul BOS/CHoCH ancorat pe impuls
