@@ -125,8 +125,8 @@ def format_poi_price_relation(
         if is_short:
             return f'Sub POI (-{pct:.1f}%) · pullback în curs'
         if is_long:
-            return f'Discount (+{pct:.1f}%)'
-        return f'Discount (+{pct:.1f}%)'
+            return f'Sub POI (-{pct:.1f}%) · Așteptare pullback'
+        return f'Sub POI (-{pct:.1f}%) · Așteptare pullback'
     return ''
 
 

@@ -24,6 +24,23 @@ from smc_detector.models import (
 class FvgMixin:
     """V67 C: FVG detection and scoring."""
 
+    @staticmethod
+    def fvg_valid_for_pullback(
+        fvg: FVG,
+        direction: str,
+        current_price: Optional[float],
+    ) -> bool:
+        """POI must sit on the pullback path: LONG below price, SHORT above price."""
+        if current_price is None:
+            return True
+        mkt = float(current_price)
+        d = (direction or '').lower()
+        if d == 'bullish':
+            return float(fvg.top) <= mkt
+        if d == 'bearish':
+            return float(fvg.bottom) >= mkt
+        return True
+
     DECISIONAL_RETRACE_LO = 0.52
     DECISIONAL_RETRACE_HI = 0.78
     EXTREME_RETRACE_HI = 0.98
@@ -508,12 +525,10 @@ class FvgMixin:
         def _v79_pd_valid(fvg: FVG) -> bool:
             if equilibrium is None:
                 return False
-            if orderflow_direction == 'bullish':
-                if mkt is not None and float(fvg.bottom) >= float(mkt):
-                    return False
-                return float(fvg.middle) <= float(equilibrium)
-            if mkt is not None and float(fvg.top) <= float(mkt):
+            if not self.fvg_valid_for_pullback(fvg, orderflow_direction, mkt):
                 return False
+            if orderflow_direction == 'bullish':
+                return float(fvg.middle) <= float(equilibrium)
             return float(fvg.middle) >= float(equilibrium)
 
         # ── STEP 2: Filtrare strictă P/D + preț curent ──

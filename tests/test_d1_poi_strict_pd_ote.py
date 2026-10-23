@@ -82,6 +82,17 @@ def test_v83_decisional_first_over_extreme():
     assert pick is decisional
 
 
+def test_fvg_valid_for_pullback_long_and_short():
+    det = _Det()
+    below = FVG(1, "bullish", 1.3990, 1.3920, 1.3955, datetime.now())
+    above = FVG(2, "bullish", 1.4252, 1.4217, 1.4234, datetime.now())
+    assert det.fvg_valid_for_pullback(below, "bullish", 1.4006)
+    assert not det.fvg_valid_for_pullback(above, "bullish", 1.4006)
+    supply = FVG(3, "bearish", 1.4100, 1.4050, 1.4075, datetime.now())
+    assert det.fvg_valid_for_pullback(supply, "bearish", 1.4006)
+    assert not det.fvg_valid_for_pullback(below, "bearish", 1.4006)
+
+
 def test_v83_adr_clamp_rejects_fvg_above_lh():
     det = _Det()
     adr = ActiveDealingRange(

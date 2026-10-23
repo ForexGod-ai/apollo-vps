@@ -653,26 +653,21 @@ class PoiMixin:
     def _fvg_in_pd_zone(
         self,
         fvg: FVG,
-        equilibrium: float,
+        equilibrium: Optional[float],
         direction: str,
         impulse_low: Optional[float] = None,
         impulse_high: Optional[float] = None,
     ) -> bool:
-        """Prefer P/D half; accept any FVG overlapping the impulse span."""
-        if impulse_low is not None and impulse_high is not None:
-            if fvg.bottom <= impulse_high and fvg.top >= impulse_low:
-                if equilibrium is None:
-                    return True
-                if direction == 'bullish' and fvg.middle < equilibrium:
-                    return True
-                if direction == 'bearish' and fvg.middle > equilibrium:
-                    return True
-                return True
+        """Strict P/D half: middle vs equilibrium only (no overlap bypass)."""
+        _ = (impulse_low, impulse_high)
         if equilibrium is None:
-            return True
-        if direction == 'bullish':
-            return fvg.middle < equilibrium
-        return fvg.middle > equilibrium
+            return False
+        d = (direction or '').lower()
+        if d == 'bullish':
+            return float(fvg.middle) <= float(equilibrium)
+        if d == 'bearish':
+            return float(fvg.middle) >= float(equilibrium)
+        return False
 
     def _resolve_continuation_poi_cascade(
         self,
@@ -680,6 +675,7 @@ class PoiMixin:
         latest_signal,
         current_trend: str,
         adr: Optional[ActiveDealingRange],
+        current_price: Optional[float] = None,
         audit_out: Optional[dict] = None,
     ) -> Optional[FVG]:
         """
@@ -702,6 +698,10 @@ class PoiMixin:
                 f for f in impulse_fvgs
                 if self._fvg_within_adr(f, adr, direction)
             ]
+        impulse_fvgs = [
+            f for f in impulse_fvgs
+            if self.fvg_valid_for_pullback(f, direction, current_price)
+        ]
 
         impulse_low = impulse_high = None
         break_price = float(getattr(latest_signal, 'break_price', 0) or 0)
@@ -728,11 +728,9 @@ class PoiMixin:
         if pd_unmitigated:
             selected = self._select_fvg_decisional_first(pd_unmitigated, direction, adr)
             reason = 'continuation cascade: decisional OTE FVG'
-        elif unmitigated:
-            selected = self._select_fvg_decisional_first(unmitigated, direction, adr)
-            reason = 'continuation cascade: organic FVG in impulse span'
-        else:
-            # (b) OB la originea impulsului — semnalul BOS/CHoCH ancorat pe impuls
+
+        if selected is None:
+            # (b) OB la originea impulsului — semnal BOS/CHoCH ancorat pe impuls
             pseudo_choch = latest_signal
             if not isinstance(latest_signal, CHoCH):
                 pseudo_choch = CHoCH(
@@ -748,16 +746,19 @@ class PoiMixin:
                 ob_top, ob_bottom = float(ob.top), float(ob.bottom)
                 if ob_bottom < ob_top:
                     mid = (ob_top + ob_bottom) / 2.0
-                    if self._fvg_in_pd_zone(
-                        FVG(
-                            index=ob.index, direction=direction,
-                            top=ob_top, bottom=ob_bottom, middle=mid,
-                            candle_time=ob.candle_time, is_filled=False,
-                        ),
-                        equilibrium,
-                        direction,
-                        impulse_low,
-                        impulse_high,
+                    ob_probe = FVG(
+                        index=ob.index, direction=direction,
+                        top=ob_top, bottom=ob_bottom, middle=mid,
+                        candle_time=ob.candle_time, is_filled=False,
+                    )
+                    if (
+                        self._fvg_in_pd_zone(
+                            ob_probe, equilibrium, direction,
+                            impulse_low, impulse_high,
+                        )
+                        and self.fvg_valid_for_pullback(
+                            ob_probe, direction, current_price,
+                        )
                     ):
                         selected = FVG(
                             index=ob.index,
@@ -843,6 +844,7 @@ class PoiMixin:
                 latest_signal,
                 current_trend,
                 adr,
+                current_price=current_price,
                 audit_out=fvg_audit,
             )
             if selected is not None:
@@ -865,6 +867,10 @@ class PoiMixin:
                 selected = self.build_ote_pd_fvg(
                     impulse_low, impulse_high, orderflow, latest_signal, df,
                 )
+                if selected is not None and not self.fvg_valid_for_pullback(
+                    selected, orderflow, current_price,
+                ):
+                    selected = None
                 if selected is not None:
                     meta['poi_source'] = 'ote_pd_fallback'
                     if symbol and debug:
