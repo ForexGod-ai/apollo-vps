@@ -1564,12 +1564,19 @@ class MultiTFRadar:
     ) -> TimeframeAnalysis:
         """V49: entry secvențial — touch POI (latch) apoi retrace 60–80% pe CHoCH/BOS."""
         wait_pb = PullbackStatus.WAITING_4H_PULLBACK
+        _st = (signal_type or 'CHoCH').upper()
+        if _st == 'BOS':
+            _choch_detected_val = False
+            _bos_flag_val = True
+        else:
+            _choch_detected_val = True
+            _bos_flag_val = _bos_detected_val
         try:
             swing_broken_price = float(latest_choch.swing_broken.price)
         except Exception:
             return TimeframeAnalysis(
                 timeframe=timeframe_display,
-                choch_detected=True,
+                choch_detected=_choch_detected_val,
                 choch_direction=choch_direction,
                 choch_time=choch_time_str,
                 choch_price=choch_price,
@@ -1578,9 +1585,10 @@ class MultiTFRadar:
                 equilibrium=choch_equilibrium,
                 h4_sl_price=h4_sl_price,
                 choch_bars_ago=_choch_bars_ago,
-                bos_detected=_bos_detected_val,
+                bos_detected=_bos_flag_val,
                 bos_direction=_bos_direction_val,
                 bos_bars_ago=_bos_bars_ago_val,
+                signal_type=signal_type,
             )
 
         retrace_pct, impulse_size = _choch_impulse_retrace_pct(
@@ -1606,9 +1614,10 @@ class MultiTFRadar:
                 equilibrium=choch_equilibrium,
                 h4_sl_price=h4_sl_price,
                 choch_bars_ago=_choch_bars_ago,
-                bos_detected=_bos_detected_val,
+                bos_detected=_bos_flag_val,
                 bos_direction=_bos_direction_val,
                 bos_bars_ago=_bos_bars_ago_val,
+                signal_type=signal_type,
             )
 
         if _retrace_is_overshoot(retrace_pct, impulse_size):
@@ -1620,7 +1629,7 @@ class MultiTFRadar:
             sys.stdout.flush()
             return TimeframeAnalysis(
                 timeframe=timeframe_display,
-                choch_detected=True,
+                choch_detected=_choch_detected_val,
                 choch_direction=choch_direction,
                 choch_time=choch_time_str,
                 choch_price=choch_price,
@@ -1631,7 +1640,7 @@ class MultiTFRadar:
                 choch_bars_ago=_choch_bars_ago,
                 retrace_pct=retrace_pct,
                 overshoot_stale=True,
-                bos_detected=_bos_detected_val,
+                bos_detected=_bos_flag_val,
                 bos_direction=_bos_direction_val,
                 bos_bars_ago=_bos_bars_ago_val,
                 signal_type=signal_type,
@@ -1642,7 +1651,7 @@ class MultiTFRadar:
             sys.stdout.flush()
             return TimeframeAnalysis(
                 timeframe=timeframe_display,
-                choch_detected=True,
+                choch_detected=_choch_detected_val,
                 choch_direction=choch_direction,
                 choch_time=choch_time_str,
                 choch_price=choch_price,
@@ -1652,9 +1661,10 @@ class MultiTFRadar:
                 h4_sl_price=h4_sl_price,
                 choch_bars_ago=_choch_bars_ago,
                 retrace_pct=retrace_pct,
-                bos_detected=_bos_detected_val,
+                bos_detected=_bos_flag_val,
                 bos_direction=_bos_direction_val,
                 bos_bars_ago=_bos_bars_ago_val,
+                signal_type=signal_type,
             )
 
         if _choch_bars_ago > 72:
@@ -1665,7 +1675,7 @@ class MultiTFRadar:
             sys.stdout.flush()
             return TimeframeAnalysis(
                 timeframe=timeframe_display,
-                choch_detected=True,
+                choch_detected=_choch_detected_val,
                 choch_direction=choch_direction,
                 choch_time=choch_time_str,
                 choch_price=choch_price,
@@ -1675,9 +1685,10 @@ class MultiTFRadar:
                 h4_sl_price=h4_sl_price,
                 choch_bars_ago=_choch_bars_ago,
                 retrace_pct=retrace_pct,
-                bos_detected=_bos_detected_val,
+                bos_detected=_bos_flag_val,
                 bos_direction=_bos_direction_val,
                 bos_bars_ago=_bos_bars_ago_val,
+                signal_type=signal_type,
             )
 
         zone_bottom, zone_top, zone_entry = _choch_premium_discount_zone(
@@ -1739,7 +1750,7 @@ class MultiTFRadar:
 
         return TimeframeAnalysis(
             timeframe=timeframe_display,
-            choch_detected=True,
+            choch_detected=_choch_detected_val,
             choch_direction=choch_direction,
             choch_time=choch_time_str,
             choch_price=choch_price,
@@ -1756,7 +1767,7 @@ class MultiTFRadar:
             fvg_source=fvg_source,
             h4_sl_price=h4_sl_price,
             choch_bars_ago=_choch_bars_ago,
-            bos_detected=_bos_detected_val,
+            bos_detected=_bos_flag_val,
             bos_direction=_bos_direction_val,
             bos_bars_ago=_bos_bars_ago_val,
             signal_type=signal_type,
@@ -2364,7 +2375,12 @@ class MultiTFRadar:
         )
         # V47.1: scan LTF cât timp panda e latched (inclusiv după ieșirea din POI la respingere)
         _poi_scan_active = bool(daily_zone_validated or setup_data.get('radar_panda_active'))
-        _allow_bos_4h = bool(_poi_scan_active)
+        _has_confirmed_choch = bool(
+            setup_data.get('h4_choch_alert_sent')
+            or setup_data.get('h4_structure_locked')
+            or setup_data.get('entry1_filled')
+        )
+        _allow_bos_4h = bool(_poi_scan_active and _has_confirmed_choch)
 
         _radar_print(f"\n{'='*80}")
         _radar_print(f"🔍 [{symbol}] Bias Daily: {direction} | Scanare structurală 4H (V43.2 POI Gate)...")
@@ -2704,16 +2720,6 @@ class MultiTFRadar:
                 f"[W+D SOFT SYNC WARN] {sym}: W≠D sau preț în afara zonei W — "
                 f"monitor only (EXECUTE neblocat)"
             )
-            if not setup.get('w_d_sync_warn_sent'):
-                setup['w_d_sync_warn_sent'] = True
-                try:
-                    self._send_radar_telegram_alert(
-                        f"⚠️ <b>W+D sync {sym}</b>\n"
-                        f"Status: <code>{setup.get('status', '?')}</code> — "
-                        f"counter-trend W1; EXECUTE permis dacă D+POI+4H OK."
-                    )
-                except Exception:
-                    pass
         else:
             setup.pop('w_d_sync_warn_sent', None)
         return False
@@ -3181,37 +3187,60 @@ class MultiTFRadar:
                 result.pd_guard_reason or 'P/D guard failed',
             )
         elif result.execution_ready and result.pd_guard_passed:
-            # V31.0 REVERSAL vs CONTINUATION TRIGGER GUARD
-            # REVERSAL: accepta NUMAI CHoCH ca trigger (BOS = continuarea trendului anterior — invalid pt reversal)
-            # CONTINUATION: accepta si BOS (trend in desfasurare, BOS = confirmare continuare)
-            _setup_type_v31 = setup.get('setup_type', setup.get('strategy_type', 'reversal')).upper()
-            _is_reversal_v31 = 'REVERSAL' in _setup_type_v31
             _exec_tf_data = result.tf_4h
-            # BOS-only trigger detection
-            _used_bos_only = (
-                getattr(_exec_tf_data, 'bos_detected', False)
-                and not _exec_tf_data.choch_detected
-            )
-            if _is_reversal_v31 and _used_bos_only:
-                # REVERSAL pe BOS = INTERZIS — asteptam CHoCH autentic
-                logger.warning(
-                    f"[V31.0 REVERSAL GUARD] {result.symbol}: EXECUTE_NOW blocat — "
-                    f"setup REVERSAL nu accepta BOS ca trigger. Numai CHoCH autentic!"
+            _sig = str(getattr(_exec_tf_data, 'signal_type', '') or '').upper()
+            _is_bos_trigger = (
+                _sig == 'BOS'
+                or (
+                    getattr(_exec_tf_data, 'bos_detected', False)
+                    and not _exec_tf_data.choch_detected
                 )
-                _radar_print(f"  ⛔ [RADAR SKIP EXECUTE] {result.symbol}: REVERSAL guard — "
-                      f"BOS-only trigger respins, așteptăm CHoCH autentic")
+            )
+            _primary_entry_ok = bool(
+                setup.get('entry1_filled') or setup.get('h4_choch_alert_sent')
+            )
+            if _is_bos_trigger and not _primary_entry_ok:
+                setup['radar_execution_ready'] = False
+                setup['radar_verdict'] = (
+                    "👀 WAITING FOR 4H CHoCH (BOS fără CHoCH prealabil interzis la intrarea 1)"
+                )
+                logger.info(
+                    f"[SMC SEQUENCE GUARD] {result.symbol}: Trigger BOS respins — "
+                    f"primul semnal din POI trebuie să fie strict CHoCH 4H"
+                )
+                _radar_print(
+                    f"  ⛔ [SMC SEQUENCE GUARD] {result.symbol}: BOS respins — "
+                    f"așteptăm CHoCH 4H înainte de intrarea 1"
+                )
                 sys.stdout.flush()
-                # Nu setam EXECUTE_NOW — asteptam CHoCH real
             else:
-                # V37.7 RR SHIELD — toate trigger-ele (ex. BTC TP la low deja sweep-uit → RR 0.77)
-                _block_execute = self._rr_shield_blocks_execute(setup, result, result.tf_4h)
-
-                if not _block_execute:
-                    self._arm_execute_now(
-                        setup, result,
-                        result.priority_timeframe or '4H',
-                        source='trigger',
+                # V31.0 REVERSAL vs CONTINUATION TRIGGER GUARD
+                _setup_type_v31 = setup.get('setup_type', setup.get('strategy_type', 'reversal')).upper()
+                _is_reversal_v31 = 'REVERSAL' in _setup_type_v31
+                _used_bos_only = (
+                    getattr(_exec_tf_data, 'bos_detected', False)
+                    and not _exec_tf_data.choch_detected
+                )
+                if _is_reversal_v31 and _used_bos_only:
+                    logger.warning(
+                        f"[V31.0 REVERSAL GUARD] {result.symbol}: EXECUTE_NOW blocat — "
+                        f"setup REVERSAL nu accepta BOS ca trigger. Numai CHoCH autentic!"
                     )
+                    _radar_print(
+                        f"  ⛔ [RADAR SKIP EXECUTE] {result.symbol}: REVERSAL guard — "
+                        f"BOS-only trigger respins, așteptăm CHoCH autentic"
+                    )
+                    sys.stdout.flush()
+                else:
+                    _block_execute = self._rr_shield_blocks_execute(
+                        setup, result, result.tf_4h,
+                    )
+                    if not _block_execute:
+                        self._arm_execute_now(
+                            setup, result,
+                            result.priority_timeframe or '4H',
+                            source='trigger',
+                        )
         elif setup.get('status') == 'TRADE_OPEN':
             self._clear_execute_now_signal(setup, 'trade_open')
         elif setup.get('entry1_filled') and setup.get('status') != 'PARTIAL_OPEN':
