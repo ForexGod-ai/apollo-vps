@@ -30,16 +30,34 @@ class FvgMixin:
         direction: str,
         current_price: Optional[float],
     ) -> bool:
-        """POI must sit on the pullback path: LONG below price, SHORT above price."""
+        """
+        POI activ pe calea pullback: LONG — deasupra bazei FVG sau în interior;
+        SHORT — sub vârful FVG sau în interior. Mitigarea completă = daily close breach.
+        """
         if current_price is None:
             return True
         mkt = float(current_price)
         d = (direction or '').lower()
         if d == 'bullish':
-            return float(fvg.top) <= mkt
+            return mkt >= float(fvg.bottom) or mkt > float(fvg.top)
         if d == 'bearish':
-            return float(fvg.bottom) >= mkt
+            return mkt <= float(fvg.top) or mkt < float(fvg.bottom)
         return True
+
+    @staticmethod
+    def fvg_mitigated_by_daily_close(df: pd.DataFrame, fvg: FVG) -> bool:
+        """FVG invalid doar la închidere Daily dincolo de zonă (wick / intrare ≠ mitigare)."""
+        if df is None or fvg is None or len(df) <= fvg.index + 1:
+            return False
+        bottom = float(fvg.bottom)
+        top = float(fvg.top)
+        for j in range(fvg.index + 1, len(df)):
+            close = float(df['close'].iloc[j])
+            if fvg.direction == 'bullish' and close < bottom:
+                return True
+            if fvg.direction == 'bearish' and close > top:
+                return True
+        return False
 
     DECISIONAL_RETRACE_LO = 0.52
     DECISIONAL_RETRACE_HI = 0.78
@@ -407,45 +425,12 @@ class FvgMixin:
 
         all_found_fvgs = list(all_fvgs)
 
-        # 🔥 V8.1: MITIGATION CHECK - Filter out FVGs that were already filled by BODY closure
-        # FVG is mitigated ONLY when price BODY closes through it (wicks don't count)
+        # Mitigare: doar daily CLOSE sub baza (bullish) sau peste vârf (bearish)
         if all_fvgs:
-            unfilled_fvgs = []
-            current_body_highs = df[['open', 'close']].max(axis=1)
-            current_body_lows = df[['open', 'close']].min(axis=1)
-            
-            for fvg in all_fvgs:
-                is_filled = False
-                
-                # ✅ V10.3 BUG#4 FIX: Buffer mitigation 20%
-                # FVG rămâne ACTIV dacă prețul îl atinge (testare = setup valid!)
-                # Devine is_filled DOAR dacă body close penetrează cu >20% din mărimea FVG
-                # Exemplu: FVG 1.0850-1.0900 (50 pips) → buffer = 10 pips
-                #   body_low = 1.0845 (5 pips sub bottom) → ACTIV (sub buffer)
-                #   body_low = 1.0838 (12 pips sub bottom) → FILLED (depășește buffer)
-                fvg_size = fvg.top - fvg.bottom
-                mitigation_buffer = fvg_size * 0.50  # V82: 50% consequent encroachment
-                
-                # Check all candles AFTER FVG formation for body closure through zone
-                for j in range(fvg.index + 1, len(df)):
-                    body_high = current_body_highs.iloc[j]
-                    body_low = current_body_lows.iloc[j]
-                    
-                    if fvg.direction == 'bullish':
-                        # BULLISH FVG mitigated when BODY closes BELOW (bottom - buffer)
-                        if body_low < fvg.bottom - mitigation_buffer:
-                            is_filled = True
-                            break
-                    else:  # bearish
-                        # BEARISH FVG mitigated when BODY closes ABOVE (top + buffer)
-                        if body_high > fvg.top + mitigation_buffer:
-                            is_filled = True
-                            break
-                
-                if not is_filled:
-                    unfilled_fvgs.append(fvg)
-            
-            all_fvgs = unfilled_fvgs
+            all_fvgs = [
+                f for f in all_fvgs
+                if not self.fvg_mitigated_by_daily_close(df, f)
+            ]
 
         after_mitigation_fvgs = list(all_fvgs)
 

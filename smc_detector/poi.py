@@ -329,8 +329,13 @@ class PoiMixin:
             c_low, hl_bar = self._resolve_bullish_leg_low(
                 df, anchor, swing_lows, latest_signal, sm_protected_low,
             )
-            c_high = float(df.iloc[hl_bar:]['high'].max())
-            c_high_bar = int(hl_bar + int(df.iloc[hl_bar:]['high'].to_numpy().argmax()))
+            # Întreg impulsul HL → HH (nu doar sub-secțiunea post-anchor)
+            leg_slice = df.iloc[max(0, hl_bar):]
+            c_high = float(leg_slice['high'].max())
+            c_high_bar = int(
+                max(0, hl_bar)
+                + int(leg_slice['high'].to_numpy().argmax())
+            )
             return _finish_adr(
                 c_low, c_high, hl_bar, c_high_bar,
                 last_lh=c_high, last_ll=c_low, last_hl=c_low,
@@ -526,20 +531,8 @@ class PoiMixin:
         return lo <= float(fvg.middle) <= hi
 
     def _fvg_body_mitigated(self, df: pd.DataFrame, fvg: FVG) -> bool:
-        """True dacă body close a mitigat FVG-ul (>50% consequent encroachment)."""
-        body_highs = df[['open', 'close']].max(axis=1)
-        body_lows = df[['open', 'close']].min(axis=1)
-        fvg_size = fvg.top - fvg.bottom
-        mitigation_buffer = fvg_size * 0.50
-        for j in range(fvg.index + 1, len(df)):
-            body_high = body_highs.iloc[j]
-            body_low = body_lows.iloc[j]
-            if fvg.direction == 'bullish':
-                if body_low < fvg.bottom - mitigation_buffer:
-                    return True
-            elif body_high > fvg.top + mitigation_buffer:
-                return True
-        return False
+        """Alias — mitigare strictă daily close (Glitch: wick în FVG = POI activ)."""
+        return self.fvg_mitigated_by_daily_close(df, fvg)
 
     def _scan_organic_fvgs(
         self,

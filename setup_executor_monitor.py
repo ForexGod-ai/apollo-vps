@@ -382,11 +382,6 @@ class SetupExecutorMonitor:
         cleanup_old_signals_file(Path(signals_path), max_age_hours=1)
         logger.success("🧹 Startup cleanup complete - old signals removed")
         
-        # V9.1 ANTI-SPAM: Track rejected trades — 4h cooldown (was 5min, caused spam)
-        # Format: {symbol: {'reason': str, 'timestamp': datetime, 'count': int}}
-        self.rejected_trades = {}
-        self.rejection_cooldown_seconds = 14400  # 4 hours (V9.1 ФорексГод)
-        
         # ━━━ V9.3 DEEP SLEEP MODE ━━━
         # When daily loss limit is hit, STOP all scanning until 00:05 UTC next day.
         # Zero HTTP calls, zero CPU usage — the system SLEEPS intelligently.
@@ -407,11 +402,6 @@ class SetupExecutorMonitor:
         self._liquidity_sniper_be_fail_alerted: set = set()
         self._liquidity_sniper_be_file = Path("data/liquidity_sniper_be_applied.json")
         self._load_liquidity_sniper_be_state()
-
-        # V40.9/V41: o singura alerta Telegram per blocare EXECUTE_NOW (persista pe disc)
-        self._execute_now_block_alert_keys: set = set()
-        self._execute_now_block_alert_file = Path("data/execute_now_block_alerts.json")
-        self._load_execute_now_block_alert_state()
 
         # V68: dedup Telegram for infrastructure offline alerts
         self._infra_offline_alert_keys: set = set()
@@ -436,19 +426,9 @@ class SetupExecutorMonitor:
         self._telegram_token = os.getenv('TELEGRAM_BOT_TOKEN', '')
         self._telegram_chat_id = os.getenv('TELEGRAM_CHAT_ID', '')
         
-        # Load pairs config for SCALE_IN settings and V3.2 Pullback Strategy
+        # Load pairs config (execution strategy / scale-in settings)
         self.config = self._load_config()
         self.execution_strategy = self.config.get('scanner_settings', {}).get('execution_strategy', {})
-        self.pullback_config = self.config.get('scanner_settings', {}).get('pullback_strategy', {
-            'enabled': True,
-            'fibo_level': 0.5,
-            'tolerance_pips': 10,
-            'pullback_timeout_hours': 24,
-            'swing_lookback_candles': 5,
-            'sl_buffer_pips': 10,
-            'on_timeout_action': 'force_entry',
-            'use_4h_sl': True   # [LEGACY — Dezactivat permanent din V31.0] V3.3 HIGH CONFIDENCE SL
-        })
         
         # SMC Detector for CHoCH detection
         # V10.5 ATR SYNC: atr_multiplier=0.6 — echilibru între Scanner (1.2) și
@@ -461,8 +441,6 @@ class SetupExecutorMonitor:
         logger.info("🎯 Setup Executor Monitor initialized")
         logger.info(f"⏱️  Check interval: {check_interval}s")
         logger.info(f"📊 Execution Strategy: {self.execution_strategy.get('mode', 'N/A')}")
-        logger.info(f"🎯 V3.2 Pullback Strategy: {'ENABLED' if self.pullback_config['enabled'] else 'DISABLED'}")
-        logger.info(f"[LEGACY V3.3 — dezactivat V31.0] SL 4H: {'ENABLED' if self.pullback_config.get('use_4h_sl', True) else 'DISABLED'}")
     
     def _load_config(self):
         """Load pairs_config.json"""
@@ -1021,27 +999,6 @@ class SetupExecutorMonitor:
         except Exception as e:
             logger.debug(f"V39.5 BE state save skipped: {e}")
 
-    def _load_execute_now_block_alert_state(self):
-        """V41: dedup alerte EXECUTE NOW BLOCAT — supravietuieste restart + procese paralele."""
-        try:
-            if not self._execute_now_block_alert_file.exists():
-                return
-            with open(self._execute_now_block_alert_file, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            if isinstance(data, dict):
-                cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
-                for key, ts in data.items():
-                    try:
-                        sent = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
-                        if sent >= cutoff:
-                            self._execute_now_block_alert_keys.add(key)
-                    except Exception:
-                        self._execute_now_block_alert_keys.add(key)
-            elif isinstance(data, list):
-                self._execute_now_block_alert_keys.update(data)
-        except Exception as e:
-            logger.debug(f"V41 block alert state load skipped: {e}")
-
     def _liquidity_sniper_be_protect_open_positions(self):
         """
         V39.5 LIQUIDITY SNIPER — TRADE MANAGEMENT (Protect & Ride).
@@ -1515,13 +1472,13 @@ class SetupExecutorMonitor:
                                 updated = True
                                 continue
 
-                        # V19.14b: Radarul a confirmat EXECUTE_NOW → h4_structure_locked implicit True
-                        # Guard#4 bloca toate tradurile pentru că Radarul seta EXECUTE_NOW=True
-                        # dar NU seta și h4_structure_locked=True în același scriere atomică
-                        if not setup.get('h4_structure_locked', False):
-                            setups[i]['h4_structure_locked'] = True
-                            setup['h4_structure_locked'] = True
-                            logger.info(f"🔓 [V19.14b] {symbol}: h4_structure_locked=True auto-set (EXECUTE_NOW=True implică confirmare Radar)")
+                        if setup.get('radar_execution_ready') or setup.get('EXECUTE_NOW'):
+                            if not setup.get('h4_structure_locked'):
+                                setups[i]['h4_structure_locked'] = True
+                                setup['h4_structure_locked'] = True
+                                logger.debug(
+                                    f"[SYNC] {symbol}: h4_structure_locked sincronizat cu semnalul Radar"
+                                )
 
                         # ── STEP 1: Entry price — din FVG-ul radar (midpoint zonă de intrare) ──────
                         _en_entry = (
@@ -1554,7 +1511,7 @@ class SetupExecutorMonitor:
 
                         _tp = self._resolve_execute_now_tp(
                             setup, symbol, _en_direction, _en_entry,
-                            None, _df_d1_en, _pip_size_en, _sl,
+                            _df_sl_en, _df_d1_en, _pip_size_en, _sl,
                             d1_live_only=True,
                         )
 
@@ -1765,12 +1722,6 @@ class SetupExecutorMonitor:
                             logger.debug(
                                 f"[V43.3] {symbol}: entry1 pending — trigger activ, gate={_exec_skip or 'ok'}"
                             )
-                    else:
-                        logger.debug(
-                            f"[V37.0] {symbol}: Entry 2 scale-in dezactivat "
-                            f"(entry1_filled=True) — skip validate_choch_confirmation_scale_in"
-                        )
-                        continue
                 
                 except Exception as e:
                     logger.error(f"❌ Error processing {symbol}: {e}")
@@ -1792,9 +1743,11 @@ class SetupExecutorMonitor:
                 # prioritate; setups noi adăugate de scanner în interval sunt PĂSTRATE.
                 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
                 try:
-                    with open(self.monitoring_file, 'r', encoding='utf-8') as _f_fresh:
-                        _fresh_data = json.load(_f_fresh)
-                    _fresh_setups = _fresh_data.get('setups', []) if isinstance(_fresh_data, dict) else _fresh_data
+                    from monitoring_json_io import load_monitoring_json
+                    _fresh_data, _fresh_setups, _ = load_monitoring_json(self.monitoring_file)
+                    if not isinstance(_fresh_setups, list):
+                        _fresh_setups = []
+
                     _processed_map = {
                         self._setup_merge_key(s): s for s in setups if s.get('symbol')
                     }
@@ -1807,11 +1760,13 @@ class SetupExecutorMonitor:
                             )
                         else:
                             _merged.append(_fs)
+
                     _fresh_keys = {self._setup_merge_key(s) for s in _fresh_setups if s.get('symbol')}
                     for _ps in setups:
                         _pk = self._setup_merge_key(_ps)
                         if _pk[0] and _pk not in _fresh_keys:
                             _merged.append(_ps)
+
                     if isinstance(_fresh_data, dict):
                         _fresh_data['setups'] = _merged
                         _fresh_data['last_update'] = datetime.now(timezone.utc).isoformat()
@@ -1819,7 +1774,6 @@ class SetupExecutorMonitor:
                     else:
                         _write_data = _merged
                 except Exception as _merge_err:
-                    # Fallback la comportamentul vechi dacă merge-ul eșuează
                     logger.warning(f"⚠️ [V22.3] Merge fresh read failed ({_merge_err}) — fallback la write direct")
                     data['setups'] = setups
                     data['last_update'] = datetime.now(timezone.utc).isoformat()

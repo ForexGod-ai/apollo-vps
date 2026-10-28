@@ -669,11 +669,19 @@ class ScanSetupMixin:
                     print(f"   ✗ D1 POI: {d1_poi_reason}")
                     print(f"   ⏳ Așteptăm pullback la POI Daily înainte de READY")
         else:
-            # V28.0: WAITING_D1_PULLBACK — D1 break valid (CHoCH/BOS confirmat cu Body Close)
-            # Așteptăm 4H CHoCH aliniat cu bias-ul Daily. Status curat, vizibil în Telegram.
-            # multi_tf_radar verifică continuu 4H și upgradează la READY la aliniere.
-            status = 'WAITING_D1_PULLBACK'
-            print(f"⏳ [V28.0 BIAS] {symbol}: D1 {current_trend.upper()} {_signal_label} valid → WAITING_D1_PULLBACK (fără 4H CHoCH încă)")
+            # V28.0 / V84: POI atins → așteptăm confirmare 4H; altfel pullback la POI Daily
+            if d1_poi_validated:
+                status = 'WAITING_4H_CHOCH'
+                print(
+                    f"⏳ [V84 POI+4H] {symbol}: D1 {current_trend.upper()} la POI Daily "
+                    f"→ WAITING_4H_CHOCH (radar monitorizează structura 4H)"
+                )
+            else:
+                status = 'WAITING_D1_PULLBACK'
+                print(
+                    f"⏳ [V28.0 BIAS] {symbol}: D1 {current_trend.upper()} {_signal_label} valid "
+                    f"→ WAITING_D1_PULLBACK (fără 4H CHoCH încă)"
+                )
             if debug:
                 print(f"   ✓ Daily CHoCH/BOS: {current_trend.upper()}")
                 print(f"   ✓ FVG Zone: {fvg.bottom:.5f} - {fvg.top:.5f}")

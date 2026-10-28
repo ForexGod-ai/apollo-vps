@@ -86,11 +86,33 @@ def test_fvg_valid_for_pullback_long_and_short():
     det = _Det()
     below = FVG(1, "bullish", 1.3990, 1.3920, 1.3955, datetime.now())
     above = FVG(2, "bullish", 1.4252, 1.4217, 1.4234, datetime.now())
+    inside = FVG(4, "bullish", 1.4010, 1.3940, 1.3975, datetime.now())
     assert det.fvg_valid_for_pullback(below, "bullish", 1.4006)
     assert not det.fvg_valid_for_pullback(above, "bullish", 1.4006)
+    assert det.fvg_valid_for_pullback(inside, "bullish", 1.3960)
     supply = FVG(3, "bearish", 1.4100, 1.4050, 1.4075, datetime.now())
     assert det.fvg_valid_for_pullback(supply, "bearish", 1.4006)
     assert not det.fvg_valid_for_pullback(below, "bearish", 1.4006)
+
+
+def test_fvg_mitigated_only_on_daily_close_breach():
+    det = _Det()
+    import pandas as pd
+
+    times = pd.date_range("2026-01-01", periods=6, freq="D")
+    df = pd.DataFrame(
+        {
+            "time": times,
+            "open": [1.40, 1.41, 1.42, 1.395, 1.396, 1.397],
+            "high": [1.405, 1.415, 1.425, 1.400, 1.398, 1.399],
+            "low": [1.395, 1.405, 1.415, 1.390, 1.392, 1.393],
+            "close": [1.402, 1.412, 1.422, 1.415, 1.416, 1.417],
+        }
+    )
+    fvg = FVG(2, "bullish", 1.4180, 1.4100, 1.4140, times[2])
+    assert not det.fvg_mitigated_by_daily_close(df, fvg)
+    df.loc[5, "close"] = 1.4090
+    assert det.fvg_mitigated_by_daily_close(df, fvg)
 
 
 def test_v83_adr_clamp_rejects_fvg_above_lh():
