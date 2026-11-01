@@ -51,6 +51,8 @@ class ScanFinalizeMixin:
         strategy_type = l['strategy_type']
         symbol = l['symbol']
         valid_h4_choch = l['valid_h4_choch']
+        d1_poi_validated = l.get('d1_poi_validated', False)
+        price_in_fvg = l.get('price_in_fvg', False)
         # Step 7: Calculate entry, SL, TP
         # Use H4 CHoCH for both REVERSAL and CONTINUITY
         h4_signal = valid_h4_choch
@@ -144,11 +146,33 @@ class ScanFinalizeMixin:
         if debug:
             print(f"📊 [V27 TOO-LATE {symbol}] {100 - _pct_ramas:.1f}% spre TP | h4={'DA' if h4_signal else 'NU (placeholder)'} | status={status} | curr={current_price:.5f} entry={entry:.5f} tp={tp:.5f}")
         
-        # V30.0: Prag relaxat 0.20→0.10 (90%+ spre TP = prea tarziu, nu 80%).
-        # + WAITING_D1_PULLBACK exclus: entry/tp sunt placeholder, nu reale → filtrul era fals.
-        if h4_signal and total_move > 0 and (distance_to_tp / total_move) < 0.10 and status != 'WAITING_D1_PULLBACK':
-            print(f"⛔ [DROP {symbol}] FILTRU 'TOO LATE' — {100 - _pct_ramas:.1f}% completat | h4_signal PREZENT → entry/tp REALE | entry={entry:.5f} tp={tp:.5f}")
-            return None  # Price already 80%+ toward TP - TOO LATE!
+        # V30.0: Prag 90%+ spre TP — V84: nu DROP setup (bias Daily + POI rămân în JSON).
+        # Cauză USDCAD-class: entry din h4_sync_fvg poate fi departe de prețul la POI D1,
+        # iar progresul entry→TP pare „prea târziu” deși prețul abia reacționează în FVG Daily.
+        _defer_statuses = ('WAITING_D1_PULLBACK', 'WAITING_4H_CHOCH', 'MONITORING')
+        if (
+            h4_signal
+            and total_move > 0
+            and (distance_to_tp / total_move) < 0.10
+            and status not in _defer_statuses
+        ):
+            print(
+                f"⏳ [V84 TOO-LATE DEFER] {symbol}: {100 - _pct_ramas:.1f}% spre TP "
+                f"(entry 4H={entry:.5f} vs curr={current_price:.5f}) → MONITORING, nu DROP"
+            )
+            status = 'MONITORING'
+            if d1_poi_validated or price_in_fvg:
+                if current_trend == 'bullish':
+                    entry = fvg.bottom
+                    sl = fvg.bottom * 0.998
+                    tp = fvg.top * 1.015
+                else:
+                    entry = fvg.top
+                    sl = fvg.top * 1.002
+                    tp = fvg.bottom * 0.985
+                risk = abs(entry - sl)
+                reward = abs(tp - entry)
+                risk_reward = reward / risk if risk > 0 else risk_reward
         
         # V67 D: RE-ENTRY legacy removed — SL structural atins = setup respins
         if h4_signal:
