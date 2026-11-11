@@ -184,3 +184,8 @@ class TradeSetup:
     preserve_stored_poi: bool = False
     d1_bias_direction: Optional[str] = None  # V63 canonical trend
     d1_signal_type: Optional[str] = None  # V63: CHoCH or BOS
+    poi_was_touched: bool = False  # V86: touch istoric Daily pe POI
+    poi_touched_active: bool = False  # alias pentru card / JSON
+    h4_confirmed: bool = False
+    h4_event_price: Optional[float] = None
+    h4_event_type: Optional[str] = None  # CHoCH | BOS

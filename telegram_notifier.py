@@ -22,6 +22,7 @@ from pip_utils import (
     format_telegram_fvg_range,
     format_swap_line,
     format_poi_price_relation,
+    get_pip_size,
 )
 from radar_gates import ltf_choch_confirmed_for_card, ltf_choch_price_for_card
 
@@ -203,13 +204,27 @@ def _setup_attr(setup: Any, key: str, default=None):
 
 
 def _scan_card_wait_hint(setup: Any) -> str:
-    """RO wait hint for V61 scan card Block 3."""
+    """RO wait hint for V61 scan card Block 3 — V86: fără fallback oarbă CHoCH."""
     status = str(_setup_attr(setup, 'status', '') or '')
     if status == 'WAITING_W_D_SYNC' or _setup_attr(setup, 'w_d_aligned', True) is False:
         return 'Așteptăm sync W+D'
     if status == 'WAITING_W_ZONE':
         return 'Așteptăm zonă W1'
-    return _WAIT_4H_CHOCH_HINT_RO
+    if status == 'WAITING_D1_PULLBACK':
+        if _setup_attr(setup, 'h4_confirmed', False):
+            return 'Așteptăm retragere la POI / zonă 4H'
+        return 'Așteptăm pullback la POI Daily'
+    if status == 'WAITING_4H_PULLBACK':
+        return 'Așteptăm retragere 4H'
+    if status == 'WAITING_4H_CHOCH':
+        if _setup_attr(setup, 'poi_was_touched', False) or _setup_attr(setup, 'poi_touched_active', False):
+            return 'POI atins — scanăm structura 4H'
+    if not (
+        _setup_attr(setup, 'poi_was_touched', False)
+        or _setup_attr(setup, 'poi_touched_active', False)
+    ):
+        return 'Așteptăm atingere POI / CHoCH 4H'
+    return 'Așteptăm confirmare 4H după POI'
 
 
 def _canonical_d1_trend(setup: Any) -> str:
@@ -334,13 +349,46 @@ def _ltf_choch_price(setup: Any, snap: Dict, tf: str, macro_dir: str):
     return ltf_choch_price_for_card(merged, tf, confirmed)
 
 
+def _h4_extended_pips(symbol: str, macro_dir: str, live_price: Optional[float], fvg) -> tuple[bool, float]:
+    if live_price is None or fvg is None:
+        return False, 0.0
+    try:
+        px = float(live_price)
+        pip = get_pip_size(symbol)
+    except (TypeError, ValueError):
+        return False, 0.0
+    top = float(getattr(fvg, 'top', 0) or 0)
+    bottom = float(getattr(fvg, 'bottom', 0) or 0)
+    if macro_dir == 'bullish' and top and px > top:
+        return (px - top) / pip > 80, (px - top) / pip
+    if macro_dir == 'bearish' and bottom and px < bottom:
+        return (bottom - px) / pip > 80, (bottom - px) / pip
+    return False, 0.0
+
+
 def _format_radar_exec_lines(
     setup: Any,
     symbol: str,
     macro_dir: str,
     wait_hint: str,
     radar_snapshot: Optional[Dict] = None,
+    live_price: Optional[float] = None,
 ) -> str:
+    h4_confirmed = bool(_setup_attr(setup, 'h4_confirmed', False))
+    event_price = _setup_attr(setup, 'h4_event_price', None)
+    event_type = str(_setup_attr(setup, 'h4_event_type', None) or 'CHoCH')
+    fvg = _setup_attr(setup, 'fvg', None)
+
+    if h4_confirmed and event_price is not None:
+        px_fmt = format_telegram_price(symbol, float(event_price))
+        extended, pips_ext = _h4_extended_pips(symbol, macro_dir, live_price, fvg)
+        if extended:
+            return (
+                f"📡 4H: ✅ Confirmat ({event_type} @ <code>{px_fmt}</code>) · "
+                f"extins +{pips_ext:.0f} pips · ⏳ Așteptăm retragere 4H"
+            )
+        return f"📡 4H: ✅ {event_type} confirmat @ <code>{px_fmt}</code>"
+
     snap = _resolve_radar_snapshot(symbol, macro_dir, radar_snapshot)
 
     if _ltf_choch_confirmed(setup, snap, '4H', macro_dir):
@@ -855,6 +903,15 @@ class TelegramNotifier:
         poi_relation = format_poi_price_relation(
             live_price, setup.fvg.bottom, setup.fvg.top, trade_side=raw_dir,
         )
+        poi_touched = bool(
+            getattr(setup, 'poi_was_touched', False)
+            or getattr(setup, 'poi_touched_active', False)
+        )
+        if poi_touched and live_price is not None:
+            if raw_dir == 'bullish' and live_price > setup.fvg.top:
+                poi_relation = '✅ ATINS (în reacție)'
+            elif raw_dir == 'bearish' and live_price < setup.fvg.bottom:
+                poi_relation = '✅ ATINS (în reacție)'
         poi_line = f"🎯 POI Daily: <code>{poi_range}</code>"
         if poi_relation:
             poi_line += f" · {poi_relation}"
@@ -904,7 +961,9 @@ class TelegramNotifier:
 
         # ── BLOC 3: Radar & Execuție ──
         h4_line = _format_radar_exec_lines(
-            setup, symbol, raw_dir, wait_hint, radar_snapshot=radar_snapshot,
+            setup, symbol, raw_dir, wait_hint,
+            radar_snapshot=radar_snapshot,
+            live_price=live_price,
         )
 
         block3 = (

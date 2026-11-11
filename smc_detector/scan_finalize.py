@@ -51,11 +51,16 @@ class ScanFinalizeMixin:
         strategy_type = l['strategy_type']
         symbol = l['symbol']
         valid_h4_choch = l['valid_h4_choch']
+        h4_confirmed_signal = l.get('h4_confirmed_signal')
+        poi_was_touched = bool(l.get('poi_was_touched', False))
+        poi_touched_active = bool(l.get('poi_touched_active', poi_was_touched))
+        h4_confirmed = bool(l.get('h4_confirmed', False))
+        h4_event_price = l.get('h4_event_price')
+        h4_event_type = l.get('h4_event_type')
         d1_poi_validated = l.get('d1_poi_validated', False)
         price_in_fvg = l.get('price_in_fvg', False)
         # Step 7: Calculate entry, SL, TP
-        # Use H4 CHoCH for both REVERSAL and CONTINUITY
-        h4_signal = valid_h4_choch
+        h4_signal = h4_confirmed_signal if h4_confirmed_signal is not None else valid_h4_choch
 
         # V30.0: Dead code eliminat — primul bloc OB (order_block=None la acest punct,
         # detect_order_block() este apelat abia la Step 8 mai jos).
@@ -493,6 +498,11 @@ class ScanFinalizeMixin:
             preserve_stored_poi=_poi_res.preserve_stored_poi,
             d1_bias_direction=current_trend,
             d1_signal_type=_signal_label,
+            poi_was_touched=poi_was_touched,
+            poi_touched_active=poi_touched_active,
+            h4_confirmed=h4_confirmed,
+            h4_event_price=float(h4_event_price) if h4_event_price is not None else None,
+            h4_event_type=h4_event_type,
         )
         
         # 💧 V4.0: Store liquidity sweep info (for Telegram reporting)

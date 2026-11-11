@@ -789,11 +789,8 @@ class DailyScanner:
                             try:
                                 setup.live_price = symbol_price_map.get(symbol)
                                 setup.live_price_source = 'ctrader_d1_close'
-                                _radar_snap = (
-                                    existing_setups_by_symbol.get(symbol, {})
-                                    if setup_status == 'READY'
-                                    else {}
-                                )
+                                _stored_snap = existing_setups_by_symbol.get(symbol, {})
+                                _radar_snap = dict(_stored_snap) if _stored_snap else {}
                                 _sync_setup_from_d1_context(setup, d1_auth_cache.get(symbol))
                                 _deferred_tg_cards.append({
                                     'setup': setup,
@@ -2105,6 +2102,11 @@ def _trade_setup_to_monitoring_dict(setup: TradeSetup, setup_time_str: str) -> d
         "d1_signal_bar": getattr(_d1_sig, 'index', None),
         "d1_signal_price": getattr(_d1_sig, 'break_price', None),
         "d1_scan_date": datetime.now().isoformat(),
+        "poi_was_touched": bool(getattr(setup, 'poi_was_touched', False)),
+        "poi_touched_active": bool(getattr(setup, 'poi_touched_active', False)),
+        "h4_confirmed": bool(getattr(setup, 'h4_confirmed', False)),
+        "h4_event_price": getattr(setup, 'h4_event_price', None),
+        "h4_event_type": getattr(setup, 'h4_event_type', None),
     }
     out.update(_v43_fields_from_setup(setup))
     return _sanitize_monitoring_value(out)

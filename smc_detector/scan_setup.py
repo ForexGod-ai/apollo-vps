@@ -397,6 +397,15 @@ class ScanSetupMixin:
         
         # FVG direction must match current trend
         fvg.direction = current_trend
+
+        poi_was_touched, poi_touch_daily_bar = self.poi_historical_touch_info(
+            df_daily, fvg, current_trend,
+        )
+        poi_touched_active = poi_was_touched
+        h4_confirmed = False
+        h4_event_price: Optional[float] = None
+        h4_event_type: Optional[str] = None
+        h4_confirmed_signal = None
         
         # Step 4: Check price relationship with FVG
         current_price = df_daily['close'].iloc[-1]
@@ -436,20 +445,26 @@ class ScanSetupMixin:
         if debug:
             print(f"\n📋 Strategy Type: {strategy_type.upper()}")
         
-        # Step 6: Check 4H for confirmation (CHoCH FROM FVG zone)
-        h4_chochs, _ = self.detect_choch_and_bos(df_4h)
+        # Step 6: Check 4H for confirmation (CHoCH / BOS după touch POI)
+        h4_chochs, h4_bos_list = self.detect_choch_and_bos(df_4h)
+        h4_min_idx = (
+            self.h4_bar_index_after_daily_touch(df_4h, df_daily, poi_touch_daily_bar)
+            if poi_was_touched
+            else 0
+        )
         
         if debug:
             print(f"\n🔍 H4 Analysis:")
-            print(f"   Total H4 CHoCH: {len(h4_chochs)}")
+            print(f"   Total H4 CHoCH: {len(h4_chochs)} | BOS: {len(h4_bos_list)}")
+            print(f"   POI touch istoric: {poi_was_touched} (D1 bar {poi_touch_daily_bar}) | H4 from bar {h4_min_idx}")
             if h4_chochs:
                 for i, h4ch in enumerate(h4_chochs[-5:]):  # Last 5
                     in_fvg = fvg.bottom <= h4ch.break_price <= fvg.top
                     matches = h4ch.direction == current_trend
                     print(f"   [{i}] {h4ch.direction.upper()} @ {h4ch.break_price:.5f} - InFVG:{in_fvg} Match:{matches}")
         
-        # Find H4 CHoCH that matches current trend AND happens FROM FVG zone
         valid_h4_choch = None
+        _is_continuation = (strategy_type or '').lower() in ('continuation', 'continuity')
         
         # 🔥 V8.0: Skip 4H CHoCH requirement for MOMENTUM entries
         # MOMENTUM = breakout at last swing (no pullback to confirm)
@@ -481,48 +496,63 @@ class ScanSetupMixin:
             
             # V26.0: Scan last 80 candles (20 zile) — pullback Daily poate dura 2-3 săptămâni
             # 50 candle = 12.5 zile era prea scurt pentru pullback-uri extinse (ex: XAUUSD, GBPNZD)
-            recent_h4_chochs = [ch for ch in h4_chochs if ch.index >= len(df_4h) - 80]
+            recent_h4_chochs = [
+                ch for ch in h4_chochs
+                if ch.index >= len(df_4h) - 80 and ch.index >= h4_min_idx
+            ]
+            recent_h4_bos = [
+                b for b in h4_bos_list
+                if b.index >= len(df_4h) - 80 and b.index >= h4_min_idx
+            ]
             
             for h4_choch in reversed(recent_h4_chochs):
-                # H4 CHoCH direction must match Daily trend direction
                 if h4_choch.direction != current_trend:
                     continue
-                
-                # V25.0: LIMITA DE VÂRSTĂ 48 CANDLE ELIMINATĂ
-                # Orice CHoCH pe 4H în direcția biasului Daily este valid, indiferent de vârstă.
-                # MOTIVUL: pullback-ul pe Daily poate dura 4, 14 sau 25 zile.
-                # În secunda în care 4H printează un CHoCH aliniat → alinierea este validă.
-                # Body closure garantată de detect_choch_and_bos() (V8.1).
                 choch_age = len(df_4h) - 1 - h4_choch.index
-                
-                # Body closure already validated in detect_choch_and_bos (V8.1).
-                # No FVG zone restriction — 4H is directional sync, not zone-specific.
-                
-                # ✅ VALID 4H CHoCH — direction matches D1 bias + body closure (no age limit)
                 valid_h4_choch = h4_choch
+                h4_confirmed = True
+                h4_event_price = float(h4_choch.break_price)
+                h4_event_type = 'CHoCH'
+                h4_confirmed_signal = h4_choch
                 if debug:
-                    print(f"   ✅ [V25.0 4H SYNC] {h4_choch.direction.upper()} CHoCH @ {h4_choch.break_price:.5f} ({choch_age} candle în urmă — fără limită vârstă)")
-                    print(f"      Body closure validated (institutional commitment)")
+                    print(f"   ✅ [V86 4H SYNC] {h4_choch.direction.upper()} CHoCH @ {h4_choch.break_price:.5f} ({choch_age} bare)")
                 break
+
+            if (
+                not h4_confirmed
+                and poi_was_touched
+                and _is_continuation
+            ):
+                for h4_bos in reversed(recent_h4_bos):
+                    if h4_bos.direction != current_trend:
+                        continue
+                    h4_confirmed = True
+                    h4_event_price = float(h4_bos.break_price)
+                    h4_event_type = 'BOS'
+                    h4_confirmed_signal = h4_bos
+                    if debug:
+                        age = len(df_4h) - 1 - h4_bos.index
+                        print(f"   ✅ [V86 4H CONT] BOS @ {h4_bos.break_price:.5f} după POI ({age} bare)")
+                    break
             
             # ━━━ V10.4: DETECT 4H SYNC FVG (entry zone from confirmation move) ━━━
-            # After 4H CHoCH confirmed, find the FVG generated by that 4H impulse move.
-            # This is the ENTRY ZONE — not the Daily FVG (which is the POI zone).
-            if valid_h4_choch:
-                h4_sync_fvg = self.detect_fvg(df_4h, valid_h4_choch)
+            if h4_confirmed_signal is not None:
+                h4_sync_fvg = self.detect_fvg(df_4h, h4_confirmed_signal)
                 if h4_sync_fvg:
-                    h4_sync_fvg.direction = current_trend  # Align with D1 bias
+                    h4_sync_fvg.direction = current_trend
                     if debug:
                         print(f"   🎯 V10.4 4H SYNC FVG DETECTED: {h4_sync_fvg.bottom:.5f} - {h4_sync_fvg.top:.5f}")
-                        print(f"      This is the ENTRY ZONE (from 4H confirmation move)")
-                else:
-                    if debug:
-                        print(f"   ⚠️  V10.4: No 4H sync FVG found after CHoCH — will use Daily FVG for entry")
+                elif debug:
+                    print(f"   ⚠️  V10.4: No 4H sync FVG found after confirm — will use Daily FVG for entry")
             
-            if not valid_h4_choch:
-                print(f"⏳ [V25.0 WAITING_D1_PULLBACK] {symbol}: {current_trend.upper()} — niciun 4H CHoCH {current_trend.upper()} găsit (fără limită temporală — așteptăm alinierea)")
+            if not h4_confirmed:
+                _wait_label = 'POI neatins încă' if not poi_was_touched else 'post-POI'
+                print(
+                    f"⏳ [V86 WAIT 4H] {symbol}: {current_trend.upper()} — "
+                    f"fără CHoCH/BOS 4H aliniat ({_wait_label})"
+                )
                 if debug:
-                    print(f"   Bot în PÂNDĂ pe 4H — fără deadline, alinierea va veni când vine!")
+                    print(f"   Bot în PÂNDĂ pe 4H — alinierea va veni când vine")
         else:
             # V2.1 MODE: Skip 4H CHoCH requirement (original logic)
             if debug:
@@ -634,7 +664,7 @@ class ScanSetupMixin:
                     print(f"\n⏳ STATUS: MONITORING (V2.1 MODE - waiting for price in FVG)")
                     print(f"   ✓ Daily CHoCH: {current_trend.upper()}")
                     print(f"   ✗ Price NOT in FVG (current: {current_price:.5f})")
-        elif valid_h4_choch:
+        elif h4_confirmed and h4_confirmed_signal is not None:
             # V42.7: READY doar cu POI Daily validat + 4H CHoCH (V10.6 retracement = info, nu trigger)
             _swing_highs_v10 = self.detect_swing_highs(df_daily)
             _swing_lows_v10  = self.detect_swing_lows(df_daily)
@@ -657,7 +687,7 @@ class ScanSetupMixin:
                         sync_fvg_info = f"\n   ✓ 4H Sync FVG (Entry Zone): {h4_sync_fvg.bottom:.5f} - {h4_sync_fvg.top:.5f}"
                     print(f"\n✅ STATUS: READY TO EXECUTE (V42.7 — D1 POI + 4H CHoCH)")
                     print(f"   ✓ D1 Bias: {strategy_type.upper()} ({current_trend.upper()})")
-                    print(f"   ✓ 4H CHoCH Body Close: {valid_h4_choch.direction.upper()} @ {valid_h4_choch.break_price:.5f}")
+                    print(f"   ✓ 4H {h4_event_type}: {h4_confirmed_signal.direction.upper()} @ {h4_event_price:.5f}")
                     print(f"   ✓ Daily FVG (POI): {fvg.bottom:.5f} - {fvg.top:.5f}{sync_fvg_info}")
                     print(f"   📊 Current Price: {current_price:.5f}")
             else:
@@ -665,16 +695,17 @@ class ScanSetupMixin:
                 print(f"⏳ [V42.7 POI GATE] {symbol}: 4H CHoCH aliniat, dar preț NU e la POI Daily → WAITING_D1_PULLBACK")
                 if debug:
                     print(f"   ✓ D1 Bias: {strategy_type.upper()} ({current_trend.upper()})")
-                    print(f"   ✓ 4H Sync CHoCH: {valid_h4_choch.direction.upper()} @ {valid_h4_choch.break_price:.5f}")
+                    print(f"   ✓ 4H Sync {h4_event_type}: {h4_confirmed_signal.direction.upper()} @ {h4_event_price:.5f}")
                     print(f"   ✗ D1 POI: {d1_poi_reason}")
                     print(f"   ⏳ Așteptăm pullback la POI Daily înainte de READY")
         else:
-            # V28.0 / V84: POI atins → așteptăm confirmare 4H; altfel pullback la POI Daily
-            if d1_poi_validated:
+            # V28.0 / V86: POI atins (live sau istoric) → așteptăm confirmare 4H
+            if d1_poi_validated or poi_was_touched:
                 status = 'WAITING_4H_CHOCH'
                 print(
-                    f"⏳ [V84 POI+4H] {symbol}: D1 {current_trend.upper()} la POI Daily "
-                    f"→ WAITING_4H_CHOCH (radar monitorizează structura 4H)"
+                    f"⏳ [V86 POI+4H] {symbol}: D1 {current_trend.upper()} "
+                    f"{'la POI' if d1_poi_validated else 'POI atins anterior'}"
+                    f" → WAITING_4H_CHOCH"
                 )
             else:
                 status = 'WAITING_D1_PULLBACK'

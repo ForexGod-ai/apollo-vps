@@ -24,6 +24,55 @@ from smc_detector.models import (
 class PoiMixin:
     """V67 C: D1 POI resolution."""
 
+    @staticmethod
+    def poi_historical_touch_info(
+        df: pd.DataFrame,
+        fvg: FVG,
+        direction: str,
+    ) -> Tuple[bool, Optional[int]]:
+        """V86: POI atins pe istoric Daily (de la formarea FVG), nu doar la prețul curent."""
+        if df is None or df.empty or fvg is None:
+            return False, None
+        start = max(0, int(getattr(fvg, 'index', 0) or 0))
+        if start >= len(df):
+            start = max(0, len(df) - 1)
+        top = float(fvg.top)
+        bottom = float(fvg.bottom)
+        d = (direction or '').lower()
+        for bar_idx in range(start, len(df)):
+            row = df.iloc[bar_idx]
+            lo = float(row['low'])
+            hi = float(row['high'])
+            cl = float(row['close'])
+            if d == 'bullish':
+                if lo <= top and cl >= bottom:
+                    return True, bar_idx
+            elif d == 'bearish':
+                if hi >= bottom and cl <= top:
+                    return True, bar_idx
+        return False, None
+
+    @staticmethod
+    def h4_bar_index_after_daily_touch(
+        df_4h: pd.DataFrame,
+        df_daily: pd.DataFrame,
+        daily_touch_bar: int,
+    ) -> int:
+        """Primul index H4 la/ după bara Daily a primului touch POI."""
+        if df_4h is None or df_4h.empty:
+            return 0
+        if daily_touch_bar is None:
+            return 0
+        if 'time' in df_daily.columns and 'time' in df_4h.columns:
+            try:
+                touch_t = pd.to_datetime(df_daily['time'].iloc[daily_touch_bar])
+                h4_times = pd.to_datetime(df_4h['time'])
+                pos = int(h4_times.searchsorted(touch_t, side='left'))
+                return max(0, min(pos, len(df_4h) - 1))
+            except Exception:
+                pass
+        return max(0, min(int(daily_touch_bar) * 6, len(df_4h) - 1))
+
     def detect_order_block(
         self, 
         df: pd.DataFrame, 
