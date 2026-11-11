@@ -401,8 +401,7 @@ class FvgMixin:
                             is_filled=False,
                             associated_choch=choch
                         )
-                        if _v43_adr_allows(fvg):
-                            all_fvgs.append(fvg)
+                        all_fvgs.append(fvg)
 
             elif orderflow_direction == 'bearish':
                 if df['low'].iloc[i - 1] > df['high'].iloc[i + 1]:
@@ -420,8 +419,7 @@ class FvgMixin:
                             is_filled=False,
                             associated_choch=choch
                         )
-                        if _v43_adr_allows(fvg):
-                            all_fvgs.append(fvg)
+                        all_fvgs.append(fvg)
 
         all_found_fvgs = list(all_fvgs)
 
@@ -558,7 +556,11 @@ class FvgMixin:
                 return None
 
             if _v43_continuation and self.poi_conflicts_with_continuation(
-                selected.top, selected.bottom, orderflow_direction, dealing_range,
+                selected.top,
+                selected.bottom,
+                orderflow_direction,
+                dealing_range,
+                current_price=mkt,
             ):
                 _fill_audit(
                     None,

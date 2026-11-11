@@ -209,10 +209,7 @@ class PoiMixin:
 
         if sm_protected_high is not None:
             sm_f = float(sm_protected_high)
-            if sm_f > leg_hi * 1.005:
-                c_high = leg_hi
-            else:
-                c_high = min(leg_hi, sm_f)
+            c_high = sm_f if sm_f > 0 else leg_hi
         else:
             c_high = leg_hi
         return c_high, origin_idx
@@ -245,7 +242,7 @@ class PoiMixin:
         leg_lo = min(leg_lo if leg_lo is not None else window_lo, window_lo)
         if sm_protected_low is not None:
             sm_f = float(sm_protected_low)
-            c_low = leg_lo if sm_f < leg_lo * 0.995 else max(leg_lo, sm_f)
+            c_low = sm_f if sm_f > 0 else leg_lo
         else:
             c_low = leg_lo
         return c_low, origin_idx
@@ -461,13 +458,21 @@ class PoiMixin:
         poi_bottom: float,
         direction: str,
         adr: ActiveDealingRange,
+        current_price: Optional[float] = None,
     ) -> bool:
-        """V43.0 anti-zombie: POI invalid for continuation if it breaks protected structure."""
+        """V43.0 anti-zombie — V85: zonă activă la preț curent nu e zombie."""
+        top = float(poi_top)
+        bottom = float(poi_bottom)
+        if current_price is not None:
+            px = float(current_price)
+            if bottom <= px <= top:
+                return False
         d = (direction or '').lower()
+        tol = 0.0010
         if d == 'bearish':
-            return float(poi_bottom) > float(adr.container_high)
+            return float(poi_bottom) > (float(adr.container_high) + tol)
         if d == 'bullish':
-            return float(poi_top) < float(adr.container_low)
+            return float(poi_top) < (float(adr.container_low) - tol)
         return False
 
     @staticmethod
@@ -497,6 +502,7 @@ class PoiMixin:
             float(stored_poi_bottom),
             direction,
             adr,
+            current_price=price,
         )
 
     @staticmethod
@@ -518,16 +524,16 @@ class PoiMixin:
 
     @staticmethod
     def _fvg_within_adr(fvg: FVG, adr: ActiveDealingRange, orderflow_direction: str) -> bool:
-        """V83: întreg FVG clampat în ADR — SHORT: top <= LH; LONG: bottom >= HL."""
+        """V85: FVG valid dacă se suprapune cu dealing range-ul activ (nu clamp integral)."""
         lo = float(adr.container_low)
         hi = float(adr.container_high)
         top = float(fvg.top)
         bottom = float(fvg.bottom)
         d = (orderflow_direction or '').lower()
-        if d == 'bearish':
-            return bottom >= lo and top <= hi
         if d == 'bullish':
-            return bottom >= lo and top <= hi
+            return top >= lo and bottom <= hi
+        if d == 'bearish':
+            return bottom <= hi and top >= lo
         return lo <= float(fvg.middle) <= hi
 
     def _fvg_body_mitigated(self, df: pd.DataFrame, fvg: FVG) -> bool:

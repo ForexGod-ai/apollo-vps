@@ -115,6 +115,28 @@ def test_fvg_mitigated_only_on_daily_close_breach():
     assert det.fvg_mitigated_by_daily_close(df, fvg)
 
 
+def test_v85_adr_overlap_allows_fvg_at_impulse_base():
+    det = _Det()
+    adr = ActiveDealingRange(
+        container_low=1.37600,
+        container_high=1.43000,
+        current_swing_high=1.43000,
+        current_swing_low=1.37600,
+        last_lh=1.43000,
+        last_hl=1.37600,
+        last_ll=1.37600,
+        current_swing_high_bar=10,
+        current_swing_low_bar=5,
+        leg_anchor_index=8,
+        price_inside=True,
+    )
+    fvg = FVG(1, "bullish", 1.39741, 1.39279, 1.39510, datetime.now())
+    assert det._fvg_within_adr(fvg, adr, "bullish")
+    assert not det.poi_conflicts_with_continuation(
+        fvg.top, fvg.bottom, "bullish", adr, current_price=1.39741,
+    )
+
+
 def test_v83_adr_clamp_rejects_fvg_above_lh():
     det = _Det()
     adr = ActiveDealingRange(
