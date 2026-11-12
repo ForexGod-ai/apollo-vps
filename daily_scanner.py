@@ -545,6 +545,8 @@ class DailyScanner:
                         debug=_scanner_debug_flag,
                         stored_poi_top=_stored.get('poi_top') if _stored.get('poi_top') is not None else _stored.get('fvg_top'),
                         stored_poi_bottom=_stored.get('poi_bottom') if _stored.get('poi_bottom') is not None else _stored.get('fvg_bottom'),
+                        stored_protected_idx=_stored.get('d1_protected_idx'),
+                        stored_target_idx=_stored.get('d1_target_idx'),
                         d1_ctx=d1_auth_cache.get(symbol),
                     )
                 except Exception as scan_error:

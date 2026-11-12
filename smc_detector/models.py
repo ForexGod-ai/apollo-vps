@@ -133,6 +133,7 @@ class D1AuthContext:
     protected_high: Optional[float] = None
     protected_idx: Optional[int] = None
     target_idx: Optional[int] = None
+    is_internal_pullback: bool = False
 
     def as_dict(self) -> dict:
         return {
@@ -149,6 +150,7 @@ class D1AuthContext:
             'protected_high': self.protected_high,
             'protected_idx': self.protected_idx,
             'target_idx': self.target_idx,
+            'is_internal_pullback': self.is_internal_pullback,
         }
 
 

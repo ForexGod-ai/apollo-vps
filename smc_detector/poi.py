@@ -525,6 +525,53 @@ class PoiMixin:
         return False
 
     @staticmethod
+    def fvg_from_stored_poi_bounds(
+        top: float,
+        bottom: float,
+        index: int,
+        direction: str,
+        associated_signal,
+    ) -> FVG:
+        lo = min(float(top), float(bottom))
+        hi = max(float(top), float(bottom))
+        return FVG(
+            index=int(index),
+            direction=(direction or 'bullish').lower(),
+            top=hi,
+            bottom=lo,
+            middle=(hi + lo) / 2.0,
+            candle_time=index,
+            is_filled=False,
+            associated_choch=associated_signal,
+        )
+
+    @staticmethod
+    def should_lock_poi_on_active_range(
+        stored_poi_top: Optional[float],
+        stored_poi_bottom: Optional[float],
+        stored_protected_idx: Optional[int],
+        stored_target_idx: Optional[int],
+        protected_idx: Optional[int],
+        target_idx: Optional[int],
+        is_internal_pullback: bool = False,
+    ) -> bool:
+        """V89: păstrează POI JSON cât timp dealing range-ul major nu se rotește."""
+        if stored_poi_top is None or stored_poi_bottom is None:
+            return False
+        if is_internal_pullback:
+            return True
+        if (
+            protected_idx is not None
+            and target_idx is not None
+            and stored_protected_idx is not None
+            and stored_target_idx is not None
+            and int(protected_idx) == int(stored_protected_idx)
+            and int(target_idx) == int(stored_target_idx)
+        ):
+            return True
+        return False
+
+    @staticmethod
     def should_preserve_stored_poi(
         stored_poi_top: Optional[float],
         stored_poi_bottom: Optional[float],
@@ -853,10 +900,13 @@ class PoiMixin:
         sm_protected_high: Optional[float] = None,
         leg_choch=None,
         protected_idx: Optional[int] = None,
+        target_idx: Optional[int] = None,
+        is_internal_pullback: bool = False,
+        stored_protected_idx: Optional[int] = None,
+        stored_target_idx: Optional[int] = None,
         debug: bool = False,
     ) -> POIResolution:
         """Faza A — POI organic only; no JSON preserve, no synthetic Equilibrium clip."""
-        _ = (stored_poi_top, stored_poi_bottom)
         meta: dict = {
             'adr': None,
             'preserve_stored_poi': False,
@@ -866,6 +916,39 @@ class PoiMixin:
         }
         if audit_out is not None:
             audit_out['v43'] = meta
+
+        lock_poi = self.should_lock_poi_on_active_range(
+            stored_poi_top,
+            stored_poi_bottom,
+            stored_protected_idx,
+            stored_target_idx,
+            protected_idx,
+            target_idx,
+            is_internal_pullback=is_internal_pullback,
+        )
+        if lock_poi and stored_poi_top is not None and stored_poi_bottom is not None:
+            anchor = protected_idx if protected_idx is not None else (
+                getattr(latest_signal, 'index', 0) or 0
+            )
+            selected = self.fvg_from_stored_poi_bounds(
+                float(stored_poi_top),
+                float(stored_poi_bottom),
+                anchor,
+                current_trend,
+                latest_signal,
+            )
+            meta['preserve_stored_poi'] = True
+            meta['poi_source'] = 'v89_range_lock_stored_poi'
+            if audit_out is not None:
+                audit_out['v43'] = meta
+            return POIResolution(
+                fvg=selected,
+                adr=adr,
+                preserve_stored_poi=True,
+                poi_source=meta['poi_source'],
+                poi_zombie=False,
+                adr_rescan=False,
+            )
 
         if adr is not None:
             meta['adr'] = {
@@ -961,7 +1044,7 @@ class PoiMixin:
         return POIResolution(
             fvg=selected,
             adr=adr,
-            preserve_stored_poi=False,
+            preserve_stored_poi=bool(meta.get('preserve_stored_poi')),
             poi_source=meta.get('poi_source', 'detect_fvg'),
             poi_zombie=poi_zombie,
             adr_rescan=bool(fvg_audit.get('v43', {}).get('force_in_range_rescan')),

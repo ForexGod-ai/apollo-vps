@@ -42,7 +42,7 @@ class CoreStructureMixin:
         debug: bool = False,
     ) -> dict:
         """
-        V87 — D1 SMC state machine (dynamic HL/LH, instant CHoCH on body break).
+        V89 — D1 SMC: locked dealing range until BOS/CHoCH on major pivots (no internal promotion).
 
         State: bias, protected_pivot (HL if bullish / LH if bearish), target_pivot (HH/LL).
         Pullback = price between protected and target; trend flips only on body close through
@@ -61,6 +61,7 @@ class CoreStructureMixin:
             'structural_hl': None,
             'protected_idx': None,
             'target_idx': None,
+            'is_internal_pullback': False,
         }
         if df is None or len(df) < 2:
             return empty
@@ -245,33 +246,10 @@ class CoreStructureMixin:
             assert protected_pivot is not None and target_pivot is not None
 
             if bias == 'bullish':
-                # V87: promote HL when a higher confirmed swing low forms in pullback
-                hl_promote = [
-                    l for l in confirmed_lows(i)
-                    if l.index > (protected_idx or 0)
-                    and bl(df, l.index) > protected_pivot
-                    and bl(df, l.index) < target_pivot
-                ]
-                if hl_promote:
-                    best_hl = max(hl_promote, key=lambda l: l.index)
-                    protected_pivot = float(bl(df, best_hl.index))
-                    protected_idx = best_hl.index
-
-                # 3. Bearish CHoCH — body close below active HL
+                # Bearish CHoCH — body close below HL_major (range lock: no pivot promotion in pullback)
                 if i > last_event_bar and close < protected_pivot:
-                    leg_highs = [
-                        h for h in confirmed_highs(i)
-                        if (protected_idx or 0) <= h.index <= i
-                    ]
-                    if leg_highs:
-                        lh_pt = max(leg_highs, key=lambda h: bh(df, h.index))
-                        lh_idx = lh_pt.index
-                    else:
-                        lh_idx = target_idx if target_idx is not None else i
-                    ll_cand = deepest_confirmed_low(i, i)
-                    if ll_cand is None:
-                        ll_cand = swing_pt(i, 'low')
-                    ll_idx = ll_cand.index
+                    lh_idx = target_idx if target_idx is not None else i
+                    ll_idx = i
                     bias = 'bearish'
                     _set_bearish_pivots(lh_idx, ll_idx)
                     last_event_bar = i
@@ -326,31 +304,9 @@ class CoreStructureMixin:
                 continue
 
             if bias == 'bearish':
-                lh_promote = [
-                    h for h in confirmed_highs(i)
-                    if h.index > (protected_idx or 0)
-                    and bh(df, h.index) < protected_pivot
-                    and bh(df, h.index) > target_pivot
-                ]
-                if lh_promote:
-                    best_lh = max(lh_promote, key=lambda h: h.index)
-                    protected_pivot = float(bh(df, best_lh.index))
-                    protected_idx = best_lh.index
-
                 if i > last_event_bar and close > protected_pivot:
-                    leg_lows = [
-                        l for l in confirmed_lows(i)
-                        if (protected_idx or 0) <= l.index <= i
-                    ]
-                    if leg_lows:
-                        hl_pt = min(leg_lows, key=lambda l: bl(df, l.index))
-                        hl_idx = hl_pt.index
-                    else:
-                        hl_idx = target_idx if target_idx is not None else i
-                    hh_cand = highest_confirmed_high(i, i)
-                    if hh_cand is None:
-                        hh_cand = swing_pt(i, 'high')
-                    hh_idx = hh_cand.index
+                    hl_idx = target_idx if target_idx is not None else i
+                    hh_idx = i
                     bias = 'bullish'
                     _set_bullish_pivots(hl_idx, hh_idx)
                     last_event_bar = i
@@ -425,12 +381,30 @@ class CoreStructureMixin:
             protected_high = protected_pivot
             structural_hh = target_pivot
 
+        is_internal_pullback = False
+        if (
+            bias in ('bullish', 'bearish')
+            and protected_pivot is not None
+            and target_pivot is not None
+            and len(df) > 0
+        ):
+            last_close = float(df['close'].iloc[-1])
+            if bias == 'bullish':
+                is_internal_pullback = (
+                    float(protected_pivot) <= last_close <= float(target_pivot)
+                )
+            else:
+                is_internal_pullback = (
+                    float(target_pivot) <= last_close <= float(protected_pivot)
+                )
+
         if debug and trend != 'neutral':
             kind = 'CHoCH' if isinstance(latest_signal, CHoCH) else 'BOS'
             print(
-                f"   📐 [V82 SMC SM] trend={trend.upper()} "
+                f"   📐 [V89 SMC SM] trend={trend.upper()} "
                 f"HL/LH={protected_pivot} HH/LL={target_pivot} last={kind} "
-                f"@bar{getattr(latest_signal, 'index', '?')}"
+                f"@bar{getattr(latest_signal, 'index', '?')} "
+                f"internal_pb={is_internal_pullback}"
             )
 
         return {
@@ -446,6 +420,7 @@ class CoreStructureMixin:
             'structural_hl': structural_hl,
             'protected_idx': protected_idx,
             'target_idx': target_idx,
+            'is_internal_pullback': is_internal_pullback,
         }
 
     def detect_choch_and_bos(self, df: pd.DataFrame) -> Tuple[List[CHoCH], List[BOS]]:

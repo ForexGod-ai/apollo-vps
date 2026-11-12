@@ -36,6 +36,8 @@ class ScanOrchestratorMixin:
         debug: bool = False,  # ✅ V10.4 FIX CRASH: param explicit — era UnboundLocalError!
         stored_poi_top: Optional[float] = None,  # V43.0: passive preserve signal (JSON in Etapa 2)
         stored_poi_bottom: Optional[float] = None,
+        stored_protected_idx: Optional[int] = None,
+        stored_target_idx: Optional[int] = None,
         d1_ctx: Optional[D1AuthContext] = None,  # V67: cached D1 authority from scanner
     ) -> Optional[TradeSetup]:
         """
@@ -70,4 +72,8 @@ class ScanOrchestratorMixin:
         4. Check 4H for CHoCH confirmation (pullback finished)
         5. Return complete setup
         """
-        return self._scan_through_poi_validation(            symbol, df_daily, df_4h, priority, require_4h_choch,            skip_fvg_quality, debug, stored_poi_top, stored_poi_bottom, d1_ctx,        )
+        return self._scan_through_poi_validation(
+            symbol, df_daily, df_4h, priority, require_4h_choch,
+            skip_fvg_quality, debug, stored_poi_top, stored_poi_bottom, d1_ctx,
+            stored_protected_idx, stored_target_idx,
+        )

@@ -40,6 +40,7 @@ class D1AuthorityMixin:
             protected_high=None,
             protected_idx=None,
             target_idx=None,
+            is_internal_pullback=False,
         )
         if df is None or df.empty:
             return empty
@@ -127,6 +128,7 @@ class D1AuthorityMixin:
             protected_high=sm.get('protected_high'),
             protected_idx=sm.get('protected_idx'),
             target_idx=sm.get('target_idx'),
+            is_internal_pullback=bool(sm.get('is_internal_pullback')),
         )
 
     def resolve_authoritative_d1_bias(

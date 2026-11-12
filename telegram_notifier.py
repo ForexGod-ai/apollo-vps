@@ -212,7 +212,17 @@ def _scan_card_wait_hint(setup: Any) -> str:
         return 'Așteptăm zonă W1'
     if status == 'WAITING_D1_PULLBACK':
         if _setup_attr(setup, 'h4_confirmed', False):
+            if (
+                _setup_attr(setup, 'poi_was_touched', False)
+                or _setup_attr(setup, 'poi_touched_active', False)
+            ):
+                return 'POI atins — așteptăm confirmare CHoCH 4H'
             return 'Așteptăm retragere la POI / zonă 4H'
+        if (
+            _setup_attr(setup, 'poi_was_touched', False)
+            or _setup_attr(setup, 'poi_touched_active', False)
+        ):
+            return 'POI atins — așteptăm confirmare CHoCH 4H'
         return 'Așteptăm pullback la POI Daily'
     if status == 'WAITING_4H_PULLBACK':
         return 'Așteptăm retragere 4H'
@@ -399,6 +409,13 @@ def _format_radar_exec_lines(
                 f"<code>{format_telegram_price(symbol, price_4h)}</code>"
             )
         return "📡 ✅ 4H CHoCH confirmat"
+    poi_touched = bool(
+        _setup_attr(setup, 'poi_was_touched', False)
+        or _setup_attr(setup, 'poi_touched_active', False)
+    )
+    if poi_touched and not h4_confirmed:
+        if 'pullback la POI Daily' in wait_hint:
+            return "📡 4H: 🔍 POI atins — așteptăm confirmare CHoCH 4H"
     return f"📡 4H: ⏳ {wait_hint}"
 
 
@@ -942,8 +959,13 @@ class TelegramNotifier:
             confidence = "HIGH" if fused_score >= 75 else "MED" if fused_score >= 60 else "LOW"
             rec = getattr(setup, 'ml_recommendation', 'REVIEW')
             rec_badge = "EXECUTE" if rec == 'TAKE' else "REVIEW" if rec == 'REVIEW' else "SKIP"
+            w_d_ok = bool(_setup_attr(setup, 'w_d_aligned', True))
+            if w1_counter or not w_d_ok:
+                footer = "<i>BLOCAT (W1 opus)</i>"
+            else:
+                footer = "<i>informativ</i>"
             block2_parts.append(
-                f"🧠 <b>AI: {fused_score}% ({confidence})</b> · {rec_badge} · <i>informativ</i>"
+                f"🧠 <b>AI: {fused_score}% ({confidence})</b> · {rec_badge} · {footer}"
             )
 
         if pair_stats:

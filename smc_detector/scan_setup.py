@@ -25,7 +25,7 @@ from smc_detector.models import (
 class ScanSetupMixin:
     """V67 C: scan D1/FVG/POI phase."""
 
-    def _scan_through_poi_validation(        self,        symbol: str,        df_daily: pd.DataFrame,        df_4h: pd.DataFrame,        priority: int,        require_4h_choch: bool,        skip_fvg_quality: bool,        debug: bool,        stored_poi_top: Optional[float],        stored_poi_bottom: Optional[float],        d1_ctx: Optional[D1AuthContext],    ):        # ✅ V10.4 FIX CRASH: alias debug in corpul funcției
+    def _scan_through_poi_validation(        self,        symbol: str,        df_daily: pd.DataFrame,        df_4h: pd.DataFrame,        priority: int,        require_4h_choch: bool,        skip_fvg_quality: bool,        debug: bool,        stored_poi_top: Optional[float],        stored_poi_bottom: Optional[float],        d1_ctx: Optional[D1AuthContext],        stored_protected_idx: Optional[int] = None,        stored_target_idx: Optional[int] = None,    ):        # ✅ V10.4 FIX CRASH: alias debug in corpul funcției
         # V67: fără NZDCAD forțat — debug controlat de SCANNER_DEBUG env
         debug = debug
 
@@ -185,6 +185,12 @@ class ScanSetupMixin:
             sm_protected_high=_sm_ph,
             leg_choch=leg_choch,
             protected_idx=_protected_idx,
+            target_idx=d1_ctx.target_idx if d1_ctx is not None else None,
+            is_internal_pullback=bool(
+                d1_ctx.is_internal_pullback if d1_ctx is not None else False
+            ),
+            stored_protected_idx=stored_protected_idx,
+            stored_target_idx=stored_target_idx,
             debug=debug,
         )
         fvg = _poi_res.fvg
