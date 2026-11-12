@@ -131,6 +131,8 @@ class D1AuthContext:
     swing_l: List['SwingPoint']
     protected_low: Optional[float] = None
     protected_high: Optional[float] = None
+    protected_idx: Optional[int] = None
+    target_idx: Optional[int] = None
 
     def as_dict(self) -> dict:
         return {
@@ -145,6 +147,8 @@ class D1AuthContext:
             'd1_signal_type': self.d1_signal_type,
             'protected_low': self.protected_low,
             'protected_high': self.protected_high,
+            'protected_idx': self.protected_idx,
+            'target_idx': self.target_idx,
         }
 
 
@@ -186,6 +190,8 @@ class TradeSetup:
     d1_signal_type: Optional[str] = None  # V63: CHoCH or BOS
     poi_was_touched: bool = False  # V86: touch istoric Daily pe POI
     poi_touched_active: bool = False  # alias pentru card / JSON
+    d1_protected_idx: Optional[int] = None  # V87 SM pivot bar
+    d1_target_idx: Optional[int] = None
     h4_confirmed: bool = False
     h4_event_price: Optional[float] = None
     h4_event_type: Optional[str] = None  # CHoCH | BOS

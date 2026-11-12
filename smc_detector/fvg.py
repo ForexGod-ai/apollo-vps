@@ -322,6 +322,8 @@ class FvgMixin:
         current_price: Optional[float] = None,
         sm_protected_low: Optional[float] = None,
         sm_protected_high: Optional[float] = None,
+        leg_anchor_index: Optional[int] = None,
+        protected_bar: Optional[int] = None,
         debug: bool = False,
     ) -> Optional[FVG]:
         """🎯 GLITCH IN MATRIX - FVG DETECTION (V8.1 - ORDERFLOW ALIGNED)
@@ -366,8 +368,17 @@ class FvgMixin:
         # V10.4 limita la ultimele 30 bare → bloca FVG-urile formate la bara 40-70 dintr-un range de 100
         # V10.6: folosim întreg intervalul [choch.index → prezent], exact cum vede traderul pe chart
         raw_start = choch.index if hasattr(choch, 'index') else 0
+        anchor_idx = leg_anchor_index if leg_anchor_index is not None else raw_start
         pre_signal = 80 if dealing_range is not None else 20
         start_idx = max(0, raw_start - pre_signal)
+        stype = (strategy_type or '').lower()
+
+        def _v87_index_floor(fvg: FVG) -> bool:
+            if stype == 'reversal':
+                return fvg.index >= max(0, anchor_idx - 2)
+            if stype == 'continuation' and protected_bar is not None:
+                return fvg.index >= int(protected_bar)
+            return True
         
         # 🔥 V8.1: ORDERFLOW DIRECTION - Only search for FVGs aligned with CHoCH/BOS direction
         orderflow_direction = choch.direction  # 'bullish' or 'bearish'
@@ -429,6 +440,7 @@ class FvgMixin:
                 f for f in all_fvgs
                 if not self.fvg_mitigated_by_daily_close(df, f)
             ]
+            all_fvgs = [f for f in all_fvgs if _v87_index_floor(f)]
 
         after_mitigation_fvgs = list(all_fvgs)
 

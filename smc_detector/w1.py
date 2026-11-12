@@ -34,6 +34,37 @@ class W1Mixin:
         return None
 
     @staticmethod
+    def _daily_atr_half(df: Optional[pd.DataFrame], period: int = 14) -> float:
+        if df is None or len(df) < period + 1:
+            return 0.0
+        high = df['high'].astype(float)
+        low = df['low'].astype(float)
+        close = df['close'].astype(float)
+        prev = close.shift(1)
+        tr = pd.concat(
+            [(high - low).abs(), (high - prev).abs(), (low - prev).abs()],
+            axis=1,
+        ).max(axis=1)
+        atr = float(tr.tail(period).mean())
+        return 0.5 * atr
+
+    @classmethod
+    def _w1_zone_touched_recently(
+        cls,
+        df: Optional[pd.DataFrame],
+        w_lo: float,
+        w_hi: float,
+        lookback: int = 15,
+    ) -> bool:
+        if df is None or df.empty:
+            return False
+        tail = df.iloc[-lookback:]
+        for _, row in tail.iterrows():
+            if float(row['low']) <= w_hi and float(row['high']) >= w_lo:
+                return True
+        return False
+
+    @staticmethod
     def daily_poi_inside_weekly_zone(
         daily_poi_top: Optional[float],
         daily_poi_bottom: Optional[float],
@@ -196,6 +227,8 @@ class W1Mixin:
         w1_poi_top: Optional[float] = None,
         w1_poi_bottom: Optional[float] = None,
         current_price: Optional[float] = None,
+        d1_strategy_type: Optional[str] = None,
+        df_daily: Optional[pd.DataFrame] = None,
     ) -> dict:
         """
         Faza 2: clasificare W+D — soft wait, fără reject hard.
@@ -227,12 +260,41 @@ class W1Mixin:
             if current_price is not None:
                 w_lo = min(float(w1_poi_bottom), float(w1_poi_top))
                 w_hi = max(float(w1_poi_bottom), float(w1_poi_top))
-                if not (w_lo <= float(current_price) <= w_hi):
-                    return {
-                        'w_d_aligned': True,
-                        'status': 'WAITING_W_ZONE',
-                        'reason': 'price_outside_w1_poi',
-                    }
+                in_box = w_lo <= float(current_price) <= w_hi
+                if not in_box:
+                    st = (d1_strategy_type or '').lower()
+                    if st == 'reversal':
+                        pass
+                    elif st == 'continuation' and self.daily_poi_inside_weekly_zone(
+                        daily_poi_top,
+                        daily_poi_bottom,
+                        w1_poi_top,
+                        w1_poi_bottom,
+                    ):
+                        pass
+                    elif self._w1_zone_touched_recently(df_daily, w_lo, w_hi):
+                        pass
+                    else:
+                        half_atr = self._daily_atr_half(df_daily)
+                        if half_atr > 0:
+                            dist = min(
+                                abs(float(current_price) - w_lo),
+                                abs(float(current_price) - w_hi),
+                            )
+                            if dist <= half_atr:
+                                pass
+                            else:
+                                return {
+                                    'w_d_aligned': True,
+                                    'status': 'WAITING_W_ZONE',
+                                    'reason': 'price_outside_w1_poi',
+                                }
+                        else:
+                            return {
+                                'w_d_aligned': True,
+                                'status': 'WAITING_W_ZONE',
+                                'reason': 'price_outside_w1_poi',
+                            }
 
         return {'w_d_aligned': True, 'status': None, 'reason': 'w_d_aligned'}
 
@@ -260,6 +322,7 @@ class W1Mixin:
         w1_bias: str,
         w1_poi: Optional[dict] = None,
         current_price: Optional[float] = None,
+        df_daily: Optional[pd.DataFrame] = None,
     ) -> Optional['TradeSetup']:
         """Faza 2: aplică W+D soft sync pe TradeSetup (status + câmpuri JSON)."""
         if setup is None or not getattr(setup, 'daily_choch', None):
@@ -282,6 +345,8 @@ class W1Mixin:
             setup.w1_poi_top,
             setup.w1_poi_bottom,
             current_price=current_price,
+            d1_strategy_type=getattr(setup, 'strategy_type', None),
+            df_daily=df_daily,
         )
         setup.w_d_aligned = bool(sync.get('w_d_aligned', True))
         _prev_status = getattr(setup, 'status', '') or ''

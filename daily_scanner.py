@@ -594,6 +594,7 @@ class DailyScanner:
                         w1_bias_map.get(symbol, 'NEUTRAL'),
                         w1_poi=w1_poi,
                         current_price=_live_px,
+                        df_daily=df_daily,
                     )
 
                 if setup:
@@ -1770,9 +1771,20 @@ def _rehydrate_poi_from_bos_range(
     range_state = ctx.range_state
 
     price = float(df_daily['close'].iloc[-1])
+    _adr_anchor = (
+        ctx.protected_idx if ctx.protected_idx is not None else latest_signal.index
+    )
     adr = detector.build_active_dealing_range(
-        df_daily, swing_h, swing_l, latest_signal.index, current_trend,
-        range_state=range_state, symbol=sym,
+        df_daily,
+        swing_h,
+        swing_l,
+        _adr_anchor,
+        current_trend,
+        range_state=range_state,
+        symbol=sym,
+        sm_protected_low=ctx.protected_low,
+        sm_protected_high=ctx.protected_high,
+        latest_signal=latest_signal,
     )
     out = dict(setup_dict)
     if out.get('poi_top') is not None and out.get('legacy_poi_top') is None:
@@ -1780,10 +1792,19 @@ def _rehydrate_poi_from_bos_range(
         out['legacy_poi_bottom'] = out.get('poi_bottom')
 
     poi_res = detector.resolve_d1_poi(
-        df_daily, latest_signal, price, current_trend, _resolved_strategy, adr,
+        df_daily,
+        latest_signal,
+        price,
+        current_trend,
+        _resolved_strategy,
+        adr,
         symbol=sym,
         stored_poi_top=None,
         stored_poi_bottom=None,
+        sm_protected_low=ctx.protected_low,
+        sm_protected_high=ctx.protected_high,
+        leg_choch=ctx.leg_choch,
+        protected_idx=ctx.protected_idx,
     )
     out = _apply_poi_to_setup_dict(out, poi_res)
 
@@ -1797,6 +1818,10 @@ def _rehydrate_poi_from_bos_range(
     out['d1_bias_direction'] = current_trend
     out['daily_bias'] = current_trend.upper()
     out['direction'] = 'buy' if current_trend == 'bullish' else 'sell'
+    out['d1_protected_idx'] = ctx.protected_idx
+    out['d1_target_idx'] = ctx.target_idx
+    out['d1_protected_low'] = ctx.protected_low
+    out['d1_protected_high'] = ctx.protected_high
     if out.get('status') not in ('TRADE_OPEN', 'PARTIAL_OPEN'):
         out['status'] = 'WAITING_D1_PULLBACK'
     for key in (
@@ -1832,15 +1857,61 @@ def _try_bos_new_range_evolution(
     range_state = ctx.range_state
     if latest_signal is None or leg_choch is None:
         return setup_dict
+
+    protected_rotated = False
+    if ctx.protected_idx is not None:
+        stored_pidx = setup_dict.get('d1_protected_idx')
+        if stored_pidx is not None and int(stored_pidx) != int(ctx.protected_idx):
+            protected_rotated = True
+    sm_pl = ctx.protected_low
+    sm_ph = ctx.protected_high
+    if sm_pl is not None and setup_dict.get('d1_protected_low') is not None:
+        try:
+            if abs(float(sm_pl) - float(setup_dict['d1_protected_low'])) > 1e-9:
+                protected_rotated = True
+        except (TypeError, ValueError):
+            pass
+    if sm_ph is not None and setup_dict.get('d1_protected_high') is not None:
+        try:
+            if abs(float(sm_ph) - float(setup_dict['d1_protected_high'])) > 1e-9:
+                protected_rotated = True
+        except (TypeError, ValueError):
+            pass
+
+    if protected_rotated and isinstance(latest_signal, BOS):
+        out = _rehydrate_poi_from_bos_range(
+            detector,
+            df_daily,
+            setup_dict,
+            sym,
+            poi_source_label='V87 BOS protected pivot rotation',
+        )
+        print(
+            f"  [V87 BOS ROTATION] {sym}: protected pivot bar "
+            f"{setup_dict.get('d1_protected_idx')} → {ctx.protected_idx} — POI re-resolved"
+        )
+        return out
+
     if not isinstance(latest_signal, BOS):
         return setup_dict
     if not detector._expansion_bos_confirms_new_range(df_daily, leg_choch, latest_signal):
         return setup_dict
 
     price = float(df_daily['close'].iloc[-1])
+    _adr_anchor = (
+        ctx.protected_idx if ctx.protected_idx is not None else latest_signal.index
+    )
     adr = detector.build_active_dealing_range(
-        df_daily, swing_h, swing_l, latest_signal.index, current_trend,
-        range_state=range_state, symbol=sym,
+        df_daily,
+        swing_h,
+        swing_l,
+        _adr_anchor,
+        current_trend,
+        range_state=range_state,
+        symbol=sym,
+        sm_protected_low=ctx.protected_low,
+        sm_protected_high=ctx.protected_high,
+        latest_signal=latest_signal,
     )
     if adr is None:
         return setup_dict
@@ -1869,7 +1940,14 @@ def _try_bos_new_range_evolution(
     stale_signal = setup_dict.get('d1_signal_type') != 'BOS'
     is_reversal = _norm_strategy_type(setup_dict.get('strategy_type')) == 'reversal'
 
-    if not (is_reversal or poi_conflict or stale_signal or adr_shift or setup_dict.get('preserve_stored_poi')):
+    if not (
+        is_reversal
+        or poi_conflict
+        or stale_signal
+        or adr_shift
+        or protected_rotated
+        or setup_dict.get('preserve_stored_poi')
+    ):
         return setup_dict
 
     out = _rehydrate_poi_from_bos_range(
@@ -2031,6 +2109,9 @@ def _apply_v42_macro_override(old: dict, new_macro: dict) -> dict:
         for key in _RADAR_RESET_KEYS:
             merged.pop(key, None)
         merged['status'] = 'WAITING_4H_CHOCH'
+        merged['preserve_stored_poi'] = False
+        merged.pop('legacy_poi_top', None)
+        merged.pop('legacy_poi_bottom', None)
 
     return merged
 
@@ -2108,6 +2189,10 @@ def _trade_setup_to_monitoring_dict(setup: TradeSetup, setup_time_str: str) -> d
         "h4_event_price": getattr(setup, 'h4_event_price', None),
         "h4_event_type": getattr(setup, 'h4_event_type', None),
     }
+    if getattr(setup, 'd1_protected_idx', None) is not None:
+        out['d1_protected_idx'] = setup.d1_protected_idx
+    if getattr(setup, 'd1_target_idx', None) is not None:
+        out['d1_target_idx'] = setup.d1_target_idx
     out.update(_v43_fields_from_setup(setup))
     return _sanitize_monitoring_value(out)
 

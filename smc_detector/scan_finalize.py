@@ -503,6 +503,12 @@ class ScanFinalizeMixin:
             h4_confirmed=h4_confirmed,
             h4_event_price=float(h4_event_price) if h4_event_price is not None else None,
             h4_event_type=h4_event_type,
+            d1_protected_idx=(
+                d1_ctx.protected_idx if d1_ctx is not None else None
+            ),
+            d1_target_idx=(
+                d1_ctx.target_idx if d1_ctx is not None else None
+            ),
         )
         
         # 💧 V4.0: Store liquidity sweep info (for Telegram reporting)

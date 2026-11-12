@@ -38,6 +38,8 @@ class D1AuthorityMixin:
             swing_l=[],
             protected_low=None,
             protected_high=None,
+            protected_idx=None,
+            target_idx=None,
         )
         if df is None or df.empty:
             return empty
@@ -74,12 +76,36 @@ class D1AuthorityMixin:
 
         d1_signal_type = 'CHoCH' if strategy_type == 'reversal' else 'BOS'
 
-        if bos_list and current_trend in ('bullish', 'bearish'):
+        reversal_choch = None
+        for c in reversed(chochs):
+            pt = getattr(c, 'previous_trend', None)
+            if pt and pt != c.direction:
+                reversal_choch = c
+                break
+
+        suppress_continuation_override = False
+        if isinstance(latest, CHoCH):
+            pt = getattr(latest, 'previous_trend', None)
+            if pt and pt != latest.direction:
+                suppress_continuation_override = True
+        if reversal_choch is not None and bos_list:
+            same_dir_bos_pre = [
+                b for b in bos_list if getattr(b, 'direction', '') == current_trend
+            ]
+            if same_dir_bos_pre and reversal_choch.index >= same_dir_bos_pre[-1].index:
+                suppress_continuation_override = True
+
+        if (
+            bos_list
+            and current_trend in ('bullish', 'bearish')
+            and not suppress_continuation_override
+        ):
             same_dir_bos = [b for b in bos_list if getattr(b, 'direction', '') == current_trend]
             if same_dir_bos:
                 strategy_type = 'continuation'
-                d1_signal_type = 'BOS'
                 latest = same_dir_bos[-1]
+
+        d1_signal_type = 'CHoCH' if strategy_type == 'reversal' else 'BOS'
 
         return D1AuthContext(
             symbol=symbol,
@@ -99,6 +125,8 @@ class D1AuthorityMixin:
             swing_l=swing_l,
             protected_low=sm.get('protected_low'),
             protected_high=sm.get('protected_high'),
+            protected_idx=sm.get('protected_idx'),
+            target_idx=sm.get('target_idx'),
         )
 
     def resolve_authoritative_d1_bias(

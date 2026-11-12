@@ -725,6 +725,7 @@ class PoiMixin:
         adr: Optional[ActiveDealingRange],
         current_price: Optional[float] = None,
         audit_out: Optional[dict] = None,
+        protected_bar: Optional[int] = None,
     ) -> Optional[FVG]:
         """
         CONTINUITY: dacă primul FVG post-BOS e mitigat, caută în cascadă:
@@ -739,8 +740,9 @@ class PoiMixin:
             df, latest_signal, adr=adr,
         )
         scan_end = min(len(df) - 1, sig_idx + 40)
-        all_fvgs = self._scan_organic_fvgs(df, origin_idx, scan_end, direction)
-        impulse_fvgs = [f for f in all_fvgs if origin_idx <= f.index <= scan_end]
+        scan_start = max(origin_idx, int(protected_bar)) if protected_bar is not None else origin_idx
+        all_fvgs = self._scan_organic_fvgs(df, scan_start, scan_end, direction)
+        impulse_fvgs = [f for f in all_fvgs if scan_start <= f.index <= scan_end]
         if adr is not None:
             impulse_fvgs = [
                 f for f in impulse_fvgs
@@ -849,6 +851,8 @@ class PoiMixin:
         audit_out: Optional[dict] = None,
         sm_protected_low: Optional[float] = None,
         sm_protected_high: Optional[float] = None,
+        leg_choch=None,
+        protected_idx: Optional[int] = None,
         debug: bool = False,
     ) -> POIResolution:
         """Faza A — POI organic only; no JSON preserve, no synthetic Equilibrium clip."""
@@ -872,6 +876,11 @@ class PoiMixin:
                 'price_inside': adr.price_inside,
             }
 
+        leg_anchor = (
+            getattr(leg_choch, 'index', None)
+            if leg_choch is not None
+            else getattr(latest_signal, 'index', None)
+        )
         fvg_audit: dict = {}
         selected = self.detect_fvg(
             df,
@@ -882,6 +891,8 @@ class PoiMixin:
             current_price=current_price,
             sm_protected_low=sm_protected_low,
             sm_protected_high=sm_protected_high,
+            leg_anchor_index=leg_anchor,
+            protected_bar=protected_idx,
         )
         if (
             selected is None
@@ -894,6 +905,7 @@ class PoiMixin:
                 adr,
                 current_price=current_price,
                 audit_out=fvg_audit,
+                protected_bar=protected_idx,
             )
             if selected is not None:
                 meta['poi_source'] = fvg_audit.get(

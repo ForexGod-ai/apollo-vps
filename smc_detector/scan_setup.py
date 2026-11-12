@@ -140,11 +140,21 @@ class ScanSetupMixin:
         _swing_l = self.detect_swing_lows(df_daily)
         _sm_pl = d1_ctx.protected_low if d1_ctx is not None else None
         _sm_ph = d1_ctx.protected_high if d1_ctx is not None else None
+        _leg_anchor = (
+            d1_ctx.protected_idx
+            if d1_ctx is not None and d1_ctx.protected_idx is not None
+            else (
+                leg_choch.index
+                if leg_choch is not None
+                else latest_signal.index
+            )
+        )
+        _protected_idx = d1_ctx.protected_idx if d1_ctx is not None else None
         _adr = self.build_active_dealing_range(
             df_daily,
             _swing_h,
             _swing_l,
-            latest_signal.index,
+            _leg_anchor,
             current_trend,
             range_state=_range_state,
             symbol=symbol,
@@ -173,6 +183,8 @@ class ScanSetupMixin:
             stored_poi_bottom=stored_poi_bottom,
             sm_protected_low=_sm_pl,
             sm_protected_high=_sm_ph,
+            leg_choch=leg_choch,
+            protected_idx=_protected_idx,
             debug=debug,
         )
         fvg = _poi_res.fvg
