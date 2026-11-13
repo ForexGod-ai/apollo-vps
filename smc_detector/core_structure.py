@@ -42,11 +42,10 @@ class CoreStructureMixin:
         debug: bool = False,
     ) -> dict:
         """
-        V89 — D1 SMC: locked dealing range until BOS/CHoCH on major pivots (no internal promotion).
+        V90 — D1 SMC: major dealing range (major swings only).
 
-        State: bias, protected_pivot (HL if bullish / LH if bearish), target_pivot (HH/LL).
-        Pullback = price between protected and target; trend flips only on body close through
-        protected_pivot. BOS extends target and refreshes protected from impulse-origin fractal.
+        target_pivot tracks confirmed major HH/LL; protected_pivot updates ONLY on major BOS
+        (min low / max high over [old_protected_idx, bar]). Internal pullback: no CHoCH/BOS.
         """
         empty = {
             'trend': 'neutral',
@@ -185,6 +184,62 @@ class CoreStructureMixin:
                 return highest.index, float(bh(df, highest.index))
             return end_idx, float(bh(df, end_idx))
 
+        def _min_body_low_between(start_idx: int, end_idx: int) -> Tuple[int, float]:
+            start_idx = max(0, int(start_idx))
+            end_idx = min(int(end_idx), len(df) - 1)
+            best_i = start_idx
+            best_v = bl(df, start_idx)
+            for j in range(start_idx, end_idx + 1):
+                v = bl(df, j)
+                if v < best_v:
+                    best_v = v
+                    best_i = j
+            return best_i, float(best_v)
+
+        def _max_body_high_between(start_idx: int, end_idx: int) -> Tuple[int, float]:
+            start_idx = max(0, int(start_idx))
+            end_idx = min(int(end_idx), len(df) - 1)
+            best_i = start_idx
+            best_v = bh(df, start_idx)
+            for j in range(start_idx, end_idx + 1):
+                v = bh(df, j)
+                if v > best_v:
+                    best_v = v
+                    best_i = j
+            return best_i, float(best_v)
+
+        def _sync_major_target_high(bar_i: int) -> None:
+            nonlocal target_pivot, target_idx
+            if protected_idx is None:
+                return
+            pool = [
+                h for h in major_highs
+                if h.index + fw <= bar_i and h.index >= protected_idx
+            ]
+            if not pool:
+                return
+            best = max(pool, key=lambda h: bh(df, h.index))
+            px = float(bh(df, best.index))
+            if target_idx is None or best.index >= target_idx or px > float(target_pivot or 0):
+                target_idx = best.index
+                target_pivot = px
+
+        def _sync_major_target_low(bar_i: int) -> None:
+            nonlocal target_pivot, target_idx
+            if protected_idx is None:
+                return
+            pool = [
+                l for l in major_lows
+                if l.index + fw <= bar_i and l.index >= protected_idx
+            ]
+            if not pool:
+                return
+            best = min(pool, key=lambda l: bl(df, l.index))
+            px = float(bl(df, best.index))
+            if target_idx is None or best.index >= target_idx or px < float(target_pivot or 1e18):
+                target_idx = best.index
+                target_pivot = px
+
         for i in range(1, len(df)):
             close = float(df['close'].iloc[i])
             ct = self._bar_time(df, i)
@@ -246,7 +301,13 @@ class CoreStructureMixin:
             assert protected_pivot is not None and target_pivot is not None
 
             if bias == 'bullish':
-                # Bearish CHoCH — body close below HL_major (range lock: no pivot promotion in pullback)
+                _sync_major_target_high(i)
+                lo_p = float(protected_pivot)
+                hi_p = float(target_pivot)
+                if lo_p <= close <= hi_p:
+                    continue
+
+                # Bearish CHoCH — body close below HL_major
                 if i > last_event_bar and close < protected_pivot:
                     lh_idx = target_idx if target_idx is not None else i
                     ll_idx = i
@@ -267,43 +328,47 @@ class CoreStructureMixin:
                     leg_choch = ev
                     continue
 
-                # 1. BOS bullish — close above HH target (confirmed fractal high)
+                # BOS bullish — major HH only; promote protected = min low [old_protected_idx, i]
                 if close > target_pivot:
                     pool = [
                         h for h in major_highs
                         if h.index + fw <= i and close > bh(df, h.index)
                     ]
-                    if not pool:
-                        pool = [
-                            h for h in confirmed_highs(i)
-                            if close > bh(df, h.index)
-                        ]
                     if pool:
                         br_h = max(pool, key=lambda h: bh(df, h.index))
-                        if target_idx is not None and br_h.index <= target_idx:
-                            continue
-                        start = target_idx if target_idx is not None else 0
-                        hl_idx, hl_px = _hl_from_impulse(start, i)
-                        protected_pivot = hl_px
-                        protected_idx = hl_idx
-                        target_idx = br_h.index
-                        target_pivot = float(bh(df, br_h.index))
-                        last_event_bar = i
-                        ev = BOS(
-                            index=i,
-                            direction='bullish',
-                            break_price=target_pivot,
-                            candle_time=ct,
-                            swing_broken=br_h,
-                        )
-                        bos_list.append(ev)
-                        latest_signal = ev
+                    elif target_idx is not None:
+                        br_h = swing_pt(target_idx, 'high')
+                    else:
+                        continue
+                    if bh(df, br_h.index) <= target_pivot + 1e-12 and close <= target_pivot + 1e-12:
+                        continue
+                    old_prot = protected_idx if protected_idx is not None else 0
+                    hl_idx, hl_px = _min_body_low_between(old_prot, i)
+                    protected_pivot = hl_px
+                    protected_idx = hl_idx
+                    target_idx = br_h.index
+                    target_pivot = float(bh(df, br_h.index))
+                    last_event_bar = i
+                    ev = BOS(
+                        index=i,
+                        direction='bullish',
+                        break_price=target_pivot,
+                        candle_time=ct,
+                        swing_broken=br_h,
+                    )
+                    bos_list.append(ev)
+                    latest_signal = ev
                     continue
 
-                # 2. Pullback: protected_pivot < close <= target_pivot — no state change
                 continue
 
             if bias == 'bearish':
+                _sync_major_target_low(i)
+                lo_p = float(target_pivot)
+                hi_p = float(protected_pivot)
+                if lo_p <= close <= hi_p:
+                    continue
+
                 if i > last_event_bar and close > protected_pivot:
                     hl_idx = target_idx if target_idx is not None else i
                     hh_idx = i
@@ -329,31 +394,30 @@ class CoreStructureMixin:
                         l for l in major_lows
                         if l.index + fw <= i and close < bl(df, l.index)
                     ]
-                    if not pool:
-                        pool = [
-                            l for l in confirmed_lows(i)
-                            if close < bl(df, l.index)
-                        ]
                     if pool:
                         br_l = min(pool, key=lambda l: bl(df, l.index))
-                        if target_idx is not None and br_l.index <= target_idx:
-                            continue
-                        start = target_idx if target_idx is not None else 0
-                        lh_idx, lh_px = _lh_from_impulse(start, i)
-                        protected_pivot = lh_px
-                        protected_idx = lh_idx
-                        target_idx = br_l.index
-                        target_pivot = float(bl(df, br_l.index))
-                        last_event_bar = i
-                        ev = BOS(
-                            index=i,
-                            direction='bearish',
-                            break_price=target_pivot,
-                            candle_time=ct,
-                            swing_broken=br_l,
-                        )
-                        bos_list.append(ev)
-                        latest_signal = ev
+                    elif target_idx is not None:
+                        br_l = swing_pt(target_idx, 'low')
+                    else:
+                        continue
+                    if bl(df, br_l.index) >= target_pivot - 1e-12 and close >= target_pivot - 1e-12:
+                        continue
+                    old_prot = protected_idx if protected_idx is not None else 0
+                    lh_idx, lh_px = _max_body_high_between(old_prot, i)
+                    protected_pivot = lh_px
+                    protected_idx = lh_idx
+                    target_idx = br_l.index
+                    target_pivot = float(bl(df, br_l.index))
+                    last_event_bar = i
+                    ev = BOS(
+                        index=i,
+                        direction='bearish',
+                        break_price=target_pivot,
+                        candle_time=ct,
+                        swing_broken=br_l,
+                    )
+                    bos_list.append(ev)
+                    latest_signal = ev
                     continue
 
                 continue
@@ -401,7 +465,7 @@ class CoreStructureMixin:
         if debug and trend != 'neutral':
             kind = 'CHoCH' if isinstance(latest_signal, CHoCH) else 'BOS'
             print(
-                f"   📐 [V89 SMC SM] trend={trend.upper()} "
+                f"   📐 [V90 SMC SM] trend={trend.upper()} "
                 f"HL/LH={protected_pivot} HH/LL={target_pivot} last={kind} "
                 f"@bar{getattr(latest_signal, 'index', '?')} "
                 f"internal_pb={is_internal_pullback}"

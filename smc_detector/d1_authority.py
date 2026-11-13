@@ -77,11 +77,11 @@ class D1AuthorityMixin:
 
         d1_signal_type = 'CHoCH' if strategy_type == 'reversal' else 'BOS'
 
-        reversal_choch = None
+        latest_flip_choch = None
         for c in reversed(chochs):
             pt = getattr(c, 'previous_trend', None)
             if pt and pt != c.direction:
-                reversal_choch = c
+                latest_flip_choch = c
                 break
 
         suppress_continuation_override = False
@@ -89,22 +89,22 @@ class D1AuthorityMixin:
             pt = getattr(latest, 'previous_trend', None)
             if pt and pt != latest.direction:
                 suppress_continuation_override = True
-        if reversal_choch is not None and bos_list:
-            same_dir_bos_pre = [
-                b for b in bos_list if getattr(b, 'direction', '') == current_trend
-            ]
-            if same_dir_bos_pre and reversal_choch.index >= same_dir_bos_pre[-1].index:
-                suppress_continuation_override = True
 
         if (
             bos_list
             and current_trend in ('bullish', 'bearish')
             and not suppress_continuation_override
         ):
-            same_dir_bos = [b for b in bos_list if getattr(b, 'direction', '') == current_trend]
+            same_dir_bos = [
+                b for b in bos_list if getattr(b, 'direction', '') == current_trend
+            ]
             if same_dir_bos:
-                strategy_type = 'continuation'
-                latest = same_dir_bos[-1]
+                if latest_flip_choch is None:
+                    strategy_type = 'continuation'
+                    latest = same_dir_bos[-1]
+                elif same_dir_bos[-1].index > latest_flip_choch.index:
+                    strategy_type = 'continuation'
+                    latest = same_dir_bos[-1]
 
         d1_signal_type = 'CHoCH' if strategy_type == 'reversal' else 'BOS'
 

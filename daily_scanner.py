@@ -115,6 +115,73 @@ def _scanner_quiet() -> bool:
     return os.getenv('SCANNER_QUIET', '0') == '1'
 
 
+def _scan_inventory_stage_label(
+    ctx: Optional[D1AuthContext],
+    setup: Optional[TradeSetup],
+) -> str:
+    """V90: user-facing stage for MARKET_REPORT 16/16 inventory."""
+    if setup is not None:
+        st = str(getattr(setup, 'status', '') or '').upper()
+        if st == 'WAITING_D1_PULLBACK':
+            return 'Pullback spre POI'
+        if st == 'WAITING_W_ZONE':
+            return 'Zonă W1'
+        if st == 'WAITING_W_D_SYNC':
+            return 'W+D nealiniat'
+        if st in ('WAITING_4H_CHOCH', 'MONITORING'):
+            return 'Confirmare 4H'
+        if st == 'READY':
+            return 'Gata execuție'
+        if st:
+            return st.replace('_', ' ').title()
+        return 'Setup activ'
+    if ctx is None:
+        return 'Fără context D1'
+    trend = (ctx.trend or 'neutral').lower()
+    if trend == 'neutral':
+        mac = (ctx.macro_swings or 'neutral').lower()
+        if mac in ('bullish', 'bearish'):
+            return f'Structură macro {mac.upper()} · fără FVG'
+        return 'D1 neutru · fără setup'
+    if ctx.is_internal_pullback:
+        return 'Pullback în range D1 major'
+    return 'Fără FVG valid încă'
+
+
+def _build_scan_inventory_item(
+    symbol: str,
+    ctx: Optional[D1AuthContext],
+    setup: Optional[TradeSetup],
+) -> dict:
+    """V90: one row per scanned pair for Telegram MARKET_REPORT."""
+    trend = 'NEUTRAL'
+    strat = ''
+    poi_zone = ''
+    if ctx is not None:
+        t = (ctx.trend or 'neutral').lower()
+        if t in ('bullish', 'bearish'):
+            trend = t.upper()
+        elif (ctx.macro_swings or '').lower() in ('bullish', 'bearish'):
+            trend = ctx.macro_swings.upper()
+        st = (ctx.strategy_type or '').lower()
+        strat = 'CONT' if st == 'continuation' else ('REV' if st == 'reversal' else '')
+        if setup is None and t == 'bullish' and ctx.protected_low is not None:
+            poi_zone = f"HL major {float(ctx.protected_low):.5f}"
+        elif setup is None and t == 'bearish' and ctx.protected_high is not None:
+            poi_zone = f"LH major {float(ctx.protected_high):.5f}"
+    if setup is not None and getattr(setup, 'fvg', None):
+        fvg = setup.fvg
+        poi_zone = f"{float(fvg.bottom):.5f}–{float(fvg.top):.5f}"
+    return {
+        'symbol': symbol,
+        'trend': trend,
+        'strategy_type': strat,
+        'has_setup': setup is not None,
+        'poi_zone': poi_zone,
+        'stage_label': _scan_inventory_stage_label(ctx, setup),
+    }
+
+
 def _print_pair_scan_summary(
     symbol: str,
     ctx: D1AuthContext,
@@ -403,6 +470,7 @@ class DailyScanner:
         symbol_price_map = {}  # V40.3: preț D1 close per simbol — soft TTL POI
         symbol_df_daily_map: Dict[str, pd.DataFrame] = {}  # V43.1: post-TP evolution
         d1_auth_cache: Dict[str, D1AuthContext] = {}  # V67: one D1 pipeline per pair
+        scan_inventory: list = []  # V90: MARKET_REPORT 16/16 D1 bias
         _scanner_debug_flag = _scanner_debug()
         _scanner_quiet_flag = _scanner_quiet()
         _deferred_tg_cards: List[dict] = []  # V67: charts after scan report
@@ -467,6 +535,7 @@ class DailyScanner:
                 )
                 
                 if df_daily is None or df_daily.empty:
+                    scan_inventory.append(_build_scan_inventory_item(symbol, None, None))
                     print(f"⚠️  Skipping {symbol} - no Daily data")
                     # 🚨 AUDIT: Log data errors for forensics
                     try:
@@ -487,6 +556,11 @@ class DailyScanner:
                 )
                 
                 if df_4h is None:
+                    scan_inventory.append(
+                        _build_scan_inventory_item(
+                            symbol, d1_auth_cache.get(symbol), None,
+                        )
+                    )
                     print(f"⚠️ Skipping {symbol} - no 4H data")
                     continue
 
@@ -826,6 +900,9 @@ class DailyScanner:
                             )
 
                 _ctx_out = d1_auth_cache.get(symbol)
+                scan_inventory.append(
+                    _build_scan_inventory_item(symbol, _ctx_out, setup),
+                )
                 if _ctx_out is not None:
                     _print_pair_scan_summary(
                         symbol,
@@ -1041,6 +1118,7 @@ class DailyScanner:
                     deep_sleep_until=deep_sleep_until_str,
                     setup_symbols=setup_symbols,
                     persist_missing=persist_missing,
+                    scan_inventory=scan_inventory,
                 )
             except Exception as e:
                 print(f"[ERROR] send_scan_report failed: {e} — trimite versiune simpla")

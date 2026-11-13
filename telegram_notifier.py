@@ -172,6 +172,49 @@ def _render_grouped_setups(setup_symbols: list) -> str:
     return "".join(parts)
 
 
+def _phase_count_line(setup_symbols: list) -> str:
+    """V90: compact totals so MARKET_REPORT phases sum to listed setups."""
+    if not setup_symbols:
+        return ""
+    grouped = _group_setups_by_phase(setup_symbols)
+    bits = []
+    for phase in _PHASE_ORDER:
+        n = len(grouped.get(phase) or [])
+        if n:
+            bits.append(f"{_PHASE_LABELS[phase]}: {n}")
+    if not bits:
+        return ""
+    return "<i>Faze: " + " · ".join(bits) + "</i>\n"
+
+
+def _format_scan_inventory_line(row: dict) -> str:
+    """One inventory row — D1 bias + REV/CONT + stage (V90)."""
+    symbol = row.get('symbol', '?')
+    trend = str(row.get('trend') or 'NEUTRAL').upper()
+    strat = str(row.get('strategy_type') or '—')
+    stage = row.get('stage_label') or '—'
+    if trend == 'BULLISH':
+        dot = '🟢'
+    elif trend == 'BEARISH':
+        dot = '🔴'
+    else:
+        dot = '⚪'
+    st = f" · {strat}" if strat and strat != '—' else ''
+    return f"{dot} <code>{symbol}</code> {trend}{st} — <i>{stage}</i>\n"
+
+
+def _render_scan_inventory(scan_inventory: list) -> str:
+    if not scan_inventory:
+        return ""
+    lines = [
+        f"📋 <b>Analiză completă D1 ({len(scan_inventory)}/16 perechi)</b>\n\n",
+    ]
+    for row in scan_inventory:
+        lines.append(_format_scan_inventory_line(row))
+    lines.append("\n")
+    return "".join(lines)
+
+
 def _scan_report_wait_suffix(sym_info: dict) -> str:
     """Legacy suffix — prefer grouped MARKET_REPORT (V60). Kept for send_daily_summary fallback."""
     phase = _classify_setup_phase(sym_info)
@@ -1352,6 +1395,7 @@ class TelegramNotifier:
         setup_symbols: list = None,
         watching_count: int = None,
         persist_missing: list = None,
+        scan_inventory: list = None,
     ) -> bool:
         """
         V60 MARKET_REPORT — grouped vertical layout, compact header/footer.
@@ -1384,14 +1428,29 @@ class TelegramNotifier:
             _full_setups = [s for s in setup_symbols if not s.get('bias_fallback')]
             _bias_only = [s for s in setup_symbols if s.get('bias_fallback')]
             if _full_setups:
-                report += f"🎯 <b>Setup-uri cu POI ({len(_full_setups)})</b>\n\n"
+                report += f"🎯 <b>Setup-uri cu POI ({len(_full_setups)})</b>\n"
+                report += _phase_count_line(_full_setups)
+                report += "\n"
                 report += _render_grouped_setups(_full_setups)
             if _bias_only:
                 report += (
                     f"📡 <b>Bias D1 fără FVG ({len(_bias_only)})</b>\n"
-                    f"   <i>structură OK — lipsește zona POI Daily</i>\n\n"
+                    f"   <i>structură OK — lipsește zona POI Daily</i>\n"
                 )
+                report += _phase_count_line(_bias_only)
+                report += "\n"
                 report += _render_grouped_setups(_bias_only)
+            if setup_symbols:
+                _listed = len(_full_setups) + len(_bias_only) if _full_setups or _bias_only else 0
+                if _listed:
+                    report += (
+                        f"<i>Total listate în grupe: {_listed}"
+                        f" / {len(setup_symbols)} în JSON</i>\n"
+                    )
+                report += f"{sep}\n"
+
+        if scan_inventory:
+            report += _render_scan_inventory(scan_inventory)
 
         if persist_missing:
             report += "⚠️ <b>Detectate dar nesalvate în JSON</b>\n"
