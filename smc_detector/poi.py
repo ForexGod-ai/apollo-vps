@@ -555,7 +555,7 @@ class PoiMixin:
         target_idx: Optional[int],
         is_internal_pullback: bool = False,
     ) -> bool:
-        """V90: păstrează POI JSON cât timp dealing range-ul major (protected/target idx) nu se rotește."""
+        """V91: păstrează POI JSON cât timp dealing range-ul major (protected/target idx) nu se rotește."""
         if stored_poi_top is None or stored_poi_bottom is None:
             return False
         if is_internal_pullback:
@@ -938,7 +938,7 @@ class PoiMixin:
                 latest_signal,
             )
             meta['preserve_stored_poi'] = True
-            meta['poi_source'] = 'v90_range_lock_stored_poi'
+            meta['poi_source'] = 'v91_range_lock_stored_poi'
             if audit_out is not None:
                 audit_out['v43'] = meta
             return POIResolution(

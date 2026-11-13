@@ -42,10 +42,10 @@ class CoreStructureMixin:
         debug: bool = False,
     ) -> dict:
         """
-        V90 — D1 SMC: major dealing range (major swings only).
+        V91 — D1 SMC: leg-scoped major range.
 
-        target_pivot tracks confirmed major HH/LL; protected_pivot updates ONLY on major BOS
-        (min low / max high over [old_protected_idx, bar]). Internal pullback: no CHoCH/BOS.
+        BOS promotes HL/LH from old_target_idx → bar i (wick min/max in that window).
+        CHoCH only through protected HL/LH; target sync limited to leg.start_bar+.
         """
         empty = {
             'trend': 'neutral',
@@ -142,7 +142,10 @@ class CoreStructureMixin:
         last_event_bar = 0
         latest_signal = None
         leg_choch = None
-        MIN_FLIP_COOLDOWN = 1
+        leg_start_bar = 0
+        leg_choch_target_floor: Optional[float] = None
+        leg_choch_target_ceiling: Optional[float] = None
+        bos_unlocked = True
 
         def _set_bullish_pivots(hl_idx: int, hh_idx: int) -> None:
             nonlocal protected_pivot, target_pivot, protected_idx, target_idx
@@ -208,18 +211,52 @@ class CoreStructureMixin:
                     best_i = j
             return best_i, float(best_v)
 
+        def _min_wick_low_between(start_idx: int, end_idx: int) -> Tuple[int, float]:
+            start_idx = max(0, int(start_idx))
+            end_idx = min(int(end_idx), len(df) - 1)
+            best_i = start_idx
+            best_v = float(df['low'].iloc[start_idx])
+            for j in range(start_idx, end_idx + 1):
+                v = float(df['low'].iloc[j])
+                if v < best_v:
+                    best_v = v
+                    best_i = j
+            return best_i, best_v
+
+        def _max_wick_high_between(start_idx: int, end_idx: int) -> Tuple[int, float]:
+            start_idx = max(0, int(start_idx))
+            end_idx = min(int(end_idx), len(df) - 1)
+            best_i = start_idx
+            best_v = float(df['high'].iloc[start_idx])
+            for j in range(start_idx, end_idx + 1):
+                v = float(df['high'].iloc[j])
+                if v > best_v:
+                    best_v = v
+                    best_i = j
+            return best_i, best_v
+
+        def _begin_leg(bar_i: int) -> None:
+            nonlocal leg_start_bar, leg_choch_target_floor, leg_choch_target_ceiling, bos_unlocked
+            leg_start_bar = int(bar_i)
+            leg_choch_target_floor = None
+            leg_choch_target_ceiling = None
+            bos_unlocked = False
+
         def _sync_major_target_high(bar_i: int) -> None:
             nonlocal target_pivot, target_idx
             if protected_idx is None:
                 return
+            lo_bar = max(int(protected_idx), int(leg_start_bar))
             pool = [
                 h for h in major_highs
-                if h.index + fw <= bar_i and h.index >= protected_idx
+                if h.index + fw <= bar_i and h.index >= lo_bar
             ]
             if not pool:
                 return
             best = max(pool, key=lambda h: bh(df, h.index))
             px = float(bh(df, best.index))
+            if leg_choch_target_floor is not None and px + 1e-12 < float(leg_choch_target_floor):
+                return
             if target_idx is None or best.index >= target_idx or px > float(target_pivot or 0):
                 target_idx = best.index
                 target_pivot = px
@@ -228,14 +265,17 @@ class CoreStructureMixin:
             nonlocal target_pivot, target_idx
             if protected_idx is None:
                 return
+            lo_bar = max(int(protected_idx), int(leg_start_bar))
             pool = [
                 l for l in major_lows
-                if l.index + fw <= bar_i and l.index >= protected_idx
+                if l.index + fw <= bar_i and l.index >= lo_bar
             ]
             if not pool:
                 return
             best = min(pool, key=lambda l: bl(df, l.index))
             px = float(bl(df, best.index))
+            if leg_choch_target_ceiling is not None and px - 1e-12 > float(leg_choch_target_ceiling):
+                return
             if target_idx is None or best.index >= target_idx or px < float(target_pivot or 1e18):
                 target_idx = best.index
                 target_pivot = px
@@ -269,6 +309,9 @@ class CoreStructureMixin:
                     chochs.append(ev)
                     latest_signal = ev
                     leg_choch = ev
+                    _begin_leg(i)
+                    leg_choch_target_floor = float(target_pivot)
+                    bos_unlocked = False
                 elif close < ref_low:
                     br_l = broken_swing_low(i, close)
                     if br_l is None:
@@ -293,6 +336,9 @@ class CoreStructureMixin:
                     chochs.append(ev)
                     latest_signal = ev
                     leg_choch = ev
+                    _begin_leg(i)
+                    leg_choch_target_ceiling = float(target_pivot)
+                    bos_unlocked = False
                 else:
                     ref_high = max(ref_high, bh(df, i))
                     ref_low = min(ref_low, bl(df, i))
@@ -305,12 +351,13 @@ class CoreStructureMixin:
                 lo_p = float(protected_pivot)
                 hi_p = float(target_pivot)
                 if lo_p <= close <= hi_p:
+                    bos_unlocked = True
                     continue
 
                 # Bearish CHoCH — body close below HL_major
                 if i > last_event_bar and close < protected_pivot:
-                    lh_idx = target_idx if target_idx is not None else i
-                    ll_idx = i
+                    lh_idx, _ = _max_wick_high_between(max(leg_start_bar, protected_idx or 0), i)
+                    ll_idx, _ = _min_wick_low_between(i, i)
                     bias = 'bearish'
                     _set_bearish_pivots(lh_idx, ll_idx)
                     last_event_bar = i
@@ -326,33 +373,45 @@ class CoreStructureMixin:
                     chochs.append(ev)
                     latest_signal = ev
                     leg_choch = ev
+                    _begin_leg(i)
+                    leg_choch_target_ceiling = float(target_pivot)
+                    bos_unlocked = False
                     continue
 
-                # BOS bullish — major HH only; promote protected = min low [old_protected_idx, i]
-                if close > target_pivot:
+                # BOS bullish — close above old HH at old_target_idx
+                old_hh = float(target_pivot)
+                if (
+                    bos_unlocked
+                    and close > old_hh + 1e-12
+                    and target_idx is not None
+                ):
+                    old_target_idx = int(target_idx)
                     pool = [
                         h for h in major_highs
-                        if h.index + fw <= i and close > bh(df, h.index)
+                        if h.index + fw <= i
+                        and h.index > (target_idx or -1)
+                        and h.index >= leg_start_bar
+                        and close > bh(df, h.index)
                     ]
                     if pool:
                         br_h = max(pool, key=lambda h: bh(df, h.index))
-                    elif target_idx is not None:
-                        br_h = swing_pt(target_idx, 'high')
+                    elif close > old_hh + 1e-9:
+                        br_h = swing_pt(old_target_idx, 'high')
                     else:
                         continue
-                    if bh(df, br_h.index) <= target_pivot + 1e-12 and close <= target_pivot + 1e-12:
-                        continue
-                    old_prot = protected_idx if protected_idx is not None else 0
-                    hl_idx, hl_px = _min_body_low_between(old_prot, i)
+                    hl_idx, hl_px = _min_wick_low_between(old_target_idx, i)
+                    hh_idx, hh_px = _max_body_high_between(old_target_idx, i)
                     protected_pivot = hl_px
                     protected_idx = hl_idx
-                    target_idx = br_h.index
-                    target_pivot = float(bh(df, br_h.index))
+                    target_idx = hh_idx
+                    target_pivot = hh_px
                     last_event_bar = i
+                    leg_choch_target_floor = hh_px
+                    bos_unlocked = False
                     ev = BOS(
                         index=i,
                         direction='bullish',
-                        break_price=target_pivot,
+                        break_price=hh_px,
                         candle_time=ct,
                         swing_broken=br_h,
                     )
@@ -367,11 +426,12 @@ class CoreStructureMixin:
                 lo_p = float(target_pivot)
                 hi_p = float(protected_pivot)
                 if lo_p <= close <= hi_p:
+                    bos_unlocked = True
                     continue
 
                 if i > last_event_bar and close > protected_pivot:
-                    hl_idx = target_idx if target_idx is not None else i
-                    hh_idx = i
+                    hl_idx, _ = _min_wick_low_between(max(leg_start_bar, protected_idx or 0), i)
+                    hh_idx, _ = _max_wick_high_between(i, i)
                     bias = 'bullish'
                     _set_bullish_pivots(hl_idx, hh_idx)
                     last_event_bar = i
@@ -387,32 +447,44 @@ class CoreStructureMixin:
                     chochs.append(ev)
                     latest_signal = ev
                     leg_choch = ev
+                    _begin_leg(i)
+                    leg_choch_target_floor = float(target_pivot)
+                    bos_unlocked = False
                     continue
 
-                if close < target_pivot:
+                old_ll = float(target_pivot)
+                if (
+                    bos_unlocked
+                    and close < old_ll - 1e-12
+                    and target_idx is not None
+                ):
+                    old_target_idx = int(target_idx)
                     pool = [
                         l for l in major_lows
-                        if l.index + fw <= i and close < bl(df, l.index)
+                        if l.index + fw <= i
+                        and l.index > (target_idx or -1)
+                        and l.index >= leg_start_bar
+                        and close < bl(df, l.index)
                     ]
                     if pool:
                         br_l = min(pool, key=lambda l: bl(df, l.index))
-                    elif target_idx is not None:
-                        br_l = swing_pt(target_idx, 'low')
+                    elif close < old_ll - 1e-9:
+                        br_l = swing_pt(old_target_idx, 'low')
                     else:
                         continue
-                    if bl(df, br_l.index) >= target_pivot - 1e-12 and close >= target_pivot - 1e-12:
-                        continue
-                    old_prot = protected_idx if protected_idx is not None else 0
-                    lh_idx, lh_px = _max_body_high_between(old_prot, i)
+                    lh_idx, lh_px = _max_wick_high_between(old_target_idx, i)
+                    ll_idx, ll_px = _min_body_low_between(old_target_idx, i)
                     protected_pivot = lh_px
                     protected_idx = lh_idx
-                    target_idx = br_l.index
-                    target_pivot = float(bl(df, br_l.index))
+                    target_idx = ll_idx
+                    target_pivot = ll_px
                     last_event_bar = i
+                    leg_choch_target_ceiling = ll_px
+                    bos_unlocked = False
                     ev = BOS(
                         index=i,
                         direction='bearish',
-                        break_price=target_pivot,
+                        break_price=ll_px,
                         candle_time=ct,
                         swing_broken=br_l,
                     )
@@ -424,13 +496,27 @@ class CoreStructureMixin:
 
         trend = bias if bias is not None else 'neutral'
 
-        strategy_type = 'continuation'
-        if latest_signal is not None and isinstance(latest_signal, CHoCH):
-            pt = getattr(latest_signal, 'previous_trend', None)
-            if pt and pt != latest_signal.direction:
-                strategy_type = 'reversal'
-            elif pt is None:
-                strategy_type = 'reversal'
+        latest_flip_idx = -1
+        for c in reversed(chochs):
+            pt = getattr(c, 'previous_trend', None)
+            if pt and pt != c.direction:
+                latest_flip_idx = int(c.index)
+                break
+        strategy_type = 'reversal'
+        if trend in ('bullish', 'bearish'):
+            post_leg_bos = [
+                b for b in bos_list
+                if getattr(b, 'direction', '') == trend
+                and int(b.index) > latest_flip_idx
+            ]
+            if (
+                post_leg_bos
+                and isinstance(latest_signal, BOS)
+                and int(latest_signal.index) == int(post_leg_bos[-1].index)
+            ):
+                strategy_type = 'continuation'
+            elif latest_flip_idx < 0 and isinstance(latest_signal, BOS):
+                strategy_type = 'continuation'
 
         protected_low = None
         protected_high = None
@@ -465,7 +551,7 @@ class CoreStructureMixin:
         if debug and trend != 'neutral':
             kind = 'CHoCH' if isinstance(latest_signal, CHoCH) else 'BOS'
             print(
-                f"   📐 [V90 SMC SM] trend={trend.upper()} "
+                f"   📐 [V91 SMC SM] trend={trend.upper()} "
                 f"HL/LH={protected_pivot} HH/LL={target_pivot} last={kind} "
                 f"@bar{getattr(latest_signal, 'index', '?')} "
                 f"internal_pb={is_internal_pullback}"

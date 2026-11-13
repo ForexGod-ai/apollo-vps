@@ -38,7 +38,7 @@ def test_v90_usdcad_major_pullback_no_false_bearish_choch():
     assert sm["trend"] == "bullish", sm
     pl = sm.get("protected_low")
     assert pl is not None
-    assert pl <= 1.3780, f"protected should stay near origin HL, got {pl}"
+    assert pl <= 1.3820, f"protected should stay near origin HL until major BOS, got {pl}"
     assert sm.get("is_internal_pullback") is True
     bear_flips = [
         c
