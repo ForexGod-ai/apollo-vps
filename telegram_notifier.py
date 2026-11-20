@@ -580,15 +580,28 @@ def format_4h_structural_alert(
     bars_txt = str(bars_ago) if bars_ago is not None and bars_ago != 9999 else '?'
 
     fib_lo, fib_hi = None, None
-    eq = getattr(tf_data, 'equilibrium', None) if tf_data is not None else None
-    if break_px is not None and eq is not None:
-        try:
-            swing_est = 2.0 * float(eq) - float(break_px)
-            fib_lo, fib_hi = fib_entry_zone_60_80(
-                float(break_px), swing_est, str(struct_dir),
-            )
-        except (TypeError, ValueError):
-            pass
+    _io = (
+        getattr(tf_data, 'impulse_origin', None)
+        or setup_data.get('radar_4h_impulse_origin')
+    )
+    _ie = (
+        getattr(tf_data, 'impulse_extreme', None)
+        or setup_data.get('radar_4h_impulse_extreme')
+    )
+    if _io is not None and _ie is not None:
+        fib_lo, fib_hi = fib_entry_zone_60_80(
+            float(_ie), float(_io), str(struct_dir),
+        )
+    else:
+        eq = getattr(tf_data, 'equilibrium', None) if tf_data is not None else None
+        if break_px is not None and eq is not None:
+            try:
+                swing_est = 2.0 * float(eq) - float(break_px)
+                fib_lo, fib_hi = fib_entry_zone_60_80(
+                    float(break_px), swing_est, str(struct_dir),
+                )
+            except (TypeError, ValueError):
+                pass
     fib_line = '—'
     if fib_lo is not None and fib_hi is not None:
         fib_line = (
@@ -601,12 +614,24 @@ def format_4h_structural_alert(
     sl_txt = format_telegram_price(symbol, float(h4_sl)) if h4_sl is not None else '—'
     tp_txt = format_telegram_price(symbol, float(d1_tp)) if d1_tp is not None else '—'
 
+    init_px = (
+        getattr(tf_data, 'initial_choch_price', None)
+        or setup_data.get('radar_4h_initial_choch_price')
+    )
+    semnal_line = (
+        f"⚡ Semnal 4H: <b>{sig}</b> la <code>{break_fmt}</code> (acum {bars_txt} bare)"
+    )
+    if sig == 'BOS' and init_px is not None:
+        semnal_line += (
+            f" · CHoCH inițial: <code>{format_telegram_price(symbol, float(init_px))}</code>"
+        )
+
     lines = [
         f"{head_emoji} <b>{symbol}</b> · {dir_label} ({sig_h4} · {mode_label})",
         f"📊 Bias: D1 <b>{macro_dir}</b> ({rev_cont}) · W1 <b>{w1_bias}</b>{w1_suffix}",
         '',
         f"📦 POI D1: <code>{poi_line}</code>",
-        f"⚡ Semnal 4H: <b>{sig}</b> la <code>{break_fmt}</code> (acum {bars_txt} bare)",
+        semnal_line,
         f"🎯 Zonă intrare (Retrace 60–80%): <code>{fib_line}</code>",
         f"🛑 SL orientativ: <code>{sl_txt}</code> · 🏁 TP D1: <code>{tp_txt}</code>",
         f"\n{sep}",
@@ -876,7 +901,19 @@ class TelegramNotifier:
             poi_bottom = setup_data.get('poi_bottom') or setup_data.get('fvg_bottom')
             eq = getattr(tf_data, 'equilibrium', None) if tf_data is not None else None
             fib_lo, fib_hi = None, None
-            if eq is not None and break_px:
+            _io = (
+                getattr(tf_data, 'impulse_origin', None)
+                or setup_data.get('radar_4h_impulse_origin')
+            )
+            _ie = (
+                getattr(tf_data, 'impulse_extreme', None)
+                or setup_data.get('radar_4h_impulse_extreme')
+            )
+            if _io is not None and _ie is not None:
+                fib_lo, fib_hi = fib_entry_zone_60_80(
+                    float(_ie), float(_io), str(struct_dir),
+                )
+            elif eq is not None and break_px:
                 try:
                     swing_est = 2.0 * float(eq) - float(break_px)
                     fib_lo, fib_hi = fib_entry_zone_60_80(

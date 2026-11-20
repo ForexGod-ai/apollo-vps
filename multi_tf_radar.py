@@ -1072,6 +1072,10 @@ class TimeframeAnalysis:
     in_poi_entry_zone: bool = False
     # V47: CHoCH vs BOS cascaded entry
     signal_type: Optional[str] = None  # 'CHoCH' | 'BOS'
+    # V95: impuls real 4H (origin → extreme), primul CHoCH post-POI
+    impulse_origin: Optional[float] = None
+    impulse_extreme: Optional[float] = None
+    initial_choch_price: Optional[float] = None
     # V53: retrace >200% — CHoCH valid, entry așteaptă re-intrare în bandă 60–80%
     overshoot_stale: bool = False
 
@@ -1120,12 +1124,12 @@ class MultiTFRadar:
         _radar_print("✅ cTrader cBot connected")
         
         self.smc_4h = SMCDetector(
-            swing_lookback=8,   # V19: più context structural pe 4H (5→8)
-            atr_multiplier=1.0  # V15.4: relaxed from 1.2→1.0 — avoid missing clear 4H CHoCH
+            swing_lookback=2,   # V95: fractali 4H locali (fw=2) — motor h4_engine dedicat
+            atr_multiplier=1.0
         )
         
         _radar_print("🎯 SMC Detectors initialized:")
-        _radar_print("   - 4H: ATR 1.0x (W→D→4H structural mode — V15.4)")
+        _radar_print("   - 4H: h4_engine body-only fw=2 (V95)")
 
         # V25.2: Contor eșecuri consecutive port 8010 — alertă Telegram la 3 eșecuri
         self._port8010_fail_count: int = 0
@@ -1563,6 +1567,9 @@ class MultiTFRadar:
         poi_touch_latched: bool = False,
         latest_fvg=None,
         signal_type: str = 'CHoCH',
+        impulse_origin: Optional[float] = None,
+        impulse_extreme: Optional[float] = None,
+        initial_choch_price: Optional[float] = None,
     ) -> TimeframeAnalysis:
         """V49: entry secvențial — touch POI (latch) apoi retrace 60–80% pe CHoCH/BOS."""
         wait_pb = PullbackStatus.WAITING_4H_PULLBACK
@@ -1573,9 +1580,23 @@ class MultiTFRadar:
         else:
             _choch_detected_val = True
             _bos_flag_val = _bos_detected_val
+        swing_broken_price = None
         try:
             swing_broken_price = float(latest_choch.swing_broken.price)
         except Exception:
+            swing_broken_price = None
+
+        if (
+            impulse_origin is not None
+            and impulse_extreme is not None
+            and abs(float(impulse_extreme) - float(impulse_origin)) > 0
+        ):
+            from smc_detector.h4_engine import h4_impulse_retrace_pct
+            retrace_pct, impulse_size = h4_impulse_retrace_pct(
+                impulse_origin, impulse_extreme, current_price, choch_direction,
+            )
+            choch_equilibrium = (float(impulse_origin) + float(impulse_extreme)) / 2.0
+        elif swing_broken_price is None:
             return TimeframeAnalysis(
                 timeframe=timeframe_display,
                 choch_detected=_choch_detected_val,
@@ -1592,10 +1613,12 @@ class MultiTFRadar:
                 bos_bars_ago=_bos_bars_ago_val,
                 signal_type=signal_type,
             )
-
-        retrace_pct, impulse_size = _choch_impulse_retrace_pct(
-            choch_break_price, swing_broken_price, current_price, choch_direction,
-        )
+        else:
+            retrace_pct, impulse_size = _choch_impulse_retrace_pct(
+                choch_break_price, swing_broken_price, current_price, choch_direction,
+            )
+            if choch_equilibrium is None and swing_broken_price is not None:
+                choch_equilibrium = (swing_broken_price + choch_break_price) / 2.0
         pip_size = self._get_pip_size(symbol)
 
         if _retrace_implies_stale_anchor(retrace_pct, impulse_size):
@@ -1693,8 +1716,13 @@ class MultiTFRadar:
                 signal_type=signal_type,
             )
 
+        _zone_break = (
+            float(impulse_extreme)
+            if impulse_extreme is not None
+            else choch_break_price
+        )
         zone_bottom, zone_top, zone_entry = _choch_premium_discount_zone(
-            choch_break_price, impulse_size, choch_direction,
+            _zone_break, impulse_size, choch_direction,
         )
         in_retrace_band = (
             zone_bottom <= current_price <= zone_top
@@ -1738,9 +1766,11 @@ class MultiTFRadar:
         fvg_source = "structural" if latest_fvg else "premium_discount"
         eq_val = choch_equilibrium if choch_equilibrium else zone_entry
         _sig_label = signal_type.upper()
+        _anchor = impulse_origin if impulse_origin is not None else swing_broken_price
+        _extreme = impulse_extreme if impulse_extreme is not None else choch_break_price
         _radar_print(
             f"  [V46 POI-PD] {symbol} {timeframe_display} ({_sig_label}) | "
-            f"Impulse anchor: swing_broken {swing_broken_price:.5f} -> break {choch_break_price:.5f} "
+            f"Impuls 4H: origin {_anchor:.5f} → extreme {_extreme:.5f} "
             f"({impulse_size / pip_size:.1f}p)"
         )
         _radar_print(
@@ -1773,6 +1803,9 @@ class MultiTFRadar:
             bos_direction=_bos_direction_val,
             bos_bars_ago=_bos_bars_ago_val,
             signal_type=signal_type,
+            impulse_origin=impulse_origin,
+            impulse_extreme=impulse_extreme,
+            initial_choch_price=initial_choch_price,
         )
 
     def _v47_pick_structural_signal(
@@ -1856,20 +1889,25 @@ class MultiTFRadar:
             )
         
         try:
-            # Detect CHoCH and BOS (V68: major swings only in smc_detector)
-            choch_list, bos_list = smc_detector.detect_choch_and_bos(df)
-            _swing_h = smc_detector.detect_swing_highs(df)
-            _swing_l = smc_detector.detect_swing_lows(df)
-            _major_h, _major_l = smc_detector.filter_major_swings(df, _swing_h, _swing_l)
-            choch_list = _purge_chochs_invalidated_by_opposite_impulse(
-                choch_list, df, _major_h, _major_l,
+            from smc_detector.h4_engine import run_h4_range_engine
+
+            _h4 = run_h4_range_engine(
+                df,
+                required_direction,
+                poi_touch_time=poi_first_touch_time,
+                fw=2,
             )
-            bos_list = _filter_structurally_valid_events(bos_list, df)
+            choch_list = _h4['chochs']
+            bos_list = _h4['bos_list']
+            _h4_impulse_origin = _h4.get('impulse_origin')
+            _h4_impulse_extreme = _h4.get('impulse_extreme')
+            _h4_initial_choch = _h4.get('initial_choch_price')
+            _major_h, _major_l = [], []
 
             # ── V25.1: BOS RECENCY — calculat INDEPENDENT, ÎNAINTE de filtrare fereastră ──
             _all_aligned_bos_for_lock = sorted(
-                [b for b in bos_list if b.direction == required_direction],
-                key=lambda x: x.index
+                list(_h4.get('aligned_bos') or []),
+                key=lambda x: x.index,
             )
             _all_aligned_bos_for_lock = _filter_events_in_recent_window(
                 _all_aligned_bos_for_lock, df,
@@ -1902,8 +1940,8 @@ class MultiTFRadar:
 
             all_chochs_count = len(choch_list)
             aligned_chochs = sorted(
-                [c for c in choch_list if c.direction == required_direction],
-                key=lambda x: x.index
+                list(_h4.get('aligned_chochs') or []),
+                key=lambda x: x.index,
             )
             aligned_chochs = _filter_events_in_recent_window(aligned_chochs, df)
             aligned_chochs = _filter_structurally_valid_events(aligned_chochs, df)
@@ -2003,53 +2041,6 @@ class MultiTFRadar:
                     status=PullbackStatus.WAITING_4H_CHOCH,
                     choch_bars_ago=9999,
                 )
-            if choch_direction == 'bearish' and _opposite_bullish_invalidation_after(
-                latest_choch, df, _major_h,
-            ):
-                _radar_print(
-                    f"  🛑 [{timeframe_display} V68 PURGE] {symbol}: "
-                    f"CHoCH bearish invalidat de HH body-close post-break"
-                )
-                sys.stdout.flush()
-                return TimeframeAnalysis(
-                    timeframe=timeframe_display,
-                    choch_detected=False,
-                    choch_direction=None,
-                    choch_time=None,
-                    choch_price=None,
-                    fvg_detected=False,
-                    fvg_top=None,
-                    fvg_bottom=None,
-                    fvg_entry=None,
-                    in_fvg=False,
-                    distance_to_fvg_pips=0.0,
-                    status=PullbackStatus.WAITING_4H_CHOCH,
-                    choch_bars_ago=9999,
-                )
-            if choch_direction == 'bullish' and _opposite_bearish_invalidation_after(
-                latest_choch, df, _major_l,
-            ):
-                _radar_print(
-                    f"  🛑 [{timeframe_display} V68 PURGE] {symbol}: "
-                    f"CHoCH bullish invalidat de LL body-close post-break"
-                )
-                sys.stdout.flush()
-                return TimeframeAnalysis(
-                    timeframe=timeframe_display,
-                    choch_detected=False,
-                    choch_direction=None,
-                    choch_time=None,
-                    choch_price=None,
-                    fvg_detected=False,
-                    fvg_top=None,
-                    fvg_bottom=None,
-                    fvg_entry=None,
-                    in_fvg=False,
-                    distance_to_fvg_pips=0.0,
-                    status=PullbackStatus.WAITING_4H_CHOCH,
-                    choch_bars_ago=9999,
-                )
-
             if signal_type == 'CHoCH':
                 _radar_print(
                     f"  ✅ [{timeframe_display} V47 CHoCH] {symbol} | "
@@ -2116,8 +2107,12 @@ class MultiTFRadar:
             # Stocat în setup ca radar_4h_eq.
             choch_equilibrium = None
             try:
-                _sbp = float(latest_choch.swing_broken.price)
-                _cbp = float(latest_choch.break_price)
+                if _h4_impulse_origin is not None and _h4_impulse_extreme is not None:
+                    _sbp = float(_h4_impulse_origin)
+                    _cbp = float(_h4_impulse_extreme)
+                else:
+                    _sbp = float(latest_choch.swing_broken.price)
+                    _cbp = float(choch_break_price)
                 choch_equilibrium = (_sbp + _cbp) / 2.0
                 pip_size_eq = self._get_pip_size(symbol)
                 _eq_str = f"{choch_equilibrium:.5f}" if choch_equilibrium is not None else "N/A"
@@ -2231,6 +2226,9 @@ class MultiTFRadar:
                 poi_touch_latched=poi_touch_latched,
                 latest_fvg=latest_fvg,
                 signal_type=signal_type,
+                impulse_origin=_h4_impulse_origin,
+                impulse_extreme=_h4_impulse_extreme,
+                initial_choch_price=_h4_initial_choch,
             )
         
         except Exception as e:
@@ -3034,6 +3032,12 @@ class MultiTFRadar:
             setup['radar_4h_choch_price'] = result.tf_4h.choch_price
             setup['radar_4h_signal_type'] = result.tf_4h.signal_type
             setup['radar_4h_choch_bars_ago'] = result.tf_4h.choch_bars_ago
+            if getattr(result.tf_4h, 'initial_choch_price', None) is not None:
+                setup['radar_4h_initial_choch_price'] = result.tf_4h.initial_choch_price
+            if getattr(result.tf_4h, 'impulse_origin', None) is not None:
+                setup['radar_4h_impulse_origin'] = result.tf_4h.impulse_origin
+            if getattr(result.tf_4h, 'impulse_extreme', None) is not None:
+                setup['radar_4h_impulse_extreme'] = result.tf_4h.impulse_extreme
         else:
             setup['radar_4h_choch_detected'] = False
 

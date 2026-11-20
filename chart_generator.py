@@ -70,23 +70,26 @@ class ChartGenerator:
 
             ctx = chart_context or {}
             anchor = ctx.get('poi_first_touch_time')
+            df_full = df
             if anchor and timeframe.upper() == '4H':
                 try:
                     from radar_gates import parse_radar_dt
                     adt = parse_radar_dt(anchor)
                     if adt is not None:
                         start_idx = 0
-                        for i in range(len(df)):
-                            if df.index[i] >= adt:
+                        for i in range(len(df_full)):
+                            if df_full.index[i] >= adt:
                                 start_idx = max(0, i - 12)
                                 break
-                        df = df.iloc[start_idx:]
+                        df = df_full.iloc[start_idx:]
                         if len(df) > 180:
                             df = df.iloc[-180:]
+                        if len(df) < 60:
+                            df = df_full.iloc[-min(60, len(df_full)):]
                 except Exception:
-                    df = df.tail(60)
+                    df = df_full.tail(60)
             else:
-                df = df.tail(60)
+                df = df_full.tail(60)
             
             # Title — safe attrs (dict, TradeSetup, SimpleNamespace)
             if setup is None:
