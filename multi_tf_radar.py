@@ -74,8 +74,10 @@ from radar_gates import (
     parse_radar_dt as _parse_radar_dt,
     resolve_mitigation_touch_anchor as _resolve_mitigation_touch_anchor,
     v47_break_post_poi_touch as _v47_break_post_poi_touch,
+    v47_live_alert_bars_ok as _v47_live_alert_bars_ok,
     normalize_structural_direction as _normalize_structural_direction,
     h4_structural_direction_ok as _h4_structural_direction_ok,
+    h4_move_exhausted_vs_d1_tp as _h4_move_exhausted_vs_d1_tp,
 )
 
 try:
@@ -2835,6 +2837,16 @@ class MultiTFRadar:
             post_poi = _v47_break_post_poi_touch(setup, break_time)
             if not post_poi:
                 return False, 'pre_poi_or_no_anchor', break_time, bars_ago
+            try:
+                bars_i = int(bars_ago)
+            except (TypeError, ValueError):
+                bars_i = 9999
+            if not _v47_live_alert_bars_ok('4H', bars_i):
+                return False, 'stale_break_over_3_bars', break_time, bars_ago
+            break_px = float(tf_4h.choch_price) if tf_4h.choch_price is not None else None
+            exhausted, ex_reason = _h4_move_exhausted_vs_d1_tp(setup, break_px)
+            if exhausted:
+                return False, ex_reason, break_time, bars_ago
             return True, '', break_time, bars_ago
 
         sig = (tf_4h.signal_type or 'CHoCH').upper()
@@ -3028,8 +3040,10 @@ class MultiTFRadar:
         if getattr(result.tf_4h, 'bos_detected', False):
             setup['radar_4h_bos_detected'] = True
             setup['radar_4h_bos_direction'] = result.tf_4h.bos_direction
+            setup['radar_4h_bos_bars_ago'] = int(getattr(result.tf_4h, 'bos_bars_ago', 9999))
         else:
             setup['radar_4h_bos_detected'] = False
+            setup.pop('radar_4h_bos_bars_ago', None)
 
         if getattr(result.tf_4h, 'overshoot_stale', False):
             setup['radar_4h_overshoot_stale'] = True

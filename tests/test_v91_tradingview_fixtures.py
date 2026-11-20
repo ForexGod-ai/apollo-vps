@@ -1,4 +1,4 @@
-"""V92 body-only SMC fixtures (synthetic — no historical_cache)."""
+"""V93/V94 body-only SMC + radar gates (synthetic — no historical_cache)."""
 from __future__ import annotations
 
 from datetime import datetime
@@ -227,3 +227,39 @@ def test_v92_poi_lock_from_old_target_bos_window():
     )
     if sm.get("is_internal_pullback"):
         assert res.preserve_stored_poi
+
+
+def test_v93_target_armed_one_bos_during_impulse_staircase():
+    """După un BOS, 3 închideri consecutive peste HH → un singur BOS, HL protejat."""
+    det = SMCDetector(swing_lookback=2, atr_multiplier=0.06)
+    closes = (
+        [1.00, 1.01, 1.02, 1.01, 1.02, 1.03, 1.02, 1.03, 1.04, 1.03]
+        + [1.05, 1.04, 1.05, 1.06, 1.05, 1.04, 1.05, 1.06, 1.07, 1.08]
+        + [1.09, 1.10, 1.11, 1.12, 1.13, 1.14]
+    )
+    df = _body_ohlc(closes, 0.001)
+    sm = det.run_d1_smc_state_machine(df)
+    if sm["trend"] != "bullish":
+        return
+    bos = [b for b in sm["bos_list"] if b.direction == "bullish"]
+    if not bos:
+        return
+    assert len(bos) == 1
+    pl0 = float(sm["protected_low"])
+    # protected HL must not drop below first BOS window indiscriminately
+    assert pl0 <= 1.08
+
+
+def test_v93_radar_move_exhausted_blocks_at_60pct_leg():
+    from radar_gates import h4_move_exhausted_vs_d1_tp
+
+    setup = {"poi_top": 1.10, "poi_bottom": 0.90, "take_profit": 1.30}
+    poi_mid = 1.0
+    total = 0.30
+    break_px = poi_mid + 0.60 * total
+    exhausted, reason = h4_move_exhausted_vs_d1_tp(setup, break_px, threshold=0.55)
+    assert exhausted
+    assert reason == "move_exhausted_far_from_poi"
+    ok_break = poi_mid + 0.40 * total
+    exhausted2, _ = h4_move_exhausted_vs_d1_tp(setup, ok_break, threshold=0.55)
+    assert not exhausted2

@@ -42,7 +42,7 @@ class CoreStructureMixin:
         debug: bool = False,
     ) -> dict:
         """
-        V92 — D1 SMC: 100% body-only breaks + major swing alternating chain bootstrap.
+        V93 — D1 SMC: body-only + major chain bootstrap + target_armed impulse guard.
 
         No bar-0 fallback; leg anchors on first confirmed L→H or H→L major pair.
         """
@@ -156,6 +156,12 @@ class CoreStructureMixin:
         leg_choch = None
         start_i = max(int(protected_idx), int(target_idx)) + 1
         last_event_bar = start_i - 1
+        target_armed = True
+
+        def _rearm_target(bar_i: int) -> None:
+            nonlocal target_armed
+            if target_idx is not None and int(target_idx) + fw <= bar_i:
+                target_armed = True
 
         for i in range(start_i, len(df)):
             close = float(df['close'].iloc[i])
@@ -166,9 +172,24 @@ class CoreStructureMixin:
             hi_p = float(target_pivot)
 
             if bias == 'bullish' and lo_p <= close <= hi_p:
+                _rearm_target(i)
+                if not target_armed:
+                    body_h = float(bh(df, i))
+                    if body_h > float(target_pivot):
+                        target_idx = i
+                        target_pivot = body_h
                 continue
             if bias == 'bearish' and hi_p >= close >= lo_p:
+                _rearm_target(i)
+                if not target_armed:
+                    body_l = float(bl(df, i))
+                    if body_l < float(target_pivot):
+                        target_idx = i
+                        target_pivot = body_l
                 continue
+
+            if not target_armed:
+                _rearm_target(i)
 
             if (
                 bias == 'bullish'
@@ -186,6 +207,7 @@ class CoreStructureMixin:
                 target_idx, target_pivot = ll_idx, ll_px
                 last_event_bar = i
                 event_at_bar = True
+                target_armed = False
                 broken = swing_pt(old_prot, 'low')
                 ev = CHoCH(
                     index=i,
@@ -215,6 +237,7 @@ class CoreStructureMixin:
                 target_idx, target_pivot = hh_idx, hh_px
                 last_event_bar = i
                 event_at_bar = True
+                target_armed = False
                 broken = swing_pt(old_prot, 'high')
                 ev = CHoCH(
                     index=i,
@@ -230,6 +253,7 @@ class CoreStructureMixin:
 
             elif (
                 bias == 'bullish'
+                and target_armed
                 and i > last_event_bar
                 and close > target_pivot + 1e-12
                 and target_idx is not None
@@ -241,6 +265,7 @@ class CoreStructureMixin:
                 target_idx, target_pivot = hh_idx, hh_px
                 last_event_bar = i
                 event_at_bar = True
+                target_armed = False
                 br_h = swing_pt(old_target_idx, 'high')
                 ev = BOS(
                     index=i,
@@ -254,6 +279,7 @@ class CoreStructureMixin:
 
             elif (
                 bias == 'bearish'
+                and target_armed
                 and i > last_event_bar
                 and close < target_pivot - 1e-12
                 and target_idx is not None
@@ -265,6 +291,7 @@ class CoreStructureMixin:
                 target_idx, target_pivot = ll_idx, ll_px
                 last_event_bar = i
                 event_at_bar = True
+                target_armed = False
                 br_l = swing_pt(old_target_idx, 'low')
                 ev = BOS(
                     index=i,
@@ -276,7 +303,22 @@ class CoreStructureMixin:
                 bos_list.append(ev)
                 latest_signal = ev
 
+            elif not target_armed and not event_at_bar:
+                if bias == 'bullish':
+                    body_h = float(bh(df, i))
+                    if body_h > float(target_pivot):
+                        target_idx = i
+                        target_pivot = body_h
+                elif bias == 'bearish':
+                    body_l = float(bl(df, i))
+                    if body_l < float(target_pivot):
+                        target_idx = i
+                        target_pivot = body_l
+
             if event_at_bar or protected_idx is None:
+                continue
+
+            if not target_armed:
                 continue
 
             prot_i = int(protected_idx)
@@ -368,7 +410,7 @@ class CoreStructureMixin:
                 else '—'
             )
             print(
-                f"   📐 [V92 SMC SM] trend={trend.upper()} "
+                f"   📐 [V93 SMC SM] trend={trend.upper()} "
                 f"HL/LH={protected_pivot} HH/LL={target_pivot} last={kind} "
                 f"@bar{getattr(latest_signal, 'index', '?')} "
                 f"internal_pb={is_internal_pullback}"

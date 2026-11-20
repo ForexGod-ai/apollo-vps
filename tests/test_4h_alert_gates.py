@@ -24,7 +24,7 @@ def test_4h_alert_passes_with_high_retrace_post_poi():
         choch_detected=True,
         choch_direction='bearish',
         choch_time='2026-07-01T12:00:00+00:00',
-        choch_bars_ago=5,
+        choch_bars_ago=2,
         choch_price=165.0,
         bos_detected=False,
         bos_direction=None,
@@ -42,6 +42,42 @@ def test_4h_alert_passes_with_high_retrace_post_poi():
                         radar._maybe_send_choch_alerts(setup, result, 'bearish')
 
     assert setup.get('h4_choch_alert_sent') is True
+
+
+def test_4h_alert_blocked_when_break_stale_over_3_bars():
+    radar = _make_radar()
+    setup = {
+        'symbol': 'AUDUSD',
+        'radar_panda_active': True,
+        'poi_first_touch_time': '2026-07-01T08:00:00+00:00',
+        'h4_choch_alert_sent': False,
+        'poi_top': 0.67,
+        'poi_bottom': 0.65,
+        'take_profit': 0.72,
+    }
+    tf_4h = SimpleNamespace(
+        signal_type='BOS',
+        choch_detected=False,
+        choch_direction='bullish',
+        choch_time='2026-07-01T12:00:00+00:00',
+        choch_bars_ago=5,
+        choch_price=0.66456,
+        bos_detected=True,
+        bos_direction='bullish',
+        bos_bars_ago=5,
+        retrace_pct=0.4,
+    )
+    result = SimpleNamespace(symbol='AUDUSD', tf_4h=tf_4h)
+
+    with patch.object(mtr, '_v47_break_post_poi_touch', return_value=True):
+        with patch.object(radar, '_flush_choch_alerts_to_json'):
+            with patch('telegram_alert_dedup.claim_4h_structural_alert', return_value=True):
+                with patch('telegram_notifier.TelegramNotifier') as mock_tn:
+                    mock_tn.return_value.send_4h_structural_alert.return_value = True
+                    radar._maybe_send_choch_alerts(setup, result, 'bullish')
+
+    assert setup.get('h4_bos_alert_sent') is not True
+    mock_tn.return_value.send_4h_structural_alert.assert_not_called()
 
 
 def test_4h_alert_blocked_when_choch_opposes_daily_bias():

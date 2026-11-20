@@ -189,6 +189,39 @@ def _build_scan_inventory_item(
     }
 
 
+def _print_console_scan_inventory(
+    scan_inventory: list,
+    setups_found: Optional[List[TradeSetup]] = None,
+) -> None:
+    """V93: SETUPS SUMMARY — toate perechile inventar (inclusiv WAITING / fără setup)."""
+    if not scan_inventory:
+        return
+    setup_by_sym = {s.symbol: s for s in (setups_found or [])}
+    print(f"\n{C.BOLD}{C.MAGENTA}📋 SETUPS SUMMARY ({len(scan_inventory)}/16):{C.RESET}")
+    for i, row in enumerate(scan_inventory, 1):
+        sym = row.get('symbol', '?')
+        trend = str(row.get('trend') or 'NEUTRAL').upper()
+        strat = row.get('strategy_type') or '—'
+        stage = row.get('stage_label') or '—'
+        setup = setup_by_sym.get(sym)
+        status = str(getattr(setup, 'status', '') or stage).upper()
+        if trend == 'BULLISH':
+            dot = f"{C.GREEN}LONG{C.RESET}"
+        elif trend == 'BEARISH':
+            dot = f"{C.RED}SHORT{C.RESET}"
+        else:
+            dot = f"{C.YELLOW}NEUTRAL{C.RESET}"
+        w1 = ''
+        if row.get('w_d_aligned') is False:
+            w1 = f" {C.YELLOW}W1⚠️{C.RESET}"
+        elif row.get('w_d_aligned') is True:
+            w1 = f" {C.GREEN}W1✅{C.RESET}"
+        print(
+            f"  {C.CYAN}{i:2}.{C.RESET} {C.BOLD}{sym}{C.RESET} "
+            f"{dot} · {strat} · {C.YELLOW}{status}{C.RESET}{w1}"
+        )
+
+
 def _print_pair_scan_summary(
     symbol: str,
     ctx: D1AuthContext,
@@ -1146,6 +1179,9 @@ class DailyScanner:
                 status_tag = "🆕 NEW" if s.symbol not in open_position_symbols else "🔄 ACTIVE"
                 print(f"{status_tag} {getattr(s, 'symbol', 'N/A')}: status={getattr(s, 'status', 'N/A')}")
             print('----------------------------------------------------------')
+        self.last_scan_inventory = scan_inventory
+        if not _scanner_quiet_flag:
+            _print_console_scan_inventory(scan_inventory, setups_found)
         return all_active_setups  # Return ALL setups (new + active with positions)
     
     def scan_single_pair(self, symbol: str) -> Optional[TradeSetup]:

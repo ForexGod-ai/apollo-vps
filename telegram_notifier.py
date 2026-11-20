@@ -520,13 +520,15 @@ def format_4h_structural_alert(
     signal_type: str = 'CHoCH',
     live_price: Optional[float] = None,
 ) -> str:
-    """V62 — caption hibrid RO pentru alertă 4H CHoCH/BOS (+ chart PNG)."""
+    """V94 — alertă structurală 4H (CHoCH/BOS, POI, Fib 60–80%, SL/TP orientative)."""
+    from radar_gates import fib_entry_zone_60_80
+
     symbol = setup_data.get('symbol', 'UNKNOWN')
-    sig = (signal_type or 'CHoCH').upper()
+    sig = (signal_type or setup_data.get('radar_4h_signal_type') or 'CHoCH').upper()
     direction, dir_label = _normalize_alert_direction(setup_data.get('direction', 'buy'))
-    strategy = str(setup_data.get('strategy_type', 'reversal'))
+    strategy = str(setup_data.get('strategy_type', 'reversal')).lower()
     d1_sig = str(setup_data.get('d1_signal_type', '') or '').upper()
-    w1_bias = setup_data.get('w1_bias', 'NEUTRAL') or 'NEUTRAL'
+    w1_bias = str(setup_data.get('w1_bias', 'NEUTRAL') or 'NEUTRAL').upper()
     sep = UNIVERSAL_SEPARATOR
 
     struct_dir = (
@@ -541,64 +543,82 @@ def format_4h_structural_alert(
         getattr(tf_data, 'choch_price', None)
         or setup_data.get('radar_4h_choch_price')
         or setup_data.get('entry_price')
-        or 0
     )
     bars_ago = getattr(tf_data, 'choch_bars_ago', None) or setup_data.get('radar_4h_choch_bars_ago')
     if sig == 'BOS':
-        bars_ago = getattr(tf_data, 'bos_bars_ago', None) or bars_ago
-
-    strategy_chip = _strategy_chip_4h(strategy, d1_sig, sig)
-    is_cont = strategy_chip.startswith('CONT')
-    line_emoji = '➡️' if is_cont or sig == 'BOS' else '🔄'
-    sig_label = 'BOS 4H confirmat' if sig == 'BOS' else 'CHoCH 4H confirmat'
-
-    block1 = (
-        f"{line_emoji} <b>{symbol}</b> · {dir_label}\n"
-        f"⚡ <b>{sig_label}</b> · {strategy_chip}"
-    )
-    if w1_bias and w1_bias != 'NEUTRAL':
-        aligned = (w1_bias == 'BULLISH' and direction == 'BUY') or \
-                  (w1_bias == 'BEARISH' and direction == 'SELL')
-        w1_suffix = '✅' if aligned else '⚠️ nealiniat'
-        block1 += f"\n📅 W1: <b>{w1_bias}</b> {w1_suffix}"
-
-    block2_parts = []
-    if live_price is not None:
-        block2_parts.append(
-            f"💹 Preț cTrader: <code>{format_telegram_price(symbol, live_price)}</code>"
+        bars_ago = (
+            getattr(tf_data, 'bos_bars_ago', None)
+            or setup_data.get('radar_4h_bos_bars_ago')
+            or bars_ago
         )
 
-    break_line = f"📍 Break 4H: <code>{format_telegram_price(symbol, break_px)}</code>"
-    if bars_ago is not None and bars_ago != 9999:
-        break_line += f" · {bars_ago} bare post-POI"
-    block2_parts.append(break_line)
+    is_cont = 'continu' in strategy or d1_sig == 'BOS'
+    mode_label = 'Continuare' if is_cont else 'Reversal POI'
+    sig_h4 = 'BOS 4H' if sig == 'BOS' else 'CHoCH 4H'
+    head_emoji = '🟢' if direction == 'BUY' else '🔴'
 
-    macro_dir = 'BULLISH' if direction == 'BUY' else 'BEARISH'
-    d1_label = d1_sig or ('BOS' if is_cont else 'CHoCH')
-    block2_parts.append(f"📊 D1: <b>{macro_dir} {d1_label}</b>")
+    macro_dir = 'Bullish' if direction == 'BUY' else 'Bearish'
+    rev_cont = 'CONT' if is_cont else 'REV'
 
-    if w1_bias == 'NEUTRAL':
-        block2_parts.append('📅 W1: NEUTRAL')
+    w1_suffix = ''
+    if w1_bias != 'NEUTRAL':
+        aligned = (w1_bias == 'BULLISH' and direction == 'BUY') or (
+            w1_bias == 'BEARISH' and direction == 'SELL'
+        )
+        w1_suffix = ' ✅' if aligned else ' ⚠️'
 
-    retrace = getattr(tf_data, 'retrace_pct', None) if tf_data is not None else None
-    if retrace is not None:
+    poi_top = setup_data.get('poi_top') or setup_data.get('fvg_top')
+    poi_bottom = setup_data.get('poi_bottom') or setup_data.get('fvg_bottom')
+    poi_line = '—'
+    if poi_top is not None and poi_bottom is not None:
+        poi_line = (
+            f"{format_telegram_price(symbol, float(poi_bottom))} – "
+            f"{format_telegram_price(symbol, float(poi_top))}"
+        )
+
+    break_fmt = format_telegram_price(symbol, float(break_px)) if break_px is not None else '—'
+    bars_txt = str(bars_ago) if bars_ago is not None and bars_ago != 9999 else '?'
+
+    fib_lo, fib_hi = None, None
+    eq = getattr(tf_data, 'equilibrium', None) if tf_data is not None else None
+    if break_px is not None and eq is not None:
         try:
-            rp = float(retrace)
-            pct_display = rp * 100.0 if abs(rp) <= 1.5 else rp
-            block2_parts.append(
-                f"📉 Retrace impuls: {pct_display:.0f}% · așteptăm 60–80%"
+            swing_est = 2.0 * float(eq) - float(break_px)
+            fib_lo, fib_hi = fib_entry_zone_60_80(
+                float(break_px), swing_est, str(struct_dir),
             )
         except (TypeError, ValueError):
             pass
+    fib_line = '—'
+    if fib_lo is not None and fib_hi is not None:
+        fib_line = (
+            f"{format_telegram_price(symbol, fib_lo)} – "
+            f"{format_telegram_price(symbol, fib_hi)}"
+        )
 
-    impulse_label = 'BOS' if sig == 'BOS' else '4H'
-    block3 = (
-        f"\n{sep}\n"
-        f"⏳ <b>Următorul pas:</b> retrace 60–80% pe impuls {impulse_label} → <b>EXECUTE NOW</b>\n"
-        f"{_choch_monitoring_levels_line()}"
-    )
+    h4_sl = setup_data.get('h4_sl_price')
+    d1_tp = setup_data.get('take_profit') or setup_data.get('daily_target_price')
+    sl_txt = format_telegram_price(symbol, float(h4_sl)) if h4_sl is not None else '—'
+    tp_txt = format_telegram_price(symbol, float(d1_tp)) if d1_tp is not None else '—'
 
-    return f"{block1}\n{sep}\n" + "\n".join(block2_parts) + block3
+    lines = [
+        f"{head_emoji} <b>{symbol}</b> · {dir_label} ({sig_h4} · {mode_label})",
+        f"📊 Bias: D1 <b>{macro_dir}</b> ({rev_cont}) · W1 <b>{w1_bias}</b>{w1_suffix}",
+        '',
+        f"📦 POI D1: <code>{poi_line}</code>",
+        f"⚡ Semnal 4H: <b>{sig}</b> la <code>{break_fmt}</code> (acum {bars_txt} bare)",
+        f"🎯 Zonă intrare (Retrace 60–80%): <code>{fib_line}</code>",
+        f"🛑 SL orientativ: <code>{sl_txt}</code> · 🏁 TP D1: <code>{tp_txt}</code>",
+        f"\n{sep}",
+        "⏳ <b>Acțiune:</b> Așteptăm retrace în zona 60–80% → <b>EXECUTE NOW</b>",
+        _choch_monitoring_levels_line(),
+    ]
+    if live_price is not None:
+        lines.insert(
+            3,
+            f"💹 Preț cTrader: <code>{format_telegram_price(symbol, live_price)}</code>",
+        )
+    return '\n'.join(lines)
 
 
 def _choch_trade_block(symbol: str, entry, sl, tp, rr) -> str:
@@ -851,6 +871,19 @@ class TelegramNotifier:
                 or setup_data.get('radar_4h_choch_direction')
                 or ('bearish' if direction == 'SELL' else 'bullish')
             )
+            from radar_gates import fib_entry_zone_60_80, parse_radar_dt
+            poi_top = setup_data.get('poi_top') or setup_data.get('fvg_top')
+            poi_bottom = setup_data.get('poi_bottom') or setup_data.get('fvg_bottom')
+            eq = getattr(tf_data, 'equilibrium', None) if tf_data is not None else None
+            fib_lo, fib_hi = None, None
+            if eq is not None and break_px:
+                try:
+                    swing_est = 2.0 * float(eq) - float(break_px)
+                    fib_lo, fib_hi = fib_entry_zone_60_80(
+                        float(break_px), swing_est, str(struct_dir),
+                    )
+                except (TypeError, ValueError):
+                    pass
 
             chart_4h = None
             if df_4h is not None and not df_4h.empty and len(df_4h) >= 50:
@@ -865,8 +898,8 @@ class TelegramNotifier:
                     setup_ns = SimpleNamespace(
                         symbol=symbol,
                         entry_price=break_px,
-                        stop_loss=None,
-                        take_profit=None,
+                        stop_loss=setup_data.get('h4_sl_price'),
+                        take_profit=setup_data.get('take_profit'),
                         risk_reward=0,
                         status='MONITORING',
                         strategy_type=strategy.lower(),
@@ -877,11 +910,20 @@ class TelegramNotifier:
                         fvg=None,
                         choch_break_price=break_px,
                     )
+                    chart_ctx = {
+                        'signal_label': f'{sig} 4H',
+                        'poi_top': poi_top,
+                        'poi_bottom': poi_bottom,
+                        'fib_top': fib_hi,
+                        'fib_bottom': fib_lo,
+                        'poi_first_touch_time': setup_data.get('poi_first_touch_time'),
+                    }
                     chart_4h = self.chart_generator.create_4h_chart(
                         symbol=symbol,
                         df=df_4h,
                         setup=setup_ns,
                         save_path=None,
+                        chart_context=chart_ctx,
                     )
                     if chart_4h is None:
                         print(f"[WARNING] 4H chart render returned None for {symbol} — retry once")

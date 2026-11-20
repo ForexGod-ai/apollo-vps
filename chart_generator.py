@@ -48,7 +48,8 @@ class ChartGenerator:
         df: pd.DataFrame,
         setup = None,
         save_path: Optional[str] = None,
-        timeframe: str = "Daily"
+        timeframe: str = "Daily",
+        chart_context: Optional[dict] = None,
     ):
         """Create simple chart with mplfinance"""
         try:
@@ -66,10 +67,26 @@ class ChartGenerator:
                 'low': 'Low', 'close': 'Close'
             })
             df = df[['Open', 'High', 'Low', 'Close']]
-            
-            # 🔍 ZOOM FIX: Show last 60 candles for better visibility
-            # Daily: 60 candles = ~2 months | 4H: 10 days | 1H: 2.5 days
-            df = df.tail(60)
+
+            ctx = chart_context or {}
+            anchor = ctx.get('poi_first_touch_time')
+            if anchor and timeframe.upper() == '4H':
+                try:
+                    from radar_gates import parse_radar_dt
+                    adt = parse_radar_dt(anchor)
+                    if adt is not None:
+                        start_idx = 0
+                        for i in range(len(df)):
+                            if df.index[i] >= adt:
+                                start_idx = max(0, i - 12)
+                                break
+                        df = df.iloc[start_idx:]
+                        if len(df) > 180:
+                            df = df.iloc[-180:]
+                except Exception:
+                    df = df.tail(60)
+            else:
+                df = df.tail(60)
             
             # Title — safe attrs (dict, TradeSetup, SimpleNamespace)
             if setup is None:
@@ -128,6 +145,7 @@ class ChartGenerator:
                     break_px = setup.get('choch_break_price')
                 else:
                     break_px = getattr(setup, 'choch_break_price', None)
+            sig_label = str(ctx.get('signal_label') or 'CHoCH 4H')
             if break_px is not None:
                 try:
                     ax.axhline(
@@ -135,16 +153,35 @@ class ChartGenerator:
                         color='#ff9800',
                         linestyle='--',
                         linewidth=1.2,
-                        label='CHoCH',
-                    )
-                    ax.legend(
-                        loc='upper left',
-                        fontsize=8,
-                        facecolor='#1e222d',
-                        labelcolor='#d1d4dc',
+                        label=sig_label,
                     )
                 except (TypeError, ValueError):
                     pass
+            poi_top = ctx.get('poi_top')
+            poi_bottom = ctx.get('poi_bottom')
+            if poi_top is not None and poi_bottom is not None:
+                try:
+                    lo_p = float(min(poi_top, poi_bottom))
+                    hi_p = float(max(poi_top, poi_bottom))
+                    ax.axhspan(lo_p, hi_p, color='#2196f3', alpha=0.12, label='POI D1')
+                except (TypeError, ValueError):
+                    pass
+            fib_top = ctx.get('fib_top')
+            fib_bottom = ctx.get('fib_bottom')
+            if fib_top is not None and fib_bottom is not None:
+                try:
+                    lo_f = float(min(fib_top, fib_bottom))
+                    hi_f = float(max(fib_top, fib_bottom))
+                    ax.axhspan(lo_f, hi_f, color='#4caf50', alpha=0.15, label='Fib 60–80%')
+                except (TypeError, ValueError):
+                    pass
+            if break_px is not None or poi_top is not None or fib_top is not None:
+                ax.legend(
+                    loc='upper left',
+                    fontsize=8,
+                    facecolor='#1e222d',
+                    labelcolor='#d1d4dc',
+                )
 
             # Save
             if save_path:
@@ -177,10 +214,13 @@ class ChartGenerator:
         symbol: str,
         df: pd.DataFrame,
         setup = None,
-        save_path: Optional[str] = None
+        save_path: Optional[str] = None,
+        chart_context: Optional[dict] = None,
     ):
         """Create 4H chart - same as daily but with '4H' timeframe label"""
-        return self.create_daily_chart(symbol, df, setup, save_path, timeframe="4H")
+        return self.create_daily_chart(
+            symbol, df, setup, save_path, timeframe="4H", chart_context=chart_context,
+        )
     
     def create_1h_chart(
         self,
