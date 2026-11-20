@@ -74,7 +74,7 @@ def _classify_setup_phase(sym_info: dict) -> str:
         return PHASE_READY
     if info.get('h4_structure_locked') or info.get('h4_bias_locked'):
         return PHASE_READY
-    if status == 'WAITING_W_D_SYNC' or info.get('w_d_aligned') is False:
+    if status == 'WAITING_W_D_SYNC':
         return PHASE_WD_SYNC
     if status == 'WAITING_W_ZONE':
         return PHASE_W1_ZONE
@@ -200,7 +200,12 @@ def _format_scan_inventory_line(row: dict) -> str:
     else:
         dot = '⚪'
     st = f" · {strat}" if strat and strat != '—' else ''
-    return f"{dot} <code>{symbol}</code> {trend}{st} — <i>{stage}</i>\n"
+    w1_tag = ''
+    if row.get('w_d_aligned') is False:
+        w1_tag = ' · <i>W1: Nealiniat ⚠️</i>'
+    elif row.get('w_d_aligned') is True and row.get('w1_bias'):
+        w1_tag = ' · <i>W1: Aliniat ✅</i>'
+    return f"{dot} <code>{symbol}</code> {trend}{st}{w1_tag} — <i>{stage}</i>\n"
 
 
 def _render_scan_inventory(scan_inventory: list) -> str:
@@ -249,7 +254,7 @@ def _setup_attr(setup: Any, key: str, default=None):
 def _scan_card_wait_hint(setup: Any) -> str:
     """RO wait hint for V61 scan card Block 3 — V86: fără fallback oarbă CHoCH."""
     status = str(_setup_attr(setup, 'status', '') or '')
-    if status == 'WAITING_W_D_SYNC' or _setup_attr(setup, 'w_d_aligned', True) is False:
+    if status == 'WAITING_W_D_SYNC':
         return 'Așteptăm sync W+D'
     if status == 'WAITING_W_ZONE':
         return 'Așteptăm zonă W1'
@@ -1004,9 +1009,9 @@ class TelegramNotifier:
             rec_badge = "EXECUTE" if rec == 'TAKE' else "REVIEW" if rec == 'REVIEW' else "SKIP"
             w_d_ok = bool(_setup_attr(setup, 'w_d_aligned', True))
             if w1_counter or not w_d_ok:
-                footer = "<i>BLOCAT (W1 opus)</i>"
+                footer = "<i>W1: Nealiniat ⚠️ (informativ)</i>"
             else:
-                footer = "<i>informativ</i>"
+                footer = "<i>W1: Aliniat ✅</i>"
             block2_parts.append(
                 f"🧠 <b>AI: {fused_score}% ({confidence})</b> · {rec_badge} · {footer}"
             )

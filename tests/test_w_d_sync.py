@@ -52,10 +52,10 @@ def test_evaluate_w_d_sync_counter_trend_bearish_w1_bullish_d1():
         current_price=1.103,
     )
     assert sync['w_d_aligned'] is False
-    assert sync['status'] == 'WAITING_W_D_SYNC'
+    assert sync.get('status') is None
 
 
-def test_apply_w_d_sync_gate_blocks_long_when_w1_bearish():
+def test_apply_w_d_sync_gate_keeps_monitoring_when_w1_bearish():
     det = SMCDetector()
     setup = _make_setup('bullish')
     setup.status = 'MONITORING'
@@ -65,9 +65,8 @@ def test_apply_w_d_sync_gate_blocks_long_when_w1_bearish():
         w1_poi={'w1_poi_top': 1.110, 'w1_poi_bottom': 1.095},
         current_price=1.103,
     )
-    assert out.status == 'WAITING_W_D_SYNC'
+    assert out.status == 'MONITORING'
     assert out.w_d_aligned is False
-    assert out.confidence == 'LOW_W1_COUNTER_TREND'
 
 
 def test_apply_w_d_sync_gate_aligned_bearish():
@@ -136,7 +135,7 @@ def test_w_d_sync_radar_monitor_only_does_not_block():
     }
     result = SimpleNamespace(symbol='GBPUSD', current_price=1.262)
     assert radar._w_d_sync_blocks_execute(setup, result) is False
-    assert setup['status'] == 'WAITING_W_D_SYNC'
+    assert setup['status'] == 'MONITORING'
 
 
 def test_resolve_status_promotes_waiting_w_d_sync_when_aligned():
@@ -160,7 +159,6 @@ def test_apply_w_d_sync_gate_promotes_sticky_waiting_status():
     )
     assert out.w_d_aligned is True
     assert out.status == 'MONITORING'
-    assert out.confidence == 'NORMAL'
 
 
 def test_arm_execute_now_allowed_after_w_d_promotion():

@@ -25,27 +25,25 @@ def _ohlc_frame(closes, spread=0.02):
 
 
 def test_v87_btc_style_hl_break_flips_bearish_reversal():
-    """HL promoted then body close below HL → bearish CHoCH (reversal), not stale bullish BOS."""
+    """V92: body close below HL → bearish CHoCH (reversal)."""
     det = SMCDetector(swing_lookback=3, atr_multiplier=0.25)
-    n = 51
-    close = []
-    for i in range(n - 1):
-        base = 70000 + 250 * i
-        wave = 1200 * (1 if (i // 4) % 2 == 0 else -1)
-        close.append(base + wave)
-    df = _ohlc_frame(close, spread=400.0)
+    close = (
+        [100.0, 99.5, 99.0, 98.5, 98.0, 97.8, 98.2, 98.8, 99.4, 100.0]
+        + [100.6, 101.2, 101.8, 102.2, 101.6, 101.0, 100.5, 100.8]
+    )
+    df = _ohlc_frame(close, spread=0.15)
     sm0 = det.run_d1_smc_state_machine(df)
     assert sm0["trend"] == "bullish"
     prot = float(sm0["protected_low"])
-    # Break on last **closed** bar; final row = forming candle (V72 trim).
-    df.loc[len(df) - 1, "close"] = prot - 500.0
-    df.loc[len(df) - 1, "low"] = prot - 800.0
-    df.loc[len(df) - 1, "open"] = prot - 200.0
+    df.loc[len(df) - 1, "close"] = prot - 0.35
+    df.loc[len(df) - 1, "open"] = prot - 0.10
+    df.loc[len(df) - 1, "high"] = prot + 0.05
+    df.loc[len(df) - 1, "low"] = prot - 0.40
     forming_close = float(df.loc[len(df) - 1, "close"])
     df.loc[len(df)] = {
         "open": forming_close,
-        "high": forming_close + 100,
-        "low": forming_close - 100,
+        "high": forming_close + 0.1,
+        "low": forming_close - 0.1,
         "close": forming_close,
         "time": pd.Timestamp("2025-03-01"),
     }

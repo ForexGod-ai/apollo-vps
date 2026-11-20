@@ -244,75 +244,17 @@ class W1Mixin:
         if not w_d_aligned:
             return {
                 'w_d_aligned': False,
-                'status': 'WAITING_W_D_SYNC',
+                'status': None,
                 'reason': f'W1={w1_bias} vs D1={d1_direction}',
             }
-
-        if w1_poi_top is not None and w1_poi_bottom is not None:
-            if not self.daily_poi_inside_weekly_zone(
-                daily_poi_top, daily_poi_bottom, w1_poi_top, w1_poi_bottom,
-            ):
-                return {
-                    'w_d_aligned': True,
-                    'status': 'WAITING_D1_PULLBACK',
-                    'reason': 'daily_poi_outside_w1_macro_zone',
-                }
-            if current_price is not None:
-                w_lo = min(float(w1_poi_bottom), float(w1_poi_top))
-                w_hi = max(float(w1_poi_bottom), float(w1_poi_top))
-                in_box = w_lo <= float(current_price) <= w_hi
-                if not in_box:
-                    st = (d1_strategy_type or '').lower()
-                    if st == 'reversal':
-                        pass
-                    elif st == 'continuation' and self.daily_poi_inside_weekly_zone(
-                        daily_poi_top,
-                        daily_poi_bottom,
-                        w1_poi_top,
-                        w1_poi_bottom,
-                    ):
-                        pass
-                    elif self._w1_zone_touched_recently(df_daily, w_lo, w_hi):
-                        pass
-                    else:
-                        half_atr = self._daily_atr_half(df_daily)
-                        if half_atr > 0:
-                            dist = min(
-                                abs(float(current_price) - w_lo),
-                                abs(float(current_price) - w_hi),
-                            )
-                            if dist <= half_atr:
-                                pass
-                            else:
-                                return {
-                                    'w_d_aligned': True,
-                                    'status': 'WAITING_W_ZONE',
-                                    'reason': 'price_outside_w1_poi',
-                                }
-                        else:
-                            return {
-                                'w_d_aligned': True,
-                                'status': 'WAITING_W_ZONE',
-                                'reason': 'price_outside_w1_poi',
-                            }
 
         return {'w_d_aligned': True, 'status': None, 'reason': 'w_d_aligned'}
 
     @staticmethod
     def resolve_status_after_w_d_sync(current_status: str, sync: dict) -> str:
-        """
-        Promote or set status from evaluate_w_d_sync result.
-        Fixes sticky WAITING_W_D_SYNC when W+D become aligned (status None).
-        """
+        """V92: W1/W+D is informational — never override setup status from sync."""
         current = str(current_status or '')
-        w_d_aligned = bool(sync.get('w_d_aligned', True))
-        sync_status = sync.get('status')
-
-        if sync_status == 'WAITING_W_D_SYNC':
-            return 'WAITING_W_D_SYNC'
-        if sync_status:
-            return str(sync_status)
-        if w_d_aligned and current in ('WAITING_W_D_SYNC', 'WAITING_W_ZONE'):
+        if current in ('WAITING_W_D_SYNC', 'WAITING_W_ZONE'):
             return 'MONITORING'
         return current
 
@@ -351,25 +293,11 @@ class W1Mixin:
         setup.w_d_aligned = bool(sync.get('w_d_aligned', True))
         _prev_status = getattr(setup, 'status', '') or ''
         setup.status = self.resolve_status_after_w_d_sync(_prev_status, sync)
-
-        if setup.status == 'WAITING_W_D_SYNC':
-            setup.confidence = 'LOW_W1_COUNTER_TREND'
+        if not setup.w_d_aligned:
             print(
-                f"⏸️ [W+D SOFT SYNC] {sym}: {sync.get('reason')} — "
-                f"monitor only, zero EXECUTE_NOW"
+                f"   📅 [W1 INFO] {sym}: {sync.get('reason')} "
+                f"(confluență informativă — fără blocare 4H)"
             )
-        elif sync.get('status') and setup.status != _prev_status:
-            if debug_msg := sync.get('reason'):
-                print(f"   📅 [W+D] {sym}: {setup.status} ({debug_msg})")
-        elif (
-            setup.w_d_aligned
-            and _prev_status == 'WAITING_W_D_SYNC'
-            and setup.status == 'MONITORING'
-        ):
-            setup.confidence = 'NORMAL'
-            print(f"   ✅ [W+D SYNC] {sym}: WAITING_W_D_SYNC → MONITORING (W+D aligned)")
-        elif setup.w_d_aligned and setup.confidence == 'LOW_W1_COUNTER_TREND':
-            setup.confidence = 'NORMAL'
 
         return setup
 

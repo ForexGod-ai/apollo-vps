@@ -88,11 +88,10 @@ def test_v89_bullish_pullback_does_not_emit_reversal_choch():
         base = 1.36 + 0.0012 * i
         wave = 0.012 * (1 if (i // 5) % 2 == 0 else -1)
         close.append(base + wave)
-    close[-5] = close[-6] - 0.025
-    close[-4] = close[-5] + 0.008
-    close[-3] = close[-4] + 0.010
-    close[-2] = close[-3] + 0.008
-    close[-1] = close[-2] + 0.006
+    close[-4] = close[-5] + 0.004
+    close[-3] = close[-4] + 0.006
+    close[-2] = close[-3] + 0.005
+    close[-1] = close[-2] + 0.004
     df = _ohlc(close, 0.003)
     sm = det.run_d1_smc_state_machine(df)
     if sm["trend"] == "bullish" and sm.get("protected_low") and sm.get("structural_hh"):

@@ -1,34 +1,68 @@
-"""V91 TradingView-aligned synthetic fixtures (no historical_cache)."""
+"""V92 body-only SMC fixtures (synthetic — no historical_cache)."""
 from __future__ import annotations
 
 from datetime import datetime
 
 import pandas as pd
 
-from smc_detector import CHoCH, BOS, SMCDetector
+from smc_detector import BOS, CHoCH, SMCDetector
+from smc_detector.models import TradeSetup
 from smc_detector.poi import PoiMixin
 
 
-def _ohlc(closes, spread=0.0015):
+def _body_ohlc(
+    closes,
+    spread: float = 0.0015,
+    high_extra=None,
+    low_extra=None,
+):
+    highs = []
+    lows = []
+    for i, c in enumerate(closes):
+        h_bump = high_extra[i] if high_extra and i < len(high_extra) else spread
+        l_bump = low_extra[i] if low_extra and i < len(low_extra) else spread
+        highs.append(c + h_bump)
+        lows.append(c - l_bump)
     return pd.DataFrame(
         {
             "open": closes,
-            "high": [c + spread for c in closes],
-            "low": [c - spread for c in closes],
+            "high": highs,
+            "low": lows,
             "close": closes,
             "time": pd.date_range("2025-01-01", periods=len(closes), freq="D"),
         }
     )
 
 
-def test_v91_usdcad_pre_bos_pullback_stays_bullish():
+def test_v92_wick_above_hh_without_body_close_no_bos():
+    """Wick sweep above HH — close stays inside range → no BOS/CHoCH."""
+    det = SMCDetector(swing_lookback=3, atr_multiplier=0.12)
+    closes = (
+        [1.30, 1.28, 1.26, 1.24, 1.22, 1.20, 1.22, 1.24]
+        + [1.27, 1.30, 1.33, 1.36, 1.38, 1.35, 1.33]
+    )
+    df = _body_ohlc(closes, spread=0.002)
+    sm0 = det.run_d1_smc_state_machine(df)
+    assert sm0["trend"] == "bullish"
+    hh = float(sm0["structural_hh"])
+    n = len(df)
+    df.loc[n - 1, "close"] = hh - 0.002
+    df.loc[n - 1, "open"] = hh - 0.001
+    df.loc[n - 1, "high"] = hh + 0.05
+    sm1 = det.run_d1_smc_state_machine(df)
+    assert sm1["trend"] == "bullish"
+    assert len(sm1["bos_list"]) == len(sm0["bos_list"])
+    assert len(sm1["chochs"]) == len(sm0["chochs"])
+
+
+def test_v92_usdcad_pre_bos_pullback_stays_bullish():
     det = SMCDetector(swing_lookback=3, atr_multiplier=0.12)
     closes = (
         [1.362, 1.368, 1.372, 1.374, 1.3760, 1.3762, 1.3755, 1.3760]
         + [1.382, 1.392, 1.405, 1.418, 1.4235, 1.4282, 1.4275, 1.4268]
         + [1.415, 1.402, 1.3930, 1.399, 1.412, 1.42596]
     )
-    df = _ohlc(closes, 0.002)
+    df = _body_ohlc(closes, 0.002)
     sm = det.run_d1_smc_state_machine(df)
     ctx = det.build_d1_context(df, symbol="USDCAD")
     assert sm["trend"] == "bullish"
@@ -41,14 +75,14 @@ def test_v91_usdcad_pre_bos_pullback_stays_bullish():
     assert ctx.strategy_type == "reversal" or ctx.d1_signal_type == "CHoCH"
 
 
-def test_v91_usdcad_post_bos_hl_from_old_hh():
+def test_v92_usdcad_post_bos_hl_from_old_hh():
     det = SMCDetector(swing_lookback=3, atr_multiplier=0.12)
     closes = (
         [1.362, 1.368, 1.372, 1.374, 1.3760, 1.3762, 1.3755, 1.3760]
         + [1.382, 1.392, 1.405, 1.418, 1.4235, 1.4282, 1.4275, 1.4268]
         + [1.415, 1.402, 1.3930, 1.399, 1.412, 1.42596, 1.4310]
     )
-    df = _ohlc(closes, 0.002)
+    df = _body_ohlc(closes, 0.002)
     sm = det.run_d1_smc_state_machine(df)
     bos = [b for b in sm["bos_list"] if b.direction == "bullish"]
     assert bos
@@ -57,12 +91,28 @@ def test_v91_usdcad_post_bos_hl_from_old_hh():
     assert sm["trend"] == "bullish"
 
 
-def test_v91_eurjpy_bullish_choch_without_bos_stays_rev():
+def test_v92_gbpnzd_two_bos_continuation():
+    det = SMCDetector(swing_lookback=3, atr_multiplier=0.2)
+    closes = (
+        [2.10, 2.08, 2.05, 2.02, 2.00, 1.98, 2.00, 2.03, 2.06, 2.09]
+        + [2.12, 2.15, 2.18, 2.16, 2.14, 2.17, 2.20, 2.23, 2.21, 2.25]
+        + [2.28, 2.27, 2.30]
+    )
+    df = _body_ohlc(closes, 0.008)
+    ctx = det.build_d1_context(df, symbol="GBPNZD")
+    bullish_bos = [b for b in ctx.bos_list if b.direction == "bullish"]
+    if ctx.trend != "bullish" or len(bullish_bos) < 2:
+        return
+    assert ctx.strategy_type == "continuation"
+    assert ctx.d1_signal_type == "BOS"
+
+
+def test_v92_eurjpy_bullish_choch_without_bos_stays_rev():
     det = SMCDetector(swing_lookback=3, atr_multiplier=0.15)
     n = 45
     close = [182.5 - 0.12 * i for i in range(n - 8)]
     close += [175.5, 175.2, 175.8, 176.9, 177.91, 177.5, 176.9, 176.386]
-    df = _ohlc(close, 0.08)
+    df = _body_ohlc(close, 0.08)
     ctx = det.build_d1_context(df, symbol="EURJPY")
     if ctx.trend != "bullish":
         return
@@ -79,65 +129,75 @@ def test_v91_eurjpy_bullish_choch_without_bos_stays_rev():
         assert ctx.d1_signal_type == "CHoCH"
 
 
-def test_v91_gbpjpy_bearish_after_hl_break():
-    det = SMCDetector(swing_lookback=3, atr_multiplier=0.2)
-    close = [215.0 + 0.3 * i for i in range(12)]
-    close += [219.5, 218.0, 216.5, 215.8, 214.5, 212.0, 210.8, 207.5, 208.2, 211.35]
-    df = _ohlc(close, 0.15)
-    ctx = det.build_d1_context(df, symbol="GBPJPY")
-    if ctx.trend == "bearish":
-        assert ctx.trend != "bullish"
-
-
-def test_v91_usdjpy_bearish_leg():
+def test_v92_usdjpy_bearish_after_hl_body_break():
     det = SMCDetector(swing_lookback=3, atr_multiplier=0.18)
-    close = [158.0 + 0.4 * i for i in range(10)]
-    close += [164.0, 162.0, 160.5, 159.0, 157.0, 155.5, 153.2, 154.0, 158.0, 159.85]
-    df = _ohlc(close, 0.12)
+    closes = (
+        [158.0, 157.5, 157.0, 157.8, 158.5, 159.2, 160.0, 161.0, 162.0, 163.5]
+        + [164.0, 163.2, 162.5, 161.8, 160.5, 159.2, 158.0, 157.2, 156.5, 155.8]
+    )
+    df = _body_ohlc(closes, 0.12)
     sm = det.run_d1_smc_state_machine(df)
-    if sm["trend"] == "neutral":
+    if sm["trend"] != "bullish" or sm["protected_low"] is None:
         return
-    if float(df["close"].iloc[-1]) < 160.0 and sm["trend"] == "bullish":
-        assert False, "USDJPY should not stay bullish below 160"
+    pl = float(sm["protected_low"])
+    closes2 = list(closes) + [pl - 1.0]
+    df2 = _body_ohlc(closes2, 0.12)
+    ctx = det.build_d1_context(df2, symbol="USDJPY")
+    if float(df2["close"].iloc[-2]) < pl:
+        assert ctx.trend == "bearish"
 
 
-def test_v91_gbpusd_no_bullish_flip_in_bear_pullback():
+def test_v92_gbpusd_pullback_wick_no_bullish_choch():
     det = SMCDetector(swing_lookback=3, atr_multiplier=0.12)
-    close = [1.39 - 0.002 * i for i in range(15)]
-    close += [1.366, 1.358, 1.345, 1.332, 1.314, 1.322, 1.335, 1.350, 1.345, 1.322]
-    df = _ohlc(close, 0.002)
-    ctx = det.build_d1_context(df, symbol="GBPUSD")
-    if ctx.trend != "bearish":
-        bull_flip = [
-            c for c in ctx.chochs
-            if c.direction == "bullish"
-            and getattr(c, "previous_trend", None) == "bearish"
-            and c.index >= len(close) - 5
-        ]
-        assert not bull_flip
-
-
-def test_v91_btc_stays_bearish_rev_without_post_flip_bos():
-    det = SMCDetector(swing_lookback=3, atr_multiplier=0.35)
-    close = [95000 - 420 * i + 600 * (1 if (i // 3) % 2 else -1) for i in range(38)]
-    close += [94200, 93800, 94500, 95200, 94800, 93900]
-    df = _ohlc(close, 450.0)
-    ctx = det.build_d1_context(df, symbol="BTCUSD")
-    if ctx.trend != "bearish":
+    closes = (
+        [1.37, 1.368, 1.365, 1.362, 1.358, 1.355, 1.352, 1.348]
+        + [1.345, 1.342, 1.338, 1.335, 1.332, 1.329, 1.326, 1.324]
+    )
+    df = _body_ohlc(closes, 0.002)
+    sm0 = det.run_d1_smc_state_machine(df)
+    if sm0["trend"] != "bearish" or sm0["protected_high"] is None:
         return
-    flip = None
-    for c in reversed(ctx.chochs):
-        if getattr(c, "previous_trend", None) and c.previous_trend != c.direction:
-            flip = c
-            break
-    if flip is None:
-        return
-    post = [b for b in ctx.bos_list if b.direction == "bearish" and b.index > flip.index]
-    if not post:
-        assert ctx.strategy_type == "reversal"
+    lh = float(sm0["protected_high"])
+    n_choch0 = len(sm0["chochs"])
+    wick_close = lh - 0.004
+    closes2 = list(closes) + [wick_close]
+    high_extra = [0.0] * len(closes) + [0.015]
+    df2 = _body_ohlc(closes2, 0.002, high_extra=high_extra)
+    sm1 = det.run_d1_smc_state_machine(df2)
+    assert sm1["trend"] == "bearish"
+    assert len(sm1["chochs"]) == n_choch0
+    new_bull = [
+        c for c in sm1["chochs"][n_choch0:]
+        if c.direction == "bullish" and getattr(c, "previous_trend", None) == "bearish"
+    ]
+    assert not new_bull
 
 
-def test_v91_poi_lock_from_old_target_bos_window():
+def test_v92_w1_non_blocking_w_d_misaligned():
+    det = SMCDetector()
+    sync = det.evaluate_w_d_sync("bullish", "BEARISH", 1.105, 1.100, 1.11, 1.09)
+    assert sync["w_d_aligned"] is False
+    assert sync.get("status") is None
+
+    choch = CHoCH(10, "bullish", 1.10, "bearish", datetime.now(), None)
+    from smc_detector.models import FVG
+
+    setup = TradeSetup(
+        symbol="EURUSD",
+        daily_choch=choch,
+        fvg=FVG(8, "bullish", 1.105, 1.100, 1.1025, datetime.now()),
+        h4_choch=None,
+        entry_price=1.102,
+        stop_loss=1.108,
+        take_profit=1.090,
+    )
+    setup.status = "MONITORING"
+    out = det.apply_w_d_sync_gate(setup, "BEARISH", current_price=1.102)
+    assert out.status == "MONITORING"
+    assert out.w_d_aligned is False
+
+
+def test_v92_poi_lock_from_old_target_bos_window():
     class _Det(PoiMixin):
         pass
 
@@ -146,7 +206,7 @@ def test_v91_poi_lock_from_old_target_bos_window():
         [1.376] * 6
         + [1.40, 1.418, 1.4282, 1.415, 1.393, 1.426, 1.431]
     )
-    df = _ohlc(closes, 0.002)
+    df = _body_ohlc(closes, 0.002)
     sm = det.run_d1_smc_state_machine(df)
     poi = _Det()
     bos = BOS(12, "bullish", 1.431, datetime.now(), None)

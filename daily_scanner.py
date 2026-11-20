@@ -172,6 +172,11 @@ def _build_scan_inventory_item(
     if setup is not None and getattr(setup, 'fvg', None):
         fvg = setup.fvg
         poi_zone = f"{float(fvg.bottom):.5f}–{float(fvg.top):.5f}"
+    w_d_aligned = None
+    w1_bias = None
+    if setup is not None:
+        w_d_aligned = getattr(setup, 'w_d_aligned', None)
+        w1_bias = getattr(setup, 'w1_bias', None)
     return {
         'symbol': symbol,
         'trend': trend,
@@ -179,6 +184,8 @@ def _build_scan_inventory_item(
         'has_setup': setup is not None,
         'poi_zone': poi_zone,
         'stage_label': _scan_inventory_stage_label(ctx, setup),
+        'w_d_aligned': w_d_aligned,
+        'w1_bias': w1_bias,
     }
 
 

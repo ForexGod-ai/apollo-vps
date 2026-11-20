@@ -42,10 +42,9 @@ class CoreStructureMixin:
         debug: bool = False,
     ) -> dict:
         """
-        V91 — D1 SMC: leg-scoped major range.
+        V92 — D1 SMC: 100% body-only breaks + major swing alternating chain bootstrap.
 
-        BOS promotes HL/LH from old_target_idx → bar i (wick min/max in that window).
-        CHoCH only through protected HL/LH; target sync limited to leg.start_bar+.
+        No bar-0 fallback; leg anchors on first confirmed L→H or H→L major pair.
         """
         empty = {
             'trend': 'neutral',
@@ -73,119 +72,21 @@ class CoreStructureMixin:
             df, swing_highs, swing_lows,
         )
         fw = max(self._swing_fractal_window(df), 2)
-        swing_low_indices = {l.index for l in swing_lows}
-        swing_high_indices = {h.index for h in swing_highs}
 
         def swing_pt(i: int, st: str) -> SwingPoint:
-            if st == 'high':
-                for h in swing_highs:
-                    if h.index == i:
-                        return h
-                price = float(df['high'].iloc[i])
-            else:
-                for l in swing_lows:
-                    if l.index == i:
-                        return l
-                price = float(df['low'].iloc[i])
+            for h in swing_highs:
+                if st == 'high' and h.index == i:
+                    return h
+            for l in swing_lows:
+                if st == 'low' and l.index == i:
+                    return l
+            price = float(bh(df, i) if st == 'high' else bl(df, i))
             return SwingPoint(
                 index=i,
                 price=price,
                 swing_type=st,
                 candle_time=self._bar_time(df, i),
             )
-
-        def confirmed_highs(bar_i: int) -> List[SwingPoint]:
-            return [h for h in swing_highs if h.index + fw <= bar_i]
-
-        def confirmed_lows(bar_i: int) -> List[SwingPoint]:
-            return [l for l in swing_lows if l.index + fw <= bar_i]
-
-        def broken_swing_high(bar_i: int, close_px: float) -> Optional[SwingPoint]:
-            pool = [h for h in major_highs if h.index + fw <= bar_i]
-            if not pool:
-                pool = confirmed_highs(bar_i)
-            for h in reversed(pool):
-                if close_px > bh(df, h.index):
-                    return h
-            return None
-
-        def broken_swing_low(bar_i: int, close_px: float) -> Optional[SwingPoint]:
-            pool = [l for l in major_lows if l.index + fw <= bar_i]
-            if not pool:
-                pool = confirmed_lows(bar_i)
-            for l in reversed(pool):
-                if close_px < bl(df, l.index):
-                    return l
-            return None
-
-        def deepest_confirmed_low(bar_i: int, cap_idx: int) -> Optional[SwingPoint]:
-            lows = [l for l in confirmed_lows(bar_i) if l.index <= cap_idx]
-            if not lows:
-                return None
-            return min(lows, key=lambda l: bl(df, l.index))
-
-        def highest_confirmed_high(bar_i: int, cap_idx: int) -> Optional[SwingPoint]:
-            highs = [h for h in confirmed_highs(bar_i) if h.index <= cap_idx]
-            if not highs:
-                return None
-            return max(highs, key=lambda h: bh(df, h.index))
-
-        chochs: List[CHoCH] = []
-        bos_list: List[BOS] = []
-        bias: Optional[str] = None
-        protected_pivot: Optional[float] = None
-        target_pivot: Optional[float] = None
-        protected_idx: Optional[int] = None
-        target_idx: Optional[int] = None
-        ref_high = bh(df, 0)
-        ref_low = bl(df, 0)
-        last_event_bar = 0
-        latest_signal = None
-        leg_choch = None
-        leg_start_bar = 0
-        leg_choch_target_floor: Optional[float] = None
-        leg_choch_target_ceiling: Optional[float] = None
-        bos_unlocked = True
-
-        def _set_bullish_pivots(hl_idx: int, hh_idx: int) -> None:
-            nonlocal protected_pivot, target_pivot, protected_idx, target_idx
-            protected_idx = hl_idx
-            target_idx = hh_idx
-            protected_pivot = float(bl(df, hl_idx))
-            target_pivot = float(bh(df, hh_idx))
-
-        def _set_bearish_pivots(lh_idx: int, ll_idx: int) -> None:
-            nonlocal protected_pivot, target_pivot, protected_idx, target_idx
-            protected_idx = lh_idx
-            target_idx = ll_idx
-            protected_pivot = float(bh(df, lh_idx))
-            target_pivot = float(bl(df, ll_idx))
-
-        def _hl_from_impulse(start_idx: int, end_idx: int) -> Tuple[int, float]:
-            """Fractal HL at impulse origin before BOS-up (body low of pivot)."""
-            origin = self._impulse_origin_low_between(
-                df, swing_lows, start_idx, end_idx,
-            )
-            if origin is not None:
-                return origin.index, float(bl(df, origin.index))
-            lows = [l for l in confirmed_lows(end_idx) if start_idx < l.index <= end_idx]
-            if lows:
-                deepest = min(lows, key=lambda l: bl(df, l.index))
-                return deepest.index, float(bl(df, deepest.index))
-            return end_idx, float(bl(df, end_idx))
-
-        def _lh_from_impulse(start_idx: int, end_idx: int) -> Tuple[int, float]:
-            """Fractal LH at impulse origin before BOS-down (body high of pivot)."""
-            origin = self._impulse_origin_high_between(
-                df, swing_highs, start_idx, end_idx,
-            )
-            if origin is not None:
-                return origin.index, float(bh(df, origin.index))
-            highs = [h for h in confirmed_highs(end_idx) if start_idx < h.index <= end_idx]
-            if highs:
-                highest = max(highs, key=lambda h: bh(df, h.index))
-                return highest.index, float(bh(df, highest.index))
-            return end_idx, float(bh(df, end_idx))
 
         def _min_body_low_between(start_idx: int, end_idx: int) -> Tuple[int, float]:
             start_idx = max(0, int(start_idx))
@@ -211,288 +112,200 @@ class CoreStructureMixin:
                     best_i = j
             return best_i, float(best_v)
 
-        def _min_wick_low_between(start_idx: int, end_idx: int) -> Tuple[int, float]:
-            start_idx = max(0, int(start_idx))
-            end_idx = min(int(end_idx), len(df) - 1)
-            best_i = start_idx
-            best_v = float(df['low'].iloc[start_idx])
-            for j in range(start_idx, end_idx + 1):
-                v = float(df['low'].iloc[j])
-                if v < best_v:
-                    best_v = v
-                    best_i = j
-            return best_i, best_v
+        def _alternating_major_chain() -> List[Tuple[str, int, float, SwingPoint]]:
+            events: List[Tuple[str, int, float, SwingPoint]] = []
+            for l in major_lows:
+                events.append(('L', l.index, float(bl(df, l.index)), l))
+            for h in major_highs:
+                events.append(('H', h.index, float(bh(df, h.index)), h))
+            events.sort(key=lambda x: x[1])
+            chain: List[Tuple[str, int, float, SwingPoint]] = []
+            for typ, idx, px, sp in events:
+                if not chain:
+                    chain.append((typ, idx, px, sp))
+                    continue
+                last_typ, last_idx, last_px, _last_sp = chain[-1]
+                if typ == last_typ:
+                    if typ == 'L' and px < last_px:
+                        chain[-1] = (typ, idx, px, sp)
+                    elif typ == 'H' and px > last_px:
+                        chain[-1] = (typ, idx, px, sp)
+                else:
+                    chain.append((typ, idx, px, sp))
+            return chain
 
-        def _max_wick_high_between(start_idx: int, end_idx: int) -> Tuple[int, float]:
-            start_idx = max(0, int(start_idx))
-            end_idx = min(int(end_idx), len(df) - 1)
-            best_i = start_idx
-            best_v = float(df['high'].iloc[start_idx])
-            for j in range(start_idx, end_idx + 1):
-                v = float(df['high'].iloc[j])
-                if v > best_v:
-                    best_v = v
-                    best_i = j
-            return best_i, best_v
+        chain = _alternating_major_chain()
+        if len(chain) < 2:
+            return empty
 
-        def _begin_leg(bar_i: int) -> None:
-            nonlocal leg_start_bar, leg_choch_target_floor, leg_choch_target_ceiling, bos_unlocked
-            leg_start_bar = int(bar_i)
-            leg_choch_target_floor = None
-            leg_choch_target_ceiling = None
-            bos_unlocked = False
+        p0, p1 = chain[0], chain[1]
+        if p0[0] == 'L' and p1[0] == 'H':
+            bias = 'bullish'
+            protected_idx, protected_pivot = p0[1], p0[2]
+            target_idx, target_pivot = p1[1], p1[2]
+        elif p0[0] == 'H' and p1[0] == 'L':
+            bias = 'bearish'
+            protected_idx, protected_pivot = p0[1], p0[2]
+            target_idx, target_pivot = p1[1], p1[2]
+        else:
+            return empty
 
-        def _sync_major_target_high(bar_i: int) -> None:
-            nonlocal target_pivot, target_idx
-            if protected_idx is None:
-                return
-            lo_bar = max(int(protected_idx), int(leg_start_bar))
-            pool = [
-                h for h in major_highs
-                if h.index + fw <= bar_i and h.index >= lo_bar
-            ]
-            if not pool:
-                return
-            best = max(pool, key=lambda h: bh(df, h.index))
-            px = float(bh(df, best.index))
-            if leg_choch_target_floor is not None and px + 1e-12 < float(leg_choch_target_floor):
-                return
-            if target_idx is None or best.index >= target_idx or px > float(target_pivot or 0):
-                target_idx = best.index
-                target_pivot = px
+        chochs: List[CHoCH] = []
+        bos_list: List[BOS] = []
+        latest_signal = None
+        leg_choch = None
+        start_i = max(int(protected_idx), int(target_idx)) + 1
+        last_event_bar = start_i - 1
 
-        def _sync_major_target_low(bar_i: int) -> None:
-            nonlocal target_pivot, target_idx
-            if protected_idx is None:
-                return
-            lo_bar = max(int(protected_idx), int(leg_start_bar))
-            pool = [
-                l for l in major_lows
-                if l.index + fw <= bar_i and l.index >= lo_bar
-            ]
-            if not pool:
-                return
-            best = min(pool, key=lambda l: bl(df, l.index))
-            px = float(bl(df, best.index))
-            if leg_choch_target_ceiling is not None and px - 1e-12 > float(leg_choch_target_ceiling):
-                return
-            if target_idx is None or best.index >= target_idx or px < float(target_pivot or 1e18):
-                target_idx = best.index
-                target_pivot = px
-
-        for i in range(1, len(df)):
+        for i in range(start_i, len(df)):
             close = float(df['close'].iloc[i])
             ct = self._bar_time(df, i)
+            event_at_bar = False
 
-            if bias is None:
-                if close > ref_high:
-                    br_h = broken_swing_high(i, close)
-                    if br_h is None:
-                        ref_high = max(ref_high, bh(df, i))
-                        ref_low = min(ref_low, bl(df, i))
-                        continue
-                    hl_idx, hl_px = _hl_from_impulse(0, i)
-                    bias = 'bullish'
-                    protected_pivot = hl_px
-                    protected_idx = hl_idx
-                    target_idx = br_h.index
-                    target_pivot = float(bh(df, br_h.index))
-                    last_event_bar = i
-                    ev = CHoCH(
-                        index=i,
-                        direction='bullish',
-                        break_price=target_pivot,
-                        previous_trend=None,
-                        candle_time=ct,
-                        swing_broken=br_h,
-                    )
-                    chochs.append(ev)
-                    latest_signal = ev
-                    leg_choch = ev
-                    _begin_leg(i)
-                    leg_choch_target_floor = float(target_pivot)
-                    bos_unlocked = False
-                elif close < ref_low:
-                    br_l = broken_swing_low(i, close)
-                    if br_l is None:
-                        ref_high = max(ref_high, bh(df, i))
-                        ref_low = min(ref_low, bl(df, i))
-                        continue
-                    lh_idx, lh_px = _lh_from_impulse(0, i)
-                    bias = 'bearish'
-                    protected_pivot = lh_px
-                    protected_idx = lh_idx
-                    target_idx = br_l.index
-                    target_pivot = float(bl(df, br_l.index))
-                    last_event_bar = i
-                    ev = CHoCH(
-                        index=i,
-                        direction='bearish',
-                        break_price=target_pivot,
-                        previous_trend=None,
-                        candle_time=ct,
-                        swing_broken=br_l,
-                    )
-                    chochs.append(ev)
-                    latest_signal = ev
-                    leg_choch = ev
-                    _begin_leg(i)
-                    leg_choch_target_ceiling = float(target_pivot)
-                    bos_unlocked = False
-                else:
-                    ref_high = max(ref_high, bh(df, i))
-                    ref_low = min(ref_low, bl(df, i))
+            lo_p = float(protected_pivot)
+            hi_p = float(target_pivot)
+
+            if bias == 'bullish' and lo_p <= close <= hi_p:
+                continue
+            if bias == 'bearish' and hi_p >= close >= lo_p:
                 continue
 
-            assert protected_pivot is not None and target_pivot is not None
+            if (
+                bias == 'bullish'
+                and i > last_event_bar
+                and close < protected_pivot - 1e-12
+            ):
+                old_prot = int(protected_idx)
+                old_tgt = int(target_idx)
+                win_lo = min(old_prot, old_tgt)
+                lh_idx, lh_px = _max_body_high_between(win_lo, i)
+                ll_idx = i
+                ll_px = float(bl(df, i))
+                bias = 'bearish'
+                protected_idx, protected_pivot = lh_idx, lh_px
+                target_idx, target_pivot = ll_idx, ll_px
+                last_event_bar = i
+                event_at_bar = True
+                broken = swing_pt(old_prot, 'low')
+                ev = CHoCH(
+                    index=i,
+                    direction='bearish',
+                    break_price=lo_p,
+                    previous_trend='bullish',
+                    candle_time=ct,
+                    swing_broken=broken,
+                )
+                chochs.append(ev)
+                latest_signal = ev
+                leg_choch = ev
 
+            elif (
+                bias == 'bearish'
+                and i > last_event_bar
+                and close > protected_pivot + 1e-12
+            ):
+                old_prot = int(protected_idx)
+                old_tgt = int(target_idx)
+                win_lo = min(old_prot, old_tgt)
+                hl_idx, hl_px = _min_body_low_between(win_lo, i)
+                hh_idx = i
+                hh_px = float(bh(df, i))
+                bias = 'bullish'
+                protected_idx, protected_pivot = hl_idx, hl_px
+                target_idx, target_pivot = hh_idx, hh_px
+                last_event_bar = i
+                event_at_bar = True
+                broken = swing_pt(old_prot, 'high')
+                ev = CHoCH(
+                    index=i,
+                    direction='bullish',
+                    break_price=hi_p,
+                    previous_trend='bearish',
+                    candle_time=ct,
+                    swing_broken=broken,
+                )
+                chochs.append(ev)
+                latest_signal = ev
+                leg_choch = ev
+
+            elif (
+                bias == 'bullish'
+                and i > last_event_bar
+                and close > target_pivot + 1e-12
+                and target_idx is not None
+            ):
+                old_target_idx = int(target_idx)
+                hl_idx, hl_px = _min_body_low_between(old_target_idx, i)
+                hh_idx, hh_px = _max_body_high_between(old_target_idx + 1, i)
+                protected_idx, protected_pivot = hl_idx, hl_px
+                target_idx, target_pivot = hh_idx, hh_px
+                last_event_bar = i
+                event_at_bar = True
+                br_h = swing_pt(old_target_idx, 'high')
+                ev = BOS(
+                    index=i,
+                    direction='bullish',
+                    break_price=hh_px,
+                    candle_time=ct,
+                    swing_broken=br_h,
+                )
+                bos_list.append(ev)
+                latest_signal = ev
+
+            elif (
+                bias == 'bearish'
+                and i > last_event_bar
+                and close < target_pivot - 1e-12
+                and target_idx is not None
+            ):
+                old_target_idx = int(target_idx)
+                lh_idx, lh_px = _max_body_high_between(old_target_idx, i)
+                ll_idx, ll_px = _min_body_low_between(old_target_idx + 1, i)
+                protected_idx, protected_pivot = lh_idx, lh_px
+                target_idx, target_pivot = ll_idx, ll_px
+                last_event_bar = i
+                event_at_bar = True
+                br_l = swing_pt(old_target_idx, 'low')
+                ev = BOS(
+                    index=i,
+                    direction='bearish',
+                    break_price=ll_px,
+                    candle_time=ct,
+                    swing_broken=br_l,
+                )
+                bos_list.append(ev)
+                latest_signal = ev
+
+            if event_at_bar or protected_idx is None:
+                continue
+
+            prot_i = int(protected_idx)
             if bias == 'bullish':
-                _sync_major_target_high(i)
-                lo_p = float(protected_pivot)
-                hi_p = float(target_pivot)
-                if lo_p <= close <= hi_p:
-                    bos_unlocked = True
-                    continue
-
-                # Bearish CHoCH — body close below HL_major
-                if i > last_event_bar and close < protected_pivot:
-                    lh_idx, _ = _max_wick_high_between(max(leg_start_bar, protected_idx or 0), i)
-                    ll_idx, _ = _min_wick_low_between(i, i)
-                    bias = 'bearish'
-                    _set_bearish_pivots(lh_idx, ll_idx)
-                    last_event_bar = i
-                    broken = swing_pt(protected_idx or 0, 'low')
-                    ev = CHoCH(
-                        index=i,
-                        direction='bearish',
-                        break_price=protected_pivot,
-                        previous_trend='bullish',
-                        candle_time=ct,
-                        swing_broken=broken,
-                    )
-                    chochs.append(ev)
-                    latest_signal = ev
-                    leg_choch = ev
-                    _begin_leg(i)
-                    leg_choch_target_ceiling = float(target_pivot)
-                    bos_unlocked = False
-                    continue
-
-                # BOS bullish — close above old HH at old_target_idx
-                old_hh = float(target_pivot)
-                if (
-                    bos_unlocked
-                    and close > old_hh + 1e-12
-                    and target_idx is not None
-                ):
-                    old_target_idx = int(target_idx)
-                    pool = [
-                        h for h in major_highs
-                        if h.index + fw <= i
-                        and h.index > (target_idx or -1)
-                        and h.index >= leg_start_bar
-                        and close > bh(df, h.index)
-                    ]
-                    if pool:
-                        br_h = max(pool, key=lambda h: bh(df, h.index))
-                    elif close > old_hh + 1e-9:
-                        br_h = swing_pt(old_target_idx, 'high')
-                    else:
+                best_h: Optional[SwingPoint] = None
+                best_px = float(target_pivot)
+                for h in major_highs:
+                    if h.index + fw > i or h.index <= prot_i:
                         continue
-                    hl_idx, hl_px = _min_wick_low_between(old_target_idx, i)
-                    hh_idx, hh_px = _max_body_high_between(old_target_idx, i)
-                    protected_pivot = hl_px
-                    protected_idx = hl_idx
-                    target_idx = hh_idx
-                    target_pivot = hh_px
-                    last_event_bar = i
-                    leg_choch_target_floor = hh_px
-                    bos_unlocked = False
-                    ev = BOS(
-                        index=i,
-                        direction='bullish',
-                        break_price=hh_px,
-                        candle_time=ct,
-                        swing_broken=br_h,
-                    )
-                    bos_list.append(ev)
-                    latest_signal = ev
-                    continue
-
-                continue
-
-            if bias == 'bearish':
-                _sync_major_target_low(i)
-                lo_p = float(target_pivot)
-                hi_p = float(protected_pivot)
-                if lo_p <= close <= hi_p:
-                    bos_unlocked = True
-                    continue
-
-                if i > last_event_bar and close > protected_pivot:
-                    hl_idx, _ = _min_wick_low_between(max(leg_start_bar, protected_idx or 0), i)
-                    hh_idx, _ = _max_wick_high_between(i, i)
-                    bias = 'bullish'
-                    _set_bullish_pivots(hl_idx, hh_idx)
-                    last_event_bar = i
-                    broken = swing_pt(protected_idx or 0, 'high')
-                    ev = CHoCH(
-                        index=i,
-                        direction='bullish',
-                        break_price=protected_pivot,
-                        previous_trend='bearish',
-                        candle_time=ct,
-                        swing_broken=broken,
-                    )
-                    chochs.append(ev)
-                    latest_signal = ev
-                    leg_choch = ev
-                    _begin_leg(i)
-                    leg_choch_target_floor = float(target_pivot)
-                    bos_unlocked = False
-                    continue
-
-                old_ll = float(target_pivot)
-                if (
-                    bos_unlocked
-                    and close < old_ll - 1e-12
-                    and target_idx is not None
-                ):
-                    old_target_idx = int(target_idx)
-                    pool = [
-                        l for l in major_lows
-                        if l.index + fw <= i
-                        and l.index > (target_idx or -1)
-                        and l.index >= leg_start_bar
-                        and close < bl(df, l.index)
-                    ]
-                    if pool:
-                        br_l = min(pool, key=lambda l: bl(df, l.index))
-                    elif close < old_ll - 1e-9:
-                        br_l = swing_pt(old_target_idx, 'low')
-                    else:
+                    px = float(bh(df, h.index))
+                    if px > best_px + 1e-12:
+                        best_px = px
+                        best_h = h
+                if best_h is not None:
+                    target_idx = best_h.index
+                    target_pivot = best_px
+            elif bias == 'bearish':
+                best_l: Optional[SwingPoint] = None
+                best_px = float(target_pivot)
+                for l in major_lows:
+                    if l.index + fw > i or l.index <= prot_i:
                         continue
-                    lh_idx, lh_px = _max_wick_high_between(old_target_idx, i)
-                    ll_idx, ll_px = _min_body_low_between(old_target_idx, i)
-                    protected_pivot = lh_px
-                    protected_idx = lh_idx
-                    target_idx = ll_idx
-                    target_pivot = ll_px
-                    last_event_bar = i
-                    leg_choch_target_ceiling = ll_px
-                    bos_unlocked = False
-                    ev = BOS(
-                        index=i,
-                        direction='bearish',
-                        break_price=ll_px,
-                        candle_time=ct,
-                        swing_broken=br_l,
-                    )
-                    bos_list.append(ev)
-                    latest_signal = ev
-                    continue
-
-                continue
+                    px = float(bl(df, l.index))
+                    if px < best_px - 1e-12:
+                        best_px = px
+                        best_l = l
+                if best_l is not None:
+                    target_idx = best_l.index
+                    target_pivot = best_px
 
         trend = bias if bias is not None else 'neutral'
 
@@ -549,9 +362,13 @@ class CoreStructureMixin:
                 )
 
         if debug and trend != 'neutral':
-            kind = 'CHoCH' if isinstance(latest_signal, CHoCH) else 'BOS'
+            kind = (
+                'CHoCH' if isinstance(latest_signal, CHoCH)
+                else 'BOS' if isinstance(latest_signal, BOS)
+                else '—'
+            )
             print(
-                f"   📐 [V91 SMC SM] trend={trend.upper()} "
+                f"   📐 [V92 SMC SM] trend={trend.upper()} "
                 f"HL/LH={protected_pivot} HH/LL={target_pivot} last={kind} "
                 f"@bar{getattr(latest_signal, 'index', '?')} "
                 f"internal_pb={is_internal_pullback}"
@@ -674,56 +491,6 @@ class CoreStructureMixin:
         _open = float(df['open'].iloc[bar_index])
         _body_low = min(_open, _close)
         return _close < level or _body_low < level
-
-    def _is_internal_range_signal(
-        self,
-        df: pd.DataFrame,
-        signal,
-        range_state: StructuralRangeState,
-    ) -> bool:
-        """V59 + V64.3: sub-structure filter — true CHoCH flips never internal."""
-        if isinstance(signal, CHoCH):
-            pt = getattr(signal, 'previous_trend', None)
-            if pt and pt != signal.direction:
-                return False
-        if isinstance(signal, BOS):
-            if (
-                signal.direction == 'bullish'
-                and range_state.locked_bias == 'bearish'
-                and not self._bar_body_close_above(
-                    df, signal.index, range_state.macro_range_high,
-                )
-            ):
-                return True
-            if (
-                signal.direction == 'bearish'
-                and range_state.locked_bias == 'bullish'
-                and not self._bar_body_close_below(
-                    df, signal.index, range_state.macro_range_low,
-                )
-            ):
-                return True
-        if not range_state.locked:
-            return False
-        close = float(df['close'].iloc[-1])
-        if not (range_state.macro_range_low < close < range_state.macro_range_high):
-            return False
-        # Structural breakout from range — keep CHoCH that clears bound with body-close
-        if isinstance(signal, CHoCH):
-            if signal.direction == 'bullish' and self._bar_body_close_above(
-                df, signal.index, range_state.macro_range_high
-            ):
-                return False
-            if signal.direction == 'bearish' and self._bar_body_close_below(
-                df, signal.index, range_state.macro_range_low
-            ):
-                return False
-        level = self._range_signal_level(df, signal)
-        if range_state.macro_range_low < level < range_state.macro_range_high:
-            return True
-        if signal.index >= range_state.macro_range_low_bar and level < range_state.macro_range_high:
-            return level >= range_state.macro_range_low
-        return False
 
     def filter_internal_range_signals(
         self,
