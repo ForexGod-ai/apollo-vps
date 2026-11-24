@@ -2842,9 +2842,10 @@ class MultiTFRadar:
             if not _v47_live_alert_bars_ok('4H', bars_i):
                 return False, 'stale_break_over_3_bars', break_time, bars_ago
             break_px = float(tf_4h.choch_price) if tf_4h.choch_price is not None else None
-            exhausted, ex_reason = _h4_move_exhausted_vs_d1_tp(setup, break_px)
-            if exhausted:
-                return False, ex_reason, break_time, bars_ago
+            if sig_u == 'BOS':
+                exhausted, ex_reason = _h4_move_exhausted_vs_d1_tp(setup, break_px)
+                if exhausted:
+                    return False, ex_reason, break_time, bars_ago
             return True, '', break_time, bars_ago
 
         sig = (tf_4h.signal_type or 'CHoCH').upper()

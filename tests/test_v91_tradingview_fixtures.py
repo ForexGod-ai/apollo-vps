@@ -250,16 +250,32 @@ def test_v93_target_armed_one_bos_during_impulse_staircase():
     assert pl0 <= 1.08
 
 
-def test_v93_radar_move_exhausted_blocks_at_60pct_leg():
+def test_v93_radar_move_exhausted_default_75pct_blocks_late_bos():
+    """
+    BOS târziu (AUDUSD-style): >75% POI-mid→TP — blocat; CHoCH la 56% (USDJPY) — permis la prag 0.75.
+    """
     from radar_gates import h4_move_exhausted_vs_d1_tp
 
-    setup = {"poi_top": 1.10, "poi_bottom": 0.90, "take_profit": 1.30}
-    poi_mid = 1.0
-    total = 0.30
-    break_px = poi_mid + 0.60 * total
-    exhausted, reason = h4_move_exhausted_vs_d1_tp(setup, break_px, threshold=0.55)
+    aud_setup = {
+        "poi_top": 0.6520,
+        "poi_bottom": 0.6480,
+        "take_profit": 0.6380,
+    }
+    poi_mid = (0.6520 + 0.6480) / 2.0
+    total_leg = abs(0.6380 - poi_mid)
+    late_bos_break = poi_mid - 0.78 * total_leg
+    exhausted, reason = h4_move_exhausted_vs_d1_tp(aud_setup, late_bos_break)
     assert exhausted
     assert reason == "move_exhausted_far_from_poi"
-    ok_break = poi_mid + 0.40 * total
-    exhausted2, _ = h4_move_exhausted_vs_d1_tp(setup, ok_break, threshold=0.55)
-    assert not exhausted2
+
+    usdjpy_setup = {
+        "poi_top": 159.20,
+        "poi_bottom": 158.80,
+        "take_profit": 161.50,
+    }
+    jpy_mid = (159.20 + 158.80) / 2.0
+    jpy_leg = abs(161.50 - jpy_mid)
+    choch_break = jpy_mid + 0.56 * jpy_leg
+    exhausted_choch, reason_choch = h4_move_exhausted_vs_d1_tp(usdjpy_setup, choch_break)
+    assert not exhausted_choch
+    assert reason_choch == ""

@@ -114,7 +114,7 @@ def ltf_choch_confirmed_for_card(merged: Dict, tf: str, macro_dir: str) -> bool:
 def h4_move_exhausted_vs_d1_tp(
     setup_data: dict,
     break_price: Optional[float],
-    threshold: float = 0.55,
+    threshold: float = 0.75,
 ) -> tuple[bool, str]:
     """
     V93: block 4H structural alert when break is >threshold along POI-mid → D1 TP leg.
